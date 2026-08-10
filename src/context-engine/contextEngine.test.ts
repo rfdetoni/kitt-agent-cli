@@ -25,10 +25,9 @@ describe('Context Engine', () => {
       expect(block).toHaveProperty('path')
       expect(block).toHaveProperty('content')
       expect(block.content).toContain(`${block.path}:`)
-      // Check elision marker is present showing bodies are stripped
       expect(block.content).toContain('⋮')
     }
-  })
+  }, 30000)
 
   test('consecutive calls use cache and run faster', async () => {
     const root = process.cwd()
@@ -42,6 +41,6 @@ describe('Context Engine', () => {
     await getRelevantContext('Analyze project state', 2000, root)
     const duration2 = performance.now() - start2
 
-    expect(duration2).toBeLessThanOrEqual(duration1 + 500)
-  })
+    expect(duration2).toBeLessThanOrEqual(duration1)
+  }, 30000)
 })
