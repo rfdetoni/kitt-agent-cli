@@ -13,6 +13,8 @@
 *.chat
 *.transcript.jsonl
 agent.log
+export_codebase.py
+kitt_codebase_export.txt
 
 # Node & Python
 node_modules/

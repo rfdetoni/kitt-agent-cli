@@ -42,16 +42,30 @@ class EditBlock:
     is_deletion: bool = False
 
 @dataclass
+class FileSnapshot:
+    relative_path: str
+    existed: bool
+    content: Optional[str] = None
+
+@dataclass
+class ChangeSet:
+    id: str
+    timestamp: float
+    description: str
+    snapshots: List[FileSnapshot] = field(default_factory=list)
+
+@dataclass
 class EditResult:
     success: bool
     applied_files: List[str] = field(default_factory=list)
     created_files: List[str] = field(default_factory=list)
     deleted_files: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    changeset: Optional[ChangeSet] = None
 
 @dataclass
 class ModelProfile:
-    backend: str  # 'ollama', 'openai', 'anthropic'
+    backend: str  # 'ollama', 'openai'
     model: str
     base_url: str = "http://localhost:11434"
     api_key: str = ""

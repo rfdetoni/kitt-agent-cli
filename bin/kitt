@@ -3,11 +3,7 @@ import sys
 import os
 from pathlib import Path
 
-UV_PYTHON = "/home/toni/.local/share/uv/python/cpython-3.12.8-linux-x86_64-gnu/bin/python3"
-if os.path.exists(UV_PYTHON) and sys.executable != UV_PYTHON and "KITT_REEXEC" not in os.environ:
-    os.environ["KITT_REEXEC"] = "1"
-    os.execv(UV_PYTHON, [UV_PYTHON] + sys.argv)
-
+# Add project root directory to sys.path
 root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))

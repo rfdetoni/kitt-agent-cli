@@ -1,14 +1,21 @@
 import os
 import sys
 import glob
+import shlex
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Set
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.styles import Style
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.styles import Style
+    HAS_PROMPT_TOOLKIT = True
+except ImportError:
+    HAS_PROMPT_TOOLKIT = False
+    class Completer: pass
+    class Completion: pass
 
 from kitt.context_engine.engine import ContextEngine
 from kitt.edit_format.parser import SearchReplaceParser
@@ -120,15 +127,18 @@ class CustomCompleter(Completer):
                         display_meta=desc
                     )
 
-PROMPT_STYLE = Style.from_dict({
-    'completion-menu': 'bg:default fg:#8a8a8a',
-    'completion-menu.completion': 'bg:default fg:#8a8a8a',
-    'completion-menu.meta.completion': 'bg:default fg:#8a8a8a',
-    'completion-menu.completion.current': 'bg:#a4b5fd fg:#000000 bold',
-    'completion-menu.meta.completion.current': 'bg:#a4b5fd fg:#000000',
-    'scrollbar.background': 'bg:default',
-    'scrollbar.button': 'bg:#8a8a8a',
-})
+if HAS_PROMPT_TOOLKIT:
+    PROMPT_STYLE = Style.from_dict({
+        'completion-menu': 'bg:default fg:#8a8a8a',
+        'completion-menu.completion': 'bg:default fg:#8a8a8a',
+        'completion-menu.meta.completion': 'bg:default fg:#8a8a8a',
+        'completion-menu.completion.current': 'bg:#a4b5fd fg:#000000 bold',
+        'completion-menu.meta.completion.current': 'bg:#a4b5fd fg:#000000',
+        'scrollbar.background': 'bg:default',
+        'scrollbar.button': 'bg:#8a8a8a',
+    })
+else:
+    PROMPT_STYLE = None
 
 class KittREPL:
     """Knight Rider themed Interactive REPL with prompt_toolkit floating completion dropdown & Memory Manager."""
@@ -145,11 +155,14 @@ class KittREPL:
         self.explicit_files: Set[str] = set()
 
         self.completer = CustomCompleter(SLASH_COMMANDS, root_dir=root_dir)
-        self.session = PromptSession(
-            completer=self.completer,
-            complete_while_typing=True,
-            style=PROMPT_STYLE
-        )
+        if HAS_PROMPT_TOOLKIT:
+            self.session = PromptSession(
+                completer=self.completer,
+                complete_while_typing=True,
+                style=PROMPT_STYLE
+            )
+        else:
+            self.session = None
 
     def _get_git_branch(self) -> str:
         try:
@@ -192,8 +205,11 @@ class KittREPL:
         self.render_startup_dashboard()
         while True:
             try:
-                prompt_formatted = HTML('<ansired><b>kitt</b></ansired><ansigreen><b>&gt;</b></ansigreen> ')
-                user_input = self.session.prompt(prompt_formatted).strip()
+                if HAS_PROMPT_TOOLKIT and self.session:
+                    prompt_formatted = HTML('<ansired><b>kitt</b></ansired><ansigreen><b>&gt;</b></ansigreen> ')
+                    user_input = self.session.prompt(prompt_formatted).strip()
+                else:
+                    user_input = input("\033[1;31mkitt\033[1;32m>\033[0m ").strip()
                 if not user_input:
                     continue
 
@@ -356,19 +372,46 @@ class KittREPL:
                 print(f"\033[32mCommitted changes with message: '{msg}'\033[0m")
 
         elif cmd_name == '/undo':
-            subprocess.run(["git", "checkout", "--", "."], cwd=self.root_dir)
-            print("\033[33mReverted uncommitted file changes in workspace.\033[0m")
+            cs = self.diff_applier.tracker.revert_last_changeset()
+            if cs:
+                print(f"\033[32m✓ Reverted K.I.T.T. ChangeSet [{cs.id}] ({len(cs.snapshots)} file(s) restored).\033[0m")
+                for snap in cs.snapshots:
+                    print(f"  • {snap.relative_path}")
+            else:
+                print("\033[90mNo K.I.T.T. edit ChangeSets to revert.\033[0m")
 
         elif cmd_name == '/run':
             if not arg:
-                print("\033[33mUsage: /run <shell_command>\033[0m")
+                print("\033[33mUsage: /run <command>\033[0m")
             else:
-                print(f"\033[90mExecuting: {arg}\033[0m")
-                res = subprocess.run(arg, shell=True, cwd=self.root_dir, capture_output=True, text=True)
-                if res.stdout:
-                    print(res.stdout)
-                if res.stderr:
-                    print(f"\033[31m{res.stderr}\033[0m")
+                try:
+                    cmd_args = shlex.split(arg)
+                    print(f"\033[90mExecuting: {cmd_args}\033[0m")
+                    res = subprocess.run(
+                        cmd_args,
+                        cwd=self.root_dir,
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    out_lines = res.stdout.splitlines() if res.stdout else []
+                    err_lines = res.stderr.splitlines() if res.stderr else []
+
+                    if out_lines:
+                        if len(out_lines) > 100:
+                            print("\n".join(out_lines[:100]))
+                            print(f"\033[90m... [{len(out_lines) - 100} output lines truncated]\033[0m")
+                        else:
+                            print(res.stdout)
+                    if err_lines:
+                        if len(err_lines) > 50:
+                            print(f"\033[31m" + "\n".join(err_lines[:50]) + f"\n... [{len(err_lines) - 50} error lines truncated]\033[0m")
+                        else:
+                            print(f"\033[31m{res.stderr}\033[0m")
+                except subprocess.TimeoutExpired:
+                    print("\033[31mCommand execution timed out after 30 seconds.\033[0m")
+                except Exception as e:
+                    print(f"\033[31mExecution error: {e}\033[0m")
 
         elif cmd_name == '/ask':
             if arg:
