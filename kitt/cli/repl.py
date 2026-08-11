@@ -81,7 +81,7 @@ SLASH_COMMANDS = {
     "/diff": "Show uncommitted git diff",
     "/commit": "Create automatic git commit with AI message",
     "/undo": "Revert recent git commit or uncommitted changes",
-    "/run": "Execute shell command in workspace",
+    "/run": "Execute shell command within security policy",
     "/ask": "Ask question without making code edits",
     "/code": "Force code editing mode with SEARCH/REPLACE diffs",
     "/clear": "Reset active context",
@@ -230,6 +230,39 @@ class KittREPL:
         if cmd_name in ['/exit', '/quit']:
             print("\033[1;31mK.I.T.T. Subsystem offline.\033[0m")
             return True
+
+        elif cmd_name == '/run':
+            if not arg:
+                print("\033[33mUsage: /run <command>\033[0m")
+            else:
+                args = {"command": arg}
+                res = self.turn_processor.registry.execute_tool("run_command", args)
+                if res.requires_approval:
+                    print(f"\033[1;33m[ASK Confirmation]: Command '{arg}' requires approval. Confirm execution? (y/N): \033[0m", end="")
+                    choice = input().strip().lower()
+                    if choice in ['y', 'yes']:
+                        grant = self.turn_processor.registry.issue_approval_grant("cli-run", "run_command", args)
+                        res = self.turn_processor.registry.execute_tool("run_command", args, grant=grant)
+                    else:
+                        print("\033[31mExecution cancelled by user.\033[0m")
+                        return False
+
+                if res.success:
+                    print(f"\033[32m{res.output}\033[0m")
+                else:
+                    print(f"\033[31m{res.error or res.output}\033[0m")
+
+        elif cmd_name == '/ask':
+            if not arg:
+                print("\033[33mUsage: /ask <question>\033[0m")
+            else:
+                self.process_turn(f"[QUESTION ONLY - NO CODE EDITS]: {arg}")
+
+        elif cmd_name == '/code':
+            if not arg:
+                print("\033[33mUsage: /code <instruction>\033[0m")
+            else:
+                self.process_turn(f"[CODE EDIT REQUIRED]: {arg}")
 
         elif cmd_name == '/new':
             c = self.history_service.new_conversation(title=arg or "New Conversation")
