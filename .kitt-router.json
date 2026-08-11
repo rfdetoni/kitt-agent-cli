@@ -1,0 +1,23 @@
+{
+  "profiles": {
+    "model_a": {
+      "backend": "ollama",
+      "model": "oamazonasgabriel/lfm2.5-2.6b:q4_k_m-8gbGPU",
+      "base_url": "http://localhost:11434",
+      "api_key": ""
+    },
+    "model_b": {
+      "backend": "ollama",
+      "model": "oamazonasgabriel/lfm2.5-2.6b:q4_k_m-8gbGPU",
+      "base_url": "http://localhost:11434",
+      "api_key": ""
+    }
+  },
+  "routing": {
+    "context-gather": "model_a",
+    "summarize": "model_a",
+    "validate-diff": "model_a",
+    "code-edit": "model_b",
+    "code-generation": "model_b"
+  }
+}
