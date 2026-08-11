@@ -4,7 +4,7 @@ import glob
 import shlex
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional
 
 try:
     from prompt_toolkit import PromptSession
@@ -29,6 +29,14 @@ from kitt.context_filter.prompt_budget import PromptBudget
 from kitt.domain.entities import TaskStep
 from kitt.llm.client import LLMClient
 from kitt.core.turn_processor import TurnProcessor
+from kitt.core.turn_command import TurnCommand
+from kitt.core.turn_events import (
+    TurnEvent, TurnStarted, FilterCompleted, ContextResolved, BudgetApplied,
+    ModelSelected, TextDelta, ApprovalRequired, ToolStarted, ToolCompleted,
+    EditApplied, TurnCompleted, TurnFailed
+)
+from kitt.history.service import HistoryService
+from kitt.cli.doctor import DoctorCheck
 
 # Knight Rider Red LED Scanner & Tech Dashboard Banner
 KITT_BANNER_TEMPLATE = """
@@ -46,29 +54,15 @@ KITT_BANNER_TEMPLATE = """
   \033[90mType \033[33m/\033[90m for floating dropdown slash commands menu.\033[0m
 """
 
-SYSTEM_PROMPT_TEMPLATE = """You are K.I.T.T. (Knowledge & Inference Task Tool), an advanced autonomous AI coding assistant.
-You write clean, high-performance, maintainable code.
-
-When editing code, ALWAYS emit changes in SEARCH/REPLACE diff blocks:
-
-path/to/file.ext
-<<<<<<< SEARCH
-exact original text in target file
-=======
-new updated text
->>>>>>> REPLACE
-
-{memory_context}
-
-{skills_context}
-
-{explicit_files_context}
-
-Context Engine Repository Map:
-{context_map}
-"""
-
 SLASH_COMMANDS = {
+    "/new": "Start new persistent conversation",
+    "/history": "List or search workspace conversations history",
+    "/resume": "Resume specific conversation by index or ID",
+    "/continue": "Resume most recent active conversation",
+    "/conversation": "Show current active conversation details",
+    "/fork": "Fork current conversation into new branch",
+    "/export-conversation": "Export conversation history as markdown or JSON",
+    "/doctor": "Run diagnostic check on local environment",
     "/add": "Add files to active chat context",
     "/drop": "Remove files from active chat context",
     "/files": "List active context files",
@@ -76,12 +70,11 @@ SLASH_COMMANDS = {
     "/remember": "Add persistent rule or guideline to project memory",
     "/clear-memory": "Reset persistent project memory rules",
     "/skills": "List installed commercial agent skills",
-    "/setup-skills": "Interactive checkbox setup for mandatory skills (caveman, ponytail, rtk, etc.)",
+    "/setup-skills": "Interactive checkbox setup for mandatory skills",
     "/skill-install": "Install skill from Git repo URL or GitHub user/repo",
     "/skill-remove": "Remove an installed skill",
     "/repomap": "Print AST symbol graph of repository",
     "/context-stats": "Display telemetry and section token budget breakdown",
-    "/context-preview": "Preview token allocation limits and budget rules",
     "/model": "View or switch active LLM model",
     "/setup-models": "Interactive provider model & exclusive role setup",
     "/router": "Display active dual-model task routing setup",
@@ -91,15 +84,13 @@ SLASH_COMMANDS = {
     "/run": "Execute shell command in workspace",
     "/ask": "Ask question without making code edits",
     "/code": "Force code editing mode with SEARCH/REPLACE diffs",
-    "/clear": "Reset conversation history",
+    "/clear": "Reset active context",
     "/help": "Display full K.I.T.T. slash command menu",
     "/exit": "Shut down K.I.T.T. subsystem",
     "/quit": "Shut down K.I.T.T. subsystem",
 }
 
 class CustomCompleter(Completer):
-    """CustomCompleter supporting slash commands & file path autocompletion."""
-
     def __init__(self, commands: Dict[str, str], root_dir: str = "."):
         self.commands = commands
         self.root_dir = root_dir
@@ -146,7 +137,7 @@ else:
     PROMPT_STYLE = None
 
 class KittREPL:
-    """Knight Rider themed Interactive REPL with prompt_toolkit floating completion dropdown & Memory Manager."""
+    """Knight Rider themed Interactive REPL delegating execution to TurnProcessor.run_turn()."""
 
     def __init__(self, root_dir: str = "."):
         self.root_dir = root_dir
@@ -158,7 +149,7 @@ class KittREPL:
         self.skill_manager = SkillManager(root_dir=root_dir)
         self.budget = PromptBudget(window_size=8192, reserved_output=1200)
         self.turn_processor = TurnProcessor(root_dir=root_dir)
-        self.messages: List[Dict[str, str]] = []
+        self.history_service = HistoryService(root_dir=root_dir)
         self.explicit_files: Set[str] = set()
 
         self.completer = CustomCompleter(SLASH_COMMANDS, root_dir=root_dir)
@@ -205,7 +196,7 @@ class KittREPL:
     def print_slash_menu(self):
         print("\n\033[1;37mAvailable K.I.T.T. Slash Commands Menu:\033[0m")
         for cmd, desc in SLASH_COMMANDS.items():
-            print(f"  \033[1;33m{cmd:<15}\033[0m \033[90m-\033[0m \033[37m{desc}\033[0m")
+            print(f"  \033[1;33m{cmd:<22}\033[0m \033[90m-\033[0m \033[37m{desc}\033[0m")
         print()
 
     def start(self):
@@ -238,6 +229,48 @@ class KittREPL:
         if cmd_name in ['/exit', '/quit']:
             print("\033[1;31mK.I.T.T. Subsystem offline.\033[0m")
             return True
+
+        elif cmd_name == '/new':
+            c = self.history_service.new_conversation(title=arg or "New Conversation")
+            print(f"\033[32m✓ Started new conversation: [{c['id'][:8]}] {c['title']}\033[0m")
+
+        elif cmd_name == '/history':
+            convs = self.history_service.list_history(limit=20, search=arg if arg else None)
+            print("\n\033[1;34m--- K.I.T.T. Persistent Conversation History ---\033[0m")
+            for i, c in enumerate(convs, 1):
+                marker = "*" if self.history_service.active_conversation and c["id"] == self.history_service.active_conversation["id"] else " "
+                print(f" {marker} [{i}] {c['id'][:8]} | {c['title']} \033[90m({c['status']})\033[0m")
+            print("\033[1;34m------------------------------------------------\033[0m\n")
+
+        elif cmd_name in ['/resume', '/continue']:
+            target = arg or "1"
+            c = self.history_service.resume_conversation(target)
+            if c:
+                print(f"\033[32m✓ Resumed conversation: [{c['id'][:8]}] {c['title']}\033[0m")
+            else:
+                print(f"\033[31mConversation '{target}' not found.\033[0m")
+
+        elif cmd_name == '/conversation':
+            c = self.history_service.get_or_create_active()
+            print(f"\n\033[1;34mActive Conversation:\033[0m [{c['id']}] {c['title']}")
+
+        elif cmd_name == '/fork':
+            c = self.history_service.fork_conversation(title_suffix=f" ({arg})" if arg else " (Fork)")
+            print(f"\033[32m✓ Forked conversation: [{c['id'][:8]}] {c['title']}\033[0m")
+
+        elif cmd_name == '/export-conversation':
+            fmt = "json" if "json" in arg.lower() else "md"
+            out = self.history_service.export_conversation(fmt=fmt)
+            print(f"\n\033[1;34m--- Conversation Export ({fmt.upper()}) ---\033[0m\n{out}\n")
+
+        elif cmd_name == '/doctor':
+            chk = DoctorCheck(root_dir=self.root_dir)
+            res = chk.run_diagnostics()
+            print("\n\033[1;34m--- K.I.T.T. System Diagnostics ---\033[0m")
+            for r in res:
+                color = "\033[32m" if r["status"] == "PASS" else ("\033[33m" if r["status"] == "WARN" else "\033[31m")
+                print(f" {color}[{r['status']}]\033[0m \033[1;37m{r['name']:<25}\033[0m: {r['detail']}")
+            print("\033[1;34m------------------------------------\033[0m\n")
 
         elif cmd_name == '/add':
             if not arg:
@@ -288,174 +321,24 @@ class KittREPL:
         elif cmd_name == '/skills':
             skills = self.skill_manager.list_skills()
             if not skills:
-                print("\033[90mNo skills installed. Use /skill-install <git_url> to install a skill.\033[0m")
+                print("\033[90mNo skills installed.\033[0m")
             else:
-                print("\n\033[1;34m--- Installed Commercial Agent Skills ---\033[0m")
+                print("\n\033[1;34m--- Installed Agent Skills ---\033[0m")
                 for s in skills:
                     print(f" • \033[1;33m{s.name}\033[0m (v{s.version} by {s.author})")
-                    print(f"   \033[37m{s.description}\033[0m")
-                    print(f"   \033[90mPath: {s.path}\033[0m")
-                print("\033[1;34m----------------------------------------\033[0m\n")
-
-        elif cmd_name == '/setup-skills':
-            self.skill_manager.run_interactive_checkbox_config()
-
-        elif cmd_name == '/skill-install':
-            if not arg:
-                print("\033[33mUsage: /skill-install <git_repo_url_or_shorthand> [--global]\033[0m")
-                print("Examples:")
-                print("  /skill-install owner/repository")
-                print("  /skill-install https://github.com/owner/repository.git")
-            else:
-                is_global = "--global" in arg
-                git_url = arg.replace("--global", "").strip()
-                print(f"\033[90mFetching and installing skill from: {git_url}...\033[0m")
-                try:
-                    s = self.skill_manager.install_from_git(git_url, is_global=is_global)
-                    print(f"\033[32m✓ Installed skill '{s.name}' (v{s.version}) successfully!\033[0m")
-                except Exception as e:
-                    print(f"\033[31mInstallation Error: {e}\033[0m")
-
-        elif cmd_name == '/skill-remove':
-            if not arg:
-                print("\033[33mUsage: /skill-remove <skill_name>\033[0m")
-            else:
-                if self.skill_manager.remove_skill(arg):
-                    print(f"\033[32mUninstalled skill '{arg}'.\033[0m")
-                else:
-                    print(f"\033[31mSkill '{arg}' not found.\033[0m")
 
         elif cmd_name == '/repomap':
             blocks = self.context_engine.get_relevant_context("", max_tokens=1024, root_dir=self.root_dir)
             print("\n\033[1;34m--- K.I.T.T. Repository Symbol Map ---\033[0m")
             for b in blocks:
                 print(b.content)
-            print("\033[1;34m--------------------------------------\033[0m\n")
-
-        elif cmd_name == '/context-stats':
-            t = self.budget.last_telemetry
-            if not t:
-                print("\033[90mNo context telemetry recorded yet. Run a prompt first.\033[0m")
-            else:
-                print("\n\033[1;34m--- K.I.T.T. Context Token Budget Telemetry ---\033[0m")
-                print(f" Window Size           : {t.window_size} tokens")
-                print(f" Output Reserved       : {t.output_reserved} tokens (mandatory)")
-                print(f" Total Input Tokens    : {t.section_tokens.get('total_input', 0)} tokens")
-                print(" Section Breakdown:")
-                for k, v in t.section_tokens.items():
-                    if k != "total_input":
-                        print(f"   • {k:<20}: {v} tokens")
-                if t.truncated_items:
-                    print(f" Truncated Sections    : {', '.join(t.truncated_items)}")
-                else:
-                    print(" Truncated Sections    : None")
-                print("\033[1;34m--------------------------------------------------\033[0m\n")
-
-        elif cmd_name == '/context-preview':
-            print("\n\033[1;34m--- Active Prompt Budget Allocation ---\033[0m")
-            print(f" Window Size: {self.budget.window_size} | Reserved Output: {self.budget.reserved_output}")
-            print(f" Max System: {self.budget.max_system} | Max Task: {self.budget.max_task_constraints} | Max Files: {self.budget.max_files} | Max RepoMap: {self.budget.max_repomap}")
-            print("\033[1;34m---------------------------------------\033[0m\n")
-
-        elif cmd_name == '/model':
-            if not arg:
-                profile_key = self.router.config.routing.get("chat", "model_a")
-                profile = self.router.config.profiles.get(profile_key) or self.router.config.profiles.get("execute")
-                model_name = profile.model if profile else "qwen2.5:32b-instruct"
-                print(f"\n\033[1;37mActive Main Chat Model:\033[0m \033[1;36m{model_name}\033[0m")
-                print("\033[90mUse \033[33m/model <model_name>\033[90m to update Main Chat model, or \033[33m/setup-models\033[90m for role configuration.\033[0m\n")
-            else:
-                profile_key = self.router.config.routing.get("chat", "model_a")
-                if profile_key in self.router.config.profiles:
-                    self.router.config.profiles[profile_key].model = arg
-                elif "execute" in self.router.config.profiles:
-                    self.router.config.profiles["execute"].model = arg
-                print(f"\033[32mActive Main Chat Model updated to: {arg}\033[0m")
-
-        elif cmd_name == '/setup-models':
-            configurator = ModelConfigurator(root_dir=self.root_dir)
-            configurator.run_interactive_setup()
-            self.router = TaskRouter(root_dir=self.root_dir)
-
-        elif cmd_name == '/router':
-            print("\n\033[1;34m--- Task Router Configuration ---\033[0m")
-            for k, v in self.router.config.profiles.items():
-                print(f" Profile '{k}': {v.backend} ({v.model})")
-            print(" Routing map:")
-            for t, p in self.router.config.routing.items():
-                print(f"   {t} -> {p}")
-            print("\033[1;34m---------------------------------\033[0m\n")
-
-        elif cmd_name == '/diff':
-            res = subprocess.run(["git", "diff"], cwd=self.root_dir, capture_output=True, text=True)
-            if res.stdout:
-                print(f"\n\033[1;34m--- Git Uncommitted Diff ---\033[0m\n{res.stdout}")
-            else:
-                print("\033[90mNo uncommitted changes in working directory.\033[0m")
-
-        elif cmd_name == '/commit':
-            res = subprocess.run(["git", "diff"], cwd=self.root_dir, capture_output=True, text=True)
-            if not res.stdout:
-                print("\033[90mNo changes to commit.\033[0m")
-            else:
-                msg = arg or "feat: automated updates via K.I.T.T."
-                subprocess.run(["git", "add", "."], cwd=self.root_dir)
-                subprocess.run(["git", "commit", "-m", msg], cwd=self.root_dir)
-                print(f"\033[32mCommitted changes with message: '{msg}'\033[0m")
 
         elif cmd_name == '/undo':
             cs = self.diff_applier.tracker.revert_last_changeset()
             if cs:
-                print(f"\033[32m✓ Reverted K.I.T.T. ChangeSet [{cs.id}] ({len(cs.snapshots)} file(s) restored).\033[0m")
-                for snap in cs.snapshots:
-                    print(f"  • {snap.relative_path}")
+                print(f"\033[32m✓ Reverted K.I.T.T. ChangeSet [{cs.id}]\033[0m")
             else:
                 print("\033[90mNo K.I.T.T. edit ChangeSets to revert.\033[0m")
-
-        elif cmd_name == '/run':
-            if not arg:
-                print("\033[33mUsage: /run <command>\033[0m")
-            else:
-                try:
-                    cmd_args = shlex.split(arg)
-                    print(f"\033[90mExecuting: {cmd_args}\033[0m")
-                    res = subprocess.run(
-                        cmd_args,
-                        cwd=self.root_dir,
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-                    out_lines = res.stdout.splitlines() if res.stdout else []
-                    err_lines = res.stderr.splitlines() if res.stderr else []
-
-                    if out_lines:
-                        if len(out_lines) > 100:
-                            print("\n".join(out_lines[:100]))
-                            print(f"\033[90m... [{len(out_lines) - 100} output lines truncated]\033[0m")
-                        else:
-                            print(res.stdout)
-                    if err_lines:
-                        if len(err_lines) > 50:
-                            print(f"\033[31m" + "\n".join(err_lines[:50]) + f"\n... [{len(err_lines) - 50} error lines truncated]\033[0m")
-                        else:
-                            print(f"\033[31m{res.stderr}\033[0m")
-                except subprocess.TimeoutExpired:
-                    print("\033[31mCommand execution timed out after 30 seconds.\033[0m")
-                except Exception as e:
-                    print(f"\033[31mExecution error: {e}\033[0m")
-
-        elif cmd_name == '/ask':
-            if arg:
-                self.process_turn(f"[QUESTION ONLY - NO CODE EDITS]: {arg}")
-
-        elif cmd_name == '/code':
-            if arg:
-                self.process_turn(f"[CODE EDIT REQUIRED]: {arg}")
-
-        elif cmd_name == '/clear':
-            self.messages.clear()
-            print("\033[33mConversation history cleared.\033[0m")
 
         elif cmd_name in ['/help', '/']:
             self.print_slash_menu()
@@ -465,62 +348,44 @@ class KittREPL:
 
         return False
 
-    def _build_explicit_files_context(self) -> str:
-        if not self.explicit_files:
-            return ""
-
-        context_lines = ["Explicitly Attached Context Files:"]
-        for rel_path in sorted(self.explicit_files):
-            full_p = Path(self.root_dir) / rel_path
-            if full_p.exists() and full_p.is_file():
-                try:
-                    content = full_p.read_text(encoding='utf-8', errors='ignore')
-                    context_lines.append(f"\n--- {rel_path} ---\n{content}\n--- end {rel_path} ---")
-                except Exception:
-                    continue
-        return "\n".join(context_lines)
-
     def process_turn(self, user_prompt: str):
-        self.messages.append({"role": "user", "content": user_prompt})
+        active_conv = self.history_service.get_or_create_active()
+        self.history_service.repo.save_message(active_conv["id"], "turn", "user", user_prompt)
 
-        prep = self.turn_processor.process(user_prompt, explicit_files=self.explicit_files)
-        filter_res = prep["filter_res"]
-        allocated = prep["allocated"]
-        request = prep["request"]
-        task = filter_res.task
-        exe_profile_name = prep["exe_profile_name"]
-        exe_profile = prep["exe_profile"]
+        cmd = TurnCommand(
+            conversation_id=active_conv["id"],
+            prompt=user_prompt,
+            explicit_files=self.explicit_files
+        )
 
-        source_tag = f" [{filter_res.source}]"
-        if filter_res.fallback_reason:
-            source_tag += f" (Reason: {filter_res.fallback_reason})"
-        print(f"\033[90m[Semantic Filter: Intent={task.intent}, Confidence={task.confidence:.2f}]{source_tag}\033[0m")
-        print(f"\033[90m[Task Router: intent={task.intent} -> profile '{exe_profile_name}' ({exe_profile.model})]\033[0m")
+        full_resp = ""
+        for event in self.turn_processor.run_turn(cmd):
+            if isinstance(event, FilterCompleted):
+                if event.filter_res:
+                    t = event.filter_res.task
+                    print(f"\033[90m[Filter: intent={t.intent}, confidence={t.confidence:.2f}]\033[0m")
+            elif isinstance(event, ModelSelected):
+                print(f"\033[90m[Router: profile={event.profile_name} ({event.model})]\033[0m")
+                print("\033[1;31mkitt:\033[0m ", end="", flush=True)
+            elif isinstance(event, TextDelta):
+                print(event.delta, end="", flush=True)
+                full_resp += event.delta
+            elif isinstance(event, ApprovalRequired):
+                print(f"\n\033[1;33m[ASK Confirmation Required]: Tool '{event.tool_name}' requires approval.\033[0m")
+                grant = self.turn_processor.registry.issue_approval_grant(cmd.turn_id, event.tool_name, event.args)
+                cmd.approval_grant = grant
+                # Retry with approval grant
+                for sub_event in self.turn_processor.run_turn(cmd):
+                    if isinstance(sub_event, TextDelta):
+                        print(sub_event.delta, end="", flush=True)
+                        full_resp += sub_event.delta
+                    elif isinstance(event, TurnCompleted):
+                        full_resp = event.response
+            elif isinstance(event, EditApplied):
+                print(f"\n\033[32mApplied edit to: {', '.join(event.applied_files + event.created_files)}\033[0m")
+            elif isinstance(event, TurnCompleted):
+                full_resp = event.response
 
-        llm = LLMClient(exe_profile)
-        print("\033[1;31mkitt:\033[0m ", end="", flush=True)
-
-        full_response = ""
-        for chunk in llm.chat_stream(self.messages, system_prompt=request.system_prompt):
-            print(chunk, end="", flush=True)
-            full_response += chunk
         print()
-
-        self.messages.append({"role": "assistant", "content": full_response})
-
-        # Parse & apply SEARCH/REPLACE diff blocks
-        edit_blocks = self.diff_parser.parse(full_response)
-        if edit_blocks:
-            print(f"\033[1;33mApplying {len(edit_blocks)} SEARCH/REPLACE diff edit block(s)...\033[0m")
-            result = self.diff_applier.apply(edit_blocks, root_dir=self.root_dir)
-            if result.success:
-                if result.applied_files:
-                    print(f"\033[32mApplied edits to: {', '.join(result.applied_files)}\033[0m")
-                if result.created_files:
-                    print(f"\033[32mCreated files: {', '.join(result.created_files)}\033[0m")
-                if result.deleted_files:
-                    print(f"\033[32mDeleted files: {', '.join(result.deleted_files)}\033[0m")
-            else:
-                print("\033[31mEdit Application Errors:\033[0m")
-                for err in result.errors:
-                    print(f"  - {err}")
+        if full_resp:
+            self.history_service.repo.save_message(active_conv["id"], cmd.turn_id, "assistant", full_resp)

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, List, Dict, Any, Optional
 from kitt.domain.entities import Permission
+from kitt.tools.path_policy import WorkspacePathPolicy
 
 @dataclass(frozen=True)
 class CommandRequest:
@@ -30,6 +31,10 @@ class PolicyEngine:
     DISALLOWED_SHELL_COMMANDS = {'cat', 'find', 'sudo', 'chmod', 'chown', 'dd', 'mkfs', 'curl', 'wget', 'nc', 'netcat', 'rm'}
 
     DENIED_GIT_FLAGS = {'--no-index', '-C', '--git-dir', '--work-tree'}
+
+    def __init__(self, root_dir: str = "."):
+        self.root_path = Path(root_dir).resolve()
+        self.path_policy = WorkspacePathPolicy(root_dir=root_dir)
 
     def evaluate_tool(self, tool_name: str, args: dict = None) -> Permission:
         args = args or {}
@@ -66,6 +71,15 @@ class PolicyEngine:
         # Deny dangerous shell tools that bypass path policy (cat, find, etc)
         if executable in self.DISALLOWED_SHELL_COMMANDS:
             return 'DENY'
+
+        # Check path arguments for containment in workspace root
+        for arg in argv[1:]:
+            if not arg.startswith("-"):
+                # Potential path argument
+                if arg.startswith("/") or arg.startswith("..") or arg.startswith("~"):
+                    is_safe, _, _ = self.path_policy.validate_path(arg)
+                    if not is_safe:
+                        return 'DENY'
 
         # Check git escape flags
         if executable == 'git':

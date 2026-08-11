@@ -59,18 +59,18 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         for cmd in denied_commands:
             perm = self.policy.evaluate_command(cmd)
             self.assertEqual(perm, 'DENY', f"Command '{cmd}' should have been DENIED by PolicyEngine.")
-            res = self.registry.execute_tool("run_command", {"command": cmd}, approved=True)
+            grant = self.registry.issue_approval_grant("turn-1", "run_command", {"command": cmd})
+            res = self.registry.execute_tool("run_command", {"command": cmd}, grant=grant)
             self.assertFalse(res.success, f"Command '{cmd}' execution should have been blocked.")
 
-    def test_ask_policy_requires_explicit_approval_or_token(self):
-        res_unapproved = self.registry.execute_tool("apply_patch", {"patch": ""}, approved=False)
+    def test_ask_policy_requires_explicit_approval_grant(self):
+        res_unapproved = self.registry.execute_tool("apply_patch", {"patch": ""})
         self.assertFalse(res_unapproved.success)
         self.assertTrue(res_unapproved.requires_approval)
         self.assertIn("requires explicit user confirmation", res_unapproved.error)
 
-        token = self.registry.issue_approval_token("apply_patch", {"patch": ""})
-        res_approved = self.registry.execute_tool("apply_patch", {"patch": ""}, approval_token=token)
-        # Should pass authorization check (fails later on empty patch content, not permission)
+        grant = self.registry.issue_approval_grant("turn-1", "apply_patch", {"patch": ""})
+        res_approved = self.registry.execute_tool("apply_patch", {"patch": ""}, grant=grant)
         self.assertFalse(res_approved.requires_approval)
 
     def test_chained_shell_commands_denied(self):
@@ -87,7 +87,8 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
             perm = self.policy.evaluate_command(cmd)
             self.assertEqual(perm, 'DENY', f"Command '{cmd}' should have been DENIED.")
 
-            res = self.registry.execute_tool("run_command", {"command": cmd}, approved=True)
+            grant = self.registry.issue_approval_grant("turn-1", "run_command", {"command": cmd})
+            res = self.registry.execute_tool("run_command", {"command": cmd}, grant=grant)
             self.assertFalse(res.success, f"Command '{cmd}' should have failed execution.")
 
     def test_is_new_file_overwrite_rejected(self):
