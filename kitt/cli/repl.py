@@ -119,7 +119,7 @@ class CustomCompleter(Completer):
                     yield Completion(
                         text=cmd,
                         start_position=-len(word),
-                        display=f"❯ {cmd}" if document.text_before_cursor == cmd else cmd,
+                        display=cmd,
                         display_meta=desc
                     )
 
@@ -157,6 +157,7 @@ class KittREPL:
             self.session = PromptSession(
                 completer=self.completer,
                 complete_while_typing=True,
+                reserve_space_for_menu=8,
                 style=PROMPT_STYLE
             )
         else:
