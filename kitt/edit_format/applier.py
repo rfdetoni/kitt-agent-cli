@@ -2,11 +2,10 @@ from pathlib import Path
 from typing import List, Tuple, Set
 from kitt.domain.entities import EditBlock, EditResult, FileSnapshot
 from kitt.edit_format.changeset import ChangeSetTracker
+from kitt.tools.path_policy import WorkspacePathPolicy
 
 class DiffApplier:
     """Path-contained, transactional validator and edit applier with ChangeSet tracking."""
-
-    FORBIDDEN_NAMES: Set[str] = {".git", ".env"}
 
     def __init__(self, changeset_tracker: ChangeSetTracker = None):
         self.tracker = changeset_tracker or ChangeSetTracker()
@@ -31,20 +30,10 @@ class DiffApplier:
         return False, ""
 
     def validate_and_resolve_path(self, file_path: str, root_path: Path) -> Path:
-        raw_p = Path(file_path)
-        if raw_p.is_absolute():
-            full_path = raw_p.resolve()
-        else:
-            full_path = (root_path / raw_p).resolve()
-
-        if not full_path.is_relative_to(root_path):
-            raise ValueError(f"Path containment violation: '{file_path}' resolves outside workspace ({root_path}).")
-
-        rel = full_path.relative_to(root_path)
-        for part in rel.parts:
-            if part in self.FORBIDDEN_NAMES or part.startswith(".env"):
-                raise ValueError(f"Access denied to protected file or directory: '{rel}'.")
-
+        policy = WorkspacePathPolicy(root_dir=str(root_path))
+        is_safe, full_path, err = policy.validate_path(file_path)
+        if not is_safe or not full_path:
+            raise ValueError(err or f"Access denied to path '{file_path}'.")
         return full_path
 
     def apply(self, blocks: List[EditBlock], root_dir: str = ".") -> EditResult:
@@ -67,6 +56,10 @@ class DiffApplier:
                 rel_path = str(full_path.relative_to(root_path))
                 snapshot = self.tracker.create_snapshot(rel_path)
                 snapshots.append(snapshot)
+
+                if not block.is_new_file and not full_path.exists():
+                    errors.append(f"File '{block.file_path}' does not exist and is_new_file=False.")
+                    continue
 
                 if not block.is_new_file and full_path.exists():
                     current_content = full_path.read_text(encoding='utf-8', errors='ignore')

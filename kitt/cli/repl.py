@@ -28,6 +28,7 @@ from kitt.context_filter.semantic_filter import SemanticFilter
 from kitt.context_filter.prompt_budget import PromptBudget
 from kitt.domain.entities import TaskStep
 from kitt.llm.client import LLMClient
+from kitt.core.turn_processor import TurnProcessor
 
 # Knight Rider Red LED Scanner & Tech Dashboard Banner
 KITT_BANNER_TEMPLATE = """
@@ -156,6 +157,7 @@ class KittREPL:
         self.memory = MemoryManager(root_dir=root_dir)
         self.skill_manager = SkillManager(root_dir=root_dir)
         self.budget = PromptBudget(window_size=8192, reserved_output=1200)
+        self.turn_processor = TurnProcessor(root_dir=root_dir)
         self.messages: List[Dict[str, str]] = []
         self.explicit_files: Set[str] = set()
 
@@ -482,12 +484,15 @@ class KittREPL:
         self.messages.append({"role": "user", "content": user_prompt})
 
         # Step 1: Semantic Filter (dual-model task classification & plan)
-        ctx_profile = self.router.config.profiles.get("context") or self.router.config.profiles.get("execute")
+        ctx_profile_name, ctx_profile = self.router.resolve_profile_for_task("context-gather")
         semantic_filter = SemanticFilter(context_profile=ctx_profile)
-        task, plan, bypassed = semantic_filter.filter_and_plan(user_prompt)
+        filter_res = semantic_filter.filter_and_plan(user_prompt)
+        task, plan = filter_res.task, filter_res.plan
 
-        bypassed_tag = " [Deterministic Bypass]" if bypassed else " [Context LLM Filter]"
-        print(f"\033[90m[Semantic Filter: Intent={task.intent}, Confidence={task.confidence:.2f}]{bypassed_tag}\033[0m")
+        source_tag = f" [{filter_res.source}]"
+        if filter_res.fallback_reason:
+            source_tag += f" (Reason: {filter_res.fallback_reason})"
+        print(f"\033[90m[Semantic Filter: Intent={task.intent}, Confidence={task.confidence:.2f}]{source_tag}\033[0m")
 
         # Step 2: Memory, Skills, Context Engine & Explicit Files retrieval
         memory_ctx = self.memory.get_memory_context()

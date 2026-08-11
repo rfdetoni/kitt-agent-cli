@@ -3,7 +3,7 @@ import re
 import json
 import hashlib
 from pathlib import Path
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Any
 from kitt.domain.entities import ContextBlock, TaskFocus, FileTags, Tag
 from kitt.context_engine.parser import SymbolParser
 from kitt.context_engine.graph import ContextRanker

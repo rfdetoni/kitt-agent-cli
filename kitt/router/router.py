@@ -42,8 +42,20 @@ class TaskRouter:
                 return DEFAULT_ROUTER_CONFIG
         return DEFAULT_ROUTER_CONFIG
 
+    def resolve_profile_for_task(self, task_type: TaskType) -> Tuple[str, ModelProfile]:
+        profile_name = self.config.routing.get(task_type)
+        if not profile_name:
+            if task_type in {"context-gather", "summarize"}:
+                profile_name = self.config.routing.get("context", "context")
+            elif task_type in {"code-generation", "code-edit"}:
+                profile_name = self.config.routing.get("code_generation", self.config.routing.get("edit", "execute"))
+            else:
+                profile_name = self.config.routing.get("chat", "execute")
+
+        profile = self.config.profiles.get(profile_name) or list(self.config.profiles.values())[0]
+        return profile_name, profile
+
     def route(self, step: TaskStep) -> Tuple[TaskType, str, ModelProfile]:
         task_type = self.classifier.classify(step)
-        profile_name = self.config.routing.get(task_type, "execute")
-        profile = self.config.profiles.get(profile_name, self.config.profiles["execute"])
+        profile_name, profile = self.resolve_profile_for_task(task_type)
         return task_type, profile_name, profile

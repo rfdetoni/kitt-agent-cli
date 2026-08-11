@@ -88,5 +88,30 @@ class TestPhase1ContextFilter(unittest.TestCase):
         self.assertIn("apply_patch", plan.enabled_tools)
         self.assertIn("run_command", plan.enabled_tools)
 
+    def test_fake_llm_client_integration(self):
+        class FakeLLMClient:
+            def __init__(self, response_text):
+                self.response_text = response_text
+                self.called = False
+            def chat(self, messages, system_prompt=None, response_format=None):
+                self.called = True
+                return self.response_text
+
+        json_resp = """{
+            "intent": "IMPLEMENT",
+            "symbols": ["KittREPL"],
+            "paths": ["kitt/cli/repl.py"],
+            "confidence": 0.95
+        }"""
+        fake_llm = FakeLLMClient(json_resp)
+        prof = ModelProfile(backend="ollama", model="qwen2.5:7b-instruct")
+        sf = SemanticFilter(context_profile=prof, llm_client=fake_llm)
+
+        long_prompt = "Please analyze the entire codebase architecture and implement a comprehensive new slash command handler in kitt/cli/repl.py for KittREPL class to support detailed system metrics reporting and interactive diagnostics."
+        res = sf.filter_and_plan(long_prompt)
+        self.assertTrue(fake_llm.called)
+        self.assertEqual(res.source, 'LLM')
+        self.assertEqual(res.task.intent, 'IMPLEMENT')
+
 if __name__ == '__main__':
     unittest.main()

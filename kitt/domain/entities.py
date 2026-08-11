@@ -117,6 +117,13 @@ class ModelProfile:
     model: str
     base_url: str = "http://localhost:11434"
     api_key: str = ""
+    context_window: int = 8192
+    max_output_tokens: int = 1200
+    temperature: float = 0.0
+    supports_tools: bool = False
+    supports_json: bool = False
+    keep_alive: Optional[str] = None
+    request_timeout_seconds: int = 120
 
 @dataclass
 class RouterConfig:

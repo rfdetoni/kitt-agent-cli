@@ -1,9 +1,18 @@
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Literal
+from dataclasses import dataclass, field
+
+@dataclass
+class MemoryItem:
+    text: str
+    scope: Literal['GLOBAL', 'PROJECT']
+    priority: int = 1
+    tags: List[str] = field(default_factory=list)
+    created_at: str = ""
 
 class MemoryManager:
-    """Manages persistent project and global memory for K.I.T.T. (inspired by OpenClaude memory)."""
+    """Manages persistent project and global memory with structured MemoryItem retrieval."""
 
     def __init__(self, root_dir: str = "."):
         self.root_dir = Path(root_dir).resolve()
@@ -25,6 +34,35 @@ class MemoryManager:
         content = self.project_mem_path.read_text(encoding='utf-8')
         updated = content.rstrip() + f"\n- {note}\n"
         self.project_mem_path.write_text(updated, encoding='utf-8')
+
+    def get_items(self) -> List[MemoryItem]:
+        items: List[MemoryItem] = []
+        if self.global_mem_path.exists():
+            for line in self.global_mem_path.read_text(encoding='utf-8', errors='ignore').splitlines():
+                line_str = line.strip()
+                if line_str.startswith("- "):
+                    items.append(MemoryItem(text=line_str[2:], scope='GLOBAL'))
+
+        if self.project_mem_path.exists():
+            for line in self.project_mem_path.read_text(encoding='utf-8', errors='ignore').splitlines():
+                line_str = line.strip()
+                if line_str.startswith("- "):
+                    items.append(MemoryItem(text=line_str[2:], scope='PROJECT'))
+
+        return items
+
+    def get_relevant_memories(self, prompt: str) -> List[MemoryItem]:
+        words = set(w.lower() for w in prompt.split() if len(w) > 3)
+        all_items = self.get_items()
+        if not words:
+            return all_items
+
+        relevant = []
+        for item in all_items:
+            item_words = set(item.text.lower().split())
+            if words.intersection(item_words) or item.scope == 'PROJECT':
+                relevant.append(item)
+        return relevant
 
     def get_memory_context(self) -> str:
         lines = []

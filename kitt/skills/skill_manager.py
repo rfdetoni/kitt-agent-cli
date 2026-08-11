@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import List, Dict, Set, Optional
 from dataclasses import dataclass
 
+ANSI_REGEX = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+def sanitize_prompt_text(text: str) -> str:
+    return ANSI_REGEX.sub('', text)
+
 @dataclass
 class SkillMetadata:
     name: str
@@ -235,7 +240,7 @@ class SkillManager:
         if mandatory_blocks:
             skills_prompt += "\n\n" + "\n\n".join(mandatory_blocks)
 
-        return skills_prompt
+        return sanitize_prompt_text(skills_prompt)
 
     def run_interactive_checkbox_config(self):
         skills = self.list_skills()
