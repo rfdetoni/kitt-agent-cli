@@ -10,6 +10,8 @@ class SearchReplaceParser:
         re.MULTILINE
     )
 
+    FILENAME_EXTRACTOR = re.compile(r'([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)')
+
     def parse(self, text: str) -> List[EditBlock]:
         blocks: List[EditBlock] = []
         for match in self.BLOCK_REGEX.finditer(text):
@@ -21,9 +23,12 @@ class SearchReplaceParser:
                 prefix = text[:match.start()].rstrip()
                 lines = prefix.splitlines()
                 if lines:
-                    last_line = lines[-1].strip()
-                    if re.match(r'^[a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+$', last_line):
-                        file_path = last_line
+                    for line in reversed(lines[-3:]):
+                        line_clean = line.strip(":`'\"#* ")
+                        found = self.FILENAME_EXTRACTOR.findall(line_clean)
+                        if found:
+                            file_path = found[-1]
+                            break
 
             if not file_path:
                 continue

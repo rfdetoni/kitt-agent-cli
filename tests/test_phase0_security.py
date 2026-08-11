@@ -6,6 +6,10 @@ from pathlib import Path
 from kitt.domain.entities import EditBlock
 from kitt.edit_format.applier import DiffApplier
 from kitt.edit_format.changeset import ChangeSetTracker
+from kitt.tools.policy_engine import PolicyEngine
+from kitt.tools.registry import ToolRegistry
+from kitt.context_filter.schema import ContextFilterSchemaValidator
+from kitt.context_filter.prompt_budget import PromptBudget
 
 class TestPhase0SecurityAndContainment(unittest.TestCase):
     def setUp(self):
@@ -13,12 +17,13 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         self.root_path = Path(self.tmp_dir.name).resolve()
         self.tracker = ChangeSetTracker(root_dir=self.tmp_dir.name)
         self.applier = DiffApplier(changeset_tracker=self.tracker)
+        self.policy = PolicyEngine()
+        self.registry = ToolRegistry(root_dir=self.tmp_dir.name)
 
     def tearDown(self):
         self.tmp_dir.cleanup()
 
     def test_path_traversal_blocked(self):
-        # Path traversal with relative ../
         block = EditBlock(
             file_path="../../etc/passwd",
             search_content="",
@@ -30,7 +35,6 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         self.assertTrue(any("Path containment violation" in err for err in res.errors))
 
     def test_forbidden_files_blocked(self):
-        # Protected file .env or .git
         block_env = EditBlock(
             file_path=".env",
             search_content="",
@@ -41,12 +45,89 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         self.assertFalse(res.success)
         self.assertTrue(any("Access denied" in err for err in res.errors))
 
+    def test_ask_policy_requires_explicit_approval(self):
+        # Without approved=True, ASK policy must return requires_approval=True and NOT execute!
+        res_unapproved = self.registry.execute_tool("apply_patch", {"patch": ""}, approved=False)
+        self.assertFalse(res_unapproved.success)
+        self.assertTrue(res_unapproved.requires_approval)
+        self.assertIn("requires explicit user confirmation", res_unapproved.error)
+
+    def test_chained_shell_commands_denied(self):
+        chained_cmds = [
+            "git status; touch sentinel",
+            "git status && touch sentinel",
+            "git status || touch sentinel",
+            "git status | grep master",
+            "echo $(whoami)",
+            "echo `whoami`",
+            "git status\ntouch sentinel"
+        ]
+        for cmd in chained_cmds:
+            perm = self.policy.evaluate_command(cmd)
+            self.assertEqual(perm, 'DENY', f"Command '{cmd}' should have been DENIED.")
+
+            res = self.registry.execute_tool("run_command", {"command": cmd}, approved=True)
+            self.assertFalse(res.success, f"Command '{cmd}' should have failed execution.")
+
+    def test_is_new_file_overwrite_rejected(self):
+        target = self.root_path / "existing.py"
+        target.write_text("ORIGINAL_CONTENT\n", encoding='utf-8')
+
+        block = EditBlock(
+            file_path="existing.py",
+            search_content="",
+            replace_content="OVERWRITTEN\n",
+            is_new_file=True
+        )
+        res = self.applier.apply([block], root_dir=self.tmp_dir.name)
+        self.assertFalse(res.success)
+        self.assertIn("Cannot overwrite existing file", res.errors[0])
+        self.assertEqual(target.read_text(), "ORIGINAL_CONTENT\n")
+
+    def test_invented_constraint_rejected(self):
+        prompt = "Fix bug in kitt/cli/repl.py without modifying prompt budget."
+        raw_json = """{
+            "intent": "DEBUG",
+            "constraints": [
+                {
+                    "text": "INVENTED_CONSTRAINT_NOT_IN_PROMPT",
+                    "kind": "MANDATORY"
+                },
+                {
+                    "text": "without modifying prompt budget",
+                    "kind": "NEGATIVE"
+                }
+            ],
+            "confidence": 0.9
+        }"""
+        valid, task, err = ContextFilterSchemaValidator.validate_and_parse_task(raw_json, prompt)
+        self.assertTrue(valid)
+        self.assertEqual(len(task.constraints), 1)
+        self.assertEqual(task.constraints[0].text, "without modifying prompt budget")
+
+    def test_prompt_budget_enforces_global_window(self):
+        budget = PromptBudget(window_size=8192, reserved_output=1200)
+        # Giant 24k token files context
+        giant_context = "x = 1\n" * 15000  # ~20,000 tokens
+
+        alloc = budget.allocate_context(
+            system_prompt="You are K.I.T.T.",
+            task_prompt="Refactor code",
+            mandatory_constraints=["without breaking API"],
+            repo_map="repo_map_content",
+            files_context=giant_context,
+            history_context="history_content",
+            recent_results="recent_results_content"
+        )
+
+        total_input = alloc["total_input_tokens"]
+        reserved = alloc["reserved_output_tokens"]
+        self.assertLessEqual(total_input + reserved, budget.window_size)
+
     def test_changeset_undo_preserves_user_uncommitted_changes(self):
-        # 1. Pre-existing user uncommitted modification
         user_file = self.root_path / "user_work.py"
         user_file.write_text("def user_feature(): pass\n", encoding='utf-8')
 
-        # 2. K.I.T.T. applies edit to kitt_module.py
         kitt_file = self.root_path / "kitt_module.py"
         kitt_file.write_text("def old_function(): pass\n", encoding='utf-8')
 
@@ -59,25 +140,13 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         self.assertTrue(res.success)
         self.assertEqual(kitt_file.read_text(), "def new_function(): pass\n")
 
-        # User modifies user_work.py again
         user_file.write_text("def user_feature(): return 42\n", encoding='utf-8')
 
-        # 3. K.I.T.T. performs ChangeSet undo
         reverted_cs = self.tracker.revert_last_changeset()
         self.assertIsNotNone(reverted_cs)
 
-        # Verify kitt_module.py is reverted to old_function
         self.assertEqual(kitt_file.read_text(), "def old_function(): pass\n")
-
-        # Verify user_work.py remains INTACT with user changes!
         self.assertEqual(user_file.read_text(), "def user_feature(): return 42\n")
-
-    def test_safe_command_parsing(self):
-        cmd = "echo 'hello world'"
-        args = shlex.split(cmd)
-        self.assertEqual(args, ["echo", "hello world"])
-        res = subprocess.run(args, capture_output=True, text=True)
-        self.assertEqual(res.stdout.strip(), "hello world")
 
 if __name__ == '__main__':
     unittest.main()

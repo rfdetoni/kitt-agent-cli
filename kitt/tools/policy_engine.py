@@ -1,9 +1,12 @@
 import re
-from typing import Literal
+import shlex
+from typing import Literal, List
 from kitt.domain.entities import Permission
 
 class PolicyEngine:
     """Security policy engine for tool execution and shell command permissions."""
+
+    SHELL_OPERATORS_RE = re.compile(r'[;&|`$\n]')
 
     ALLOW_COMMAND_PATTERNS = [
         re.compile(r'^\s*git\s+(status|diff|log|branch)\b'),
@@ -33,6 +36,13 @@ class PolicyEngine:
         return 'ASK'
 
     def evaluate_command(self, command: str) -> Permission:
+        if not command:
+            return 'DENY'
+
+        # Reject any shell command chaining or interpolation
+        if self.SHELL_OPERATORS_RE.search(command):
+            return 'DENY'
+
         for p in self.DENY_COMMAND_PATTERNS:
             if p.search(command):
                 return 'DENY'

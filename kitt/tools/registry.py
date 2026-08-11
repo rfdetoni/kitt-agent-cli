@@ -1,3 +1,4 @@
+import shlex
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ class ToolResult:
     error: Optional[str] = None
     bytes_count: int = 0
     truncated: bool = False
+    requires_approval: bool = False
 
 class ToolRegistry:
     """Registry managing executable tools, schemas, and policy enforcement."""
@@ -43,7 +45,13 @@ class ToolRegistry:
             return all_tools
         return [t for t in all_tools if t["name"] in enabled_tools]
 
-    def execute_tool(self, tool_name: str, args: Dict[str, Any], enabled_tools: Optional[List[str]] = None) -> ToolResult:
+    def execute_tool(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        enabled_tools: Optional[List[str]] = None,
+        approved: bool = False
+    ) -> ToolResult:
         if enabled_tools is not None and tool_name not in enabled_tools:
             return ToolResult(
                 success=False,
@@ -57,6 +65,14 @@ class ToolRegistry:
                 success=False,
                 output="",
                 error=f"Execution denied by PolicyEngine for tool '{tool_name}'."
+            )
+
+        if perm == 'ASK' and not approved:
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"Tool '{tool_name}' requires explicit user confirmation (ASK policy).",
+                requires_approval=True
             )
 
         try:
@@ -79,11 +95,29 @@ class ToolRegistry:
                 chunk = "\n".join(lines[start:end])
                 return ToolResult(success=True, output=chunk)
 
+            elif tool_name == "apply_patch":
+                patch_text = args.get("patch", "")
+                blocks = self.parser.parse(patch_text)
+                edit_res = self.applier.apply(blocks, root_dir=str(self.root_path))
+                if edit_res.success:
+                    output = f"Applied edit to {len(edit_res.applied_files + edit_res.created_files)} file(s)."
+                    return ToolResult(success=True, output=output)
+                else:
+                    return ToolResult(success=False, output="", error="\n".join(edit_res.errors))
+
             elif tool_name == "run_command":
-                cmd_str = str(args.get("command", ""))
+                cmd_str = str(args.get("command", "")).strip()
+                if not cmd_str:
+                    return ToolResult(success=False, output="", error="Empty command.")
+
+                try:
+                    argv = shlex.split(cmd_str)
+                except Exception as se:
+                    return ToolResult(success=False, output="", error=f"Invalid shell command syntax: {se}")
+
                 res = subprocess.run(
-                    cmd_str,
-                    shell=True,
+                    argv,
+                    shell=False,
                     cwd=self.root_path,
                     capture_output=True,
                     text=True,

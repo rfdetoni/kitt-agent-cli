@@ -13,21 +13,31 @@ class DiffApplier:
     def _normalize_text(self, text: str) -> str:
         return "\n".join([line.strip() for line in text.strip().splitlines() if line.strip()])
 
-    def _find_fuzzy_replacement(self, current_content: str, search_content: str) -> Tuple[bool, str]:
-        if search_content in current_content:
-            return True, search_content
+    def _find_fuzzy_replacement(self, current_content: str, search_content: str) -> Tuple[bool, str, int]:
+        if not search_content:
+            return False, "", 0
+
+        count = current_content.count(search_content)
+        if count > 0:
+            return True, search_content, count
 
         norm_search = self._normalize_text(search_content)
         lines = current_content.splitlines()
         search_lines = search_content.splitlines()
 
         n_search = len(search_lines)
+        matches = []
         for i in range(len(lines) - n_search + 1):
             chunk = "\n".join(lines[i:i + n_search])
             if self._normalize_text(chunk) == norm_search:
-                return True, chunk
+                matches.append(chunk)
 
-        return False, ""
+        if len(matches) == 1:
+            return True, matches[0], 1
+        elif len(matches) > 1:
+            return True, matches[0], len(matches)
+
+        return False, "", 0
 
     def validate_and_resolve_path(self, file_path: str, root_path: Path) -> Path:
         policy = WorkspacePathPolicy(root_dir=str(root_path))
@@ -36,7 +46,7 @@ class DiffApplier:
             raise ValueError(err or f"Access denied to path '{file_path}'.")
         return full_path
 
-    def apply(self, blocks: List[EditBlock], root_dir: str = ".") -> EditResult:
+    def apply(self, blocks: List[EditBlock], root_dir: str = ".", allow_overwrite_existing: bool = False) -> EditResult:
         root_path = Path(root_dir).resolve()
         self.tracker.root_dir = root_path
 
@@ -57,16 +67,28 @@ class DiffApplier:
                 snapshot = self.tracker.create_snapshot(rel_path)
                 snapshots.append(snapshot)
 
+                if block.is_new_file and full_path.exists() and not allow_overwrite_existing:
+                    errors.append(f"Cannot overwrite existing file '{block.file_path}' with is_new_file=True.")
+                    continue
+
                 if not block.is_new_file and not full_path.exists():
                     errors.append(f"File '{block.file_path}' does not exist and is_new_file=False.")
                     continue
 
                 if not block.is_new_file and full_path.exists():
+                    if not block.search_content:
+                        errors.append(f"SEARCH block is empty for existing file '{block.file_path}'.")
+                        continue
+
                     current_content = full_path.read_text(encoding='utf-8', errors='ignore')
-                    found, _ = self._find_fuzzy_replacement(current_content, block.search_content)
+                    found, match_target, match_count = self._find_fuzzy_replacement(current_content, block.search_content)
                     if not found:
                         errors.append(
                             f"SEARCH block mismatch in '{block.file_path}'. Expected:\n---\n{block.search_content}\n---"
+                        )
+                    elif match_count > 1:
+                        errors.append(
+                            f"Ambiguous SEARCH block in '{block.file_path}': matched {match_count} occurrences."
                         )
             except Exception as e:
                 errors.append(f"Validation error for '{block.file_path}': {e}")
@@ -91,7 +113,7 @@ class DiffApplier:
                 created_files.append(rel_path)
             else:
                 current_content = full_path.read_text(encoding='utf-8', errors='ignore')
-                found, target = self._find_fuzzy_replacement(current_content, block.search_content)
+                found, target, _ = self._find_fuzzy_replacement(current_content, block.search_content)
                 if found:
                     updated_content = current_content.replace(target, block.replace_content, 1)
                     full_path.write_text(updated_content, encoding='utf-8')

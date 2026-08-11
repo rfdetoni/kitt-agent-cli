@@ -483,63 +483,32 @@ class KittREPL:
     def process_turn(self, user_prompt: str):
         self.messages.append({"role": "user", "content": user_prompt})
 
-        # Step 1: Semantic Filter (dual-model task classification & plan)
-        ctx_profile_name, ctx_profile = self.router.resolve_profile_for_task("context-gather")
-        semantic_filter = SemanticFilter(context_profile=ctx_profile)
-        filter_res = semantic_filter.filter_and_plan(user_prompt)
-        task, plan = filter_res.task, filter_res.plan
+        prep = self.turn_processor.process(user_prompt, explicit_files=self.explicit_files)
+        filter_res = prep["filter_res"]
+        allocated = prep["allocated"]
+        request = prep["request"]
+        task = filter_res.task
+        exe_profile_name = prep["exe_profile_name"]
+        exe_profile = prep["exe_profile"]
 
         source_tag = f" [{filter_res.source}]"
         if filter_res.fallback_reason:
             source_tag += f" (Reason: {filter_res.fallback_reason})"
         print(f"\033[90m[Semantic Filter: Intent={task.intent}, Confidence={task.confidence:.2f}]{source_tag}\033[0m")
+        print(f"\033[90m[Task Router: intent={task.intent} -> profile '{exe_profile_name}' ({exe_profile.model})]\033[0m")
 
-        # Step 2: Memory, Skills, Context Engine & Explicit Files retrieval
-        memory_ctx = self.memory.get_memory_context()
-        skills_ctx = self.skill_manager.get_skills_summary_prompt()
-        explicit_ctx = self._build_explicit_files_context()
-        context_blocks = self.context_engine.get_relevant_context(user_prompt, max_tokens=2048, root_dir=self.root_dir)
-        context_map_str = "\n\n".join(b.content for b in context_blocks)
-
-        mandatory_constraints = [c.text for c in task.constraints if c.mandatory]
-
-        base_sys_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-            memory_context=memory_ctx,
-            skills_context=skills_ctx,
-            explicit_files_context="",
-            context_map=""
-        )
-
-        # Step 3: Prompt Budgeting (enforce 1200 reserved output tokens)
-        allocated = self.budget.allocate_context(
-            system_prompt=base_sys_prompt,
-            task_prompt=user_prompt,
-            mandatory_constraints=mandatory_constraints,
-            repo_map=context_map_str,
-            files_context=explicit_ctx,
-            history_context="",
-            recent_results=""
-        )
-
-        system_prompt = f"{allocated['system_prompt']}\n\nFiles Context:\n{allocated['files_context']}\n\nRepo Map:\n{allocated['repo_map']}"
-
-        # Step 4: Task Router & LLM client execution
-        step = TaskStep(prompt=user_prompt)
-        task_type, profile_name, profile = self.router.route(step)
-        print(f"\033[90m[Task Router: {task_type} -> profile '{profile_name}' ({profile.model})]\033[0m")
-
-        llm = LLMClient(profile)
+        llm = LLMClient(exe_profile)
         print("\033[1;31mkitt:\033[0m ", end="", flush=True)
 
         full_response = ""
-        for chunk in llm.chat_stream(self.messages, system_prompt=system_prompt):
+        for chunk in llm.chat_stream(self.messages, system_prompt=request.system_prompt):
             print(chunk, end="", flush=True)
             full_response += chunk
         print()
 
         self.messages.append({"role": "assistant", "content": full_response})
 
-        # 4. Parse & apply SEARCH/REPLACE diff blocks
+        # Parse & apply SEARCH/REPLACE diff blocks
         edit_blocks = self.diff_parser.parse(full_response)
         if edit_blocks:
             print(f"\033[1;33mApplying {len(edit_blocks)} SEARCH/REPLACE diff edit block(s)...\033[0m")

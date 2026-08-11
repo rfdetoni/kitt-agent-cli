@@ -36,19 +36,21 @@ class ContextFilterSchemaValidator:
                 for c in constraints_data:
                     if isinstance(c, dict):
                         text = str(c.get("text", "")).strip()
-                        start = int(c.get("source_start", -1))
-                        end = int(c.get("source_end", -1))
+                        if not text:
+                            continue
+
+                        # Strict validation: constraint text MUST be a literal substring of original_prompt
+                        idx = original_prompt.find(text)
+                        if idx == -1:
+                            # Reject invented constraint
+                            continue
+
+                        start = idx
+                        end = idx + len(text)
+
                         kind: ConstraintKind = c.get("kind", "MANDATORY")
                         if kind not in VALID_KINDS:
                             kind = "MANDATORY"
-
-                        # Validate constraint substring match if span provided
-                        if 0 <= start < end <= len(original_prompt):
-                            actual_substring = original_prompt[start:end]
-                            if text != actual_substring and text not in actual_substring:
-                                # Fix span
-                                start = original_prompt.find(text) if text in original_prompt else -1
-                                end = start + len(text) if start >= 0 else -1
 
                         valid_constraints.append(
                             Constraint(
@@ -64,11 +66,11 @@ class ContextFilterSchemaValidator:
                 original_prompt=original_prompt,
                 intent=intent,
                 secondary_intents=[i for i in data.get("secondary_intents", []) if i in VALID_INTENTS],
-                actions=[str(a) for a in data.get("actions", [])],
-                symbols=[str(s) for s in data.get("symbols", [])],
-                paths=[str(p) for p in data.get("paths", []) if ".." not in str(p)],
-                technologies=[str(t) for t in data.get("technologies", [])],
-                constraints=valid_constraints,
+                actions=[str(a) for a in data.get("actions", [])[:8]],
+                symbols=[str(s) for s in data.get("symbols", [])[:20]],
+                paths=[str(p) for p in data.get("paths", [])[:12] if ".." not in str(p)],
+                technologies=[str(t) for t in data.get("technologies", [])[:10]],
+                constraints=valid_constraints[:12],
                 risk=risk,
                 confidence=confidence
             )
