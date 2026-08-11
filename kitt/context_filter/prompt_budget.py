@@ -2,6 +2,9 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
+class PromptTooLargeError(Exception):
+    """Raised when task prompt and mandatory constraints exceed the context window."""
+
 class TokenCounter:
     """Conservative two-level token counter."""
 
@@ -145,7 +148,19 @@ class PromptBudget:
                 excess = (sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens) - max_allowed_input
                 truncated.append("pruned_files_to_window")
 
+            # Prune Step 5: System Prompt down to base
+            if excess > 0 and sys_tokens > 200:
+                sys_tokens = 200
+                system_prompt = system_prompt[:600]
+                excess = (sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens) - max_allowed_input
+                truncated.append("pruned_system_to_window")
+
             total_input_tokens = sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens
+
+            if total_input_tokens > max_allowed_input:
+                raise PromptTooLargeError(
+                    f"Prompt and mandatory constraints ({total_input_tokens} tokens) exceed max allowed input ({max_allowed_input} tokens) for context window {self.window_size}."
+                )
 
         telemetry.section_tokens["system"] = sys_tokens
         telemetry.section_tokens["task_constraints"] = task_tokens

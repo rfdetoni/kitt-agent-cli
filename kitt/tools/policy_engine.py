@@ -1,24 +1,35 @@
 import re
 import shlex
-from typing import Literal, List
+import hashlib
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal, List, Dict, Any, Optional
 from kitt.domain.entities import Permission
 
+@dataclass(frozen=True)
+class CommandRequest:
+    executable: str
+    argv: List[str]
+    cwd: Path
+    purpose: str = ""
+
+@dataclass
+class ApprovalToken:
+    action_hash: str
+    created_at: float = field(default_factory=time.time)
+    turn_id: str = ""
+    used: bool = False
+
 class PolicyEngine:
-    """Security policy engine for tool execution and shell command permissions."""
+    """Security policy engine for tool execution, argv parsing, and permission evaluation."""
 
     SHELL_OPERATORS_RE = re.compile(r'[;&|`$\n]')
 
-    ALLOW_COMMAND_PATTERNS = [
-        re.compile(r'^\s*git\s+(status|diff|log|branch)\b'),
-        re.compile(r'^\s*(rg|grep|find|cat|ls|pwd)\b'),
-        re.compile(r'^\s*(python3?|pytest|npm|bun|mvn|gradle|cargo|go)\s+(test|check|build|run|-m)\b')
-    ]
+    SAFE_READONLY_COMMANDS = {'git', 'rg', 'grep', 'ls', 'pwd'}
+    DISALLOWED_SHELL_COMMANDS = {'cat', 'find', 'sudo', 'chmod', 'chown', 'dd', 'mkfs', 'curl', 'wget', 'nc', 'netcat', 'rm'}
 
-    DENY_COMMAND_PATTERNS = [
-        re.compile(r'^\s*git\s+(push|reset\s+--hard)\b'),
-        re.compile(r'^\s*(rm\s+-rf|sudo|chmod|chown|dd|mkfs)\b'),
-        re.compile(r'^\s*(curl|wget|nc|netcat)\b')
-    ]
+    DENIED_GIT_FLAGS = {'--no-index', '-C', '--git-dir', '--work-tree'}
 
     def evaluate_tool(self, tool_name: str, args: dict = None) -> Permission:
         args = args or {}
@@ -39,16 +50,54 @@ class PolicyEngine:
         if not command:
             return 'DENY'
 
-        # Reject any shell command chaining or interpolation
         if self.SHELL_OPERATORS_RE.search(command):
             return 'DENY'
 
-        for p in self.DENY_COMMAND_PATTERNS:
-            if p.search(command):
-                return 'DENY'
+        try:
+            argv = shlex.split(command)
+        except Exception:
+            return 'DENY'
 
-        for p in self.ALLOW_COMMAND_PATTERNS:
-            if p.search(command):
+        if not argv:
+            return 'DENY'
+
+        executable = Path(argv[0]).name.lower()
+
+        # Deny dangerous shell tools that bypass path policy (cat, find, etc)
+        if executable in self.DISALLOWED_SHELL_COMMANDS:
+            return 'DENY'
+
+        # Check git escape flags
+        if executable == 'git':
+            for arg in argv[1:]:
+                if arg in self.DENIED_GIT_FLAGS or any(arg.startswith(f"{f}=") for f in self.DENIED_GIT_FLAGS):
+                    return 'DENY'
+
+            subcmd = argv[1].lower() if len(argv) > 1 else ""
+            if subcmd in {'status', 'diff', 'log', 'branch'}:
                 return 'ALLOW'
+            if subcmd in {'push', 'reset'}:
+                return 'DENY'
+            return 'ASK'
+
+        # Safe read-only commands
+        if executable in {'rg', 'grep', 'pwd'} and len(argv) == 1:
+            return 'ALLOW'
+
+        if executable == 'ls' and len(argv) <= 2:
+            return 'ALLOW'
+
+        # Build tools, python modules, pytest, npm scripts require explicit user approval (ASK)
+        if executable in {'python', 'python3', 'pytest', 'npm', 'bun', 'mvn', 'gradle', 'cargo', 'go'}:
+            return 'ASK'
 
         return 'ASK'
+
+    @staticmethod
+    def generate_action_hash(tool_name: str, args: Dict[str, Any]) -> str:
+        serialized = f"{tool_name}:{json_serialize(args)}"
+        return hashlib.sha256(serialized.encode('utf-8')).hexdigest()
+
+def json_serialize(obj: Any) -> str:
+    import json
+    return json.dumps(obj, sort_keys=True)

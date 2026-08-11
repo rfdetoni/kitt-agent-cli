@@ -9,7 +9,7 @@ from kitt.edit_format.changeset import ChangeSetTracker
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.registry import ToolRegistry
 from kitt.context_filter.schema import ContextFilterSchemaValidator
-from kitt.context_filter.prompt_budget import PromptBudget
+from kitt.context_filter.prompt_budget import PromptBudget, PromptTooLargeError
 
 class TestPhase0SecurityAndContainment(unittest.TestCase):
     def setUp(self):
@@ -45,12 +45,33 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         self.assertFalse(res.success)
         self.assertTrue(any("Access denied" in err for err in res.errors))
 
-    def test_ask_policy_requires_explicit_approval(self):
-        # Without approved=True, ASK policy must return requires_approval=True and NOT execute!
+    def test_cat_env_and_find_etc_denied(self):
+        denied_commands = [
+            "cat .env",
+            "cat /etc/passwd",
+            "find /etc",
+            "find .",
+            "git diff --no-index /etc/hosts /etc/passwd",
+            "git -C /tmp status",
+            "git --git-dir=/tmp/.git status",
+            "git --work-tree=/tmp status"
+        ]
+        for cmd in denied_commands:
+            perm = self.policy.evaluate_command(cmd)
+            self.assertEqual(perm, 'DENY', f"Command '{cmd}' should have been DENIED by PolicyEngine.")
+            res = self.registry.execute_tool("run_command", {"command": cmd}, approved=True)
+            self.assertFalse(res.success, f"Command '{cmd}' execution should have been blocked.")
+
+    def test_ask_policy_requires_explicit_approval_or_token(self):
         res_unapproved = self.registry.execute_tool("apply_patch", {"patch": ""}, approved=False)
         self.assertFalse(res_unapproved.success)
         self.assertTrue(res_unapproved.requires_approval)
         self.assertIn("requires explicit user confirmation", res_unapproved.error)
+
+        token = self.registry.issue_approval_token("apply_patch", {"patch": ""})
+        res_approved = self.registry.execute_tool("apply_patch", {"patch": ""}, approval_token=token)
+        # Should pass authorization check (fails later on empty patch content, not permission)
+        self.assertFalse(res_approved.requires_approval)
 
     def test_chained_shell_commands_denied(self):
         chained_cmds = [
@@ -107,7 +128,6 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
 
     def test_prompt_budget_enforces_global_window(self):
         budget = PromptBudget(window_size=8192, reserved_output=1200)
-        # Giant 24k token files context
         giant_context = "x = 1\n" * 15000  # ~20,000 tokens
 
         alloc = budget.allocate_context(
@@ -123,6 +143,21 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         total_input = alloc["total_input_tokens"]
         reserved = alloc["reserved_output_tokens"]
         self.assertLessEqual(total_input + reserved, budget.window_size)
+
+    def test_prompt_too_large_exception_raised(self):
+        budget = PromptBudget(window_size=2000, reserved_output=1200)
+        giant_task = "Do work " * 5000  # Exceeds max allowed 800 input tokens
+
+        with self.assertRaises(PromptTooLargeError):
+            budget.allocate_context(
+                system_prompt="Base sys",
+                task_prompt=giant_task,
+                mandatory_constraints=["mandatory"],
+                repo_map="",
+                files_context="",
+                history_context="",
+                recent_results=""
+            )
 
     def test_changeset_undo_preserves_user_uncommitted_changes(self):
         user_file = self.root_path / "user_work.py"

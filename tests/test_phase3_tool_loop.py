@@ -12,7 +12,7 @@ class TestPhase3ToolLoop(unittest.TestCase):
         self.assertEqual(self.policy.evaluate_tool('apply_patch'), 'ASK')
 
         self.assertEqual(self.policy.evaluate_command('git status'), 'ALLOW')
-        self.assertEqual(self.policy.evaluate_command('python3 -m unittest'), 'ALLOW')
+        self.assertEqual(self.policy.evaluate_command('python3 -m unittest'), 'ASK')
         self.assertEqual(self.policy.evaluate_command('rm -rf /'), 'DENY')
 
     def test_agent_loop_state_transitions(self):

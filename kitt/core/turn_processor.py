@@ -36,7 +36,6 @@ class TurnProcessor:
         self.skill_manager = SkillManager(root_dir=root_dir)
         self.context_engine = ContextEngine()
         self.context_resolver = ContextResolver(root_dir=root_dir)
-        self.budget = PromptBudget(window_size=8192, reserved_output=1200)
         self.diff_parser = SearchReplaceParser()
         self.diff_applier = DiffApplier()
         self.build_detector = BuildDetector(root_dir=root_dir)
@@ -66,7 +65,17 @@ class TurnProcessor:
 
         self._emit("FilterCompleted", {"filter_res": filter_res})
 
-        # 2. Context Engine retrieval
+        # 2. Resolve Execution Profile
+        exe_profile_name, exe_profile = self.router.resolve_profile_for_task("code-generation")
+        self._emit("ModelSelected", {"profile_name": exe_profile_name, "model": exe_profile.model})
+
+        # Dynamic PromptBudget based on selected execution profile's window size & max output tokens
+        budget = PromptBudget(
+            window_size=exe_profile.context_window,
+            reserved_output=exe_profile.max_output_tokens
+        )
+
+        # 3. Context Engine & AGENTS.md retrieval
         context_blocks = self.context_engine.get_relevant_context(user_prompt, max_tokens=2048, root_dir=str(self.root_path))
         context_map_str = "\n\n".join(b.content for b in context_blocks)
 
@@ -75,12 +84,21 @@ class TurnProcessor:
             explicit_items = self.context_resolver.resolve_explicit_files(list(explicit_files))
         explicit_str = "\n\n".join(item.content for item in explicit_items)
 
+        # Resolve AGENTS.md instructions
+        agents_items = self.context_resolver.resolve_agents_instructions()
+        agents_str = "\n\n".join(item.content for item in agents_items)
+
         mandatory_constraints = [c.text for c in task.constraints if c.mandatory]
 
-        base_sys = f"You are K.I.T.T., an advanced autonomous AI coding assistant.\n\nMemory:\n{self.memory.get_memory_context()}\n\nSkills:\n{self.skill_manager.get_skills_summary_prompt()}"
+        base_sys = (
+            f"You are K.I.T.T., an advanced autonomous AI coding assistant.\n\n"
+            f"Memory:\n{self.memory.get_memory_context()}\n\n"
+            f"Skills:\n{self.skill_manager.get_skills_summary_prompt()}\n\n"
+            f"Project Guidelines:\n{agents_str}"
+        ).strip()
 
-        # 3. Prompt Budgeting
-        allocated = self.budget.allocate_context(
+        # 4. Prompt Budgeting
+        allocated = budget.allocate_context(
             system_prompt=base_sys,
             task_prompt=user_prompt,
             mandatory_constraints=mandatory_constraints,
@@ -92,17 +110,19 @@ class TurnProcessor:
 
         self._emit("BudgetApplied", {"allocated": allocated})
 
-        sys_prompt = f"{allocated['system_prompt']}\n\nFiles Context:\n{allocated['files_context']}\n\nRepo Map:\n{allocated['repo_map']}".strip()
-
-        # 4. Resolve Execution Profile
-        exe_profile_name, exe_profile = self.router.resolve_profile_for_task("code-generation")
-        self._emit("ModelSelected", {"profile_name": exe_profile_name, "model": exe_profile.model})
+        sys_prompt = (
+            f"{allocated['system_prompt']}\n\n"
+            f"Task & Constraints:\n{allocated['task_str']}\n\n"
+            f"Files Context:\n{allocated['files_context']}\n\n"
+            f"Repo Map:\n{allocated['repo_map']}"
+        ).strip()
 
         request = ExecutionRequest(
             system_prompt=sys_prompt,
             messages=[{"role": "user", "content": user_prompt}],
             enabled_tools=plan.enabled_tools,
-            max_output_tokens=exe_profile.max_output_tokens
+            max_output_tokens=exe_profile.max_output_tokens,
+            estimated_input_tokens=allocated["total_input_tokens"]
         )
 
         return {
