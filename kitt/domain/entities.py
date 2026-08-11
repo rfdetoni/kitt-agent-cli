@@ -9,6 +9,54 @@ TaskType = Literal[
     'validate-diff'
 ]
 
+TaskIntent = Literal[
+    'ASK',
+    'PLAN',
+    'IMPLEMENT',
+    'DEBUG',
+    'TEST',
+    'REVIEW',
+    'DOCUMENT',
+    'REFACTOR',
+    'UNKNOWN'
+]
+
+RiskLevel = Literal['LOW', 'MEDIUM', 'HIGH']
+Permission = Literal['ALLOW', 'ASK', 'DENY']
+ConstraintKind = Literal['NEGATIVE', 'MANDATORY', 'LIMIT', 'SCOPE']
+
+@dataclass
+class Constraint:
+    text: str
+    kind: ConstraintKind
+    source_start: int
+    source_end: int
+    mandatory: bool = True
+
+@dataclass
+class SemanticTask:
+    original_prompt: str
+    intent: TaskIntent = 'UNKNOWN'
+    secondary_intents: List[TaskIntent] = field(default_factory=list)
+    actions: List[str] = field(default_factory=list)
+    symbols: List[str] = field(default_factory=list)
+    paths: List[str] = field(default_factory=list)
+    technologies: List[str] = field(default_factory=list)
+    constraints: List[Constraint] = field(default_factory=list)
+    risk: RiskLevel = 'LOW'
+    confidence: float = 1.0
+
+@dataclass
+class ContextPlan:
+    search_queries: List[str] = field(default_factory=list)
+    candidate_symbols: List[str] = field(default_factory=list)
+    preferred_paths: List[str] = field(default_factory=list)
+    enabled_tools: List[str] = field(default_factory=list)
+    instruction_modules: List[str] = field(default_factory=list)
+    validation_commands: List[str] = field(default_factory=list)
+    include_original_prompt: bool = True
+    confidence: float = 1.0
+
 @dataclass
 class Tag:
     kind: str  # 'def' or 'ref'

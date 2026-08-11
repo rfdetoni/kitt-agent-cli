@@ -24,6 +24,8 @@ from kitt.router.router import TaskRouter
 from kitt.router.model_selector import ModelConfigurator
 from kitt.memory.memory_manager import MemoryManager
 from kitt.skills.skill_manager import SkillManager
+from kitt.context_filter.semantic_filter import SemanticFilter
+from kitt.context_filter.prompt_budget import PromptBudget
 from kitt.domain.entities import TaskStep
 from kitt.llm.client import LLMClient
 
@@ -77,6 +79,8 @@ SLASH_COMMANDS = {
     "/skill-install": "Install skill from Git repo URL or GitHub user/repo",
     "/skill-remove": "Remove an installed skill",
     "/repomap": "Print AST symbol graph of repository",
+    "/context-stats": "Display telemetry and section token budget breakdown",
+    "/context-preview": "Preview token allocation limits and budget rules",
     "/model": "View or switch active LLM model",
     "/setup-models": "Interactive provider model & exclusive role setup",
     "/router": "Display active dual-model task routing setup",
@@ -151,6 +155,7 @@ class KittREPL:
         self.router = TaskRouter(root_dir=root_dir)
         self.memory = MemoryManager(root_dir=root_dir)
         self.skill_manager = SkillManager(root_dir=root_dir)
+        self.budget = PromptBudget(window_size=8192, reserved_output=1200)
         self.messages: List[Dict[str, str]] = []
         self.explicit_files: Set[str] = set()
 
@@ -325,6 +330,31 @@ class KittREPL:
                 print(b.content)
             print("\033[1;34m--------------------------------------\033[0m\n")
 
+        elif cmd_name == '/context-stats':
+            t = self.budget.last_telemetry
+            if not t:
+                print("\033[90mNo context telemetry recorded yet. Run a prompt first.\033[0m")
+            else:
+                print("\n\033[1;34m--- K.I.T.T. Context Token Budget Telemetry ---\033[0m")
+                print(f" Window Size           : {t.window_size} tokens")
+                print(f" Output Reserved       : {t.output_reserved} tokens (mandatory)")
+                print(f" Total Input Tokens    : {t.section_tokens.get('total_input', 0)} tokens")
+                print(" Section Breakdown:")
+                for k, v in t.section_tokens.items():
+                    if k != "total_input":
+                        print(f"   • {k:<20}: {v} tokens")
+                if t.truncated_items:
+                    print(f" Truncated Sections    : {', '.join(t.truncated_items)}")
+                else:
+                    print(" Truncated Sections    : None")
+                print("\033[1;34m--------------------------------------------------\033[0m\n")
+
+        elif cmd_name == '/context-preview':
+            print("\n\033[1;34m--- Active Prompt Budget Allocation ---\033[0m")
+            print(f" Window Size: {self.budget.window_size} | Reserved Output: {self.budget.reserved_output}")
+            print(f" Max System: {self.budget.max_system} | Max Task: {self.budget.max_task_constraints} | Max Files: {self.budget.max_files} | Max RepoMap: {self.budget.max_repomap}")
+            print("\033[1;34m---------------------------------------\033[0m\n")
+
         elif cmd_name == '/model':
             if not arg:
                 profile_key = self.router.config.routing.get("chat", "model_a")
@@ -451,26 +481,48 @@ class KittREPL:
     def process_turn(self, user_prompt: str):
         self.messages.append({"role": "user", "content": user_prompt})
 
-        # 1. Memory, Skills, Context Engine & Explicit Files retrieval
+        # Step 1: Semantic Filter (dual-model task classification & plan)
+        ctx_profile = self.router.config.profiles.get("context") or self.router.config.profiles.get("execute")
+        semantic_filter = SemanticFilter(context_profile=ctx_profile)
+        task, plan, bypassed = semantic_filter.filter_and_plan(user_prompt)
+
+        bypassed_tag = " [Deterministic Bypass]" if bypassed else " [Context LLM Filter]"
+        print(f"\033[90m[Semantic Filter: Intent={task.intent}, Confidence={task.confidence:.2f}]{bypassed_tag}\033[0m")
+
+        # Step 2: Memory, Skills, Context Engine & Explicit Files retrieval
         memory_ctx = self.memory.get_memory_context()
         skills_ctx = self.skill_manager.get_skills_summary_prompt()
         explicit_ctx = self._build_explicit_files_context()
         context_blocks = self.context_engine.get_relevant_context(user_prompt, max_tokens=2048, root_dir=self.root_dir)
         context_map_str = "\n\n".join(b.content for b in context_blocks)
 
-        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        mandatory_constraints = [c.text for c in task.constraints if c.mandatory]
+
+        base_sys_prompt = SYSTEM_PROMPT_TEMPLATE.format(
             memory_context=memory_ctx,
             skills_context=skills_ctx,
-            explicit_files_context=explicit_ctx,
-            context_map=context_map_str
+            explicit_files_context="",
+            context_map=""
         )
 
-        # 2. Task Router selection
+        # Step 3: Prompt Budgeting (enforce 1200 reserved output tokens)
+        allocated = self.budget.allocate_context(
+            system_prompt=base_sys_prompt,
+            task_prompt=user_prompt,
+            mandatory_constraints=mandatory_constraints,
+            repo_map=context_map_str,
+            files_context=explicit_ctx,
+            history_context="",
+            recent_results=""
+        )
+
+        system_prompt = f"{allocated['system_prompt']}\n\nFiles Context:\n{allocated['files_context']}\n\nRepo Map:\n{allocated['repo_map']}"
+
+        # Step 4: Task Router & LLM client execution
         step = TaskStep(prompt=user_prompt)
         task_type, profile_name, profile = self.router.route(step)
         print(f"\033[90m[Task Router: {task_type} -> profile '{profile_name}' ({profile.model})]\033[0m")
 
-        # 3. LLM client execution
         llm = LLMClient(profile)
         print("\033[1;31mkitt:\033[0m ", end="", flush=True)
 
