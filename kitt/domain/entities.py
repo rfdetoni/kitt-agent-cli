@@ -1,5 +1,12 @@
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Literal
+
+@dataclass(frozen=True)
+class WorkspaceIdentity:
+    id: str
+    canonical_root: Path
+    canonical_path_hash: str
 
 TaskType = Literal[
     'context-gather',

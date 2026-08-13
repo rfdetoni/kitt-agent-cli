@@ -15,13 +15,6 @@ class CommandRequest:
     cwd: Path
     purpose: str = ""
 
-@dataclass
-class ApprovalToken:
-    action_hash: str
-    created_at: float = field(default_factory=time.time)
-    turn_id: str = ""
-    used: bool = False
-
 class PolicyEngine:
     """Security policy engine for tool execution, argv parsing, and permission evaluation."""
 
@@ -32,14 +25,34 @@ class PolicyEngine:
 
     DENIED_GIT_FLAGS = {'--no-index', '-C', '--git-dir', '--work-tree'}
 
-    def __init__(self, root_dir: str = "."):
+    def __init__(self, root_dir: str = ".", autonomy: Optional[Any] = None, approval_manager: Optional[Any] = None):
+        from kitt.core.autonomy_policy import AutonomyPolicy
         self.root_path = Path(root_dir).resolve()
         self.path_policy = WorkspacePathPolicy(root_dir=root_dir)
+        self.autonomy = autonomy or AutonomyPolicy.preset("supervised")
+        self.approval_manager = approval_manager
 
-    def evaluate_tool(self, tool_name: str, args: dict = None) -> Permission:
+    def _evaluate_tool_base(self, tool_name: str, args: dict = None, origin: str = 'MODEL') -> Permission:
         args = args or {}
 
-        if tool_name in {'list_files', 'search', 'read_file', 'repository_map', 'git_status', 'git_diff'}:
+        if origin == 'MODEL':
+            if tool_name in {
+                'list_files', 'search', 'read_file', 'repository_map', 'git_status',
+                'git_diff', 'python_compute', 'artifact_list', 'artifact_read'
+            }:
+                return 'ALLOW'
+
+            if tool_name == 'run_command':
+                command = str(args.get("command", "")).strip()
+                return self.evaluate_command(command)
+
+            return 'ASK'
+
+        if tool_name in {
+            'list_files', 'search', 'read_file', 'repository_map', 'git_status',
+            'git_diff', 'python_compute', 'artifact_list', 'artifact_read', 'artifact_store',
+            'goal_create', 'goal_add_gate', 'queue_input', 'child_spawn', 'harness_remember'
+        }:
             return 'ALLOW'
 
         if tool_name in {'apply_patch', 'write_file'}:
@@ -50,6 +63,51 @@ class PolicyEngine:
             return self.evaluate_command(command)
 
         return 'ASK'
+
+    def evaluate_tool(self, tool_name: str, args: dict = None, origin: str = 'MODEL') -> Permission:
+        args = args or {}
+
+        if getattr(self.autonomy, "level", "supervised") == "read_only":
+            if tool_name in {'apply_patch', 'write_file', 'run_command', 'child_spawn', 'child'}:
+                return 'DENY'
+
+        # Check remembered approval rules in ApprovalManager first
+        if self.approval_manager and tool_name in {'apply_patch', 'write_file'}:
+            path = args.get("path") or args.get("file")
+            rem = self.approval_manager.check_remembered(tool_name, path)
+            if rem in ('allow', 'deny'):
+                return 'ALLOW' if rem == 'allow' else 'DENY'
+
+        base = self._evaluate_tool_base(tool_name, args, origin)
+        if base != 'ASK':
+            return base
+
+        return self._autonomy_downgrade(tool_name, args, base)
+
+    def _autonomy_downgrade(self, tool_name: str, args: dict, base: Permission) -> Permission:
+        """Único ponto de decisão ASK->ALLOW por autonomia — usado por MODEL e não-MODEL."""
+        if tool_name in {'apply_patch', 'write_file'} and getattr(self.autonomy, "allow_file_write_auto", False):
+            return 'ALLOW'
+
+        if tool_name == 'run_command':
+            command = str(args.get("command", "")).strip()
+            cmd_eval = self.evaluate_command(command)
+            if cmd_eval == 'DENY':
+                return 'DENY'
+            if getattr(self.autonomy, "allow_run_command_auto", False):
+                return 'ALLOW'
+            return cmd_eval
+
+        if tool_name in {'child_spawn', 'child'} and getattr(self.autonomy, "allow_child_spawn_auto", True):
+            return 'ALLOW'
+
+        return base
+
+    def evaluate_command_request(self, req: CommandRequest) -> Permission:
+        if not req.argv:
+            return 'DENY'
+        cmd_str = " ".join(shlex.quote(arg) for arg in req.argv)
+        return self.evaluate_command(cmd_str)
 
     def evaluate_command(self, command: str) -> Permission:
         if not command:

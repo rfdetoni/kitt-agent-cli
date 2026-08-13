@@ -1,5 +1,5 @@
 import shlex
-import subprocess
+import re
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Set
@@ -8,11 +8,13 @@ from kitt.tools.path_policy import WorkspacePathPolicy
 from kitt.tools.approval import ApprovalGrant, ApprovalManager
 from kitt.edit_format.applier import DiffApplier
 from kitt.edit_format.parser import SearchReplaceParser
+from kitt.tools.safe_python import SafePythonExecutor
+from kitt.tools.process_runner import ProcessRunner
+from kitt.context_engine.engine import ContextEngine
 
-@dataclass
-class ToolContext:
-    root_dir: Path
-    policy: PolicyEngine = field(default_factory=PolicyEngine)
+from kitt.tools.artifact_tools import ArtifactTools
+from kitt.tools.child_tools import ChildTools
+from kitt.tools.goal_tools import GoalTools
 
 @dataclass
 class ToolResult:
@@ -22,6 +24,7 @@ class ToolResult:
     bytes_count: int = 0
     truncated: bool = False
     requires_approval: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 class ToolRegistry:
     """Registry managing executable tools, schemas, and path-contained policy enforcement."""
@@ -33,6 +36,27 @@ class ToolRegistry:
         self.applier = DiffApplier()
         self.parser = SearchReplaceParser()
         self.approval_manager = ApprovalManager()
+        self.safe_python = SafePythonExecutor()
+        self.process_runner = ProcessRunner(root_dir)
+        self.context_engine = ContextEngine()
+        self.artifacts = None
+        self.artifact_tools = None
+        self.queue_service = None
+        self.goal_service = None
+        self.goal_tools = None
+        self.child_manager = None
+        self.child_tools = None
+        self.harness_service = None
+
+    def attach_services(self, artifacts=None, queue_service=None, goal_service=None, child_manager=None, harness_service=None):
+        self.artifacts = artifacts
+        self.artifact_tools = ArtifactTools(artifacts) if artifacts else None
+        self.queue_service = queue_service
+        self.goal_service = goal_service
+        self.goal_tools = GoalTools(goal_service) if goal_service else None
+        self.child_manager = child_manager
+        self.child_tools = ChildTools(child_manager) if child_manager else None
+        self.harness_service = harness_service
 
     def get_tool_definitions(self, enabled_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         all_tools = [
@@ -40,26 +64,39 @@ class ToolRegistry:
             {"name": "search", "description": "Search regex pattern across repository"},
             {"name": "read_file", "description": "Read file lines with start_line and end_line bounds"},
             {"name": "repository_map", "description": "Get repository AST symbol map"},
+            {
+                "name": "python_compute",
+                "description": (
+                    "Run a side-effect-free subset of Python for calculations and JSON data transformation. "
+                    "Accepts code, optional JSON inputs, and result_var. No imports, files, network, shell, "
+                    "reflection, functions, classes, threads, or external packages. Assign the final value "
+                    "to _result (or result_var)."
+                )
+            },
+            {"name": "write_file", "description": "Create or overwrite content to a file at specified path (arguments: path, content)"},
             {"name": "apply_patch", "description": "Apply SEARCH/REPLACE diff blocks"},
             {"name": "run_command", "description": "Run shell command within security policy"},
             {"name": "git_status", "description": "Show uncommitted git status"},
             {"name": "git_diff", "description": "Show git diff"}
+            ,{"name": "artifact_store", "description": "Persist bounded large output outside model context"}
+            ,{"name": "artifact_read", "description": "Read a persisted artifact by id"}
+            ,{"name": "artifact_list", "description": "List artifacts for this conversation"}
+            ,{"name": "queue_input", "description": "Queue steering or follow-up input"}
+            ,{"name": "goal_create", "description": "Create a bounded autonomous goal"}
+            ,{"name": "goal_add_gate", "description": "Add a quality gate (command check) to an active goal"}
+            ,{"name": "child_spawn", "description": "Spawn an isolated child task with restricted scope and budget"}
+            ,{"name": "harness_remember", "description": "Persist a learned guideline entry into the harness repository"}
         ]
         if enabled_tools is None:
             return all_tools
         return [t for t in all_tools if t["name"] in enabled_tools]
 
-    def issue_approval_grant(self, turn_id: str, tool_name: str, args: Dict[str, Any]) -> ApprovalGrant:
-        action_hash = self.policy.generate_action_hash(tool_name, args)
-        return self.approval_manager.issue_grant(turn_id, action_hash)
+    def execute_tool(self, tool_name: str, args: dict = None, turn_id: str = "default_turn",
+                     conversation_id: str = "default_conv", workspace_id: str = "default_ws",
+                     enabled_tools: Optional[list] = None, grant: Optional[ApprovalGrant] = None,
+                     expected_approval_id: Optional[str] = None, origin: str = 'MODEL') -> ToolResult:
+        args = args or {}
 
-    def execute_tool(
-        self,
-        tool_name: str,
-        args: Dict[str, Any],
-        enabled_tools: Optional[List[str]] = None,
-        grant: Optional[ApprovalGrant] = None
-    ) -> ToolResult:
         if enabled_tools is not None and tool_name not in enabled_tools:
             return ToolResult(
                 success=False,
@@ -67,7 +104,7 @@ class ToolRegistry:
                 error=f"Tool '{tool_name}' is not enabled in ContextPlan."
             )
 
-        perm = self.policy.evaluate_tool(tool_name, args)
+        perm = self.policy.evaluate_tool(tool_name, args, origin=origin)
         if perm == 'DENY':
             return ToolResult(
                 success=False,
@@ -77,7 +114,10 @@ class ToolRegistry:
 
         if perm == 'ASK':
             expected_hash = self.policy.generate_action_hash(tool_name, args)
-            valid = self.approval_manager.validate_and_consume(grant, expected_hash)
+            valid = self.approval_manager.validate_and_consume(
+                grant, expected_hash, turn_id, conversation_id, workspace_id,
+                expected_approval_id=expected_approval_id
+            )
             if not valid:
                 return ToolResult(
                     success=False,
@@ -106,15 +146,68 @@ class ToolRegistry:
                 chunk = "\n".join(lines[start:end])
                 return ToolResult(success=True, output=chunk)
 
+            elif tool_name == "search":
+                pattern = str(args.get("pattern", ""))
+                if not pattern or len(pattern) > 500:
+                    return ToolResult(False, "", "Invalid search pattern.")
+                try:
+                    rx = re.compile(pattern)
+                except re.error as exc:
+                    return ToolResult(False, "", f"Invalid regex: {exc}")
+                matches = []
+                for path in self.root_path.rglob("*"):
+                    if len(matches) >= 200:
+                        break
+                    if not path.is_file() or ".git" in path.parts or ".kitt" in path.parts:
+                        continue
+                    try:
+                        for no, line in enumerate(path.read_text("utf-8", errors="ignore").splitlines(), 1):
+                            if rx.search(line):
+                                matches.append(f"{path.relative_to(self.root_path)}:{no}:{line[:300]}")
+                                if len(matches) >= 200: break
+                    except OSError:
+                        continue
+                return ToolResult(True, "\n".join(matches), truncated=len(matches) >= 200)
+
+            elif tool_name == "repository_map":
+                blocks = self.context_engine.get_relevant_context(
+                    str(args.get("query", "")), max_tokens=min(int(args.get("max_tokens", 1200)), 4000),
+                    root_dir=str(self.root_path))
+                return ToolResult(True, "\n\n".join(b.content for b in blocks))
+
+            elif tool_name == "write_file":
+                rel = args.get("path", "") or args.get("file", "")
+                content = args.get("content", "")
+                is_safe, target, err = self.path_policy.validate_path(rel)
+                if not is_safe or not target:
+                    return ToolResult(success=False, output="", error=err or "Access outside workspace denied.")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+                return ToolResult(success=True, output=f"Successfully wrote {len(content)} bytes to {rel}.")
+
             elif tool_name == "apply_patch":
                 patch_text = args.get("patch", "")
                 blocks = self.parser.parse(patch_text)
-                edit_res = self.applier.apply(blocks, root_dir=str(self.root_path))
+                edit_res = self.applier.apply(blocks, root_dir=str(self.root_path), allow_overwrite_existing=True)
                 if edit_res.success:
                     output = f"Applied edit to {len(edit_res.applied_files + edit_res.created_files)} file(s)."
-                    return ToolResult(success=True, output=output)
+                    return ToolResult(success=True, output=output, metadata={"edit_result": edit_res})
                 else:
-                    return ToolResult(success=False, output="", error="\n".join(edit_res.errors))
+                    return ToolResult(success=False, output="", error="\n".join(edit_res.errors), metadata={"edit_result": edit_res})
+
+            elif tool_name == "python_compute":
+                execution = self.safe_python.execute(
+                    code=args.get("code", ""),
+                    inputs=args.get("inputs", {}),
+                    result_var=args.get("result_var", "_result"),
+                )
+                return ToolResult(
+                    success=execution.success,
+                    output=execution.output,
+                    error=execution.error,
+                    bytes_count=len(execution.output.encode("utf-8")),
+                    truncated=execution.truncated,
+                )
 
             elif tool_name == "run_command":
                 cmd_str = str(args.get("command", "")).strip()
@@ -126,21 +219,78 @@ class ToolRegistry:
                 except Exception as se:
                     return ToolResult(success=False, output="", error=f"Invalid shell command syntax: {se}")
 
-                res = subprocess.run(
-                    argv,
-                    shell=False,
-                    cwd=self.root_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                output = res.stdout if res.returncode == 0 else (res.stdout + "\n" + res.stderr)
-                return ToolResult(success=(res.returncode == 0), output=output, error=None if res.returncode == 0 else res.stderr)
+                res = self.process_runner.run(argv, timeout_seconds=30)
+                output = res.stdout + (("\n" + res.stderr) if res.stderr else "")
+                return ToolResult(success=(res.returncode == 0 and not res.timed_out),
+                    output=output, error=None if res.returncode == 0 else res.stderr,
+                    bytes_count=len(output.encode()), truncated=res.truncated)
 
             elif tool_name in {"git_status", "git_diff"}:
                 sub = ["status", "--short"] if tool_name == "git_status" else ["diff"]
-                res = subprocess.run(["git"] + sub, cwd=self.root_path, capture_output=True, text=True)
-                return ToolResult(success=True, output=res.stdout)
+                res = self.process_runner.run(["git"] + sub, timeout_seconds=30)
+                return ToolResult(success=res.returncode == 0, output=res.stdout, error=res.stderr or None)
+
+            elif tool_name == "artifact_store" and self.artifact_tools:
+                artifact = self.artifact_tools.put(workspace_id, args.get("content", ""),
+                    args.get("artifact_type", "TEXT"), args.get("summary", "Agent artifact"),
+                    conversation_id, turn_id)
+                return ToolResult(True, artifact.id, metadata={"artifact": artifact})
+            elif tool_name == "artifact_read" and self.artifact_tools:
+                raw = self.artifact_tools.read_text(str(args.get("artifact_id", "")))
+                return ToolResult(True, raw, bytes_count=len(raw.encode()))
+            elif tool_name == "artifact_list" and self.artifact_tools:
+                items = self.artifact_tools.list(conversation_id, int(args.get("limit", 20)))
+                return ToolResult(True, "\n".join(f"{a.id} {a.artifact_type} {a.size_bytes}B {a.summary}" for a in items))
+            elif tool_name == "queue_input" and self.queue_service:
+                kind = str(args.get("kind", "FOLLOW_UP")).upper()
+                if kind not in {"STEERING", "FOLLOW_UP"}:
+                    return ToolResult(False, "", "Invalid queue kind: must be STEERING or FOLLOW_UP.")
+                item = (self.queue_service.steer if kind == "STEERING" else self.queue_service.follow_up)(
+                    conversation_id, str(args.get("content", "")))
+                return ToolResult(True, item.id)
+            elif tool_name == "goal_create" and (self.goal_tools or self.goal_service):
+                service = self.goal_tools or self.goal_service
+                goal = service.create(conversation_id, str(args.get("objective", "")),
+                    args.get("success_criteria", []), args.get("token_budget"),
+                    int(args.get("max_turns", 12)), int(args.get("max_wall_seconds", 1800)))
+                return ToolResult(True, goal.id if hasattr(goal, "id") else str(goal))
+            elif tool_name == "goal_add_gate" and self.goal_service:
+                gate = self.goal_service.add_gate(
+                    goal_id=str(args.get("goal_id", "")),
+                    name=str(args.get("name", "QualityGate")),
+                    argv=args.get("argv", []),
+                    timeout_seconds=int(args.get("timeout_seconds", 120))
+                )
+                return ToolResult(True, f"Gate '{gate.name}' added with ID {gate.id}.")
+            elif tool_name == "child_spawn" and (self.child_tools or self.child_manager):
+                mgr = self.child_tools or self.child_manager
+                child = mgr.spawn(
+                    parent_conversation_id=conversation_id,
+                    parent_turn_id=turn_id,
+                    name=str(args.get("name", "child_task")),
+                    task=str(args.get("task", "")),
+                    workspace_id=workspace_id,
+                    allowed_paths=args.get("allowed_paths", []),
+                    enabled_tools=args.get("enabled_tools") or args.get("allowed_tools") or ["read_file", "search"],
+                    token_budget=int(args.get("token_budget", 4000)),
+                    timeout_seconds=float(args.get("timeout_seconds", 60.0))
+                )
+                return ToolResult(True, f"Child task spawned with ID {child.id}.")
+            elif tool_name == "harness_remember" and self.harness_service:
+                evidence_raw = args.get("evidence", {})
+                if isinstance(evidence_raw, str):
+                    try:
+                        evidence_raw = json.loads(evidence_raw)
+                    except Exception:
+                        evidence_raw = {"note": evidence_raw}
+                entry = self.harness_service.remember(
+                    name=str(args.get("name", "")),
+                    content=str(args.get("content", "")),
+                    workspace_id=workspace_id,
+                    conversation_id=conversation_id,
+                    evidence=evidence_raw
+                )
+                return ToolResult(True, f"Harness entry '{entry.name}' saved with ID {entry.id}.")
 
             return ToolResult(success=False, output="", error=f"Tool '{tool_name}' execution not implemented.")
 

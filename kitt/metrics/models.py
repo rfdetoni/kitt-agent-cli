@@ -16,6 +16,8 @@ class TurnMetrics:
     actual_output_tokens: int = 0
     context_llm_input: int = 0
     context_llm_output: int = 0
+    duration_ms: float = 0.0
+    route: str = "dual-model"
     
     @property
     def gross_saved(self) -> int:

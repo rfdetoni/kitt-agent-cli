@@ -14,7 +14,9 @@ class DeterministicFallbackPlanner:
 
         intent: TaskIntent = 'IMPLEMENT'
         prompt_lower = prompt.lower()
-        if 'test' in prompt_lower or 'unittest' in prompt_lower:
+        if (not paths and not symbols and not any(kw in prompt_lower for kw in ("crie o arquivo", "crie um arquivo", "crie a pasta", "execute", "rode"))) or prompt_lower.strip() in {'oi', 'olá', 'ola', 'hello', 'hi'} or any(word in prompt_lower for word in ('explique', 'diga', 'responda', 'como ', 'por que', 'porque', '?')):
+            intent = 'ASK'
+        elif 'test' in prompt_lower or 'unittest' in prompt_lower:
             intent = 'TEST'
         elif 'debug' in prompt_lower or 'fix' in prompt_lower or 'bug' in prompt_lower:
             intent = 'DEBUG'
@@ -30,7 +32,7 @@ class DeterministicFallbackPlanner:
         return SemanticTask(
             original_prompt=prompt,
             intent=intent,
-            actions=['analyze', 'edit'],
+            actions=['analyze'] if intent == 'ASK' else ['analyze', 'edit'],
             symbols=symbols,
             paths=paths,
             constraints=constraints,
@@ -38,7 +40,9 @@ class DeterministicFallbackPlanner:
         )
 
     def generate_plan(self, task: SemanticTask) -> ContextPlan:
-        tools = ["read_file", "apply_patch", "run_command", "repository_map"]
+        if task.intent == 'ASK' and not task.paths and not task.symbols:
+            return ContextPlan(confidence=1.0)
+        tools = ["write_file", "apply_patch", "read_file", "run_command", "repository_map", "python_compute"]
         return ContextPlan(
             search_queries=task.symbols + task.paths,
             candidate_symbols=task.symbols,

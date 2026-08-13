@@ -74,6 +74,18 @@ class SemanticFilter:
                 latency_ms=latency
             )
 
+        if (self.profile.backend.lower() == "ollama" and not self.profile.supports_json
+                and isinstance(self.llm_client, LLMClient)):
+            task = self.fallback_planner.generate_task(prompt)
+            plan = self.fallback_planner.generate_plan(task)
+            return SemanticFilterResult(
+                task=task,
+                plan=plan,
+                source="FALLBACK",
+                fallback_reason="Ollama context profile does not support JSON responses.",
+                latency_ms=(time.time() - start_t) * 1000.0,
+            )
+
         # Rule 2: Call Context LLM
         try:
             messages = [{"role": "user", "content": prompt}]

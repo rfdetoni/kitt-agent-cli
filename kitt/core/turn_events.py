@@ -45,13 +45,28 @@ class ToolCallProposed(TurnEvent):
 @dataclass
 class ApprovalRequired(TurnEvent):
     turn_id: str = ""
+    conversation_id: str = ""
     tool_name: str = ""
     args: Dict[str, Any] = field(default_factory=dict)
     action_hash: str = ""
+    approval_request_id: str = ""
+    workspace_id: str = ""
+
+@dataclass
+class ThinkingStarted(TurnEvent):
+    """Emitido quando o modelo começa a 'pensar' antes de produzir texto/tool call."""
+    pass
+
+@dataclass
+class ThinkingCompleted(TurnEvent):
+    duration_ms: int = 0
+    tokens: int = 0
 
 @dataclass
 class ToolStarted(TurnEvent):
     tool_name: str = ""
+    args: Dict[str, Any] = field(default_factory=dict)
+    call_id: str = ""
 
 @dataclass
 class ToolCompleted(TurnEvent):
@@ -59,6 +74,8 @@ class ToolCompleted(TurnEvent):
     success: bool = True
     output: str = ""
     error: Optional[str] = None
+    call_id: str = ""
+    tokens: int = 0
 
 @dataclass
 class EditPreviewReady(TurnEvent):
@@ -88,3 +105,30 @@ class TurnCompleted(TurnEvent):
 @dataclass
 class TurnFailed(TurnEvent):
     error: str = ""
+
+@dataclass
+class TurnCancelled(TurnEvent):
+    reason: str = ""
+
+@dataclass
+class TurnBlocked(TurnEvent):
+    reason: str = ""
+
+@dataclass
+class ChildAgentSpawned(TurnEvent):
+    child_id: str = ""
+    name: str = ""
+    task: str = ""
+
+@dataclass
+class ChildAgentProgress(TurnEvent):
+    child_id: str = ""
+    status: str = ""
+    summary: str = ""
+    progress: int = 0
+
+@dataclass
+class ChildAgentFinished(TurnEvent):
+    child_id: str = ""
+    status: str = ""
+    error: Optional[str] = None

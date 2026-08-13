@@ -59,7 +59,8 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         for cmd in denied_commands:
             perm = self.policy.evaluate_command(cmd)
             self.assertEqual(perm, 'DENY', f"Command '{cmd}' should have been DENIED by PolicyEngine.")
-            grant = self.registry.issue_approval_grant("turn-1", "run_command", {"command": cmd})
+            action_hash = self.registry.policy.generate_action_hash("run_command", {"command": cmd})
+            grant = self.registry.approval_manager.issue_grant("turn-1", "default_conv", "default_ws", action_hash)
             res = self.registry.execute_tool("run_command", {"command": cmd}, grant=grant)
             self.assertFalse(res.success, f"Command '{cmd}' execution should have been blocked.")
 
@@ -69,7 +70,9 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
         self.assertTrue(res_unapproved.requires_approval)
         self.assertIn("requires explicit user confirmation", res_unapproved.error)
 
-        grant = self.registry.issue_approval_grant("turn-1", "apply_patch", {"patch": ""})
+        action_hash = self.registry.policy.generate_action_hash("apply_patch", {"patch": ""})
+        self.registry.approval_manager.register_request("default_turn", "default_conv", "default_ws", action_hash, "req_1", "apply_patch")
+        grant = self.registry.approval_manager.issue_grant("default_turn", "default_conv", "default_ws", action_hash, "req_1")
         res_approved = self.registry.execute_tool("apply_patch", {"patch": ""}, grant=grant)
         self.assertFalse(res_approved.requires_approval)
 
@@ -87,7 +90,8 @@ class TestPhase0SecurityAndContainment(unittest.TestCase):
             perm = self.policy.evaluate_command(cmd)
             self.assertEqual(perm, 'DENY', f"Command '{cmd}' should have been DENIED.")
 
-            grant = self.registry.issue_approval_grant("turn-1", "run_command", {"command": cmd})
+            action_hash = self.registry.policy.generate_action_hash("run_command", {"command": cmd})
+            grant = self.registry.approval_manager.issue_grant("turn-1", "default_conv", "default_ws", action_hash)
             res = self.registry.execute_tool("run_command", {"command": cmd}, grant=grant)
             self.assertFalse(res.success, f"Command '{cmd}' should have failed execution.")
 

@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import List, Dict, Set, Optional
 from dataclasses import dataclass
+from kitt.cli.ui import prompt_dropdown
 
 ANSI_REGEX = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
@@ -72,14 +73,16 @@ Run bash commands via rtk proxy wrapper to cut tool output tokens.
 class SkillManager:
     """Manages Agent Skills with Mandatory Always-On Checkbox Configuration."""
 
-    def __init__(self, root_dir: str = "."):
+    def __init__(self, root_dir: str = ".", persistence_enabled: bool = True):
         self.root_dir = Path(root_dir).resolve()
+        self.persistence_enabled = persistence_enabled
         self.project_skills_dir = self.root_dir / ".kitt" / "skills"
         self.global_skills_dir = Path.home() / ".kitt" / "skills"
         self.active_skills_file = self.root_dir / ".kitt" / "active_skills.json"
 
-        self._ensure_dirs()
-        self._ensure_default_skills()
+        if persistence_enabled:
+            self._ensure_dirs()
+            self._ensure_default_skills()
 
     def _ensure_dirs(self):
         self.project_skills_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +99,7 @@ class SkillManager:
             self.set_active_skills(["caveman", "ponytail", "rtk"])
 
     def get_active_skills(self) -> List[str]:
-        if not self.active_skills_file.exists():
+        if not self.persistence_enabled or not self.active_skills_file.exists():
             return ["caveman", "ponytail", "rtk"]
         try:
             return json.loads(self.active_skills_file.read_text(encoding='utf-8'))
@@ -104,6 +107,8 @@ class SkillManager:
             return ["caveman", "ponytail", "rtk"]
 
     def set_active_skills(self, active: List[str]):
+        if not self.persistence_enabled:
+            return
         self.active_skills_file.write_text(json.dumps(active, indent=2), encoding='utf-8')
 
     def _parse_yaml_frontmatter(self, content: str) -> Dict[str, str]:
@@ -161,6 +166,8 @@ class SkillManager:
         return skills
 
     def install_from_git(self, git_url: str, is_global: bool = False) -> SkillMetadata:
+        if not self.persistence_enabled:
+            raise RuntimeError("Skill installation requires persistence enabled.")
         if not git_url.startswith("http://") and not git_url.startswith("https://") and not git_url.startswith("git@"):
             git_url = f"https://github.com/{git_url}.git"
 
@@ -203,6 +210,8 @@ class SkillManager:
             return s
 
     def remove_skill(self, skill_name: str) -> bool:
+        if not self.persistence_enabled:
+            return False
         removed = False
         p_path = self.project_skills_dir / skill_name
         if p_path.exists():
@@ -258,7 +267,8 @@ class SkillManager:
             print(f"  [{idx}] {checked} \033[1;33m{s.name:<15}\033[0m \033[90m-\033[0m {s.description}")
 
         print("\nType skill numbers to toggle (e.g. '1 2' to toggle caveman & ponytail, or 'all'/'none'):")
-        userInput = input("\033[1;31mkitt-config\033[1;32m>\033[0m ").strip().lower()
+        options = ["all", "none", "1", "1 2", "1 2 3"] + [str(i) for i in range(1, len(skills) + 1)]
+        userInput = prompt_dropdown("\033[1;31mkitt-config\033[1;32m>\033[0m ", options).lower()
 
         if not userInput:
             print("\033[90mNo changes made.\033[0m")

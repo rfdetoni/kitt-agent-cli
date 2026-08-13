@@ -43,6 +43,10 @@ class SymbolParser:
             tags = self._extract_java_tags(content)
         elif ext in ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']:
             tags = self._extract_ts_js_tags(content)
+        elif ext == '.go':
+            tags = self._extract_go_tags(content)
+        elif ext in ['.rs']:
+            tags = self._extract_rust_tags(content)
         else:
             tags = self._extract_generic_tags(content)
 
@@ -109,6 +113,26 @@ class SymbolParser:
                 sig = line.strip().rstrip('{').rstrip(';')
                 tags.append(Tag(kind='def', name=name, line=idx, signature=sig, sub_kind=match.group(3)))
 
+        return tags
+
+    def _extract_go_tags(self, content: str) -> List[Tag]:
+        tags: List[Tag] = []
+        go_def = re.compile(r'^\s*(func|type)\s+([A-Za-z0-9_]+)', re.MULTILINE)
+        lines = content.splitlines()
+        for idx, line in enumerate(lines, start=1):
+            m = go_def.match(line)
+            if m:
+                tags.append(Tag(kind='def', name=m.group(2), line=idx, signature=line.strip(), sub_kind=m.group(1)))
+        return tags
+
+    def _extract_rust_tags(self, content: str) -> List[Tag]:
+        tags: List[Tag] = []
+        rs_def = re.compile(r'^\s*(pub(\([^)]+\))?\s+)?(fn|struct|enum|trait|type|impl)\s+([A-Za-z0-9_]+)', re.MULTILINE)
+        lines = content.splitlines()
+        for idx, line in enumerate(lines, start=1):
+            m = rs_def.match(line)
+            if m:
+                tags.append(Tag(kind='def', name=m.group(4), line=idx, signature=line.strip(), sub_kind=m.group(3)))
         return tags
 
     def _extract_generic_tags(self, content: str) -> List[Tag]:

@@ -9,13 +9,10 @@ class TokenCounter:
     """Conservative two-level token counter."""
 
     @staticmethod
-    def count_tokens(text: str) -> int:
+    def count_tokens(text: str, num_messages: int = 1) -> int:
         if not text:
             return 0
-        # Conservative multi-language token estimator (average 3.2 chars per token for code/pt/en)
-        char_count = len(text)
-        word_count = len(text.split())
-        return max(int(char_count / 3.2), int(word_count * 1.3))
+        return (len(text) // 4) + (num_messages * 3)
 
 @dataclass
 class TelemetryData:
@@ -27,30 +24,41 @@ class TelemetryData:
     bypassed_context_llm: bool = False
     context_llm_latency_ms: float = 0.0
 
+@dataclass(frozen=True)
+class PromptSections:
+    system_instructions: str
+    constraints_text: str
+    retrieved_context: str
+    memory_context: str
+    history_summary: str
+    user_prompt: str
+
 class PromptBudget:
     """Manages token allocation, mandatory output reservation, and prioritized truncation enforcing global window limits."""
 
     def __init__(self, window_size: int = 8192, reserved_output: int = 1200):
         self.window_size = window_size
-        self.reserved_output = max(reserved_output, 1200)
-
-        # Budget allocations per section
-        if window_size <= 8192:
-            self.max_system = 1100
-            self.max_task_constraints = 700
-            self.max_repomap = 900
-            self.max_files = 3000
-            self.max_history = 600
-            self.max_results = 500
-        else:
-            self.max_system = 1100
-            self.max_task_constraints = 700
-            self.max_repomap = 1200
-            self.max_files = 6000
-            self.max_history = 1000
-            self.max_results = 800
-
+        self.reserved_output = max(64, min(reserved_output, max(64, window_size - 128)))
         self.last_telemetry: Optional[TelemetryData] = None
+
+    def _truncate_to_tokens(self, text: str, target_tokens: int) -> str:
+        if target_tokens <= 0:
+            return ""
+        if TokenCounter.count_tokens(text) <= target_tokens:
+            return text
+        suffix = "\n... [truncated]"
+        if TokenCounter.count_tokens(suffix) > target_tokens:
+            return ""
+        low, high = 0, len(text)
+        while low < high:
+            mid = (low + high + 1) // 2
+            if TokenCounter.count_tokens(text[:mid] + suffix) <= target_tokens:
+                low = mid
+            else:
+                high = mid - 1
+        if low < len(text):
+            return text[:low] + suffix
+        return text
 
     def allocate_context(
         self,
@@ -67,119 +75,82 @@ class PromptBudget:
 
         max_allowed_input = max(500, self.window_size - self.reserved_output)
 
-        # 1. System + Schemas
         sys_tokens = TokenCounter.count_tokens(system_prompt)
-        if sys_tokens > self.max_system:
-            system_prompt = system_prompt[:self.max_system * 3]
-            sys_tokens = TokenCounter.count_tokens(system_prompt)
-            truncated.append("system_prompt")
+        constraints_str = "\n".join(mandatory_constraints).strip()
+        task_tokens = TokenCounter.count_tokens(task_prompt)
+        constraints_tokens = TokenCounter.count_tokens(constraints_str)
 
-        # 2. Task + Mandatory Constraints (NEVER TRUNCATE MANDATORY CONSTRAINTS)
-        constraints_str = "\n".join(mandatory_constraints)
-        task_str = f"{task_prompt}\n{constraints_str}".strip()
-        task_tokens = TokenCounter.count_tokens(task_str)
+        if sys_tokens + task_tokens + constraints_tokens > max_allowed_input:
+            raise PromptTooLargeError(
+                f"System, task and mandatory constraints ({sys_tokens + task_tokens + constraints_tokens}t) "
+                f"exceed available context ({max_allowed_input}t)."
+            )
+        
+        # Priority components to truncate (first is truncated first)
+        components = [
+            {"name": "repo_map", "text": repo_map, "tokens": TokenCounter.count_tokens(repo_map)},
+            {"name": "history_context", "text": history_context, "tokens": TokenCounter.count_tokens(history_context)},
+            {"name": "recent_results", "text": recent_results, "tokens": TokenCounter.count_tokens(recent_results)},
+            {"name": "files_context", "text": files_context, "tokens": TokenCounter.count_tokens(files_context)}
+        ]
 
-        # 3. Files Context
-        files_tokens = TokenCounter.count_tokens(files_context)
-        if files_tokens > self.max_files:
-            files_context = files_context[:self.max_files * 3] + "\n... [files truncated to budget]"
-            files_tokens = TokenCounter.count_tokens(files_context)
-            truncated.append("non_explicit_files")
+        def get_total() -> int:
+            return sys_tokens + task_tokens + constraints_tokens + sum(c["tokens"] for c in components)
 
-        # 4. Repo Map
-        repo_tokens = TokenCounter.count_tokens(repo_map)
-        if repo_tokens > self.max_repomap:
-            repo_map = repo_map[:self.max_repomap * 3] + "\n... [repo map truncated to budget]"
-            repo_tokens = TokenCounter.count_tokens(repo_map)
-            truncated.append("secondary_repo_map")
+        # Iterative truncation
+        for comp in components:
+            excess = get_total() - max_allowed_input
+            if excess > 0 and comp["tokens"] > 0:
+                cut_tokens = min(comp["tokens"], excess)
+                new_tokens = comp["tokens"] - cut_tokens
+                comp["text"] = self._truncate_to_tokens(comp["text"], new_tokens)
+                comp["tokens"] = TokenCounter.count_tokens(comp["text"])
+                truncated.append(comp["name"])
 
-        # 5. History
-        hist_tokens = TokenCounter.count_tokens(history_context)
-        if hist_tokens > self.max_history:
-            history_context = history_context[-self.max_history * 3:]
-            hist_tokens = TokenCounter.count_tokens(history_context)
-            truncated.append("old_history")
+        final_repo = components[0]["text"]
+        final_hist = components[1]["text"]
+        final_results = components[2]["text"]
+        final_files = components[3]["text"]
 
-        # 6. Recent Results
-        results_tokens = TokenCounter.count_tokens(recent_results)
-        if results_tokens > self.max_results:
-            recent_results = recent_results[-self.max_results * 3:]
-            results_tokens = TokenCounter.count_tokens(recent_results)
-            truncated.append("old_results")
-
-        total_input_tokens = (
-            sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens
-        )
-
-        # MANDATORY GLOBAL INVARIANT ENFORCEMENT:
-        # total_input_tokens + reserved_output <= window_size
+        total_input_tokens = get_total()
+        
+        # Hard safety fail
         if total_input_tokens > max_allowed_input:
-            excess = total_input_tokens - max_allowed_input
+            raise PromptTooLargeError("Prompt allocation could not satisfy the context window.")
 
-            # Prune Step 1: Recent Results
-            if results_tokens > 0:
-                cut = min(results_tokens, excess)
-                recent_results = "" if cut == results_tokens else recent_results[:max(0, len(recent_results) - cut * 3)]
-                results_tokens = TokenCounter.count_tokens(recent_results)
-                excess = (sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens) - max_allowed_input
-                truncated.append("pruned_results_to_window")
-
-            # Prune Step 2: History
-            if excess > 0 and hist_tokens > 0:
-                cut = min(hist_tokens, excess)
-                history_context = "" if cut == hist_tokens else history_context[:max(0, len(history_context) - cut * 3)]
-                hist_tokens = TokenCounter.count_tokens(history_context)
-                excess = (sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens) - max_allowed_input
-                truncated.append("pruned_history_to_window")
-
-            # Prune Step 3: Repo Map
-            if excess > 0 and repo_tokens > 0:
-                cut = min(repo_tokens, excess)
-                repo_map = "" if cut == repo_tokens else repo_map[:max(0, len(repo_map) - cut * 3)]
-                repo_tokens = TokenCounter.count_tokens(repo_map)
-                excess = (sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens) - max_allowed_input
-                truncated.append("pruned_repomap_to_window")
-
-            # Prune Step 4: Files Context
-            if excess > 0 and files_tokens > 0:
-                cut = min(files_tokens, excess)
-                files_context = "" if cut == files_tokens else files_context[:max(0, len(files_context) - cut * 3)]
-                files_tokens = TokenCounter.count_tokens(files_context)
-                excess = (sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens) - max_allowed_input
-                truncated.append("pruned_files_to_window")
-
-            # Prune Step 5: System Prompt down to base
-            if excess > 0 and sys_tokens > 200:
-                sys_tokens = 200
-                system_prompt = system_prompt[:600]
-                excess = (sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens) - max_allowed_input
-                truncated.append("pruned_system_to_window")
-
-            total_input_tokens = sys_tokens + task_tokens + files_tokens + repo_tokens + hist_tokens + results_tokens
-
-            if total_input_tokens > max_allowed_input:
-                raise PromptTooLargeError(
-                    f"Prompt and mandatory constraints ({total_input_tokens} tokens) exceed max allowed input ({max_allowed_input} tokens) for context window {self.window_size}."
-                )
-
-        telemetry.section_tokens["system"] = sys_tokens
-        telemetry.section_tokens["task_constraints"] = task_tokens
-        telemetry.section_tokens["files"] = files_tokens
-        telemetry.section_tokens["repomap"] = repo_tokens
-        telemetry.section_tokens["history"] = hist_tokens
-        telemetry.section_tokens["results"] = results_tokens
-        telemetry.section_tokens["total_input"] = total_input_tokens
+        telemetry.section_tokens = {
+            "system": sys_tokens,
+            "task": task_tokens,
+            "constraints": constraints_tokens,
+            "files": components[3]["tokens"],
+            "repo": components[0]["tokens"],
+            "history": components[1]["tokens"],
+            "results": components[2]["tokens"]
+        }
         telemetry.truncated_items = truncated
         self.last_telemetry = telemetry
 
+        sections = PromptSections(
+            system_instructions=system_prompt,
+            constraints_text=constraints_str,
+            retrieved_context=f"{final_files}\n\n{final_repo}".strip(),
+            memory_context="",
+            history_summary=final_hist,
+            user_prompt=task_prompt
+        )
+
         return {
+            "sections": sections,
             "system_prompt": system_prompt,
-            "task_str": task_str,
-            "repo_map": repo_map,
-            "files_context": files_context,
-            "history_context": history_context,
-            "recent_results": recent_results,
+            "constraints_text": constraints_str,
+            "task_str": constraints_str,
+            "user_prompt": task_prompt,
+            "repo_map": final_repo,
+            "files_context": final_files,
+            "history_context": final_hist,
+            "recent_results": final_results,
             "total_input_tokens": total_input_tokens,
             "reserved_output_tokens": self.reserved_output,
+            "truncated": truncated,
             "telemetry": telemetry
         }

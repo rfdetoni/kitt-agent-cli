@@ -9,6 +9,7 @@ class TestPhase3ToolLoop(unittest.TestCase):
 
     def test_policy_engine_permissions(self):
         self.assertEqual(self.policy.evaluate_tool('list_files'), 'ALLOW')
+        self.assertEqual(self.policy.evaluate_tool('python_compute'), 'ALLOW')
         self.assertEqual(self.policy.evaluate_tool('apply_patch'), 'ASK')
 
         self.assertEqual(self.policy.evaluate_command('git status'), 'ALLOW')

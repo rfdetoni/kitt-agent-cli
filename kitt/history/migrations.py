@@ -1,0 +1,484 @@
+import sqlite3
+import time
+from dataclasses import dataclass
+from typing import Tuple
+
+@dataclass(frozen=True)
+class Migration:
+    version: int
+    name: str
+    statements: Tuple[str, ...]
+
+MIGRATIONS = [
+    Migration(
+        version=1,
+        name="initial_v1_migration",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                canonical_path_hash TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                git_root TEXT,
+                created_at REAL NOT NULL,
+                last_opened_at REAL NOT NULL
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                parent_conversation_id TEXT,
+                forked_from_turn_id TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                last_turn_at REAL,
+                model_context_profile TEXT,
+                model_execution_profile TEXT,
+                compact_summary TEXT,
+                summary_version INTEGER DEFAULT 0,
+                history_enabled INTEGER DEFAULT 1,
+                metadata_json TEXT,
+                active_entry_id TEXT,
+                active_generation INTEGER NOT NULL DEFAULT 0,
+                context_policy_version INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS turns (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                state TEXT NOT NULL DEFAULT 'CREATED',
+                mode TEXT NOT NULL DEFAULT 'auto',
+                user_message_id TEXT,
+                assistant_message_id TEXT,
+                semantic_intent TEXT,
+                risk TEXT,
+                confidence REAL,
+                started_at REAL NOT NULL,
+                completed_at REAL,
+                error_code TEXT,
+                changeset_id TEXT,
+                parent_turn_id TEXT,
+                is_compacted INTEGER DEFAULT 0,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                UNIQUE(conversation_id, ordinal)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                token_count INTEGER DEFAULT 0,
+                token_count_method TEXT DEFAULT 'estimated',
+                content_hash TEXT,
+                is_compacted INTEGER DEFAULT 0,
+                is_partial INTEGER DEFAULT 0,
+                metadata_json TEXT,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS decisions (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                type TEXT NOT NULL,
+                source_span TEXT,
+                created_at REAL NOT NULL,
+                active INTEGER DEFAULT 1,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS conversation_files (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                relation TEXT NOT NULL,
+                file_hash TEXT,
+                created_at REAL NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pending_actions (
+                id TEXT PRIMARY KEY,
+                approval_request_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                normalized_args_json TEXT NOT NULL,
+                action_hash TEXT NOT NULL,
+                source_response_sha256 TEXT NOT NULL,
+                affected_paths_json TEXT NOT NULL,
+                before_hashes_json TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending',
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS telemetry_events (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                route TEXT NOT NULL,
+                start_time REAL NOT NULL,
+                duration_ms REAL NOT NULL,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                tokens_saved INTEGER DEFAULT 0,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS session_entries (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                parent_entry_id TEXT,
+                turn_id TEXT,
+                entry_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                include_in_context INTEGER NOT NULL DEFAULT 1,
+                generation INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                content_hash TEXT NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(parent_entry_id) REFERENCES session_entries(id)
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_session_entries_conversation_generation
+            ON session_entries(conversation_id, generation, created_at);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_session_entries_parent
+            ON session_entries(parent_entry_id);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                conversation_id TEXT,
+                turn_id TEXT,
+                artifact_type TEXT NOT NULL,
+                storage_kind TEXT NOT NULL,
+                relative_storage_path TEXT,
+                inline_content BLOB,
+                summary TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sensitivity TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                metadata_json TEXT,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_artifacts_conversation_created
+            ON artifacts(conversation_id, created_at DESC);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS compactions (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                entry_id TEXT NOT NULL,
+                first_compacted_entry_id TEXT NOT NULL,
+                first_kept_entry_id TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                tokens_before INTEGER NOT NULL,
+                tokens_after INTEGER NOT NULL,
+                policy_version INTEGER NOT NULL,
+                model_profile TEXT,
+                validation_json TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(entry_id) REFERENCES session_entries(id)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS queued_inputs (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('STEERING','FOLLOW_UP')),
+                content TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                target_generation INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                delivered_at REAL,
+                content_hash TEXT NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                UNIQUE(conversation_id, kind, position)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS goals (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                objective TEXT NOT NULL,
+                state TEXT NOT NULL,
+                token_budget INTEGER,
+                max_turns INTEGER NOT NULL,
+                max_wall_seconds INTEGER NOT NULL,
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                turns_used INTEGER NOT NULL DEFAULT 0,
+                continuations_used INTEGER NOT NULL DEFAULT 0,
+                success_criteria_json TEXT NOT NULL,
+                started_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                completed_at REAL,
+                last_error TEXT,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS quality_gates (
+                id TEXT PRIMARY KEY,
+                goal_id TEXT NOT NULL,
+                argv_json TEXT NOT NULL,
+                workspace_hash TEXT,
+                last_exit_code INTEGER,
+                last_output_artifact_id TEXT,
+                last_run_at REAL,
+                status TEXT NOT NULL,
+                FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS harness_entries (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT,
+                conversation_id TEXT,
+                entry_kind TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                status TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                supersedes_id TEXT,
+                content_hash TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                created_by TEXT NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS harness_refinements (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT,
+                proposal_json TEXT NOT NULL,
+                before_snapshot_json TEXT NOT NULL,
+                after_snapshot_json TEXT,
+                state TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                applied_at REAL,
+                rolled_back_at REAL
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS child_sessions (
+                id TEXT PRIMARY KEY,
+                parent_conversation_id TEXT NOT NULL,
+                parent_turn_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                task TEXT NOT NULL,
+                state TEXT NOT NULL,
+                depth INTEGER NOT NULL,
+                model_profile TEXT NOT NULL,
+                allowed_paths_json TEXT NOT NULL,
+                enabled_tools_json TEXT NOT NULL,
+                token_budget INTEGER NOT NULL,
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                timeout_seconds INTEGER NOT NULL,
+                result_artifact_id TEXT,
+                error TEXT,
+                created_at REAL NOT NULL,
+                started_at REAL,
+                completed_at REAL,
+                FOREIGN KEY(parent_conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_child_sessions_parent
+            ON child_sessions(parent_conversation_id, created_at DESC);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS usage_attributions (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                turn_id TEXT,
+                child_session_id TEXT,
+                stage TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                estimated INTEGER NOT NULL,
+                duration_ms REAL NOT NULL,
+                created_at REAL NOT NULL
+            );
+            """
+        )
+    )
+]
+
+# Versions 2-4 deliberately repeat CREATE IF NOT EXISTS declarations.  This is
+# required for databases created by the pre-Prime v1 release, whose schema_info
+# says "1" although none of the Prime tables existed yet.
+MIGRATIONS.extend([
+    Migration(2, "session_tree_and_artifacts", (
+        "ALTER TABLE conversations ADD COLUMN active_entry_id TEXT;",
+        "ALTER TABLE conversations ADD COLUMN active_generation INTEGER NOT NULL DEFAULT 0;",
+        "ALTER TABLE conversations ADD COLUMN context_policy_version INTEGER NOT NULL DEFAULT 1;",
+        """CREATE TABLE IF NOT EXISTS session_entries (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, parent_entry_id TEXT, turn_id TEXT, entry_type TEXT NOT NULL, payload_json TEXT NOT NULL, include_in_context INTEGER NOT NULL DEFAULT 1, generation INTEGER NOT NULL, created_at REAL NOT NULL, content_hash TEXT NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE, FOREIGN KEY(parent_entry_id) REFERENCES session_entries(id));""",
+        """CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, conversation_id TEXT, turn_id TEXT, artifact_type TEXT NOT NULL, storage_kind TEXT NOT NULL, relative_storage_path TEXT, inline_content BLOB, summary TEXT NOT NULL, content_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, sensitivity TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL, pinned INTEGER NOT NULL DEFAULT 0, metadata_json TEXT, FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS compactions (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, entry_id TEXT NOT NULL, first_compacted_entry_id TEXT NOT NULL, first_kept_entry_id TEXT NOT NULL, summary TEXT NOT NULL, tokens_before INTEGER NOT NULL, tokens_after INTEGER NOT NULL, policy_version INTEGER NOT NULL, model_profile TEXT, validation_json TEXT NOT NULL, created_at REAL NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE, FOREIGN KEY(entry_id) REFERENCES session_entries(id));""",
+    )),
+    Migration(3, "prime_services", (
+        """CREATE TABLE IF NOT EXISTS queued_inputs (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('STEERING','FOLLOW_UP')), content TEXT NOT NULL, position INTEGER NOT NULL, status TEXT NOT NULL, target_generation INTEGER NOT NULL, created_at REAL NOT NULL, delivered_at REAL, content_hash TEXT NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE, UNIQUE(conversation_id, kind, position));""",
+        """CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, objective TEXT NOT NULL, state TEXT NOT NULL, token_budget INTEGER, max_turns INTEGER NOT NULL, max_wall_seconds INTEGER NOT NULL, tokens_used INTEGER NOT NULL DEFAULT 0, turns_used INTEGER NOT NULL DEFAULT 0, continuations_used INTEGER NOT NULL DEFAULT 0, success_criteria_json TEXT NOT NULL, started_at REAL NOT NULL, updated_at REAL NOT NULL, completed_at REAL, last_error TEXT, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS quality_gates (id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, argv_json TEXT NOT NULL, workspace_hash TEXT, last_exit_code INTEGER, last_output_artifact_id TEXT, last_run_at REAL, status TEXT NOT NULL, FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS harness_entries (id TEXT PRIMARY KEY, workspace_id TEXT, conversation_id TEXT, entry_kind TEXT NOT NULL, scope TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL, evidence_json TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL, version INTEGER NOT NULL, supersedes_id TEXT, content_hash TEXT NOT NULL, created_at REAL NOT NULL, created_by TEXT NOT NULL, FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS harness_refinements (id TEXT PRIMARY KEY, conversation_id TEXT, proposal_json TEXT NOT NULL, before_snapshot_json TEXT NOT NULL, after_snapshot_json TEXT, state TEXT NOT NULL, created_at REAL NOT NULL, applied_at REAL, rolled_back_at REAL);""",
+        """CREATE TABLE IF NOT EXISTS child_sessions (id TEXT PRIMARY KEY, parent_conversation_id TEXT NOT NULL, parent_turn_id TEXT NOT NULL, name TEXT NOT NULL, task TEXT NOT NULL, state TEXT NOT NULL, depth INTEGER NOT NULL, model_profile TEXT NOT NULL, allowed_paths_json TEXT NOT NULL, enabled_tools_json TEXT NOT NULL, token_budget INTEGER NOT NULL, tokens_used INTEGER NOT NULL DEFAULT 0, timeout_seconds INTEGER NOT NULL, result_artifact_id TEXT, error TEXT, created_at REAL NOT NULL, started_at REAL, completed_at REAL, FOREIGN KEY(parent_conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS usage_attributions (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, turn_id TEXT, child_session_id TEXT, stage TEXT NOT NULL, provider TEXT, model TEXT, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, estimated INTEGER NOT NULL, duration_ms REAL NOT NULL, created_at REAL NOT NULL);""",
+    )),
+    Migration(4, "integrity_and_indexes", (
+        """CREATE TABLE IF NOT EXISTS consumed_approval_nonces (nonce TEXT PRIMARY KEY, approval_id TEXT NOT NULL, consumed_at REAL NOT NULL);""",
+        "CREATE INDEX IF NOT EXISTS idx_session_entries_conversation_generation ON session_entries(conversation_id, generation, created_at);",
+        "CREATE INDEX IF NOT EXISTS idx_session_entries_parent ON session_entries(parent_entry_id);",
+        "CREATE INDEX IF NOT EXISTS idx_artifacts_conversation_created ON artifacts(conversation_id, created_at DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_child_sessions_parent ON child_sessions(parent_conversation_id, created_at DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_queued_inputs_pending ON queued_inputs(conversation_id, status, kind, position);",
+    )),
+    Migration(5, "quality_gate_name_and_timeout", (
+        """CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, objective TEXT NOT NULL, state TEXT NOT NULL, token_budget INTEGER, max_turns INTEGER NOT NULL, max_wall_seconds INTEGER NOT NULL, tokens_used INTEGER NOT NULL DEFAULT 0, turns_used INTEGER NOT NULL DEFAULT 0, continuations_used INTEGER NOT NULL DEFAULT 0, success_criteria_json TEXT NOT NULL, started_at REAL NOT NULL, updated_at REAL NOT NULL, completed_at REAL, last_error TEXT, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS quality_gates (id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, argv_json TEXT NOT NULL, workspace_hash TEXT, last_exit_code INTEGER, last_output_artifact_id TEXT, last_run_at REAL, status TEXT NOT NULL, name TEXT DEFAULT 'QualityGate', timeout_seconds INTEGER DEFAULT 120, FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE);""",
+        "ALTER TABLE quality_gates ADD COLUMN name TEXT DEFAULT 'QualityGate';",
+        "ALTER TABLE quality_gates ADD COLUMN timeout_seconds INTEGER DEFAULT 120;",
+    )),
+])
+
+# Some development builds recorded versions 2-5 without applying every Prime
+# table. Re-run their idempotent declarations once for those partial databases.
+MIGRATIONS.append(Migration(
+    6,
+    "repair_partial_prime_schema",
+    tuple(statement for migration in MIGRATIONS if 2 <= migration.version <= 5 for statement in migration.statements),
+))
+MIGRATIONS.append(Migration(
+    7,
+    "remembered_approval_rules",
+    (
+        """CREATE TABLE IF NOT EXISTS remembered_approval_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_name TEXT NOT NULL, path_glob TEXT, decision TEXT NOT NULL, created_at REAL NOT NULL);""",
+    )
+))
+MIGRATIONS.append(Migration(
+    8,
+    "persistent_approval_requests",
+    (
+        """
+        CREATE TABLE IF NOT EXISTS approval_requests (
+            approval_id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            workspace_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            arguments_hash TEXT NOT NULL,
+            scope_json TEXT NOT NULL,
+            risk_level TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('PENDING','GRANTED','CONSUMED','DENIED','EXPIRED','FAILED')),
+            nonce_hash TEXT NOT NULL,
+            requested_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            decided_at TEXT,
+            consumed_at TEXT,
+            decision_source TEXT,
+            failure_reason TEXT
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_approval_state_expiry
+        ON approval_requests(state, expires_at);
+        """
+    )
+))
+
+class MigrationRunner:
+    def __init__(self, migrations: list[Migration] = None):
+        if migrations is None:
+            migrations = MIGRATIONS
+        self.migrations = sorted(migrations, key=lambda m: m.version)
+
+    def _ensure_schema_info(self, conn: sqlite3.Connection):
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_info (
+                version INTEGER PRIMARY KEY,
+                applied_at REAL NOT NULL
+            )
+        """)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(schema_info)")}
+        if "applied_at" not in columns:
+            conn.execute("ALTER TABLE schema_info ADD COLUMN applied_at REAL")
+            conn.execute("UPDATE schema_info SET applied_at = ? WHERE applied_at IS NULL", (time.time(),))
+        conn.commit()
+
+    def get_current_version(self, conn: sqlite3.Connection) -> int:
+        self._ensure_schema_info(conn)
+        cur = conn.cursor()
+        cur.execute("SELECT MAX(version) FROM schema_info")
+        row = cur.fetchone()
+        return row[0] if row and row[0] is not None else 0
+
+    def migrate(self, connection: sqlite3.Connection) -> int:
+        current_version = self.get_current_version(connection)
+        applied = 0
+        
+        for migration in self.migrations:
+            if migration.version > current_version:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    for stmt in migration.statements:
+                        if stmt.strip():
+                            try:
+                                connection.execute(stmt)
+                            except sqlite3.OperationalError as exc:
+                                err_msg = str(exc).lower()
+                                if "duplicate column name" in err_msg or "already exists" in err_msg:
+                                    continue
+                                raise
+                    
+                    connection.execute(
+                        "INSERT INTO schema_info (version, applied_at) VALUES (?, ?)",
+                        (migration.version, time.time())
+                    )
+                    connection.commit()
+                    applied += 1
+                except Exception as e:
+                    connection.rollback()
+                    raise RuntimeError(f"Migration {migration.version} ({migration.name}) failed: {e}")
+                    
+        return applied

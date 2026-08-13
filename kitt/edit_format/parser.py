@@ -6,7 +6,7 @@ class SearchReplaceParser:
     """Parser for SEARCH/REPLACE diff blocks emitted by the LLM."""
 
     BLOCK_REGEX = re.compile(
-        r'(?:([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)\s*\n)?<<<<<<< SEARCH\r?\n([\s\S]*?)\r?\n=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE',
+        r'(?:([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)\s*\n)?<<<<<<< SEARCH\r?\n([\s\S]*?)(?:\r?\n)?=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE',
         re.MULTILINE
     )
 

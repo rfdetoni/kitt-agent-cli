@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kitt-agent-cli"
+version = "0.2.0"
+description = "K.I.T.T. autonomous AI coding agent CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "prompt-toolkit>=3.0.52,<4",
+]
+
+[project.optional-dependencies]
+tui = [
+    "prompt-toolkit>=3.0.52,<4",
+]
+
+[project.scripts]
+kitt = "kitt.cli.main:main"

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, Tuple
 from kitt.domain.entities import TaskStep, TaskType, ModelProfile, RouterConfig
@@ -26,6 +27,10 @@ class TaskRouter:
         self.config = self._load_config(root_dir)
 
     def _load_config(self, root_dir: str) -> RouterConfig:
+        defaults = RouterConfig(
+            profiles={name: replace(profile) for name, profile in DEFAULT_ROUTER_CONFIG.profiles.items()},
+            routing=dict(DEFAULT_ROUTER_CONFIG.routing),
+        )
         config_path = Path(root_dir) / ".kitt-router.json"
         if config_path.exists():
             try:
@@ -35,12 +40,40 @@ class TaskRouter:
                 }
                 routing = data.get("routing", {})
                 return RouterConfig(
-                    profiles={**DEFAULT_ROUTER_CONFIG.profiles, **profiles},
-                    routing={**DEFAULT_ROUTER_CONFIG.routing, **routing}
+                    profiles={**defaults.profiles, **profiles},
+                    routing={**defaults.routing, **routing}
                 )
             except Exception:
-                return DEFAULT_ROUTER_CONFIG
-        return DEFAULT_ROUTER_CONFIG
+                return defaults
+        return defaults
+
+    def save_config(self, root_dir: str) -> None:
+        """Persist current routing without rebuilding the runtime router."""
+        from kitt.security.credentials import CredentialResolver, atomic_write_secure
+
+        config_path = Path(root_dir) / ".kitt-router.json"
+        profiles_data = {}
+        for name, profile in self.config.profiles.items():
+            profile_dict = {
+                "backend": profile.backend,
+                "model": profile.model,
+                "base_url": profile.base_url,
+                "api_key": profile.api_key if (profile.api_key and profile.api_key.startswith(("env:", "session:"))) else (f"env:OPENAI_API_KEY" if profile.api_key else None),
+                "context_window": profile.context_window,
+                "max_output_tokens": profile.max_output_tokens,
+                "temperature": profile.temperature,
+                "supports_tools": profile.supports_tools,
+                "supports_json": profile.supports_json,
+                "keep_alive": profile.keep_alive,
+                "request_timeout_seconds": profile.request_timeout_seconds,
+            }
+            profiles_data[name] = profile_dict
+
+        data = {
+            "profiles": profiles_data,
+            "routing": self.config.routing,
+        }
+        atomic_write_secure(config_path, json.dumps(data, indent=2))
 
     def resolve_profile_for_task(self, task_type: TaskType) -> Tuple[str, ModelProfile]:
         profile_name = self.config.routing.get(task_type)

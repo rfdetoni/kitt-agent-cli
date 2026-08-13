@@ -1,14 +1,11 @@
-#!/usr/bin/env python3
-import sys
-import os
-from pathlib import Path
+#!/bin/sh
+set -eu
 
-# Add project root directory to sys.path
-root_dir = Path(__file__).resolve().parent.parent
-if str(root_dir) not in sys.path:
-    sys.path.insert(0, str(root_dir))
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+python="$project_dir/.venv/bin/python"
 
-from kitt.cli.main import main
+if [ ! -x "$python" ]; then
+    python=${PYTHON:-python3}
+fi
 
-if __name__ == '__main__':
-    sys.exit(main())
+exec "$python" -m kitt.cli.main "$@"

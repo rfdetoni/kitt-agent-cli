@@ -10,10 +10,8 @@ class DiffApplier:
     def __init__(self, changeset_tracker: ChangeSetTracker = None):
         self.tracker = changeset_tracker or ChangeSetTracker()
 
-    def _normalize_text(self, text: str) -> str:
-        return "\n".join([line.strip() for line in text.strip().splitlines() if line.strip()])
-
     def _find_fuzzy_replacement(self, current_content: str, search_content: str) -> Tuple[bool, str, int]:
+        import difflib
         if not search_content:
             return False, "", 0
 
@@ -21,21 +19,35 @@ class DiffApplier:
         if count > 0:
             return True, search_content, count
 
-        norm_search = self._normalize_text(search_content)
+        # Fallback to difflib Levenshtein similarity
         lines = current_content.splitlines()
         search_lines = search_content.splitlines()
-
         n_search = len(search_lines)
-        matches = []
+        
+        if n_search == 0 or len(lines) == 0:
+            return False, "", 0
+
+        best_ratio = 0.0
+        best_chunk = ""
+        second_best_ratio = 0.0
+
         for i in range(len(lines) - n_search + 1):
             chunk = "\n".join(lines[i:i + n_search])
-            if self._normalize_text(chunk) == norm_search:
-                matches.append(chunk)
+            ratio = difflib.SequenceMatcher(None, chunk, search_content).ratio()
+            
+            if ratio > best_ratio:
+                second_best_ratio = best_ratio
+                best_ratio = ratio
+                best_chunk = chunk
+            elif ratio > second_best_ratio:
+                second_best_ratio = ratio
 
-        if len(matches) == 1:
-            return True, matches[0], 1
-        elif len(matches) > 1:
-            return True, matches[0], len(matches)
+        # Accept if we have a strong match (>= 0.8) and it's not ambiguous (clear winner)
+        if best_ratio >= 0.8:
+            if best_ratio - second_best_ratio < 0.05 and second_best_ratio >= 0.8:
+                # Ambiguous match
+                return False, "", 0
+            return True, best_chunk, 1
 
         return False, "", 0
 
@@ -109,8 +121,12 @@ class DiffApplier:
 
             full_path.parent.mkdir(parents=True, exist_ok=True)
             if not full_path.exists() or block.is_new_file:
+                existed_before = full_path.exists()
                 full_path.write_text(block.replace_content, encoding='utf-8')
-                created_files.append(rel_path)
+                if existed_before:
+                    applied_files.append(rel_path)
+                else:
+                    created_files.append(rel_path)
             else:
                 current_content = full_path.read_text(encoding='utf-8', errors='ignore')
                 found, target, _ = self._find_fuzzy_replacement(current_content, block.search_content)

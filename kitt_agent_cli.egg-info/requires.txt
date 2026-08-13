@@ -1,0 +1,4 @@
+prompt-toolkit<4,>=3.0.52
+
+[tui]
+prompt-toolkit<4,>=3.0.52

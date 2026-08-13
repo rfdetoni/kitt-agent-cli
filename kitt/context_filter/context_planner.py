@@ -4,12 +4,10 @@ class ContextPlanner:
     """Converts SemanticTask into an actionable ContextPlan governing tool selection and search targets."""
 
     def build_plan(self, task: SemanticTask) -> ContextPlan:
-        tools = ["read_file", "search", "repository_map"]
+        tools = ["read_file", "search", "repository_map", "python_compute"]
 
-        if task.intent in {'IMPLEMENT', 'DEBUG', 'REFACTOR'}:
-            tools.extend(["apply_patch", "run_command"])
-        elif task.intent == 'TEST':
-            tools.extend(["run_command", "read_file"])
+        if task.intent in {'IMPLEMENT', 'DEBUG', 'REFACTOR', 'DOCUMENT', 'TEST'}:
+            tools.extend(["write_file", "apply_patch", "run_command"])
 
         search_queries = list(set(task.paths + task.symbols + task.actions))
 

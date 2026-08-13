@@ -2,7 +2,8 @@ import re
 from typing import List, Tuple
 from kitt.domain.entities import Constraint, ConstraintKind
 
-PATH_PATTERN = re.compile(r'\b(?:[a-zA-Z0-9_\-\.]+/)+[a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+\b')
+FILE_EXTENSIONS = r'(?:py|html|css|js|ts|tsx|jsx|json|md|txt|toml|yaml|yml|sh|rs|go|c|cpp|h|hpp|java|sql|xml|env|ini|cfg)'
+PATH_PATTERN = re.compile(r'\b(?:[a-zA-Z0-9_\-\.]+/)*[a-zA-Z0-9_\-]+\.' + FILE_EXTENSIONS + r'\b', re.IGNORECASE)
 SYMBOL_PATTERN = re.compile(r'\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*\b')
 QUOTED_PATTERN = re.compile(r'["\']([^"\']+)["\"]')
 NEGATIVE_SPAN_PATTERN = re.compile(r'\b(?:don\'t|do not|never|sem|sem usar|without|no|nao|não)\b\s+[^.,;\n]+', re.IGNORECASE)
@@ -17,7 +18,10 @@ class DeterministicExtractor:
 
     def extract_symbols(self, text: str) -> List[str]:
         words = SYMBOL_PATTERN.findall(text)
-        keywords = {"the", "and", "for", "with", "this", "that", "from", "import", "code", "file", "path", "test"}
+        keywords = {
+            "the", "and", "for", "with", "this", "that", "from", "import", "code", "file", "path", "test",
+            "crie", "create", "make", "build", "add", "update", "delete", "remove", "change", "fix", "show", "get", "set"
+        }
         symbols = [w for w in words if w.lower() not in keywords and ("_" in w or (w[0].isupper() and len(w) > 1))]
         return list(dict.fromkeys(symbols))
 
@@ -43,5 +47,4 @@ class DeterministicExtractor:
         clean = text.strip()
         if len(clean) > 150 or len(clean.split()) > 25:
             return False
-        paths = self.extract_paths(clean)
-        return len(paths) > 0 or clean.startswith("/")
+        return clean.lower() in {"oi", "olá", "ola", "hello", "hi"} or clean.startswith("/")

@@ -40,8 +40,8 @@ jobs:
 
       - name: Launcher compatibility
         run: |
-          node bin/openclaude --version
-          NODE_DISABLE_COMPILE_CACHE=1 node bin/openclaude --version
+          node bin/kitt --version
+          NODE_DISABLE_COMPILE_CACHE=1 node bin/kitt --version
 
       - name: Suspicious PR intent scan
         env:
@@ -80,7 +80,7 @@ jobs:
         run: bun run build
 
       - name: Launch on the minimum supported Node.js
-        run: node bin/openclaude --version
+        run: node bin/kitt --version
 
   typecheck:
     runs-on: ubuntu-latest

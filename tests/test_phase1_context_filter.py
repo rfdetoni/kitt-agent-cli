@@ -6,6 +6,7 @@ from kitt.context_filter.fallback import DeterministicFallbackPlanner
 from kitt.context_filter.context_planner import ContextPlanner
 from kitt.context_filter.semantic_filter import SemanticFilter
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
+from kitt.llm.client import LLMClient
 
 class TestPhase1ContextFilter(unittest.TestCase):
     def setUp(self):
@@ -55,6 +56,12 @@ class TestPhase1ContextFilter(unittest.TestCase):
         self.assertEqual(task.confidence, 1.0)
         self.assertIn("kitt/cli/repl.py", task.paths)
 
+    def test_greeting_uses_tool_free_ask_plan(self):
+        task = self.fallback.generate_task("hello")
+        plan = self.fallback.generate_plan(task)
+        self.assertEqual(task.intent, "ASK")
+        self.assertEqual(plan.enabled_tools, [])
+
     def test_prompt_budget_output_reservation(self):
         budget = PromptBudget(window_size=8192, reserved_output=1200)
         self.assertEqual(budget.reserved_output, 1200)
@@ -76,7 +83,7 @@ class TestPhase1ContextFilter(unittest.TestCase):
 
         self.assertIn("system_prompt", alloc)
         self.assertEqual(alloc["reserved_output_tokens"], 1200)
-        self.assertLessEqual(alloc["telemetry"].section_tokens["files"], budget.max_files)
+        self.assertLessEqual(alloc["total_input_tokens"] + alloc["reserved_output_tokens"], budget.window_size)
 
     def test_context_planner_tool_selection(self):
         task = SemanticTask(
@@ -104,7 +111,7 @@ class TestPhase1ContextFilter(unittest.TestCase):
             "confidence": 0.95
         }"""
         fake_llm = FakeLLMClient(json_resp)
-        prof = ModelProfile(backend="ollama", model="qwen2.5:7b-instruct")
+        prof = ModelProfile(backend="ollama", model="qwen2.5:7b-instruct", supports_json=True)
         sf = SemanticFilter(context_profile=prof, llm_client=fake_llm)
 
         long_prompt = "Please analyze the entire codebase architecture and implement a comprehensive new slash command handler in kitt/cli/repl.py for KittREPL class to support detailed system metrics reporting and interactive diagnostics."
@@ -112,6 +119,14 @@ class TestPhase1ContextFilter(unittest.TestCase):
         self.assertTrue(fake_llm.called)
         self.assertEqual(res.source, 'LLM')
         self.assertEqual(res.task.intent, 'IMPLEMENT')
+
+    def test_ollama_completion_profile_skips_json_filter(self):
+        profile = ModelProfile(backend="ollama", model="completion-only")
+        client = LLMClient(profile)
+        client.chat = lambda *args, **kwargs: self.fail("completion profile must not receive a JSON request")
+        sf = SemanticFilter(profile, client)
+        result = sf.filter_and_plan("Analyze this project architecture and describe its request pipeline.")
+        self.assertEqual(result.source, "FALLBACK")
 
 if __name__ == '__main__':
     unittest.main()

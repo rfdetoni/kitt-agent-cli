@@ -14,12 +14,14 @@ class MemoryItem:
 class MemoryManager:
     """Manages persistent project and global memory with structured MemoryItem retrieval."""
 
-    def __init__(self, root_dir: str = "."):
+    def __init__(self, root_dir: str = ".", persistence_enabled: bool = True):
         self.root_dir = Path(root_dir).resolve()
+        self.persistence_enabled = persistence_enabled
         self.project_mem_path = self.root_dir / ".kitt" / "memory" / "project_memory.md"
         self.global_mem_path = Path.home() / ".kitt" / "global_memory.md"
 
-        self._ensure_files()
+        if persistence_enabled:
+            self._ensure_files()
 
     def _ensure_files(self):
         self.project_mem_path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,9 +33,16 @@ class MemoryManager:
             self.global_mem_path.write_text("# K.I.T.T. Global User Preferences\n\n- Prefer standard library and minimalist diffs.\n", encoding='utf-8')
 
     def add_project_memory(self, note: str):
+        if not self.persistence_enabled:
+            return
         content = self.project_mem_path.read_text(encoding='utf-8')
         updated = content.rstrip() + f"\n- {note}\n"
         self.project_mem_path.write_text(updated, encoding='utf-8')
+
+    def clear_project_memory(self):
+        if not self.persistence_enabled:
+            return
+        self.project_mem_path.write_text("# Project Memory & Guidelines\n\n", encoding='utf-8')
 
     def get_items(self) -> List[MemoryItem]:
         items: List[MemoryItem] = []
@@ -79,4 +88,6 @@ class MemoryManager:
         return "\n\n".join(lines)
 
     def clear_project_memory(self):
+        if not self.persistence_enabled:
+            return
         self.project_mem_path.write_text("# Project Memory & Guidelines\n\n", encoding='utf-8')

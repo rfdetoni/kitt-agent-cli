@@ -13,8 +13,17 @@ class ContextFilterSchemaValidator:
 
     @staticmethod
     def validate_and_parse_task(raw_json_str: str, original_prompt: str) -> Tuple[bool, SemanticTask, str]:
+        import re
         try:
-            data = json.loads(raw_json_str)
+            # Fallback heuristic: strip markdown code blocks if present
+            cleaned_str = raw_json_str.strip()
+            if cleaned_str.startswith("```"):
+                # Try to extract content inside ```json ... ``` or ``` ... ```
+                match = re.search(r'```(?:json)?\s*(.*?)\s*```', cleaned_str, re.DOTALL)
+                if match:
+                    cleaned_str = match.group(1)
+                
+            data = json.loads(cleaned_str)
             if not isinstance(data, dict):
                 return False, SemanticTask(original_prompt=original_prompt), "Root JSON is not an object."
 

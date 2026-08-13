@@ -1,23 +1,64 @@
 {
   "profiles": {
+    "context": {
+      "backend": "ollama",
+      "model": "oamazonasgabriel/lfm2.5-2.6b:q4_k_m-8gbGPU",
+      "base_url": "http://localhost:11434",
+      "api_key": "",
+      "context_window": 8192,
+      "max_output_tokens": 128,
+      "temperature": 0.0,
+      "supports_tools": false,
+      "supports_json": false,
+      "keep_alive": null,
+      "request_timeout_seconds": 120
+    },
+    "execute": {
+      "backend": "ollama",
+      "model": "agent-qwen:latest",
+      "base_url": "http://192.168.100.51:11434",
+      "api_key": "",
+      "context_window": 32768,
+      "max_output_tokens": 2048,
+      "temperature": 0.0,
+      "supports_tools": true,
+      "supports_json": false,
+      "keep_alive": null,
+      "request_timeout_seconds": 120
+    },
     "model_a": {
       "backend": "ollama",
       "model": "oamazonasgabriel/lfm2.5-2.6b:q4_k_m-8gbGPU",
       "base_url": "http://localhost:11434",
-      "api_key": ""
+      "api_key": "",
+      "context_window": 8192,
+      "max_output_tokens": 1200,
+      "temperature": 0.0,
+      "supports_tools": false,
+      "supports_json": false,
+      "keep_alive": null,
+      "request_timeout_seconds": 120
     },
     "model_b": {
       "backend": "ollama",
-      "model": "oamazonasgabriel/lfm2.5-2.6b:q4_k_m-8gbGPU",
+      "model": "qwen2.5:7b-instruct",
       "base_url": "http://localhost:11434",
-      "api_key": ""
+      "api_key": "",
+      "context_window": 8192,
+      "max_output_tokens": 1200,
+      "temperature": 0.0,
+      "supports_tools": false,
+      "supports_json": false,
+      "keep_alive": null,
+      "request_timeout_seconds": 120
     }
   },
   "routing": {
-    "context-gather": "model_a",
-    "summarize": "model_a",
-    "validate-diff": "model_a",
-    "code-edit": "model_b",
-    "code-generation": "model_b"
+    "context-gather": "context",
+    "summarize": "context",
+    "code-generation": "execute",
+    "code-edit": "execute",
+    "validate-diff": "context",
+    "chat": "execute"
   }
 }
