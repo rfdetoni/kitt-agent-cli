@@ -341,33 +341,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             self._emit("FilterCompleted", {"filter_res": filter_res})
             yield FilterCompleted(filter_res=filter_res)
 
-            # 2. Resolve Execution Profile via TaskFeatures and RoutingPolicy
-            from kitt.router.features import TaskFeatureExtractor
-            from kitt.router.policy import RoutingPolicy
-            from kitt.router.models import ModelCapabilities
-
-            caps = {}
-            for pname, pobj in self.router.config.profiles.items():
-                caps[pname] = ModelCapabilities(
-                    profile_name=pname,
-                    tier="small" if pname == "context" else "large",
-                    input_context_limit=pobj.context_window,
-                    max_output_tokens=pobj.max_output_tokens,
-                    supports_json=pobj.supports_json,
-                    supports_native_tools=pobj.supports_tools,
-                    tool_call_reliability=0.9 if pobj.supports_tools else 0.7,
-                    code_edit_score=0.9 if pname == "execute" else 0.7,
-                    reasoning_score=0.9 if pname == "execute" else 0.75,
-                    languages=("py", "ts", "js", "java", "go", "rs", "sql", "md"),
-                    is_local=(pobj.backend in ("ollama", "lmstudio", "localai", "vllm")),
-                    privacy_class="local" if pobj.backend in ("ollama", "lmstudio", "localai", "vllm") else "remote"
-                )
-            features = TaskFeatureExtractor.extract(cmd.prompt, explicit_files=cmd.explicit_files)
-            routing_policy = RoutingPolicy()
-            privacy_mode = getattr(self.config, "privacy_mode", "hybrid_redacted")
-            routing_decision = routing_policy.select_route(features, caps, privacy_mode=privacy_mode)
-            exe_profile_name = routing_decision.selected_profile
-            exe_profile = self.router.config.profiles.get(exe_profile_name) or list(self.router.config.profiles.values())[0]
+            # 2. Resolve the final-answer model from the configured principal role.
+            # The context profile may summarize/filter, but it must not replace the
+            # user's selected principal model for the visible answer.
+            exe_profile_name, exe_profile = self.router.resolve_profile_for_task("code-generation")
 
             self._emit("ModelSelected", {"profile_name": exe_profile_name, "model": exe_profile.model})
             yield ModelSelected(profile_name=exe_profile_name, model=exe_profile.model)

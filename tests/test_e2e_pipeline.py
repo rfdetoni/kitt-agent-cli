@@ -79,6 +79,27 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertEqual(captured["system_prompt"], "Answer in one direct, concise sentence. Do not expose reasoning.")
         self.assertEqual(captured["messages"], [{"role": "user", "content": "what model is running?"}])
 
+    def test_final_answer_uses_configured_principal_model(self):
+        from dataclasses import replace
+        from kitt.core.turn_command import TurnCommand
+        from kitt.core.turn_events import ModelSelected
+
+        self.processor.router.config.profiles["context"] = replace(
+            self.processor.router.config.profiles["context"], model="context-model"
+        )
+        self.processor.router.config.profiles["execute"] = replace(
+            self.processor.router.config.profiles["execute"], model="principal-model"
+        )
+
+        class ExecutionClient:
+            def chat_stream(self, *args, **kwargs):
+                yield "final answer"
+
+        self.processor.execution_client = ExecutionClient()
+        events = list(self.processor.run_turn(TurnCommand("conv-models", "analise este projeto")))
+        selected = next(event for event in events if isinstance(event, ModelSelected))
+        self.assertEqual((selected.profile_name, selected.model), ("execute", "principal-model"))
+
     def test_uncited_code_request_reaches_llm_without_agent_tools(self):
         captured = {}
         class DirectClient:

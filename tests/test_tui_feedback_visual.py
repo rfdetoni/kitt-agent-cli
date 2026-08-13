@@ -4,7 +4,7 @@ from kitt.ui.state import UIState, AgentTaskStep
 from kitt.ui.reducer import reduce_ui_event
 from kitt.core.turn_events import (
     TurnStarted, TurnCompleted, TurnFailed, ToolStarted, ToolCompleted,
-    ThinkingStarted, ThinkingCompleted,
+    ThinkingStarted, ThinkingCompleted, ModelSelected,
     ChildAgentSpawned, ChildAgentFinished, EditApplied
 )
 from kitt.ui.components.status_bar import StatusBarComponent
@@ -80,6 +80,17 @@ class TestTUIVisualFeedback(unittest.TestCase):
         self.assertIn("(2.1s)", last_block.text)
         self.assertTrue(last_block.text.endswith("✔"))
         self.assertNotIn(", 0 tok", last_block.text)
+
+    def test_model_selected_preserves_context_and_principal_roles(self):
+        state = UIState(small_model="context-model", large_model="principal-model")
+
+        reduce_ui_event(state, ModelSelected(profile_name="context", model="new-context"))
+        self.assertEqual(state.small_model, "new-context")
+        self.assertEqual(state.large_model, "principal-model")
+
+        reduce_ui_event(state, ModelSelected(profile_name="execute", model="new-principal"))
+        self.assertEqual(state.small_model, "new-context")
+        self.assertEqual(state.large_model, "new-principal")
 
     def test_simultaneous_tool_calls_call_id_isolation(self):
         state = UIState()

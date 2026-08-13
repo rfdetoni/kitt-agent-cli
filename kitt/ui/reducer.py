@@ -165,7 +165,10 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
             core_task.summary = f"Contexto compilado ({event.total_input_tokens} tokens). Gerando..."
             core_task.progress = 30
     elif isinstance(event, ModelSelected):
-        state.large_model = event.model
+        if event.profile_name in {"context", "context-gather", "summarize"}:
+            state.small_model = event.model
+        else:
+            state.large_model = event.model
     elif isinstance(event, MetricsRecorded):
         state.tokens_used = event.input_tokens + event.output_tokens
         state.gross_saved_tokens += event.saved_tokens
