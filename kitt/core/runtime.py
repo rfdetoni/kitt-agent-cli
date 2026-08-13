@@ -9,6 +9,7 @@ from kitt.children.manager import ChildAgentManager
 from kitt.children.repository import ChildRepository
 from kitt.compaction.service import CompactionService
 from kitt.context_engine.indexer import LocalFileIndexer
+from kitt.context_engine.engine import ContextEngine
 from kitt.core.event_bus import EventBus
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_processor import TurnProcessor
@@ -27,6 +28,7 @@ from kitt.skills.skill_manager import SkillManager
 from kitt.tools.approval import ApprovalManager
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.registry import ToolRegistry
+from kitt.index.repository import RepositoryIndex
 
 
 @dataclass
@@ -38,6 +40,8 @@ class KittRuntime:
     metrics: MetricsCollector
     policy: PolicyEngine
     approval: ApprovalManager
+    repository_index: RepositoryIndex
+    context_engine: ContextEngine
     registry: ToolRegistry
     skills: SkillManager
     harness: HarnessService
@@ -76,7 +80,14 @@ class KittRuntime:
         autonomy_store = AutonomyStore(canon_root, persistence_enabled=persistence_enabled)
         approval = ApprovalManager(db=db, ttl_seconds=config.approval_ttl_seconds)
         policy = PolicyEngine(canon_root, autonomy=autonomy_store.get(), approval_manager=approval)
-        registry = ToolRegistry(canon_root)
+        from kitt.security.egress import EgressPolicy
+        from kitt.security.sensitive_data import SensitiveDataScanner
+        from kitt.security.path_policy import PathPolicy
+        from kitt.security.network_policy import NetworkPolicy
+
+        repository_index = RepositoryIndex(canon_root, in_memory=in_memory)
+        context_engine = ContextEngine(repository_index=repository_index, persistence_enabled=persistence_enabled)
+        registry = ToolRegistry(canon_root, context_engine=context_engine)
         registry.policy = policy
         registry.approval_manager = approval
         skills = SkillManager(canon_root, persistence_enabled=persistence_enabled)
@@ -102,13 +113,6 @@ class KittRuntime:
         )
         registry.attach_services(artifacts, queue, goals, children, harness)
         memory = MemoryManager(canon_root, persistence_enabled=persistence_enabled)
-        from kitt.index.repository import RepositoryIndex
-        from kitt.security.egress import EgressPolicy
-        from kitt.security.sensitive_data import SensitiveDataScanner
-        from kitt.security.path_policy import PathPolicy
-        from kitt.security.network_policy import NetworkPolicy
-
-        repository_index = RepositoryIndex(canon_root, in_memory=in_memory)
         egress_policy = EgressPolicy(mode=getattr(config, "privacy_mode", "hybrid_redacted"))
         sensitive_scanner = SensitiveDataScanner()
         path_policy = PathPolicy(canon_root)
@@ -130,6 +134,7 @@ class KittRuntime:
             compaction_service=compaction,
             memory_service=memory,
             skill_manager=skills,
+            context_engine=context_engine,
             event_callback=lambda name, payload: events.publish(name, payload),
             config=config,
             enable_context_summary=True,
@@ -144,11 +149,11 @@ class KittRuntime:
         registry.path_policy = path_policy
 
         runtime = cls(
-            config, db, history, artifacts, metrics, policy, approval, registry, skills,
+            config, db, history, artifacts, metrics, policy, approval, repository_index,
+            context_engine, registry, skills,
             harness, goals, queue, children, compaction, tree, events, processor,
             memory, indexer, autonomy_store,
         )
-        runtime.repository_index = repository_index
         runtime.egress_policy = egress_policy
         runtime.sensitive_scanner = sensitive_scanner
         runtime.path_policy = path_policy

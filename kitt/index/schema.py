@@ -99,13 +99,16 @@ def setup_fts5_tables(conn: sqlite3.Connection) -> bool:
     if not check_fts5_supported(conn):
         return False
     try:
+        conn.execute("DROP TABLE IF EXISTS fts_chunks")
         conn.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
+            CREATE VIRTUAL TABLE fts_chunks USING fts5(
+                chunk_id UNINDEXED,
+                file_id UNINDEXED,
                 path,
                 symbol_name,
                 content,
-                content='chunks',
-                content_rowid='chunk_id'
+                tokenize = "unicode61 tokenchars '_.$#'",
+                prefix = '2 3 4'
             );
         """)
         return True

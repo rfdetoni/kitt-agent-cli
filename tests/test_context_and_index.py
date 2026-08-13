@@ -7,6 +7,7 @@ from kitt.context.candidates import ContextCandidate, ContextSelector
 from kitt.index.graph import RepositoryGraph
 from kitt.index.scanner import RepositoryScanner
 from kitt.index.repository import RepositoryIndex
+from kitt.context_engine.engine import ContextEngine
 
 class TestContextAndIndex(unittest.TestCase):
     def test_calibrated_token_estimator(self):
@@ -50,6 +51,43 @@ class TestContextAndIndex(unittest.TestCase):
 
             results = index.search_text("Hello World")
             self.assertGreaterEqual(len(results), 1)
+            index.close()
+
+    def test_repository_index_fts_handles_natural_language_and_tail_content(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text(("x = 1\n" * 900) + "def target_symbol():\n    return 'tail'\n", encoding="utf-8")
+
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            results = index.search_text("fix target symbol")
+            self.assertTrue(results)
+            if index.has_fts5:
+                self.assertEqual(results[0]["method"], "fts5")
+            self.assertIn("target_symbol", results[0]["content"])
+
+            counts = {
+                table: index._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("symbols", "chunks")
+            }
+            self.assertGreater(counts["symbols"], 0)
+            self.assertGreater(counts["chunks"], 1)
+            index.close()
+
+    def test_context_engine_uses_shared_repository_index(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text("def useful_symbol():\n    return 42\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            engine = ContextEngine(repository_index=index)
+
+            blocks = engine.get_relevant_context("useful symbol", root_dir=tmpdir)
+
+            self.assertIs(engine.index, index)
+            self.assertTrue(blocks)
+            self.assertIn("useful_symbol", blocks[0].content)
+            self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
             index.close()
 
 if __name__ == "__main__":

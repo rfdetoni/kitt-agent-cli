@@ -29,7 +29,7 @@ class ToolResult:
 class ToolRegistry:
     """Registry managing executable tools, schemas, and path-contained policy enforcement."""
 
-    def __init__(self, root_dir: str = "."):
+    def __init__(self, root_dir: str = ".", context_engine: ContextEngine | None = None):
         self.root_path = Path(root_dir).resolve()
         self.policy = PolicyEngine(root_dir=root_dir)
         self.path_policy = WorkspacePathPolicy(root_dir=root_dir)
@@ -38,7 +38,7 @@ class ToolRegistry:
         self.approval_manager = ApprovalManager()
         self.safe_python = SafePythonExecutor()
         self.process_runner = ProcessRunner(root_dir)
-        self.context_engine = ContextEngine()
+        self.context_engine = context_engine or ContextEngine()
         self.artifacts = None
         self.artifact_tools = None
         self.queue_service = None

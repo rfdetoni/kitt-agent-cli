@@ -32,6 +32,9 @@ class TestPrimeRuntime(unittest.TestCase):
     def test_runtime_composition_and_cli_contract(self):
         self.assertIs(self.runtime.processor.registry,self.runtime.registry)
         self.assertIs(self.runtime.processor.history_service,self.runtime.history)
+        self.assertIs(self.runtime.processor.context_engine,self.runtime.context_engine)
+        self.assertIs(self.runtime.registry.context_engine,self.runtime.context_engine)
+        self.assertIs(self.runtime.context_engine.index,self.runtime.repository_index)
         self.assertTrue(hasattr(self.runtime.processor,"arun_turn"))
 
     def test_session_tree_branch_selection(self):

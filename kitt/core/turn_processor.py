@@ -63,6 +63,7 @@ class TurnProcessor:
         compaction_service: Any = None,
         memory_service: Any = None,
         skill_manager: Any = None,
+        context_engine: Any = None,
         config: Optional[RuntimeConfig] = None,
         workspace_id: Optional[str] = None,
         enable_context_summary: bool = False,
@@ -74,7 +75,7 @@ class TurnProcessor:
             root_dir=root_dir, persistence_enabled=self.config.persistence_enabled)
         self.skill_manager = skill_manager or SkillManager(
             root_dir=root_dir, persistence_enabled=self.config.persistence_enabled)
-        self.context_engine = ContextEngine()
+        self.context_engine = context_engine or ContextEngine()
         self.context_resolver = ContextResolver(root_dir=root_dir)
         self.diff_parser = SearchReplaceParser()
         self.diff_applier = DiffApplier()

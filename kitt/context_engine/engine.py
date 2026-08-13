@@ -1,10 +1,7 @@
-import os
 import re
-import json
-import hashlib
 from pathlib import Path
-from typing import List, Dict, Set, Optional, Any
-from kitt.domain.entities import ContextBlock, TaskFocus, FileTags, Tag
+from typing import List
+from kitt.domain.entities import ContextBlock, TaskFocus
 from kitt.context_engine.parser import SymbolParser
 from kitt.context_engine.graph import ContextRanker
 
@@ -16,9 +13,10 @@ IGNORED_DIRS = {
 class ContextEngine:
     """Incremental Context Engine facade with mtime/hash caching and PageRank symbol graph integration."""
 
-    def __init__(self, persistence_enabled: bool = True):
+    def __init__(self, repository_index=None, persistence_enabled: bool = True):
         self.parser = SymbolParser()
         self.ranker = ContextRanker()
+        self.index = repository_index
         self.persistence_enabled = persistence_enabled
 
     def extract_task_focus(self, task_description: str) -> TaskFocus:
@@ -46,6 +44,25 @@ class ContextEngine:
         max_tokens: int = 2048,
         root_dir: str = "."
     ) -> List[ContextBlock]:
+        if self.index is not None:
+            self.index.build_or_update()
+            results = self.index.search_text(task_description, limit=20)
+            blocks: List[ContextBlock] = []
+            current_tokens = 0
+            seen_paths = set()
+            for result in results:
+                path = result.get("path")
+                content = result.get("content", "")
+                if not path or path in seen_paths:
+                    continue
+                seen_paths.add(path)
+                tokens = max(1, len(content) // 4)
+                if current_tokens + tokens > max_tokens:
+                    continue
+                blocks.append(ContextBlock(path=path, content=f"{path}:\n{content}", token_count=tokens))
+                current_tokens += tokens
+            return blocks
+
         root_path = Path(root_dir).resolve()
         focus = self.extract_task_focus(task_description)
         
