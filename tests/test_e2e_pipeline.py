@@ -146,6 +146,26 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertEqual(self.processor._without_thinking("<think>unfinished"), "")
         self.assertEqual(self.processor._without_thinking("reasoning</think>final"), "final")
 
+    def test_incomplete_lfm_thinking_shows_user_feedback(self):
+        class LfmClient:
+            profile = type("Profile", (), {"model": "lfm2.5-local"})()
+
+            def chat_stream(self, *args, **kwargs):
+                yield "<think>unfinished reasoning"
+
+        events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
+        self.assertIn("Não recebi uma resposta final", events[0][1].delta)
+
+    def test_incomplete_lfm_thinking_uses_final_answer_marker(self):
+        class LfmClient:
+            profile = type("Profile", (), {"model": "lfm2.5-local"})()
+
+            def chat_stream(self, *args, **kwargs):
+                yield "<think>reasoning without closing tag\nResposta final: resposta visível"
+
+        events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
+        self.assertEqual(events[0][1].delta, "resposta visível")
+
     def test_context_summary_fallback_is_persisted(self):
         class UnavailableContext:
             def chat(self, *args, **kwargs): raise RuntimeError("unavailable")

@@ -246,11 +246,31 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             response = response.rsplit("</think>", 1)[-1]
         return re.sub(r"<think>.*?(?:</think>|$)\s*", "", response, flags=re.DOTALL).strip()
 
+    @classmethod
+    def _visible_lfm_response(cls, response: str) -> str:
+        visible = cls._without_thinking(response)
+        if visible:
+            return visible
+        marker = re.search(
+            r"(?:resposta\s+final|final\s+answer|resposta|answer)\s*[:：]\s*(.+)\Z",
+            response,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if marker and marker.group(1).strip():
+            return marker.group(1).strip()
+        if "<think" in response.lower():
+            return (
+                "Não recebi uma resposta final do modelo; ele retornou apenas "
+                "raciocínio interno sem fechamento. Tente novamente ou selecione "
+                "um modelo que finalize a resposta."
+            )
+        return ""
+
     def _stream_execution_response(self, client: LLMClient, messages: List[Dict[str, str]], system_prompt: str, turn_id: str = ""):
         """Stream normal text while hiding an exact tool-call envelope from the UI."""
         profile = getattr(client, "profile", None)
         if "lfm" in getattr(profile, "model", "").lower():
-            full_response = self._without_thinking("".join(client.chat_stream(messages, system_prompt=system_prompt)))
+            full_response = self._visible_lfm_response("".join(client.chat_stream(messages, system_prompt=system_prompt)))
             if full_response:
                 yield full_response, TextDelta(delta=full_response)
             yield full_response, None

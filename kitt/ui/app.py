@@ -1227,6 +1227,11 @@ class KittUIApp:
 
     def _status_text(self):
         pct = min(100, self.state.tokens_used * 100 // max(1, self.state.context_window))
+        if self.state.is_thinking:
+            elapsed = max(0, int(time.time() - self.state.turn_started_at))
+            active = next((t for t in self.state.active_tasks if t.status == "running"), None)
+            detail = active.summary if active else "processando solicitação"
+            return f" {self.state.status_text} {elapsed}s | {detail[:48]} | context {pct}% "
         if self.state.width < 80:
             return f" {self.state.status_text} | {self.state.large_model[:16]} | {pct}% "
         return f" {self.state.workspace_name} | {self.state.status_text} | {self.state.large_model} | context {pct}% "

@@ -3,7 +3,7 @@ from unittest.mock import patch
 from kitt.ui.state import UIState, AgentTaskStep
 from kitt.ui.reducer import reduce_ui_event
 from kitt.core.turn_events import (
-    TurnCompleted, TurnFailed, ToolStarted, ToolCompleted,
+    TurnStarted, TurnCompleted, TurnFailed, ToolStarted, ToolCompleted,
     ThinkingStarted, ThinkingCompleted,
     ChildAgentSpawned, ChildAgentFinished, EditApplied
 )
@@ -57,9 +57,12 @@ class TestTUIVisualFeedback(unittest.TestCase):
 
     def test_thinking_started_and_completed_formatting(self):
         state = UIState()
+        reduce_ui_event(state, TurnStarted(turn_id="t1", conversation_id="c1", prompt="Avalie o projeto"))
         reduce_ui_event(state, ThinkingStarted())
         self.assertEqual(state.transcript[-1].text, "▸ Pensando...")
         self.assertEqual(state.transcript[-1].status, "running")
+        self.assertEqual(state.status_text, "THINKING")
+        self.assertIn("aguardando primeira resposta visível", state.active_tasks[0].summary)
 
         reduce_ui_event(state, ThinkingCompleted(duration_ms=5000, tokens=161))
         self.assertEqual(state.transcript[-1].text, "▸ Thought for 5s, 161 tokens")

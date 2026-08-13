@@ -61,9 +61,15 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
         state.init_turn_tasks(event.prompt)
         state.turn_started_at = time.time()
     elif isinstance(event, ThinkingStarted):
+        state.status_text = "THINKING"
         state.transcript.append(TranscriptBlock(
             f"thought-{len(state.transcript)+1}", "thought", "▸ Pensando...", "running",
         ))
+        core_task = next((t for t in state.active_tasks if t.id == "core" or t.kind == "core_agent"), None)
+        if core_task:
+            core_task.status = "running"
+            core_task.summary = "Modelo pensando; aguardando primeira resposta visível..."
+            core_task.progress = max(core_task.progress, 20)
     elif isinstance(event, ThinkingCompleted):
         for block in reversed(state.transcript):
             if block.kind == "thought" and block.status == "running":
@@ -75,6 +81,7 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
                 block.tokens = event.tokens
                 break
     elif isinstance(event, TextDelta):
+        state.status_text = "RESPONDING"
         delta = safe_text(event.delta)
         if state.transcript and state.transcript[-1].kind == "assistant" and state.transcript[-1].status == "streaming":
             state.transcript[-1].text += delta
