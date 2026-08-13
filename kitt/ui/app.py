@@ -574,7 +574,7 @@ class KittUIApp:
                 step = self.state.scanner_step + tk.scanner_phase
                 scan = DEFAULT_THEME.scanner_frame(step, 8)
                 items.append(f"{glyph} [{tag}:{tk.name[:14]}] [{scan}] {tk.progress}%")
-            return " " + " | ".join(items) + "  (press 'a' for dashboard)"
+            return " " + " | ".join(items) + "  (Ctrl+X A for dashboard)"
         else:
             done = [tk for tk in tasks if tk.status == "done"]
             err = [tk for tk in tasks if tk.status == "error"]

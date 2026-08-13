@@ -8,7 +8,7 @@ class StatusBarComponent:
         
         running = [tk for tk in state.active_tasks if tk.status == "running"]
         if len(running) > 1:
-            center = f"[{len(running)} AGENTES EM EXECUÇÃO — press 'a' for dashboard]"
+            center = f"[{len(running)} AGENTES EM EXECUÇÃO — Ctrl+X A for dashboard]"
         elif len(running) == 1:
             center = f"[{running[0].name}: {running[0].progress}%]"
         elif state.status_text.startswith("✔") or "COMPLETED" in state.status_text:
