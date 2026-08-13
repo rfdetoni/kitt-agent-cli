@@ -69,5 +69,5 @@ class MetricsCollector:
 
     def close(self):
         if not self._closed:
-            self._executor.shutdown(wait=True)
+            self._executor.shutdown(wait=False, cancel_futures=True)
             self._closed = True

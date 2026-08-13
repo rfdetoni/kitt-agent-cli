@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,7 +23,7 @@ class SessionPickerModel:
     async def reload(self, query: str = "") -> None:
         self.query = query
         try:
-            self.sessions = await asyncio.to_thread(self.runtime.history.list_history, 20, 0, query or None)
+            self.sessions = self.runtime.history.list_history(20, 0, query or None)
         except Exception:
             self.sessions = []
         self.selected_index = max(0, min(self.selected_index, max(0, len(self.sessions) - 1)))
@@ -52,7 +51,7 @@ class TimelineModel:
             self.turns = []
             return
         try:
-            self.turns = await asyncio.to_thread(self.runtime.history.list_turns, conversation_id)
+            self.turns = self.runtime.history.list_turns(conversation_id)
         except Exception:
             self.turns = []
         self.selected_index = max(0, min(self.selected_index, max(0, len(self.turns) - 1)))
@@ -78,7 +77,7 @@ class DiffViewerModel:
                 return res.stdout or "No uncommitted changes."
             except Exception as exc:
                 return f"Failed to get diff: {exc}"
-        self.diff_text = await asyncio.to_thread(_get_diff)
+        self.diff_text = _get_diff()
 
     def scroll(self, delta: int) -> None:
         lines = self.diff_text.splitlines()

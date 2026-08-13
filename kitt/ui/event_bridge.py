@@ -59,11 +59,14 @@ class TurnEventBridge:
             self._queue.put((gen, _END))
 
     async def _consume(self, gen: int) -> None:
-        loop = asyncio.get_running_loop()
         pending_delta = ""
         try:
             while True:
-                raw = await loop.run_in_executor(None, self._queue.get)
+                try:
+                    raw = self._queue.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.01)
+                    continue
                 if not isinstance(raw, tuple) or len(raw) != 2:
                     continue
                 item_gen, item = raw
@@ -220,4 +223,4 @@ class TurnEventBridge:
                 await asyncio.wait_for(asyncio.shield(self._producer_future), timeout)
             except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
                 pass
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        self._executor.shutdown(wait=False, cancel_futures=True)

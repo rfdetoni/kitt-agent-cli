@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
 import json
+import queue
 import re
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -111,35 +113,36 @@ class TurnProcessor:
 
     async def arun_turn(self, cmd: TurnCommand):
         """Bridge the blocking providers to asyncio without buffering the stream."""
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+        event_queue: queue.Queue = queue.Queue(maxsize=64)
         sentinel = object()
-        produced = False
+        stop = threading.Event()
 
         def produce():
-            nonlocal produced
-            produced = True
             try:
                 for event in self.run_turn(cmd):
-                    future = asyncio.run_coroutine_threadsafe(queue.put(event), loop)
-                    future.result()
+                    if stop.is_set():
+                        break
+                    event_queue.put(event)
+            except BaseException as exc:
+                if not stop.is_set():
+                    event_queue.put(TurnFailed(error=str(exc)))
             finally:
-                asyncio.run_coroutine_threadsafe(queue.put(sentinel), loop).result()
+                if not stop.is_set():
+                    event_queue.put(sentinel)
 
-        producer = asyncio.create_task(asyncio.to_thread(produce))
+        threading.Thread(target=produce, daemon=True).start()
         try:
             while True:
-                item = await queue.get()
+                try:
+                    item = event_queue.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.01)
+                    continue
                 if item is sentinel:
                     break
                 yield item
         finally:
-            # Cancel the producer if the consumer abandons the stream.
-            producer.cancel()
-            try:
-                await asyncio.wait_for(producer, timeout=5.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+            stop.set()
 
     def _history_context(self, conversation_id: str, max_messages: int = 12,
                          exclude_prompt: Optional[str] = None) -> str:

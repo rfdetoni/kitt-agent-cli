@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import queue
 import sys
 import threading
 
@@ -11,20 +12,23 @@ from kitt.ui.theme import DEFAULT_THEME
 
 
 async def _stream_iterator(iterator):
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[object] = asyncio.Queue()
+    event_queue: queue.Queue = queue.Queue(maxsize=64)
     sentinel = object()
 
     def produce():
         try:
             for item in iterator:
-                loop.call_soon_threadsafe(queue.put_nowait, item)
+                event_queue.put(item)
         finally:
-            loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+            event_queue.put(sentinel)
 
     threading.Thread(target=produce, daemon=True).start()
     while True:
-        item = await queue.get()
+        try:
+            item = event_queue.get_nowait()
+        except queue.Empty:
+            await asyncio.sleep(0.01)
+            continue
         if item is sentinel:
             break
         yield item

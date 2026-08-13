@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import functools
 import json
 import os
 import shlex
@@ -37,6 +39,7 @@ class KittUIApp:
         self.application = None
         self.bridge = None
         self._animation_task = None
+        self._blocking_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="kitt-ui-blocking")
         self._shutdown = False
         self.palette_index = 0
         self.focus_stack: list[OverlayFrame] = []
@@ -47,6 +50,11 @@ class KittUIApp:
         self.model_setup_model = ModelSetupModel()
 
         self._build_controls()
+
+    async def _run_blocking(self, func, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        call = functools.partial(func, *args, **kwargs)
+        return await loop.run_in_executor(self._blocking_executor, call)
 
     def _init_models_from_runtime(self) -> None:
         try:
@@ -217,7 +225,7 @@ class KittUIApp:
                     active.add(skill_name.strip())
                 else:
                     active.discard(skill_name.strip())
-                await asyncio.to_thread(self.runtime.skills.set_active_skills, sorted(active))
+                await self._run_blocking(self.runtime.skills.set_active_skills, sorted(active))
                 self._show_result(f"Skill {action}d: {skill_name.strip()}")
             else:
                 body = "\n".join(f"  {'[x]' if s.name in active else '[ ]'} {s.name} (v{s.version}) — {s.author}" for s in skills) if skills else "  No custom skills installed."
@@ -235,7 +243,7 @@ class KittUIApp:
             await self._show_history(arg)
         elif found.id in {"resume"}:
             target = arg or "1"
-            conversation = await asyncio.to_thread(self.runtime.history.resume_conversation, target)
+            conversation = await self._run_blocking(self.runtime.history.resume_conversation, target)
             if conversation:
                 await self._load_conversation(conversation)
                 self._show_result(f"Resumed: {conversation['title']}")
@@ -245,21 +253,21 @@ class KittUIApp:
             conversation = self.runtime.history.get_or_create_active()
             self._show_result(f"Active conversation\n{conversation['id']}\n{conversation['title']}")
         elif found.id == "fork":
-            conversation = await asyncio.to_thread(self.runtime.history.fork_conversation, title_suffix=f" ({arg})" if arg else " (Fork)")
+            conversation = await self._run_blocking(self.runtime.history.fork_conversation, title_suffix=f" ({arg})" if arg else " (Fork)")
             self._show_result(f"Forked: {conversation['title']}")
         elif found.id == "export_conversation":
             fmt = "json" if "json" in arg.lower() else "md"
-            self._show_result(await asyncio.to_thread(self.runtime.history.export_conversation, fmt=fmt))
+            self._show_result(await self._run_blocking(self.runtime.history.export_conversation, fmt=fmt))
         elif found.id == "memory":
             self._show_result(self.runtime.memory.get_memory_context() or "No memory entries.")
         elif found.id == "remember":
             if arg:
-                await asyncio.to_thread(self.runtime.memory.add_project_memory, arg)
+                await self._run_blocking(self.runtime.memory.add_project_memory, arg)
                 self._show_result(f"Remembered: {arg}")
             else:
                 self._show_result("Usage: /remember <rule or guideline>")
         elif found.id == "clear_memory":
-            await asyncio.to_thread(self.runtime.memory.clear_project_memory)
+            await self._run_blocking(self.runtime.memory.clear_project_memory)
             self._show_result("Project memory cleared.")
         elif found.id == "skills":
             skills = self.runtime.skills.list_skills()
@@ -269,12 +277,12 @@ class KittUIApp:
                 self._show_result("Usage: /skill-install <github/repo or URL>")
             else:
                 try:
-                    skill = await asyncio.to_thread(self.runtime.skills.install_from_git, arg)
+                    skill = await self._run_blocking(self.runtime.skills.install_from_git, arg)
                     self._show_result(f"Installed: {skill.name} v{skill.version}")
                 except Exception as exc:
                     self._show_result(f"Install failed: {exc}")
         elif found.id == "skill_remove":
-            removed = await asyncio.to_thread(self.runtime.skills.remove_skill, arg) if arg else False
+            removed = await self._run_blocking(self.runtime.skills.remove_skill, arg) if arg else False
             self._show_result("Usage: /skill-remove <skill_name>" if not arg else ("Removed." if removed else "Skill not found."))
         elif found.id == "files":
             self._show_result("\n".join(sorted(self.explicit_files)) or "No explicit files added.")
@@ -294,11 +302,11 @@ class KittUIApp:
             self.explicit_files.difference_update(names)
             self._show_result(f"Dropped: {', '.join(sorted(removed))}" if removed else "No matching context files.")
         elif found.id == "repomap":
-            blocks = await asyncio.to_thread(self.runtime.processor.context_engine.get_relevant_context, "", 1024, str(self.runtime.canonical_root))
+            blocks = await self._run_blocking(self.runtime.processor.context_engine.get_relevant_context, "", 1024, str(self.runtime.canonical_root))
             self._show_result("\n\n".join(block.content for block in blocks) or "Repository map empty.")
         elif found.id == "doctor":
             from kitt.cli.doctor import DoctorCheck
-            results = await asyncio.to_thread(DoctorCheck(str(self.runtime.canonical_root)).run_diagnostics)
+            results = await self._run_blocking(DoctorCheck(str(self.runtime.canonical_root)).run_diagnostics)
             self._show_result("\n".join(f"[{item['status']}] {item['name']}: {item['detail']}" for item in results))
         elif found.id == "diff":
             await self._open_diff_overlay()
@@ -306,7 +314,7 @@ class KittUIApp:
             snapshot = self.runtime.snapshot()
             self._show_result(f"Workspace: {snapshot.workspace_id}\nConversation: {snapshot.active_conversation_id}\nPending actions: {snapshot.pending_actions}\nQueued inputs: {snapshot.queued_inputs}")
         elif found.id == "stats":
-            stats = await asyncio.to_thread(self.runtime.history.repo.get_telemetry_stats)
+            stats = await self._run_blocking(self.runtime.history.repo.get_telemetry_stats)
             self._show_result(f"Turns: {stats['count']}  Input: {stats['input']}  Output: {stats['output']}  Saved: {stats['saved']}")
         elif found.id == "context_stats":
             config = self.runtime.config
@@ -320,14 +328,14 @@ class KittUIApp:
             self._show_result("\n".join(f"{r.approval_id[:8]} {r.tool_name} ({r.turn_id[:8]})\n  summary: {r.summary}" for r in pending) or "No approval requests.")
         elif found.id == "compact":
             conversation = self.runtime.history.get_or_create_active()
-            result = await asyncio.to_thread(self.runtime.compaction.compact, conversation["id"], 4)
+            result = await self._run_blocking(self.runtime.compaction.compact, conversation["id"], 4)
             self._show_result("History compacted." if result else "History already small.")
         elif found.id == "child":
             if not arg:
                 self._show_result("Usage: /child <task description>")
             else:
                 conversation = self.runtime.history.get_or_create_active()
-                child = await asyncio.to_thread(
+                child = await self._run_blocking(
                     self.runtime.children.spawn,
                     parent_conversation_id=conversation["id"], parent_turn_id="ui", task=arg,
                 )
@@ -381,7 +389,7 @@ class KittUIApp:
             else:
                 self._show_result(f"Usage: /{found.id} <prompt>")
         elif found.id == "undo":
-            changeset = await asyncio.to_thread(self.runtime.processor.diff_applier.tracker.revert_last_changeset)
+            changeset = await self._run_blocking(self.runtime.processor.diff_applier.tracker.revert_last_changeset)
             self._show_result(f"Reverted changeset {changeset.id}." if changeset else "No changeset to revert.")
         elif found.id == "workspace":
             if not arg:
@@ -475,7 +483,7 @@ class KittUIApp:
         )
         for task in tasks:
             router.config.routing[task] = profile_name
-        await asyncio.to_thread(router.save_config, self.state.workspace_path)
+        await self._run_blocking(router.save_config, self.state.workspace_path)
         self._init_models_from_runtime()
         self.state.add_toast(f"{role.title()} model: {provider}/{model}")
 
@@ -497,7 +505,7 @@ class KittUIApp:
             "antigravity": ["ag-pro", "ag-flash", "gemini-2.5-pro", "gemini-2.5-flash"],
         }
         if provider == "ollama":
-            return await asyncio.to_thread(ModelConfigurator(self.state.workspace_path).fetch_ollama_models, base_url)
+            return await self._run_blocking(ModelConfigurator(self.state.workspace_path).fetch_ollama_models, base_url)
         if provider == "lmstudio":
             def discover_lmstudio() -> list[str]:
                 request = urllib.request.Request(f"{base_url.rstrip('/')}/v1/models", headers={"User-Agent": "Kitt-CLI"})
@@ -507,7 +515,7 @@ class KittUIApp:
                     return [item["id"] for item in data.get("data", []) if item.get("id")]
                 except Exception:
                     return []
-            return await asyncio.to_thread(discover_lmstudio)
+            return await self._run_blocking(discover_lmstudio)
         return defaults.get(provider, ["default-model"])
 
     async def _prepare_model_setup(self, base_url: str | None = None) -> None:
@@ -597,7 +605,7 @@ class KittUIApp:
         self.state.append_message("system", safe_text(text)[:12000])
 
     async def _show_history(self, search: str = "") -> None:
-        conversations = await asyncio.to_thread(self.runtime.history.list_history, 20, 0, search or None)
+        conversations = await self._run_blocking(self.runtime.history.list_history, 20, 0, search or None)
         active = self.runtime.history.active_conversation
         active_id = active.get("id") if active else None
         self._show_result("\n".join(
@@ -607,11 +615,11 @@ class KittUIApp:
 
     async def _show_active_history(self) -> None:
         conversation = self.runtime.history.get_or_create_active()
-        messages = await asyncio.to_thread(self.runtime.history.repo.get_messages_for_conversation, conversation["id"])
+        messages = await self._run_blocking(self.runtime.history.repo.get_messages_for_conversation, conversation["id"])
         self._show_result("\n\n".join(f"{message['role'].upper()}: {message['content']}" for message in messages) or "No messages in active conversation.")
 
     async def _load_conversation(self, conversation: dict) -> None:
-        messages = await asyncio.to_thread(self.runtime.history.repo.get_messages_for_conversation, conversation["id"])
+        messages = await self._run_blocking(self.runtime.history.repo.get_messages_for_conversation, conversation["id"])
         self.state.active_conversation_id = conversation["id"]
         self.state.route = "session"
         self.state.transcript.clear()
@@ -623,7 +631,7 @@ class KittUIApp:
         self.state.active_conversation_id = conversation["id"]
         turn_id = f"ui-{uuid.uuid4().hex[:12]}"
         workspace_id = self.runtime.workspace_id
-        result = await asyncio.to_thread(
+        result = await self._run_blocking(
             self.runtime.registry.execute_tool, tool_name, args,
             turn_id, conversation["id"], workspace_id,
         )
@@ -653,7 +661,7 @@ class KittUIApp:
             self._show_result(f"Directory not found: {raw_path}")
             return
         try:
-            new_runtime = await asyncio.to_thread(self.runtime.switch_workspace, str(target))
+            new_runtime = await self._run_blocking(self.runtime.switch_workspace, str(target))
         except Exception as exc:
             self._show_result(f"Workspace switch failed: {exc}")
             return
@@ -717,7 +725,7 @@ class KittUIApp:
                 self.state.pending_approvals.pop(0)
                 self.close_overlay()
                 if pending.get("direct_tool"):
-                    result = await asyncio.to_thread(
+                    result = await self._run_blocking(
                         self.runtime.registry.execute_tool,
                         pending["tool_name"], pending["args"], pending["turn_id"], pending["conversation_id"],
                         pending["workspace_id"], None, grant, pending["approval_id"], "USER",
@@ -1154,6 +1162,7 @@ class KittUIApp:
             await asyncio.gather(self._animation_task, return_exceptions=True)
         if self.bridge:
             await self.bridge.shutdown()
+        self._blocking_executor.shutdown(wait=False, cancel_futures=True)
 
     def _home_text(self):
         scanner = DEFAULT_THEME.scanner_frame(self.state.scanner_step, 22)
