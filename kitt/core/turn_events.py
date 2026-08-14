@@ -35,6 +35,9 @@ class ContextBuildCompleted(TurnEvent):
     index_scanned: int = 0
     index_updated: int = 0
     index_deleted: int = 0
+    freshness: str = ""
+    partial_reason: str = ""
+    schema_version: str = ""
 
 @dataclass
 class BudgetApplied(TurnEvent):

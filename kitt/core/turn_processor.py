@@ -444,6 +444,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     index_scanned=int(build_stats.get("scanned", 0)),
                     index_updated=int(build_stats.get("updated", 0)),
                     index_deleted=int(build_stats.get("deleted", 0)),
+                    freshness=str(build_stats.get("freshness", "")),
+                    partial_reason=str(build_stats.get("partial_reason", "")),
+                    schema_version=str(build_stats.get("schema_version", "")),
                 )
             if self.enable_context_summary:
                 sources = self._source_context_excerpt([block.path for block in context_blocks])

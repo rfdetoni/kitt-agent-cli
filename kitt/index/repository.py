@@ -8,6 +8,7 @@ import hashlib
 import time
 import re
 import threading
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -15,6 +16,9 @@ from kitt.index.schema import INDEX_SCHEMA_SQL, setup_fts5_tables
 from kitt.index.scanner import RepositoryScanner
 from kitt.index.graph import RepositoryGraph
 from kitt.context_engine.parser import SymbolParser
+
+INDEX_SCHEMA_VERSION = "2"
+PARSER_REGISTRY_VERSION = "symbol-parser-v1"
 
 
 class RepositoryIndex:
@@ -56,8 +60,31 @@ class RepositoryIndex:
             self._conn.executescript(INDEX_SCHEMA_SQL)
             self.has_fts5 = setup_fts5_tables(self._conn)
             with self._conn:
+                self._set_meta_locked("schema_version", INDEX_SCHEMA_VERSION)
+                self._set_meta_locked("parser_registry_version", PARSER_REGISTRY_VERSION)
                 self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('index_generation', '0')")
                 self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('state', 'EMPTY')")
+                self._set_meta_locked("workspace_identity", hashlib.sha256(str(self.root_path).encode("utf-8")).hexdigest()[:16])
+                self._set_meta_locked("capabilities", json.dumps(self._capabilities(), sort_keys=True))
+
+    def _capabilities(self) -> Dict[str, bool]:
+        return {
+            "fts5": self.has_fts5,
+            "git": (self.root_path / ".git").exists(),
+            "kittignore": (self.root_path / ".kittignore").exists(),
+            "stdlib_parser": True,
+        }
+
+    def _set_meta_locked(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT INTO index_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+    def metadata(self) -> Dict[str, str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT key, value FROM index_meta").fetchall()
+            return {row["key"]: row["value"] for row in rows}
 
     def index_generation(self) -> int:
         with self._lock:
@@ -120,12 +147,25 @@ class RepositoryIndex:
                 self._conn.execute(
                     "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
                 )
-            self._conn.execute("UPDATE index_meta SET value=? WHERE key='state'", ("READY" if len(files) < self.max_files else "PARTIAL",))
+            state = "READY" if len(files) < self.max_files else "PARTIAL"
+            partial_reason = "" if state == "READY" else f"file limit reached ({self.max_files})"
+            self._set_meta_locked("state", state)
+            self._set_meta_locked("partial_reason", partial_reason)
+            self._set_meta_locked("last_scan_at", str(time.time()))
 
             generation = int(self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()["value"])
-            state = self._conn.execute("SELECT value FROM index_meta WHERE key='state'").fetchone()["value"]
+            meta = self.metadata()
 
-        return {"scanned": len(files), "updated": updated_count, "deleted": len(stale), "generation": generation, "state": state}
+        return {
+            "scanned": len(files),
+            "updated": updated_count,
+            "deleted": len(stale),
+            "generation": generation,
+            "state": meta["state"],
+            "freshness": meta.get("last_scan_at", ""),
+            "partial_reason": meta.get("partial_reason", ""),
+            "schema_version": meta.get("schema_version", ""),
+        }
 
     def update_paths(self, paths: List[str]) -> Dict[str, int]:
         """Synchronously update known changed files without scanning the whole repository."""
@@ -150,10 +190,21 @@ class RepositoryIndex:
                 self._conn.execute(
                     "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
                 )
-                self._conn.execute("UPDATE index_meta SET value='READY' WHERE key='state'")
+                self._set_meta_locked("state", "READY")
+                self._set_meta_locked("partial_reason", "")
+                self._set_meta_locked("last_scan_at", str(time.time()))
             generation = int(self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()["value"])
-            state = self._conn.execute("SELECT value FROM index_meta WHERE key='state'").fetchone()["value"]
-        return {"scanned": len(paths), "updated": updated, "deleted": deleted, "generation": generation, "state": state}
+            meta = self.metadata()
+        return {
+            "scanned": len(paths),
+            "updated": updated,
+            "deleted": deleted,
+            "generation": generation,
+            "state": meta["state"],
+            "freshness": meta.get("last_scan_at", ""),
+            "partial_reason": meta.get("partial_reason", ""),
+            "schema_version": meta.get("schema_version", ""),
+        }
 
     def _index_modules(self, modules: List[Dict[str, str]]) -> None:
         with self._lock, self._conn:

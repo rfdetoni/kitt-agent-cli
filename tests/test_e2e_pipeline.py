@@ -66,6 +66,8 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertGreater(event.total_tokens, 0)
         self.assertGreaterEqual(event.index_generation, 1)
         self.assertEqual(event.index_state, "READY")
+        self.assertEqual(event.schema_version, "2")
+        self.assertTrue(event.freshness)
         index.close()
 
     def test_working_set_is_added_to_later_project_context(self):

@@ -69,6 +69,23 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertGreaterEqual(len(results), 1)
             index.close()
 
+    def test_repository_index_records_versioned_metadata_and_capabilities(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / ".kittignore").write_text("ignored.py\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+
+            stats = index.build_or_update()
+            meta = index.metadata()
+
+            self.assertEqual(meta["schema_version"], "2")
+            self.assertEqual(meta["parser_registry_version"], "symbol-parser-v1")
+            self.assertIn("workspace_identity", meta)
+            self.assertIn("capabilities", meta)
+            self.assertEqual(stats["schema_version"], "2")
+            self.assertIn("freshness", stats)
+            self.assertIn("partial_reason", stats)
+            index.close()
+
     def test_repository_index_fts_handles_natural_language_and_tail_content(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "app.py"
