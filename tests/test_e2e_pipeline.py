@@ -68,6 +68,36 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertEqual(event.index_state, "READY")
         index.close()
 
+    def test_working_set_is_added_to_later_project_context(self):
+        from kitt.core.turn_command import TurnCommand
+
+        captured = {}
+        self.processor.enable_context_summary = True
+        self.processor.working_set.touch_paths("conv-working", ["note.txt"], "turn-prev", weight=2.0, kind="read_file")
+
+        class ExecutionClient:
+            def chat_stream(self, messages, system_prompt=None):
+                captured["system_prompt"] = system_prompt
+                yield "done"
+
+        self.processor.execution_client = ExecutionClient()
+        list(self.processor.run_turn(TurnCommand("conv-working", "analise este projeto")))
+
+        self.assertIn("Working Set:", captured["system_prompt"])
+        self.assertIn("note.txt", captured["system_prompt"])
+
+    def test_tool_output_is_trimmed_to_execution_budget(self):
+        profile = type("Profile", (), {"context_window": 900, "max_output_tokens": 300})()
+        output = self.processor._fit_tool_output(
+            "system",
+            [{"role": "user", "content": "x" * 1200}],
+            "y" * 4000,
+            profile,
+        )
+
+        self.assertLess(len(output), 4000)
+        self.assertIn("[truncated]", output)
+
     def test_simple_ask_skips_repository_context(self):
         class FakeExecutionClient:
             def chat_stream(self, *args, **kwargs):

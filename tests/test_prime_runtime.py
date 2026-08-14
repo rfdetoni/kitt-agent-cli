@@ -33,6 +33,7 @@ class TestPrimeRuntime(unittest.TestCase):
         self.assertIs(self.runtime.processor.registry,self.runtime.registry)
         self.assertIs(self.runtime.processor.history_service,self.runtime.history)
         self.assertIs(self.runtime.processor.context_engine,self.runtime.context_engine)
+        self.assertIs(self.runtime.processor.working_set, self.runtime.working_set)
         self.assertIs(self.runtime.registry.context_engine,self.runtime.context_engine)
         self.assertIs(self.runtime.context_engine.index,self.runtime.repository_index)
         self.assertTrue(hasattr(self.runtime.processor,"arun_turn"))

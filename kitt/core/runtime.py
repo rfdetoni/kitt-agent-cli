@@ -10,6 +10,7 @@ from kitt.children.repository import ChildRepository
 from kitt.compaction.service import CompactionService
 from kitt.context_engine.indexer import LocalFileIndexer
 from kitt.context_engine.engine import ContextEngine
+from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.core.event_bus import EventBus
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_processor import TurnProcessor
@@ -42,6 +43,7 @@ class KittRuntime:
     approval: ApprovalManager
     repository_index: RepositoryIndex
     context_engine: ContextEngine
+    working_set: ConversationWorkingSetStore
     registry: ToolRegistry
     skills: SkillManager
     harness: HarnessService
@@ -87,6 +89,7 @@ class KittRuntime:
 
         repository_index = RepositoryIndex(canon_root, in_memory=in_memory, max_files=config.max_index_files)
         context_engine = ContextEngine(repository_index=repository_index, persistence_enabled=persistence_enabled)
+        working_set = ConversationWorkingSetStore(canon_root, persistence_enabled=persistence_enabled)
         registry = ToolRegistry(canon_root, context_engine=context_engine)
         registry.policy = policy
         registry.approval_manager = approval
@@ -135,6 +138,7 @@ class KittRuntime:
             memory_service=memory,
             skill_manager=skills,
             context_engine=context_engine,
+            working_set=working_set,
             event_callback=lambda name, payload: events.publish(name, payload),
             config=config,
             enable_context_summary=True,
@@ -149,7 +153,7 @@ class KittRuntime:
 
         runtime = cls(
             config, db, history, artifacts, metrics, policy, approval, repository_index,
-            context_engine, registry, skills,
+            context_engine, working_set, registry, skills,
             harness, goals, queue, children, compaction, tree, events, processor,
             memory, indexer, autonomy_store,
         )

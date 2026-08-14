@@ -16,6 +16,7 @@ from kitt.router.policy import RoutingPolicy
 from kitt.memory.memory_manager import MemoryManager
 from kitt.skills.skill_manager import SkillManager
 from kitt.context_engine.engine import ContextEngine
+from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.context_filter.semantic_filter import SemanticFilter
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
@@ -67,6 +68,7 @@ class TurnProcessor:
         memory_service: Any = None,
         skill_manager: Any = None,
         context_engine: Any = None,
+        working_set: Any = None,
         config: Optional[RuntimeConfig] = None,
         workspace_id: Optional[str] = None,
         enable_context_summary: bool = False,
@@ -79,6 +81,10 @@ class TurnProcessor:
         self.skill_manager = skill_manager or SkillManager(
             root_dir=root_dir, persistence_enabled=self.config.persistence_enabled)
         self.context_engine = context_engine or ContextEngine()
+        self.working_set = working_set or ConversationWorkingSetStore(
+            root_dir=root_dir,
+            persistence_enabled=self.config.persistence_enabled,
+        )
         self.context_resolver = ContextResolver(root_dir=root_dir)
         self.diff_parser = SearchReplaceParser()
         self.diff_applier = DiffApplier()
@@ -114,6 +120,25 @@ class TurnProcessor:
     def _emit(self, event_name: str, payload: Dict[str, Any]):
         if self.event_callback and not self._closed:
             self.event_callback(event_name, payload)
+
+    @staticmethod
+    def _paths_from_tool(tool_name: str, tool_args: Dict[str, Any], tool_result: Any = None) -> List[str]:
+        if tool_name in {"read_file", "write_file"}:
+            path = tool_args.get("path") or tool_args.get("file")
+            return [path] if path else []
+        if tool_name == "apply_patch":
+            edit_result = getattr(tool_result, "metadata", {}).get("edit_result") if tool_result else None
+            if edit_result:
+                return list(edit_result.applied_files + edit_result.created_files)
+        return []
+
+    def _fit_tool_output(self, system_prompt: str, messages: List[Dict[str, str]], output: str, profile) -> str:
+        max_allowed = max(500, profile.context_window - profile.max_output_tokens)
+        used = TokenCounter.count_tokens(system_prompt) + sum(TokenCounter.count_tokens(m.get("content", "")) for m in messages)
+        remaining = max(64, max_allowed - used - 80)
+        if TokenCounter.count_tokens(output) <= remaining:
+            return output
+        return PromptBudget(profile.context_window, profile.max_output_tokens)._truncate_to_tokens(output, remaining)
 
     def _routing_capabilities(self) -> Dict[str, ModelCapabilities]:
         local_backends = {"ollama", "lmstudio", "antigravity", "local"}
@@ -363,6 +388,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 plan.enabled_tools = [tool for tool in plan.enabled_tools if tool == "python_compute"] if "calculate" in task.actions else []
             self.session_state.last_task = task
             self.session_state.last_plan = plan
+            if cmd.explicit_files:
+                self.working_set.touch_paths(cmd.conversation_id, cmd.explicit_files, cmd.turn_id, weight=2.0, kind="explicit")
 
             self._emit("FilterCompleted", {"filter_res": filter_res})
             yield FilterCompleted(filter_res=filter_res)
@@ -395,8 +422,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
             # 3. Context Engine & AGENTS.md retrieval
             needs_project_context = bool(plan.enabled_tools) or (self.enable_context_summary and self._needs_project_context(task, cmd.prompt))
+            working_paths = self.working_set.paths(cmd.conversation_id)
+            context_query = " ".join([cmd.prompt, *working_paths])
             context_blocks = (
-                self.context_engine.get_relevant_context(cmd.prompt, max_tokens=2048, root_dir=str(self.root_path))
+                self.context_engine.get_relevant_context(context_query, max_tokens=2048, root_dir=str(self.root_path))
                 if needs_project_context else []
             )
             context_map_str = "\n\n".join(b.content for b in context_blocks)
@@ -428,6 +457,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 ) if part)
             if self.enable_context_summary:
                 context_map_str = self._summarize_project_context(sf_client, cmd.prompt, context_map_str)
+            working_context = self.working_set.context(cmd.conversation_id)
+            if working_context:
+                context_map_str = f"Working Set:\n{working_context}\n\n{context_map_str}".strip()
 
             explicit_items = []
             if cmd.explicit_files:
@@ -651,6 +683,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 if not tool_result.success and tool_result.error and "Execution denied by PolicyEngine" in tool_result.error:
                     yield TurnBlocked(reason=tool_result.error)
                     return
+                touched_paths = self._paths_from_tool(tool_name, tool_args, tool_result)
+                if touched_paths:
+                    self.working_set.touch_paths(
+                        cmd.conversation_id,
+                        touched_paths,
+                        cmd.turn_id,
+                        weight=2.0 if tool_name in {"write_file", "apply_patch"} else 1.0,
+                        kind=tool_name,
+                        content_hash=str(tool_result.metadata.get("content_hash", "")),
+                    )
                 yield ToolCompleted(
                     tool_name=tool_name,
                     success=tool_result.success,
@@ -673,6 +715,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                         turn_id=cmd.turn_id
                     )
                     output_str = f"[Large tool output saved to Artifact ID {art.id} ({len(output_str)} bytes). Use artifact_read to inspect.]"
+                output_str = self._fit_tool_output(request.system_prompt, execution_messages, output_str, exe_profile)
 
                 execution_messages.append({
                     "role": "user",
@@ -746,6 +789,13 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 edit_result = self.diff_applier.apply(blocks, root_dir=str(self.root_path), allow_overwrite_existing=True)
                 if edit_result.success:
                     self.session_state.last_changeset = edit_result.changeset
+                    self.working_set.touch_paths(
+                        cmd.conversation_id,
+                        edit_result.applied_files + edit_result.created_files,
+                        cmd.turn_id,
+                        weight=2.0,
+                        kind="apply_patch",
+                    )
                     self._emit("EditApplied", {"applied": edit_result.applied_files, "created": edit_result.created_files})
                     yield EditApplied(applied_files=edit_result.applied_files, created_files=edit_result.created_files)
 
@@ -856,6 +906,14 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         )
 
         if res.success:
+            self.working_set.touch_paths(
+                pa.conversation_id,
+                self._paths_from_tool(pa.tool_name, pa.normalized_args, res),
+                turn_id,
+                weight=2.0,
+                kind=pa.tool_name,
+                content_hash=str(res.metadata.get("content_hash", "")),
+            )
             if pa.tool_name == "apply_patch":
                 # For patch, we extract specific files applied for emitting
                 edit_result = res.metadata.get("edit_result")

@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 
 from kitt.history.context_builder import HistoryContextBuilder
+from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.memory.memory_manager import MemoryManager
 
 
@@ -31,6 +32,20 @@ class TestContextSources(unittest.TestCase):
         self.assertIn("small old", context)
         self.assertIn("small new", context)
         self.assertNotIn("x" * 100, context)
+
+    def test_working_set_tracks_recent_paths_by_conversation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ConversationWorkingSetStore(tmpdir, persistence_enabled=True)
+            store.touch_paths("conv-1", ["a.py", "b.py"], "turn-1", weight=1.0, kind="read_file")
+            store.touch_paths("conv-1", ["a.py"], "turn-2", weight=2.0, kind="apply_patch")
+
+            loaded = ConversationWorkingSetStore(tmpdir, persistence_enabled=True)
+            paths = loaded.paths("conv-1")
+            context = loaded.context("conv-1")
+
+            self.assertEqual(paths[0], "a.py")
+            self.assertIn("a.py (apply_patch", context)
+            self.assertNotIn("conv-2", context)
 
 
 if __name__ == "__main__":
