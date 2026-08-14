@@ -49,6 +49,14 @@ class HybridRetrievalPipeline:
                         text = ""
                     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
                     est = max(1, len(text) // 4)
+                    representation = "BODY"
+                    reason = "Explicit file requested by user"
+                    if est > max_tokens:
+                        suffix = "\n... [truncated explicit file]"
+                        text = text[: max(0, max_tokens * 4 - len(suffix))] + suffix
+                        est = max(1, len(text) // 4)
+                        representation = "TARGETED_SLICE"
+                        reason = "Explicit file requested by user; truncated to fit budget"
                     candidates.append(ContextCandidate(
                         candidate_id=f"file:{rel}",
                         source_type="file",
@@ -63,8 +71,8 @@ class HybridRetrievalPipeline:
                         mandatory=True,
                         trust_level="WORKSPACE_DATA",
                         dependencies=(),
-                        selection_reason="Explicit file requested by user",
-                        representation="BODY",
+                        selection_reason=reason,
+                        representation=representation,
                         content=text
                     ))
 

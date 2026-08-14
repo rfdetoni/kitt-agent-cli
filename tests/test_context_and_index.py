@@ -275,5 +275,24 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertIn("Exact symbol match", selected[0].selection_reason)
             index.close()
 
+    def test_retrieval_keeps_large_explicit_file_as_truncated_slice(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "large.py").write_text("def target():\n    pass\n" + ("x = 1\n" * 1000), encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            selected = HybridRetrievalPipeline(index).retrieve(
+                "fix large.py",
+                explicit_files={"large.py"},
+                max_tokens=200,
+            )
+
+            self.assertTrue(selected)
+            self.assertEqual(selected[0].path, "large.py")
+            self.assertEqual(selected[0].representation, "TARGETED_SLICE")
+            self.assertIn("[truncated explicit file]", selected[0].content)
+            index.close()
+
 if __name__ == "__main__":
     unittest.main()
