@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import hashlib
+import subprocess
 from pathlib import Path
 from typing import List, Set, Dict, Any, Optional
 
@@ -160,6 +161,33 @@ class HybridRetrievalPipeline:
                 content=text,
             ))
 
+        if self._wants_git_focus(prompt):
+            for path in self._git_focus_paths():
+                if any(c.path == path for c in candidates):
+                    continue
+                row = self._first_chunk(path)
+                if not row:
+                    continue
+                text = row["content"]
+                candidates.append(ContextCandidate(
+                    candidate_id=f"git:{path}",
+                    source_type="file",
+                    path=row["path"],
+                    start_line=row["start_line"],
+                    end_line=row["end_line"],
+                    content_hash=row["content_hash"],
+                    estimated_tokens=max(1, len(text) // 4),
+                    relevance=0.75,
+                    confidence=0.85,
+                    freshness=1.0,
+                    mandatory=False,
+                    trust_level="WORKSPACE_DATA",
+                    dependencies=(),
+                    selection_reason="Git status focus",
+                    representation="SKELETON",
+                    content=text,
+                ))
+
         # Project-overview fallback: bounded catalog slices, not whole repo.
         if not candidates and any(term in prompt.lower() for term in ("projeto", "project", "repo", "repository")):
             with self.index._lock:
@@ -290,3 +318,35 @@ class HybridRetrievalPipeline:
                 tuple(candidates),
             ).fetchall()
         return [row["path"] for row in rows]
+
+    @staticmethod
+    def _wants_git_focus(prompt: str) -> bool:
+        prompt_l = prompt.lower()
+        return any(term in prompt_l for term in ("git", "diff", "alterado", "alterados", "mudança", "mudanças", "changed"))
+
+    def _git_focus_paths(self, limit: int = 20) -> List[str]:
+        try:
+            res = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(self.index.root_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2,
+            )
+        except Exception:
+            return []
+        if res.returncode != 0:
+            return []
+        paths = []
+        for line in res.stdout.splitlines():
+            if not line or len(line) < 4:
+                continue
+            path = line[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path and not path.startswith(".kitt/"):
+                paths.append(path)
+            if len(paths) >= limit:
+                break
+        return paths

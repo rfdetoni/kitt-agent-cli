@@ -1,3 +1,4 @@
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -424,6 +425,21 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertTrue(selected)
             self.assertEqual(selected[0].path, "recent.py")
             self.assertIn("working set", selected[0].selection_reason.lower())
+            index.close()
+
+    def test_retrieval_includes_git_status_focus(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            subprocess.run(["git", "init"], cwd=tmpdir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            (root / "changed.py").write_text("def changed_context():\n    return 42\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            selected = HybridRetrievalPipeline(index).retrieve("analise arquivos alterados no git", max_tokens=1000)
+
+            self.assertTrue(selected)
+            self.assertEqual(selected[0].path, "changed.py")
+            self.assertEqual(selected[0].selection_reason, "Git status focus")
             index.close()
 
     def test_retrieval_includes_paired_tests_when_requested(self):
