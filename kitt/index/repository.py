@@ -53,6 +53,7 @@ class RepositoryIndex:
         self.graph = RepositoryGraph()
         self.parser = SymbolParser()
         self._lock = threading.RLock()
+        self.last_search_error = ""
         self._init_db()
 
     def _init_db(self) -> None:
@@ -399,6 +400,7 @@ class RepositoryIndex:
         """Search code chunks using FTS5 or fallback lexical query."""
         with self._lock:
             results = []
+            self.last_search_error = ""
             if self.has_fts5:
                 try:
                     fts_query = self._fts_query(query)
@@ -423,12 +425,12 @@ class RepositoryIndex:
                         })
                     return results
                 except sqlite3.Error as exc:
-                    results.append({"path": "", "content": "", "method": "fts5_error", "error": str(exc)})
+                    self.last_search_error = f"fts5_error: {exc}"
 
             # Lexical fallback
             terms = self._query_terms(query)
             if not terms:
-                return [r for r in results if r.get("path")]
+                return []
             where = " AND ".join("c.content LIKE ?" for _ in terms)
             rows = self._conn.execute(
                 f"""

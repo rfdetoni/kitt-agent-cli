@@ -125,6 +125,24 @@ class TestContextAndIndex(unittest.TestCase):
                 self.assertEqual(results[0]["method"], "fts5")
             reopened.close()
 
+    def test_repository_index_reports_fts_error_and_uses_lexical_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text("def fallback_symbol():\n    return 1\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+            if not index.has_fts5:
+                index.close()
+                return
+            index._conn.execute("DROP TABLE fts_chunks")
+
+            results = index.search_text("fallback symbol")
+
+            self.assertTrue(results)
+            self.assertEqual(results[0]["method"], "lexical")
+            self.assertIn("fts5_error", index.last_search_error)
+            index.close()
+
     def test_repository_index_update_paths_refreshes_single_changed_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "app.py"
