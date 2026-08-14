@@ -151,6 +151,28 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertGreater(counts["chunks"], 1)
             index.close()
 
+    def test_repository_index_records_python_qualified_names_and_end_lines(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text(
+                "class Service:\n"
+                "    def run(self, value: int) -> int:\n"
+                "        return value + 1\n",
+                encoding="utf-8",
+            )
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            row = index.find_symbol_location("Service.run")
+
+            self.assertIsNotNone(row)
+            self.assertEqual(row["path"], "app.py")
+            self.assertEqual(row["symbol"], "run")
+            self.assertEqual(row["qualified_name"], "Service.run")
+            self.assertEqual(row["start_line"], 2)
+            self.assertEqual(row["end_line"], 3)
+            index.close()
+
     def test_repository_index_persistent_fts_survives_reopen(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "app.py"

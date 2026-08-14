@@ -71,6 +71,8 @@ class Tag:
     line: int
     signature: str
     sub_kind: Optional[str] = None
+    end_line: Optional[int] = None
+    qualified_name: Optional[str] = None
 
 @dataclass
 class FileTags:

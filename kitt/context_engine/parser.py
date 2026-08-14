@@ -60,15 +60,60 @@ class SymbolParser:
         tags: List[Tag] = []
         try:
             tree = ast.parse(content)
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    sig = f"def {node.name}(...)"
-                    tags.append(Tag(kind='def', name=node.name, line=node.lineno, signature=sig, sub_kind='function'))
-                elif isinstance(node, ast.ClassDef):
-                    sig = f"class {node.name}:"
-                    tags.append(Tag(kind='def', name=node.name, line=node.lineno, signature=sig, sub_kind='class'))
-                elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                    tags.append(Tag(kind='ref', name=node.id, line=node.lineno, signature=node.id, sub_kind='ref'))
+
+            class Visitor(ast.NodeVisitor):
+                def __init__(self):
+                    self.stack: List[str] = []
+
+                def _qualname(self, name: str) -> str:
+                    return ".".join([*self.stack, name]) if self.stack else name
+
+                @staticmethod
+                def _args(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+                    args = [arg.arg for arg in node.args.posonlyargs + node.args.args]
+                    if node.args.vararg:
+                        args.append("*" + node.args.vararg.arg)
+                    args.extend(arg.arg for arg in node.args.kwonlyargs)
+                    if node.args.kwarg:
+                        args.append("**" + node.args.kwarg.arg)
+                    return ", ".join(args)
+
+                def visit_ClassDef(self, node: ast.ClassDef):
+                    qualname = self._qualname(node.name)
+                    bases = ", ".join(ast.unparse(base) for base in node.bases) if node.bases else ""
+                    sig = f"class {qualname}" + (f"({bases}):" if bases else ":")
+                    tags.append(Tag(
+                        kind='def', name=node.name, line=node.lineno, signature=sig, sub_kind='class',
+                        end_line=getattr(node, "end_lineno", node.lineno), qualified_name=qualname,
+                    ))
+                    self.stack.append(node.name)
+                    self.generic_visit(node)
+                    self.stack.pop()
+
+                def visit_FunctionDef(self, node: ast.FunctionDef):
+                    self._function(node, async_def=False)
+
+                def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+                    self._function(node, async_def=True)
+
+                def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, async_def: bool):
+                    qualname = self._qualname(node.name)
+                    prefix = "async def" if async_def else "def"
+                    returns = f" -> {ast.unparse(node.returns)}" if node.returns else ""
+                    sig = f"{prefix} {qualname}({self._args(node)}){returns}"
+                    tags.append(Tag(
+                        kind='def', name=node.name, line=node.lineno, signature=sig, sub_kind='function',
+                        end_line=getattr(node, "end_lineno", node.lineno), qualified_name=qualname,
+                    ))
+                    self.stack.append(node.name)
+                    self.generic_visit(node)
+                    self.stack.pop()
+
+                def visit_Name(self, node: ast.Name):
+                    if isinstance(node.ctx, ast.Load):
+                        tags.append(Tag(kind='ref', name=node.id, line=node.lineno, signature=node.id, sub_kind='ref'))
+
+            Visitor().visit(tree)
         except SyntaxError:
             lines = content.splitlines()
             for idx, line in enumerate(lines, start=1):

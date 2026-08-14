@@ -281,7 +281,16 @@ class RepositoryIndex:
                             (file_id, name, qualified_name, kind, signature, start_line, end_line, symbol_hash)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (file_id, tag.name, tag.name, tag.sub_kind or "symbol", tag.signature, tag.line, tag.line, symbol_hash),
+                        (
+                            file_id,
+                            tag.name,
+                            tag.qualified_name or tag.name,
+                            tag.sub_kind or "symbol",
+                            tag.signature,
+                            tag.line,
+                            tag.end_line or tag.line,
+                            symbol_hash,
+                        ),
                     )
                     symbol_names.append(tag.name)
                 elif tag.kind == "ref":
