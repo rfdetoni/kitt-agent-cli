@@ -19,7 +19,7 @@ class TestTurnEventsTiming(unittest.TestCase):
         processor.execution_client = fake_client
         processor.context_client = fake_client
 
-        cmd = TurnCommand(turn_id="turn-1", conversation_id="conv-1", prompt="read a.py and b.py")
+        cmd = TurnCommand(turn_id="turn-1", conversation_id="conv-1", prompt="KITT read file a.py and file b.py")
         events = list(processor.run_turn(cmd))
 
         tool_started_events = [e for e in events if isinstance(e, ToolStarted)]

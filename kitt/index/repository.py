@@ -7,6 +7,7 @@ import sqlite3
 import hashlib
 import time
 import re
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -38,124 +39,57 @@ class RepositoryIndex:
         self.has_fts5 = False
         self.graph = RepositoryGraph()
         self.parser = SymbolParser()
+        self._lock = threading.RLock()
         self._init_db()
 
     def _init_db(self) -> None:
-        self._conn.executescript(INDEX_SCHEMA_SQL)
-        self.has_fts5 = setup_fts5_tables(self._conn)
-        with self._conn:
-            self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('index_generation', '0')")
-            self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('state', 'EMPTY')")
+        with self._lock:
+            self._conn.executescript(INDEX_SCHEMA_SQL)
+            self.has_fts5 = setup_fts5_tables(self._conn)
+            with self._conn:
+                self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('index_generation', '0')")
+                self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('state', 'EMPTY')")
 
     def index_generation(self) -> int:
-        row = self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()
-        return int(row["value"]) if row else 0
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()
+            return int(row["value"]) if row else 0
 
     def close(self) -> None:
         try:
-            self._conn.close()
+            with self._lock:
+                self._conn.close()
         except Exception:
             pass
+
+    def __del__(self) -> None:
+        # ponytail: best-effort cleanup for test/tool instances without owner lifecycle.
+        self.close()
 
     def build_or_update(self) -> Dict[str, int]:
         """Incremental index update based on mtime_ns, size, and content_hash."""
         scanner = RepositoryScanner(self.root_path)
-        self._index_modules(scanner.detect_modules())
         files = scanner.scan_files(max_files=self.max_files)
         updated_count = 0
         seen_paths = set()
-        modules = self._module_rows()
 
-        with self._conn:
+        with self._lock, self._conn:
+            self._index_modules_locked(scanner.detect_modules())
+            modules = self._module_rows_locked()
             self._conn.execute("UPDATE index_meta SET value='BOOTSTRAP' WHERE key='state'")
             for p in files:
                 rel_path = str(p.relative_to(self.root_path))
                 seen_paths.add(rel_path)
                 stat = p.stat()
-                mtime_ns = stat.st_mtime_ns
-                size = stat.st_size
 
                 row = self._conn.execute(
                     "SELECT file_id, mtime_ns, size_bytes FROM files WHERE path=?", (rel_path,)
                 ).fetchone()
 
-                if row and row["mtime_ns"] == mtime_ns and row["size_bytes"] == size:
+                if row and row["mtime_ns"] == stat.st_mtime_ns and row["size_bytes"] == stat.st_size:
                     continue
 
-                try:
-                    content = p.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    content = ""
-
-                content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-                now = str(time.time())
-                module_id = self._module_id_for_path(rel_path, modules)
-
-                self._conn.execute(
-                    """
-                    INSERT INTO files (path, module_id, language, size_bytes, mtime_ns, content_hash, parser_version, indexed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'v1', ?)
-                    ON CONFLICT(path) DO UPDATE SET
-                        module_id=excluded.module_id,
-                        mtime_ns=excluded.mtime_ns,
-                        size_bytes=excluded.size_bytes,
-                        content_hash=excluded.content_hash,
-                        indexed_at=excluded.indexed_at
-                    """,
-                    (rel_path, module_id, p.suffix.lstrip('.'), size, mtime_ns, content_hash, now)
-                )
-                file_row = self._conn.execute("SELECT file_id FROM files WHERE path=?", (rel_path,)).fetchone()
-                file_id = file_row["file_id"]
-
-                # Extract basic symbols/chunks for FTS
-                self._conn.execute("DELETE FROM refs WHERE file_id=?", (file_id,))
-                self._conn.execute("DELETE FROM symbols WHERE file_id=?", (file_id,))
-                self._conn.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
-                if self.has_fts5:
-                    self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (file_id,))
-
-                tags = self.parser.extract_file_tags(p, rel_path)
-                symbol_names = []
-                if tags:
-                    for tag in tags.tags:
-                        if tag.kind == "def":
-                            symbol_hash = hashlib.sha256(f"{content_hash}:{tag.name}:{tag.line}".encode("utf-8")).hexdigest()
-                            self._conn.execute(
-                                """
-                                INSERT INTO symbols
-                                    (file_id, name, qualified_name, kind, signature, start_line, end_line, symbol_hash)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                                """,
-                                (
-                                    file_id, tag.name, tag.name, tag.sub_kind or "symbol",
-                                    tag.signature, tag.line, tag.line, symbol_hash,
-                                ),
-                            )
-                            symbol_names.append(tag.name)
-                        elif tag.kind == "ref":
-                            self._conn.execute(
-                                "INSERT INTO refs (file_id, target_name, kind, line) VALUES (?, ?, ?, ?)",
-                                (file_id, tag.name, tag.sub_kind or "ref", tag.line),
-                            )
-
-                lines = content.splitlines()
-                if not lines:
-                    lines = [""]
-                for start in range(0, len(lines), 200):
-                    chunk_lines = lines[start:start + 200]
-                    chunk_content = "\n".join(chunk_lines)
-                    chunk_hash = hashlib.sha256(chunk_content.encode("utf-8")).hexdigest()
-                    end_line = start + len(chunk_lines)
-                    cur = self._conn.execute(
-                        "INSERT INTO chunks (file_id, start_line, end_line, content, content_hash) VALUES (?, ?, ?, ?, ?)",
-                        (file_id, start + 1, end_line, chunk_content, chunk_hash),
-                    )
-                    chunk_id = cur.lastrowid
-                    if self.has_fts5:
-                        self._conn.execute(
-                            "INSERT INTO fts_chunks(rowid, chunk_id, file_id, path, symbol_name, content) VALUES (?, ?, ?, ?, ?, ?)",
-                            (chunk_id, chunk_id, file_id, rel_path, " ".join(symbol_names), chunk_content),
-                        )
+                self._index_file_locked(p, rel_path, modules)
                 updated_count += 1
             if seen_paths:
                 stale = self._conn.execute(
@@ -165,10 +99,9 @@ class RepositoryIndex:
             else:
                 stale = self._conn.execute("SELECT file_id, path FROM files").fetchall()
             for row in stale:
-                if self.has_fts5:
-                    self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (row["file_id"],))
-                self._conn.execute("DELETE FROM files WHERE file_id=?", (row["file_id"],))
-            self._rebuild_reference_edges()
+                self._delete_file_locked(row["file_id"])
+            self._rebuild_reference_edges_locked()
+            self._ensure_fts_consistency_locked()
             changed = updated_count or len(stale)
             if changed:
                 self._conn.execute(
@@ -176,41 +109,165 @@ class RepositoryIndex:
                 )
             self._conn.execute("UPDATE index_meta SET value=? WHERE key='state'", ("READY" if len(files) < self.max_files else "PARTIAL",))
 
-        return {
-            "scanned": len(files),
-            "updated": updated_count,
-            "deleted": len(stale),
-            "generation": self.index_generation(),
-            "state": self._conn.execute("SELECT value FROM index_meta WHERE key='state'").fetchone()["value"],
-        }
+            generation = int(self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()["value"])
+            state = self._conn.execute("SELECT value FROM index_meta WHERE key='state'").fetchone()["value"]
+
+        return {"scanned": len(files), "updated": updated_count, "deleted": len(stale), "generation": generation, "state": state}
+
+    def update_paths(self, paths: List[str]) -> Dict[str, int]:
+        """Synchronously update known changed files without scanning the whole repository."""
+        updated = deleted = 0
+        with self._lock, self._conn:
+            modules = self._module_rows_locked()
+            for rel_path in dict.fromkeys(path for path in paths if path and not os.path.isabs(path)):
+                path = (self.root_path / rel_path).resolve()
+                if self.root_path not in path.parents and path != self.root_path:
+                    continue
+                row = self._conn.execute("SELECT file_id FROM files WHERE path=?", (rel_path,)).fetchone()
+                if not path.is_file():
+                    if row:
+                        self._delete_file_locked(row["file_id"])
+                        deleted += 1
+                    continue
+                self._index_file_locked(path, rel_path, modules)
+                updated += 1
+            if updated or deleted:
+                self._rebuild_reference_edges_locked()
+                self._ensure_fts_consistency_locked()
+                self._conn.execute(
+                    "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
+                )
+                self._conn.execute("UPDATE index_meta SET value='READY' WHERE key='state'")
+            generation = int(self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()["value"])
+            state = self._conn.execute("SELECT value FROM index_meta WHERE key='state'").fetchone()["value"]
+        return {"scanned": len(paths), "updated": updated, "deleted": deleted, "generation": generation, "state": state}
 
     def _index_modules(self, modules: List[Dict[str, str]]) -> None:
-        with self._conn:
-            for module in modules:
-                manifest = module.get("manifest_path")
-                digest = ""
-                if manifest:
-                    path = self.root_path / manifest
-                    if path.exists():
-                        try:
-                            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                        except OSError:
-                            digest = ""
-                self._conn.execute(
-                    """
-                    INSERT INTO modules (root_path, kind, manifest_path, content_hash)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(root_path) DO UPDATE SET
-                        kind=excluded.kind,
-                        manifest_path=excluded.manifest_path,
-                        content_hash=excluded.content_hash
-                    """,
-                    (module["root_path"], module["kind"], manifest, digest),
-                )
+        with self._lock, self._conn:
+            self._index_modules_locked(modules)
+
+    def _index_modules_locked(self, modules: List[Dict[str, str]]) -> None:
+        for module in modules:
+            manifest = module.get("manifest_path")
+            digest = ""
+            if manifest:
+                path = self.root_path / manifest
+                if path.exists():
+                    try:
+                        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                    except OSError:
+                        digest = ""
+            self._conn.execute(
+                """
+                INSERT INTO modules (root_path, kind, manifest_path, content_hash)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(root_path) DO UPDATE SET
+                    kind=excluded.kind,
+                    manifest_path=excluded.manifest_path,
+                    content_hash=excluded.content_hash
+                """,
+                (module["root_path"], module["kind"], manifest, digest),
+            )
 
     def _module_rows(self) -> List[sqlite3.Row]:
-        rows = self._conn.execute("SELECT module_id, root_path FROM modules ORDER BY length(root_path) DESC").fetchall()
-        return rows
+        with self._lock:
+            return self._module_rows_locked()
+
+    def _module_rows_locked(self) -> List[sqlite3.Row]:
+        return self._conn.execute("SELECT module_id, root_path FROM modules ORDER BY length(root_path) DESC").fetchall()
+
+    def _index_file_locked(self, path: Path, rel_path: str, modules: List[sqlite3.Row]) -> None:
+        stat = path.stat()
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            content = ""
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        module_id = self._module_id_for_path(rel_path, modules)
+        self._conn.execute(
+            """
+            INSERT INTO files (path, module_id, language, size_bytes, mtime_ns, content_hash, parser_version, indexed_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'v1', ?)
+            ON CONFLICT(path) DO UPDATE SET
+                module_id=excluded.module_id,
+                mtime_ns=excluded.mtime_ns,
+                size_bytes=excluded.size_bytes,
+                content_hash=excluded.content_hash,
+                indexed_at=excluded.indexed_at
+            """,
+            (rel_path, module_id, path.suffix.lstrip("."), stat.st_size, stat.st_mtime_ns, content_hash, str(time.time())),
+        )
+        file_id = self._conn.execute("SELECT file_id FROM files WHERE path=?", (rel_path,)).fetchone()["file_id"]
+        self._conn.execute("DELETE FROM refs WHERE file_id=?", (file_id,))
+        self._conn.execute("DELETE FROM symbols WHERE file_id=?", (file_id,))
+        self._conn.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
+        if self.has_fts5:
+            self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (file_id,))
+
+        tags = self.parser.extract_file_tags(path, rel_path)
+        symbol_names = []
+        if tags:
+            for tag in tags.tags:
+                if tag.kind == "def":
+                    symbol_hash = hashlib.sha256(f"{content_hash}:{tag.name}:{tag.line}".encode("utf-8")).hexdigest()
+                    self._conn.execute(
+                        """
+                        INSERT INTO symbols
+                            (file_id, name, qualified_name, kind, signature, start_line, end_line, symbol_hash)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (file_id, tag.name, tag.name, tag.sub_kind or "symbol", tag.signature, tag.line, tag.line, symbol_hash),
+                    )
+                    symbol_names.append(tag.name)
+                elif tag.kind == "ref":
+                    self._conn.execute(
+                        "INSERT INTO refs (file_id, target_name, kind, line) VALUES (?, ?, ?, ?)",
+                        (file_id, tag.name, tag.sub_kind or "ref", tag.line),
+                    )
+
+        lines = content.splitlines() or [""]
+        for start in range(0, len(lines), 200):
+            chunk_content = "\n".join(lines[start:start + 200])
+            chunk_hash = hashlib.sha256(chunk_content.encode("utf-8")).hexdigest()
+            end_line = start + len(lines[start:start + 200])
+            cur = self._conn.execute(
+                "INSERT INTO chunks (file_id, start_line, end_line, content, content_hash) VALUES (?, ?, ?, ?, ?)",
+                (file_id, start + 1, end_line, chunk_content, chunk_hash),
+            )
+            chunk_id = cur.lastrowid
+            if self.has_fts5:
+                self._conn.execute(
+                    "INSERT INTO fts_chunks(rowid, chunk_id, file_id, path, symbol_name, content) VALUES (?, ?, ?, ?, ?, ?)",
+                    (chunk_id, chunk_id, file_id, rel_path, " ".join(symbol_names), chunk_content),
+                )
+
+    def _delete_file_locked(self, file_id: int) -> None:
+        if self.has_fts5:
+            self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (file_id,))
+        self._conn.execute("DELETE FROM files WHERE file_id=?", (file_id,))
+
+    def _ensure_fts_consistency_locked(self) -> None:
+        if not self.has_fts5:
+            return
+        chunk_count = self._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        fts_count = self._conn.execute("SELECT COUNT(*) FROM fts_chunks").fetchone()[0]
+        if chunk_count == fts_count:
+            return
+        self._conn.execute("DELETE FROM fts_chunks")
+        rows = self._conn.execute(
+            """
+            SELECT c.chunk_id, c.file_id, f.path, c.content,
+                   COALESCE(group_concat(s.name, ' '), '') AS symbols
+            FROM chunks c
+            JOIN files f ON f.file_id = c.file_id
+            LEFT JOIN symbols s ON s.file_id = c.file_id
+            GROUP BY c.chunk_id, c.file_id, f.path, c.content
+            """
+        ).fetchall()
+        self._conn.executemany(
+            "INSERT INTO fts_chunks(rowid, chunk_id, file_id, path, symbol_name, content) VALUES (?, ?, ?, ?, ?, ?)",
+            [(r["chunk_id"], r["chunk_id"], r["file_id"], r["path"], r["symbols"], r["content"]) for r in rows],
+        )
 
     @staticmethod
     def _module_id_for_path(rel_path: str, modules: List[sqlite3.Row]) -> Optional[int]:
@@ -221,6 +278,10 @@ class RepositoryIndex:
         return None
 
     def _rebuild_reference_edges(self) -> None:
+        with self._lock, self._conn:
+            self._rebuild_reference_edges_locked()
+
+    def _rebuild_reference_edges_locked(self) -> None:
         self._conn.execute("DELETE FROM edges")
         self.graph = RepositoryGraph()
         rows = self._conn.execute(
@@ -272,82 +333,84 @@ class RepositoryIndex:
 
     def search_text(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Search code chunks using FTS5 or fallback lexical query."""
-        results = []
-        if self.has_fts5:
-            try:
-                fts_query = self._fts_query(query)
-                if not fts_query:
-                    return []
-                rows = self._conn.execute(
-                    """
-                    SELECT fts_chunks.path, fts_chunks.content, c.start_line, c.end_line, c.content_hash,
-                           bm25(fts_chunks, 2.0, 2.5, 1.0) AS score
-                    FROM fts_chunks
-                    JOIN chunks c ON c.chunk_id = fts_chunks.chunk_id
-                    WHERE fts_chunks MATCH ?
-                    ORDER BY score
-                    LIMIT ?
-                    """,
-                    (fts_query, limit)
-                ).fetchall()
-                for r in rows:
-                    results.append({
-                        "path": r["path"], "content": r["content"], "method": "fts5", "score": r["score"],
-                        "start_line": r["start_line"], "end_line": r["end_line"], "content_hash": r["content_hash"],
-                    })
-                return results
-            except sqlite3.Error as exc:
-                results.append({"path": "", "content": "", "method": "fts5_error", "error": str(exc)})
+        with self._lock:
+            results = []
+            if self.has_fts5:
+                try:
+                    fts_query = self._fts_query(query)
+                    if not fts_query:
+                        return []
+                    rows = self._conn.execute(
+                        """
+                        SELECT fts_chunks.path, fts_chunks.content, c.start_line, c.end_line, c.content_hash,
+                               bm25(fts_chunks, 2.0, 2.5, 1.0) AS score
+                        FROM fts_chunks
+                        JOIN chunks c ON c.chunk_id = fts_chunks.chunk_id
+                        WHERE fts_chunks MATCH ?
+                        ORDER BY score
+                        LIMIT ?
+                        """,
+                        (fts_query, limit)
+                    ).fetchall()
+                    for r in rows:
+                        results.append({
+                            "path": r["path"], "content": r["content"], "method": "fts5", "score": r["score"],
+                            "start_line": r["start_line"], "end_line": r["end_line"], "content_hash": r["content_hash"],
+                        })
+                    return results
+                except sqlite3.Error as exc:
+                    results.append({"path": "", "content": "", "method": "fts5_error", "error": str(exc)})
 
-        # Lexical fallback
-        terms = self._query_terms(query)
-        if not terms:
+            # Lexical fallback
+            terms = self._query_terms(query)
+            if not terms:
+                return [r for r in results if r.get("path")]
+            where = " AND ".join("c.content LIKE ?" for _ in terms)
+            rows = self._conn.execute(
+                f"""
+                SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
+                FROM chunks c JOIN files f ON c.file_id = f.file_id
+                WHERE {where}
+                LIMIT ?
+                """,
+                tuple(f"%{term}%" for term in terms) + (limit,)
+            ).fetchall()
+            for r in rows:
+                results.append({
+                    "path": r["path"], "content": r["content"], "method": "lexical",
+                    "start_line": r["start_line"], "end_line": r["end_line"], "content_hash": r["content_hash"],
+                })
             return [r for r in results if r.get("path")]
-        where = " AND ".join("c.content LIKE ?" for _ in terms)
-        rows = self._conn.execute(
-            f"""
-            SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
-            FROM chunks c JOIN files f ON c.file_id = f.file_id
-            WHERE {where}
-            LIMIT ?
-            """,
-            tuple(f"%{term}%" for term in terms) + (limit,)
-        ).fetchall()
-        for r in rows:
-            results.append({
-                "path": r["path"], "content": r["content"], "method": "lexical",
-                "start_line": r["start_line"], "end_line": r["end_line"], "content_hash": r["content_hash"],
-            })
-        return [r for r in results if r.get("path")]
 
     def search_symbol(self, symbol: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Return chunks containing exact symbol definitions."""
-        rows = self._conn.execute(
-            """
-            SELECT f.path, s.name, s.qualified_name, s.kind, s.signature,
-                   c.content, c.start_line, c.end_line, c.content_hash
-            FROM symbols s
-            JOIN files f ON f.file_id = s.file_id
-            JOIN chunks c ON c.file_id = f.file_id
-                 AND c.start_line <= s.start_line AND c.end_line >= s.start_line
-            WHERE s.name = ? OR s.qualified_name = ?
-            ORDER BY s.start_line
-            LIMIT ?
-            """,
-            (symbol, symbol, limit),
-        ).fetchall()
-        return [
-            {
-                "path": row["path"],
-                "symbol": row["name"],
-                "qualified_name": row["qualified_name"],
-                "kind": row["kind"],
-                "signature": row["signature"],
-                "content": row["content"],
-                "method": "symbol",
-                "start_line": row["start_line"],
-                "end_line": row["end_line"],
-                "content_hash": row["content_hash"],
-            }
-            for row in rows
-        ]
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT f.path, s.name, s.qualified_name, s.kind, s.signature,
+                       c.content, c.start_line, c.end_line, c.content_hash
+                FROM symbols s
+                JOIN files f ON f.file_id = s.file_id
+                JOIN chunks c ON c.file_id = f.file_id
+                     AND c.start_line <= s.start_line AND c.end_line >= s.start_line
+                WHERE s.name = ? OR s.qualified_name = ?
+                ORDER BY s.start_line
+                LIMIT ?
+                """,
+                (symbol, symbol, limit),
+            ).fetchall()
+            return [
+                {
+                    "path": row["path"],
+                    "symbol": row["name"],
+                    "qualified_name": row["qualified_name"],
+                    "kind": row["kind"],
+                    "signature": row["signature"],
+                    "content": row["content"],
+                    "method": "symbol",
+                    "start_line": row["start_line"],
+                    "end_line": row["end_line"],
+                    "content_hash": row["content_hash"],
+                }
+                for row in rows
+            ]

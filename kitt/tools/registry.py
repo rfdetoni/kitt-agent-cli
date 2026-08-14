@@ -12,6 +12,7 @@ from kitt.edit_format.parser import SearchReplaceParser
 from kitt.tools.safe_python import SafePythonExecutor
 from kitt.tools.process_runner import ProcessRunner
 from kitt.context_engine.engine import ContextEngine
+from kitt.index.repository import RepositoryIndex
 
 from kitt.tools.artifact_tools import ArtifactTools
 from kitt.tools.child_tools import ChildTools
@@ -39,7 +40,7 @@ class ToolRegistry:
         self.approval_manager = ApprovalManager()
         self.safe_python = SafePythonExecutor()
         self.process_runner = ProcessRunner(root_dir)
-        self.context_engine = context_engine or ContextEngine()
+        self.context_engine = context_engine or ContextEngine(repository_index=RepositoryIndex(self.root_path))
         self.artifacts = None
         self.artifact_tools = None
         self.queue_service = None
@@ -53,10 +54,13 @@ class ToolRegistry:
     def repository_index(self):
         return getattr(self.context_engine, "index", None)
 
-    def _refresh_index(self) -> None:
+    def _refresh_index(self, paths: Optional[List[str]] = None) -> None:
         index = self.repository_index
         if index is not None:
-            index.build_or_update()
+            if paths and hasattr(index, "update_paths"):
+                index.update_paths(paths)
+            else:
+                index.build_or_update()
 
     def attach_services(self, artifacts=None, queue_service=None, goal_service=None, child_manager=None, harness_service=None):
         self.artifacts = artifacts
@@ -225,7 +229,7 @@ class ToolRegistry:
                     if actual_hash != expected_hash:
                         return ToolResult(success=False, output="", error="expected_content_hash mismatch.")
                 target.write_text(content, encoding="utf-8")
-                self._refresh_index()
+                self._refresh_index([str(target.relative_to(self.root_path))])
                 new_hash = hashlib.sha256(target.read_bytes()).hexdigest()
                 return ToolResult(success=True, output=f"Successfully wrote {len(content)} bytes to {rel}.", metadata={"content_hash": new_hash})
 
@@ -234,7 +238,7 @@ class ToolRegistry:
                 blocks = self.parser.parse(patch_text)
                 edit_res = self.applier.apply(blocks, root_dir=str(self.root_path), allow_overwrite_existing=True)
                 if edit_res.success:
-                    self._refresh_index()
+                    self._refresh_index(edit_res.applied_files + edit_res.created_files)
                     output = f"Applied edit to {len(edit_res.applied_files + edit_res.created_files)} file(s)."
                     return ToolResult(success=True, output=output, metadata={"edit_result": edit_res})
                 else:

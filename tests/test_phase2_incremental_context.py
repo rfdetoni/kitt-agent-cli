@@ -113,9 +113,10 @@ class TestPhase2IncrementalContext(unittest.TestCase):
         self.assertTrue(len(b1) > 0)
 
         cache_file = self.root_path / ".kitt" / "cache" / "index_cache.json"
-        self.assertTrue(cache_file.exists())
+        self.assertFalse(cache_file.exists())
+        self.assertIsNotNone(self.engine.index)
 
-        # Second run without changes reuses cache
+        # Second run without changes reuses SQLite index, not legacy JSON cache.
         b2 = self.engine.get_relevant_context("foo", root_dir=self.tmp_dir.name)
         self.assertTrue(len(b2) > 0)
 

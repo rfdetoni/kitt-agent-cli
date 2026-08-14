@@ -91,6 +91,38 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertGreater(counts["chunks"], 1)
             index.close()
 
+    def test_repository_index_persistent_fts_survives_reopen(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text("def persistent_symbol():\n    return 1\n", encoding="utf-8")
+
+            first = RepositoryIndex(tmpdir)
+            first.build_or_update()
+            first.close()
+
+            reopened = RepositoryIndex(tmpdir)
+            results = reopened.search_text("persistent symbol")
+
+            self.assertTrue(results)
+            if reopened.has_fts5:
+                self.assertEqual(results[0]["method"], "fts5")
+            reopened.close()
+
+    def test_repository_index_update_paths_refreshes_single_changed_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text("def before_symbol():\n    return 1\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            p.write_text("def after_symbol():\n    return 2\n", encoding="utf-8")
+            stats = index.update_paths(["app.py"])
+
+            self.assertEqual(stats["updated"], 1)
+            self.assertFalse(index.search_text("before symbol"))
+            self.assertTrue(index.search_text("after symbol"))
+            index.close()
+
     def test_context_engine_uses_shared_repository_index(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "app.py"
@@ -108,6 +140,20 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
             index.close()
 
+    def test_context_engine_without_supplied_index_uses_repository_index(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text("def lazy_symbol():\n    return 42\n", encoding="utf-8")
+            engine = ContextEngine(persistence_enabled=False)
+
+            blocks = engine.get_relevant_context("lazy symbol", root_dir=tmpdir)
+
+            self.assertIsInstance(engine.index, RepositoryIndex)
+            self.assertTrue(blocks)
+            self.assertIn("lazy_symbol", blocks[0].content)
+            self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
+            engine.index.close()
+
     def test_query_plan_and_context_compiler_quality_gate(self):
         plan = QueryPlanner.plan("Corrija `useful_symbol` em app.py", explicit_files={"app.py"}, token_budget=500)
         cand = ContextCandidate(
@@ -121,6 +167,12 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertEqual(compiled.quality.coverage, 1.0)
         self.assertIn("[P1] app.py", compiled.text)
         self.assertIn("def useful_symbol", compiled.text)
+
+    def test_query_plan_does_not_treat_sentence_words_or_acronyms_as_symbols(self):
+        plan = QueryPlanner.plan("Crie um HTML explicando este projeto.")
+
+        self.assertEqual(plan.exact_symbols, ())
+        self.assertIn("html", plan.lexical_terms)
 
     def test_repository_index_removes_deleted_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:

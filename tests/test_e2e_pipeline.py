@@ -199,11 +199,10 @@ class TestE2EPipeline(unittest.TestCase):
         )
         from kitt.core.turn_command import TurnCommand
         list(processor.run_turn(TurnCommand("conv-context", "Crie um HTML explicando este projeto.")))
-        self.assertEqual(len(context.calls), 2)
-        self.assertIn("Mapa do projeto", context.calls[1][0][0]["content"])
-        self.assertIn("return 'ok'", context.calls[1][0][0]["content"])
-        self.assertIn("Projeto de exemplo", context.calls[1][0][0]["content"])
-        self.assertIn("Repo Map:\napp.py contém função main", captured["system_prompt"])
+        self.assertEqual(len(context.calls), 1)
+        self.assertIn("## Context v1", captured["system_prompt"])
+        self.assertIn("return 'ok'", captured["system_prompt"])
+        self.assertIn("Projeto de exemplo", captured["system_prompt"])
         self.assertNotIn("python_compute", captured["system_prompt"])
         self.assertFalse((self.root_path / ".kitt" / "context" / "latest.md").exists())
 

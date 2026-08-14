@@ -8,7 +8,6 @@ from kitt.artifacts.store import ArtifactStore
 from kitt.children.manager import ChildAgentManager
 from kitt.children.repository import ChildRepository
 from kitt.compaction.service import CompactionService
-from kitt.context_engine.indexer import LocalFileIndexer
 from kitt.context_engine.engine import ContextEngine
 from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.core.event_bus import EventBus
@@ -55,7 +54,6 @@ class KittRuntime:
     events: EventBus
     processor: TurnProcessor
     memory: MemoryManager
-    indexer: LocalFileIndexer
     autonomy_store: AutonomyStore
 
     def __post_init__(self):
@@ -121,13 +119,6 @@ class KittRuntime:
         path_policy = PathPolicy(canon_root)
         network_policy = NetworkPolicy()
 
-        indexer = LocalFileIndexer(
-            canon_root,
-            persistence_enabled=persistence_enabled,
-            max_file_bytes=config.max_index_file_bytes,
-            max_files=config.max_index_files,
-            max_total_bytes=config.max_index_bytes,
-        )
         processor = TurnProcessor(
             canon_root,
             history_service=history,
@@ -155,7 +146,7 @@ class KittRuntime:
             config, db, history, artifacts, metrics, policy, approval, repository_index,
             context_engine, working_set, registry, skills,
             harness, goals, queue, children, compaction, tree, events, processor,
-            memory, indexer, autonomy_store,
+            memory, autonomy_store,
         )
         runtime.egress_policy = egress_policy
         runtime.sensitive_scanner = sensitive_scanner

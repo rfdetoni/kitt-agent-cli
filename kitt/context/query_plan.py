@@ -36,7 +36,7 @@ class QueryPlanner:
     _STOP = {
         "the", "and", "for", "with", "this", "that", "from", "como", "para", "este",
         "esta", "isso", "projeto", "project", "analise", "analyze", "indique", "melhore",
-        "corrija", "corrigir", "fix", "bug", "code", "file", "class", "function", "method",
+        "crie", "create", "corrija", "corrigir", "fix", "bug", "code", "file", "class", "function", "method",
     }
 
     @classmethod
@@ -51,11 +51,15 @@ class QueryPlanner:
         features = TaskFeatureExtractor.extract(prompt, explicit_files=tuple(explicit_files or ()))
         paths = tuple(dict.fromkeys((*features.paths, *(explicit_files or ()))))
         quoted = re.findall(r"`([^`]+)`", prompt)
+        quoted_ids = set(cls._IDENT_RE.findall(" ".join(quoted)))
         identifiers = [
             item for item in cls._IDENT_RE.findall(" ".join(quoted) + " " + prompt)
             if item.lower() not in cls._STOP
         ]
-        symbol_like = [item for item in identifiers if "_" in item or "." in item or item[:1].isupper()]
+        symbol_like = [
+            item for item in identifiers
+            if item in quoted_ids or "_" in item or "." in item or (item[:1].isupper() and not item.isupper())
+        ]
         symbols = tuple(dict.fromkeys([*features.symbols, *symbol_like]))[:16]
         terms = tuple(dict.fromkeys(term.lower() for term in cls._IDENT_RE.findall(prompt) if term.lower() not in cls._STOP))[:12]
         diagnostics = tuple(line.strip()[:240] for line in prompt.splitlines() if cls._DIAG_RE.search(line))[:8]

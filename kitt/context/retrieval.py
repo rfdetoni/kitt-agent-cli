@@ -122,22 +122,64 @@ class HybridRetrievalPipeline:
                 content=text
             ))
 
+        # Project-overview fallback: bounded catalog slices, not whole repo.
+        if not candidates and any(term in prompt.lower() for term in ("projeto", "project", "repo", "repository")):
+            with self.index._lock:
+                rows = self.index._conn.execute(
+                    """
+                    SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
+                    FROM files f
+                    JOIN chunks c ON c.file_id = f.file_id
+                    ORDER BY
+                        CASE
+                            WHEN lower(f.path) IN ('readme.md', 'readme.txt') THEN 0
+                            WHEN lower(f.path) LIKE '%.py' THEN 1
+                            ELSE 2
+                        END,
+                        f.path,
+                        c.start_line
+                    LIMIT ?
+                    """,
+                    (min(8, plan.candidate_limit),),
+                ).fetchall()
+            for idx, row in enumerate(rows):
+                text = row["content"]
+                candidates.append(ContextCandidate(
+                    candidate_id=f"catalog:{row['path']}:{idx}",
+                    source_type="file",
+                    path=row["path"],
+                    start_line=row["start_line"],
+                    end_line=row["end_line"],
+                    content_hash=row["content_hash"],
+                    estimated_tokens=max(1, len(text) // 4),
+                    relevance=0.45,
+                    confidence=0.65,
+                    freshness=0.9,
+                    mandatory=False,
+                    trust_level="WORKSPACE_DATA",
+                    dependencies=(),
+                    selection_reason="Bounded project overview fallback",
+                    representation="SKELETON",
+                    content=text,
+                ))
+
         # 4. Bounded graph expansion: include direct dependencies/dependents from indexed refs.
         seed_paths = {c.path for c in candidates if c.path}
         if seed_paths and (plan.include_dependencies or plan.include_dependents):
             expanded = self.index.graph.expand_neighborhood(set(seed_paths), max_hops=plan.graph_hops, max_nodes=25)
             for path in sorted(expanded - seed_paths):
-                row = self.index._conn.execute(
-                    """
-                    SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
-                    FROM files f
-                    JOIN chunks c ON c.file_id = f.file_id
-                    WHERE f.path = ?
-                    ORDER BY c.start_line
-                    LIMIT 1
-                    """,
-                    (path,),
-                ).fetchone()
+                with self.index._lock:
+                    row = self.index._conn.execute(
+                        """
+                        SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
+                        FROM files f
+                        JOIN chunks c ON c.file_id = f.file_id
+                        WHERE f.path = ?
+                        ORDER BY c.start_line
+                        LIMIT 1
+                        """,
+                        (path,),
+                    ).fetchone()
                 if not row:
                     continue
                 text = row["content"]
