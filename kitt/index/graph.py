@@ -18,18 +18,34 @@ class RepositoryGraph:
     def add_edge(self, src: str, dst: str, weight: float = 1.0, kind: str = "import") -> None:
         self.nodes.add(src)
         self.nodes.add(dst)
+        changed = False
 
         if src not in self.adj:
             self.adj[src] = []
-        if not any(existing == dst for existing, _ in self.adj[src]):
+        for idx, (existing, old_weight) in enumerate(self.adj[src]):
+            if existing == dst:
+                if weight > old_weight:
+                    self.adj[src][idx] = (dst, weight)
+                    changed = True
+                break
+        else:
             self.adj[src].append((dst, weight))
+            changed = True
 
         if dst not in self.rev_adj:
             self.rev_adj[dst] = []
-        if not any(existing == src for existing, _ in self.rev_adj[dst]):
+        for idx, (existing, old_weight) in enumerate(self.rev_adj[dst]):
+            if existing == src:
+                if weight > old_weight:
+                    self.rev_adj[dst][idx] = (src, weight)
+                    changed = True
+                break
+        else:
             self.rev_adj[dst].append((src, weight))
+            changed = True
 
-        self.generation += 1
+        if changed:
+            self.generation += 1
 
     def compute_pagerank(
         self,

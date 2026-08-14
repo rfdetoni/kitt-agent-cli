@@ -54,6 +54,18 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertIn("b.py", expanded)
         self.assertIn("c.py", expanded)
 
+    def test_repository_graph_deduplicates_edges_and_updates_weight(self):
+        graph = RepositoryGraph()
+        graph.add_edge("a.py", "b.py", weight=1.0)
+        generation = graph.generation
+        graph.add_edge("a.py", "b.py", weight=1.0)
+        graph.add_edge("a.py", "b.py", weight=2.0)
+
+        self.assertEqual(len(graph.adj["a.py"]), 1)
+        self.assertEqual(len(graph.rev_adj["b.py"]), 1)
+        self.assertEqual(graph.adj["a.py"][0], ("b.py", 2.0))
+        self.assertEqual(graph.generation, generation + 1)
+
     def test_repository_index_incremental_update_and_search(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "app.py"
