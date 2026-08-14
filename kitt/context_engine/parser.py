@@ -5,9 +5,9 @@ from typing import List, Optional, Set
 from kitt.domain.entities import Tag, FileTags
 
 JAVA_PACKAGE_REGEX = re.compile(r'^\s*package\s+([a-zA-Z0-9_.]+)\s*;', re.MULTILINE)
-JAVA_IMPORT_REGEX = re.compile(r'^\s*import\s+([a-zA-Z0-9_.]+)\s*;', re.MULTILINE)
+JAVA_IMPORT_REGEX = re.compile(r'^\s*import\s+(?:static\s+)?([a-zA-Z0-9_.*]+)\s*;', re.MULTILINE)
 JAVA_TYPE_REGEX = re.compile(r'^\s*(public|protected|private|static|abstract|final|\s)*\s*(class|interface|enum|record)\s+([A-Za-z0-9_]+)', re.MULTILINE)
-JAVA_METHOD_REGEX = re.compile(r'^\s*(public|protected|private|static|abstract|final|synchronized|\s)*\s*([A-Za-z0-9_<>\[\]]+)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)', re.MULTILINE)
+JAVA_METHOD_REGEX = re.compile(r'^\s*(?:@\w+(?:\([^)]*\))?\s*)*(public|protected|private|static|abstract|final|synchronized|\s)*\s*(?:<[^>]+>\s*)?([A-Za-z0-9_<>,.?[\]]+)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)', re.MULTILINE | re.DOTALL)
 JAVA_REF_REGEX = re.compile(r'\b([A-Z][A-Za-z0-9_]*)\b')
 
 class SymbolParser:
@@ -77,24 +77,63 @@ class SymbolParser:
 
     def _extract_java_tags(self, content: str) -> List[Tag]:
         tags: List[Tag] = []
-        lines = content.splitlines()
+        clean = self._strip_java_comments_and_strings(content)
+        lines = clean.splitlines()
+        package = ""
+        package_match = JAVA_PACKAGE_REGEX.search(clean)
+        if package_match:
+            package = package_match.group(1)
+            tags.append(Tag(kind='ref', name=package, line=1, signature=f"package {package}", sub_kind='package'))
+
+        for match in JAVA_IMPORT_REGEX.finditer(clean):
+            imported = match.group(1)
+            line_no = clean[:match.start()].count("\n") + 1
+            tags.append(Tag(kind='ref', name=imported.split(".")[-1].rstrip("*"), line=line_no, signature=f"import {imported}", sub_kind='import'))
+
+        pending = ""
+        pending_line = 1
 
         for idx, line in enumerate(lines, start=1):
             t_match = JAVA_TYPE_REGEX.match(line)
             if t_match:
                 kind = t_match.group(2)
                 name = t_match.group(3)
-                sig = f"{kind} {name}"
+                sig = f"{kind} {package + '.' if package else ''}{name}"
                 tags.append(Tag(kind='def', name=name, line=idx, signature=sig, sub_kind=kind))
                 continue
 
-            m_match = JAVA_METHOD_REGEX.match(line)
-            if m_match:
-                name = m_match.group(3)
-                ret_type = m_match.group(2)
+            stripped = line.strip()
+            if pending:
+                pending += " " + stripped
+            elif "(" in stripped and not stripped.startswith(("if ", "for ", "while ", "switch ", "catch ")):
+                pending = stripped
+                pending_line = idx
+            if pending and ")" in pending:
+                m_match = JAVA_METHOD_REGEX.match(pending)
+                if m_match:
+                    name = m_match.group(3)
+                    ret_type = m_match.group(2)
+                    if name not in {'if', 'for', 'while', 'switch', 'catch', 'new'}:
+                        params = " ".join(m_match.group(4).split())
+                        if ret_type in {"public", "protected", "private"} and name[:1].isupper():
+                            tags.append(Tag(kind='def', name=name, line=pending_line, signature=f"{name}({params}) constructor", sub_kind='constructor'))
+                        else:
+                            sig = f"{ret_type} {name}({params})"
+                            tags.append(Tag(kind='def', name=name, line=pending_line, signature=sig, sub_kind='method'))
+                else:
+                    ctor = re.match(r'^\s*(public|protected|private)?\s*([A-Z][A-Za-z0-9_]*)\s*\(', pending)
+                    if ctor:
+                        name = ctor.group(2)
+                        tags.append(Tag(kind='def', name=name, line=pending_line, signature=f"{name}(...) constructor", sub_kind='constructor'))
+                pending = ""
+                continue
+
+            # Constructor: public ClassName(...)
+            ctor = re.match(r'^\s*(public|protected|private)?\s*([A-Z][A-Za-z0-9_]*)\s*\(', line)
+            if ctor:
+                name = ctor.group(2)
                 if name not in {'if', 'for', 'while', 'switch', 'catch'}:
-                    sig = f"{ret_type} {name}(...)"
-                    tags.append(Tag(kind='def', name=name, line=idx, signature=sig, sub_kind='method'))
+                    tags.append(Tag(kind='def', name=name, line=idx, signature=f"{name}(...) constructor", sub_kind='constructor'))
                 continue
 
             for ref in JAVA_REF_REGEX.findall(line):
@@ -102,6 +141,41 @@ class SymbolParser:
                     tags.append(Tag(kind='ref', name=ref, line=idx, signature=ref, sub_kind='type_ref'))
 
         return tags
+
+    @staticmethod
+    def _strip_java_comments_and_strings(content: str) -> str:
+        out = []
+        i = 0
+        state = "code"
+        while i < len(content):
+            ch = content[i]
+            nxt = content[i + 1] if i + 1 < len(content) else ""
+            if state == "code" and ch == "/" and nxt == "/":
+                state = "line_comment"; out.extend("  "); i += 2; continue
+            if state == "code" and ch == "/" and nxt == "*":
+                state = "block_comment"; out.extend("  "); i += 2; continue
+            if state == "code" and ch in {'"', "'"}:
+                state = ch; out.append(" "); i += 1; continue
+            if state == "line_comment":
+                out.append("\n" if ch == "\n" else " ")
+                if ch == "\n":
+                    state = "code"
+                i += 1; continue
+            if state == "block_comment":
+                out.append("\n" if ch == "\n" else " ")
+                if ch == "*" and nxt == "/":
+                    out.append(" "); i += 2; state = "code"; continue
+                i += 1; continue
+            if state in {'"', "'"}:
+                out.append("\n" if ch == "\n" else " ")
+                if ch == "\\":
+                    i += 2; out.append(" "); continue
+                if ch == state:
+                    state = "code"
+                i += 1; continue
+            out.append(ch)
+            i += 1
+        return "".join(out)
 
     def _extract_ts_js_tags(self, content: str) -> List[Tag]:
         tags: List[Tag] = []

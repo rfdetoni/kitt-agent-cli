@@ -6,6 +6,7 @@ from kitt.context.token_estimator import CalibratedTokenEstimator
 from kitt.context.candidates import ContextCandidate, ContextSelector
 from kitt.context.compiler import ContextCompiler
 from kitt.context.query_plan import QueryPlanner
+from kitt.context.retrieval import HybridRetrievalPipeline
 from kitt.index.graph import RepositoryGraph
 from kitt.index.scanner import RepositoryScanner
 from kitt.index.repository import RepositoryIndex
@@ -135,6 +136,62 @@ class TestContextAndIndex(unittest.TestCase):
 
             self.assertEqual(stats["deleted"], 1)
             self.assertEqual(results, [])
+            index.close()
+
+    def test_repository_index_links_modules_and_reference_edges(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+            (root / "controller.py").write_text(
+                "from service import UserService\nclass Controller:\n    def run(self):\n        return UserService()\n",
+                encoding="utf-8",
+            )
+            (root / "service.py").write_text("class UserService:\n    pass\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+
+            index.build_or_update()
+
+            modules = index._conn.execute("SELECT COUNT(*) FROM modules").fetchone()[0]
+            file_modules = index._conn.execute("SELECT COUNT(*) FROM files WHERE module_id IS NOT NULL").fetchone()[0]
+            edges = index._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+            expanded = index.graph.expand_neighborhood({"controller.py"}, max_hops=1)
+
+            self.assertGreaterEqual(modules, 1)
+            self.assertEqual(file_modules, 3)
+            self.assertGreaterEqual(edges, 1)
+            self.assertIn("service.py", expanded)
+            index.close()
+
+    def test_retrieval_expands_graph_neighbors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "controller.py").write_text(
+                "from service import UserService\nclass Controller:\n    def run(self):\n        return UserService()\n",
+                encoding="utf-8",
+            )
+            (root / "service.py").write_text("class UserService:\n    pass\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            selected = HybridRetrievalPipeline(index).retrieve("explain Controller", max_tokens=1000)
+            paths = {candidate.path for candidate in selected}
+
+            self.assertIn("controller.py", paths)
+            self.assertIn("service.py", paths)
+            index.close()
+
+    def test_retrieval_prefers_exact_symbol_before_lexical(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "alpha.py").write_text("def target_symbol():\n    return 1\n", encoding="utf-8")
+            (root / "notes.md").write_text("target_symbol mentioned in prose\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            selected = HybridRetrievalPipeline(index).retrieve("fix `target_symbol`", max_tokens=1000)
+
+            self.assertEqual(selected[0].path, "alpha.py")
+            self.assertIn("Exact symbol match", selected[0].selection_reason)
             index.close()
 
 if __name__ == "__main__":

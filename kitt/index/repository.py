@@ -64,6 +64,7 @@ class RepositoryIndex:
         files = scanner.scan_files(max_files=self.max_files)
         updated_count = 0
         seen_paths = set()
+        modules = self._module_rows()
 
         with self._conn:
             self._conn.execute("UPDATE index_meta SET value='BOOTSTRAP' WHERE key='state'")
@@ -88,18 +89,20 @@ class RepositoryIndex:
 
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 now = str(time.time())
+                module_id = self._module_id_for_path(rel_path, modules)
 
                 self._conn.execute(
                     """
-                    INSERT INTO files (path, language, size_bytes, mtime_ns, content_hash, parser_version, indexed_at)
-                    VALUES (?, ?, ?, ?, ?, 'v1', ?)
+                    INSERT INTO files (path, module_id, language, size_bytes, mtime_ns, content_hash, parser_version, indexed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'v1', ?)
                     ON CONFLICT(path) DO UPDATE SET
+                        module_id=excluded.module_id,
                         mtime_ns=excluded.mtime_ns,
                         size_bytes=excluded.size_bytes,
                         content_hash=excluded.content_hash,
                         indexed_at=excluded.indexed_at
                     """,
-                    (rel_path, p.suffix.lstrip('.'), size, mtime_ns, content_hash, now)
+                    (rel_path, module_id, p.suffix.lstrip('.'), size, mtime_ns, content_hash, now)
                 )
                 file_row = self._conn.execute("SELECT file_id FROM files WHERE path=?", (rel_path,)).fetchone()
                 file_id = file_row["file_id"]
@@ -165,6 +168,7 @@ class RepositoryIndex:
                 if self.has_fts5:
                     self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (row["file_id"],))
                 self._conn.execute("DELETE FROM files WHERE file_id=?", (row["file_id"],))
+            self._rebuild_reference_edges()
             changed = updated_count or len(stale)
             if changed:
                 self._conn.execute(
@@ -203,6 +207,52 @@ class RepositoryIndex:
                     """,
                     (module["root_path"], module["kind"], manifest, digest),
                 )
+
+    def _module_rows(self) -> List[sqlite3.Row]:
+        rows = self._conn.execute("SELECT module_id, root_path FROM modules ORDER BY length(root_path) DESC").fetchall()
+        return rows
+
+    @staticmethod
+    def _module_id_for_path(rel_path: str, modules: List[sqlite3.Row]) -> Optional[int]:
+        for module in modules:
+            root = module["root_path"]
+            if root == "." or rel_path == root or rel_path.startswith(root.rstrip("/") + "/"):
+                return module["module_id"]
+        return None
+
+    def _rebuild_reference_edges(self) -> None:
+        self._conn.execute("DELETE FROM edges")
+        self.graph = RepositoryGraph()
+        rows = self._conn.execute(
+            """
+            SELECT rf.file_id AS source_file_id, sf.file_id AS target_file_id, r.kind
+            FROM refs r
+            JOIN files rf ON rf.file_id = r.file_id
+            JOIN symbols s ON s.name = r.target_name OR s.qualified_name = r.target_name
+            JOIN files sf ON sf.file_id = s.file_id
+            WHERE rf.file_id != sf.file_id
+            """
+        ).fetchall()
+        for row in rows:
+            self._conn.execute(
+                """
+                INSERT INTO edges (source_file_id, target_file_id, kind, weight)
+                VALUES (?, ?, ?, 1.0)
+                ON CONFLICT(source_file_id, target_file_id, kind) DO UPDATE SET
+                    weight=excluded.weight
+                """,
+                (row["source_file_id"], row["target_file_id"], row["kind"]),
+            )
+        path_edges = self._conn.execute(
+            """
+            SELECT sf.path AS source_path, tf.path AS target_path, e.weight
+            FROM edges e
+            JOIN files sf ON sf.file_id = e.source_file_id
+            JOIN files tf ON tf.file_id = e.target_file_id
+            """
+        ).fetchall()
+        for row in path_edges:
+            self.graph.add_edge(row["source_path"], row["target_path"], row["weight"])
 
     @staticmethod
     def _query_terms(query: str) -> List[str]:
@@ -269,3 +319,35 @@ class RepositoryIndex:
                 "start_line": r["start_line"], "end_line": r["end_line"], "content_hash": r["content_hash"],
             })
         return [r for r in results if r.get("path")]
+
+    def search_symbol(self, symbol: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return chunks containing exact symbol definitions."""
+        rows = self._conn.execute(
+            """
+            SELECT f.path, s.name, s.qualified_name, s.kind, s.signature,
+                   c.content, c.start_line, c.end_line, c.content_hash
+            FROM symbols s
+            JOIN files f ON f.file_id = s.file_id
+            JOIN chunks c ON c.file_id = f.file_id
+                 AND c.start_line <= s.start_line AND c.end_line >= s.start_line
+            WHERE s.name = ? OR s.qualified_name = ?
+            ORDER BY s.start_line
+            LIMIT ?
+            """,
+            (symbol, symbol, limit),
+        ).fetchall()
+        return [
+            {
+                "path": row["path"],
+                "symbol": row["name"],
+                "qualified_name": row["qualified_name"],
+                "kind": row["kind"],
+                "signature": row["signature"],
+                "content": row["content"],
+                "method": "symbol",
+                "start_line": row["start_line"],
+                "end_line": row["end_line"],
+                "content_hash": row["content_hash"],
+            }
+            for row in rows
+        ]

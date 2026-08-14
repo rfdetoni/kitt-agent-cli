@@ -68,7 +68,33 @@ class HybridRetrievalPipeline:
                         content=text
                     ))
 
-        # 2. Text / FTS search
+        # 2. Exact symbol definitions
+        for symbol in plan.exact_symbols:
+            for idx, res in enumerate(self.index.search_symbol(symbol, limit=plan.candidate_limit)):
+                cand_id = f"symbol:{symbol}:{res['path']}:{idx}"
+                if any(c.path == res["path"] and c.start_line == res["start_line"] for c in candidates):
+                    continue
+                text = res["content"]
+                candidates.append(ContextCandidate(
+                    candidate_id=cand_id,
+                    source_type="symbol",
+                    path=res["path"],
+                    start_line=res["start_line"],
+                    end_line=res["end_line"],
+                    content_hash=res["content_hash"],
+                    estimated_tokens=max(1, len(text) // 4),
+                    relevance=0.95,
+                    confidence=1.0,
+                    freshness=1.0,
+                    mandatory=False,
+                    trust_level="WORKSPACE_DATA",
+                    dependencies=(),
+                    selection_reason=f"Exact symbol match: {symbol}",
+                    representation="SYMBOL_BODY",
+                    content=text,
+                ))
+
+        # 3. Text / FTS search
         search_query = " ".join((*plan.exact_symbols, *plan.lexical_terms, *plan.diagnostics)) or prompt
         search_res = self.index.search_text(search_query, limit=plan.candidate_limit)
         for idx, res in enumerate(search_res):
@@ -96,6 +122,44 @@ class HybridRetrievalPipeline:
                 content=text
             ))
 
-        # 3. Apply ContextSelector (greedy value/token selection)
+        # 4. Bounded graph expansion: include direct dependencies/dependents from indexed refs.
+        seed_paths = {c.path for c in candidates if c.path}
+        if seed_paths and (plan.include_dependencies or plan.include_dependents):
+            expanded = self.index.graph.expand_neighborhood(set(seed_paths), max_hops=plan.graph_hops, max_nodes=25)
+            for path in sorted(expanded - seed_paths):
+                row = self.index._conn.execute(
+                    """
+                    SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
+                    FROM files f
+                    JOIN chunks c ON c.file_id = f.file_id
+                    WHERE f.path = ?
+                    ORDER BY c.start_line
+                    LIMIT 1
+                    """,
+                    (path,),
+                ).fetchone()
+                if not row:
+                    continue
+                text = row["content"]
+                candidates.append(ContextCandidate(
+                    candidate_id=f"graph:{path}",
+                    source_type="file",
+                    path=row["path"],
+                    start_line=row["start_line"],
+                    end_line=row["end_line"],
+                    content_hash=row["content_hash"],
+                    estimated_tokens=max(1, len(text) // 4),
+                    relevance=0.55,
+                    confidence=0.75,
+                    freshness=0.9,
+                    mandatory=False,
+                    trust_level="WORKSPACE_DATA",
+                    dependencies=(),
+                    selection_reason="Graph neighbor of selected candidate",
+                    representation="SKELETON",
+                    content=text,
+                ))
+
+        # 5. Apply ContextSelector (greedy value/token selection)
         selected, discarded = ContextSelector.select_candidates(candidates, max_token_budget=max_tokens)
         return selected, discarded, plan

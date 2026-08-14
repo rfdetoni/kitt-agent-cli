@@ -21,11 +21,13 @@ class RepositoryGraph:
 
         if src not in self.adj:
             self.adj[src] = []
-        self.adj[src].append((dst, weight))
+        if not any(existing == dst for existing, _ in self.adj[src]):
+            self.adj[src].append((dst, weight))
 
         if dst not in self.rev_adj:
             self.rev_adj[dst] = []
-        self.rev_adj[dst].append((src, weight))
+        if not any(existing == src for existing, _ in self.rev_adj[dst]):
+            self.rev_adj[dst].append((src, weight))
 
         self.generation += 1
 

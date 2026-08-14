@@ -33,6 +33,34 @@ class TestPhase2IncrementalContext(unittest.TestCase):
         self.assertTrue(any(t.name == "UserService" for t in java_tags.tags))
         self.assertTrue(any(t.name == "findUser" for t in java_tags.tags))
 
+    def test_java_parser_handles_multiline_methods_and_ignores_comments_strings(self):
+        java_file = self.root_path / "PaymentService.java"
+        java_file.write_text(
+            """
+            package com.acme.pay;
+            import com.acme.repo.PaymentRepository;
+            public class PaymentService {
+              // public void fakeComment() {}
+              String fake = "class FakeString {}";
+              public PaymentService() {}
+              public java.util.List<String> findPayments(
+                  String accountId,
+                  int limit
+              ) {
+                return repo.find(accountId, limit);
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        java_tags = self.parser.extract_file_tags(java_file, "PaymentService.java")
+
+        self.assertTrue(any(t.name == "PaymentService" and t.sub_kind == "class" for t in java_tags.tags))
+        self.assertTrue(any(t.name == "PaymentService" and t.sub_kind == "constructor" for t in java_tags.tags))
+        self.assertTrue(any(t.name == "findPayments" and "accountId" in t.signature for t in java_tags.tags))
+        self.assertFalse(any(t.name in {"fakeComment", "FakeString"} and t.kind == "def" for t in java_tags.tags))
+
     def test_pagerank_graph_ranking(self):
         f1 = self.root_path / "controller.py"
         f1.write_text("from service import UserService\nclass Controller:\n  def run(self):\n    UserService()\n", encoding='utf-8')
