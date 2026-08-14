@@ -348,6 +348,12 @@ class KittUIApp:
                 for t in self.state.active_tasks:
                     lines.append(f"• [{t.status.upper()}] {t.name} ({t.role})\n  ↳ Resumo: {t.summary}\n  ↳ Progresso: {t.progress}%")
                 self._show_result("\n".join(lines))
+        elif found.id in {"cancel", "stop"}:
+            if self.bridge and self.bridge.is_active:
+                await self.bridge.cancel("Cancelled by user via command")
+                self._show_result("Active turn cancelled.")
+            else:
+                self._show_result("No active turn to cancel.")
         elif found.id in {"autonomy", "permissions"}:
             store = getattr(self.runtime, "autonomy_store", None)
             if not arg:
@@ -836,7 +842,12 @@ class KittUIApp:
         model_setup = Condition(lambda: self.state.active_overlay == "model_setup")
         provider_endpoint = Condition(lambda: self.state.active_overlay == "provider_endpoint")
         editor_focused = Condition(lambda: self.application and self.application.layout.current_control is self.prompt_control)
-        can_submit = Condition(lambda: bool(self.prompt_buffer.text.strip()) and not self.state.is_thinking and not (self.bridge and self.bridge.is_active))
+        can_submit = Condition(
+            lambda: bool(self.prompt_buffer.text.strip()) and (
+                self.prompt_buffer.text.strip().startswith("/")
+                or (not self.state.is_thinking and not (self.bridge and self.bridge.is_active))
+            )
+        )
 
         @kb.add("enter", filter=editor_focused & can_submit)
         def submit_prompt(event):

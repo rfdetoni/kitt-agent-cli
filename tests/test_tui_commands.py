@@ -165,7 +165,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             "/doctor", "/add sample.txt", "/drop sample.txt", "/files", "/memory", "/remember keep tests",
             "/clear-memory", "/skills", "/setup-skills", "/skill-install", "/skill-remove", "/repomap",
             "/diff", "/undo", "/ask", "/code", "/router", "/context-stats", "/stats", "/status",
-            "/compact", "/child", "/tasks", "/approvals", "/autonomy", "/workspace", "/clear", "/help",
+            "/compact", "/child", "/tasks", "/cancel", "/approvals", "/autonomy", "/workspace", "/clear", "/help",
         ]
         tested = set()
         with patch("kitt.router.model_selector.ModelConfigurator.fetch_ollama_models", return_value=["local-test"]):
@@ -225,6 +225,17 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         self.assertEqual(self.ui.state.active_overlay, "agents")
         self.ui.close_overlay()
+
+    async def test_task_and_cancel_commands_work_during_active_execution(self):
+        self.ui.state.is_thinking = True
+
+        await self.ui.submit("/task")
+        last_block = self.ui.state.transcript[-1]
+        self.assertIn("Nenhum agente ou sub-tarefa ativo", last_block.text)
+
+        await self.ui.submit("/cancel")
+        last_block = self.ui.state.transcript[-1]
+        self.assertIn("No active turn to cancel", last_block.text)
 
 
 if __name__ == "__main__":
