@@ -61,7 +61,13 @@ class ContextEngine:
                 max_tokens=max_tokens,
                 plan=plan,
             )
-            compiled = self.compiler.compile(plan, selected, rejected, generation=stats.get("updated", 0), partial=False)
+            compiled = self.compiler.compile(
+                plan,
+                selected,
+                rejected,
+                generation=stats.get("generation", 0),
+                partial=stats.get("state") == "PARTIAL",
+            )
             self.last_compiled_context = compiled
             self.last_build_stats = {
                 **stats,

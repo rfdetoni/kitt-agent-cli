@@ -61,6 +61,8 @@ class TestContextAndIndex(unittest.TestCase):
             index = RepositoryIndex(tmpdir, in_memory=True)
             stats = index.build_or_update()
             self.assertGreaterEqual(stats["scanned"], 1)
+            self.assertEqual(stats["generation"], 1)
+            self.assertEqual(stats["state"], "READY")
 
             results = index.search_text("Hello World")
             self.assertGreaterEqual(len(results), 1)

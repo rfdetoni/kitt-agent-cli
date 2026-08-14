@@ -64,6 +64,8 @@ class TestE2EPipeline(unittest.TestCase):
 
         self.assertGreaterEqual(event.selected_count, 1)
         self.assertGreater(event.total_tokens, 0)
+        self.assertGreaterEqual(event.index_generation, 1)
+        self.assertEqual(event.index_state, "READY")
         index.close()
 
     def test_simple_ask_skips_repository_context(self):

@@ -404,6 +404,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             if build_stats:
                 self._emit("ContextBuildCompleted", build_stats)
                 yield ContextBuildCompleted(
+                    index_generation=int(build_stats.get("generation", 0)),
+                    index_state=str(build_stats.get("state", "")),
                     selected_count=int(build_stats.get("selected", 0)),
                     rejected_count=int(build_stats.get("rejected", 0)),
                     total_tokens=int(build_stats.get("tokens", 0)),

@@ -43,6 +43,13 @@ class RepositoryIndex:
     def _init_db(self) -> None:
         self._conn.executescript(INDEX_SCHEMA_SQL)
         self.has_fts5 = setup_fts5_tables(self._conn)
+        with self._conn:
+            self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('index_generation', '0')")
+            self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('state', 'EMPTY')")
+
+    def index_generation(self) -> int:
+        row = self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()
+        return int(row["value"]) if row else 0
 
     def close(self) -> None:
         try:
@@ -59,6 +66,7 @@ class RepositoryIndex:
         seen_paths = set()
 
         with self._conn:
+            self._conn.execute("UPDATE index_meta SET value='BOOTSTRAP' WHERE key='state'")
             for p in files:
                 rel_path = str(p.relative_to(self.root_path))
                 seen_paths.add(rel_path)
@@ -157,8 +165,20 @@ class RepositoryIndex:
                 if self.has_fts5:
                     self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (row["file_id"],))
                 self._conn.execute("DELETE FROM files WHERE file_id=?", (row["file_id"],))
+            changed = updated_count or len(stale)
+            if changed:
+                self._conn.execute(
+                    "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
+                )
+            self._conn.execute("UPDATE index_meta SET value=? WHERE key='state'", ("READY" if len(files) < self.max_files else "PARTIAL",))
 
-        return {"scanned": len(files), "updated": updated_count, "deleted": len(stale)}
+        return {
+            "scanned": len(files),
+            "updated": updated_count,
+            "deleted": len(stale),
+            "generation": self.index_generation(),
+            "state": self._conn.execute("SELECT value FROM index_meta WHERE key='state'").fetchone()["value"],
+        }
 
     def _index_modules(self, modules: List[Dict[str, str]]) -> None:
         with self._conn:

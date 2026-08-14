@@ -24,6 +24,8 @@ class ContextResolved(TurnEvent):
 
 @dataclass
 class ContextBuildCompleted(TurnEvent):
+    index_generation: int = 0
+    index_state: str = ""
     selected_count: int = 0
     rejected_count: int = 0
     total_tokens: int = 0
