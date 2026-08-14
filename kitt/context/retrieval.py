@@ -201,6 +201,34 @@ class HybridRetrievalPipeline:
                     content=text,
                 ))
 
+        if plan.include_tests:
+            for source_path in sorted({c.path for c in candidates if c.path}):
+                for test_path in self._paired_test_paths(source_path):
+                    if any(c.path == test_path for c in candidates):
+                        continue
+                    row = self._first_chunk(test_path)
+                    if not row:
+                        continue
+                    text = row["content"]
+                    candidates.append(ContextCandidate(
+                        candidate_id=f"test:{test_path}",
+                        source_type="file",
+                        path=row["path"],
+                        start_line=row["start_line"],
+                        end_line=row["end_line"],
+                        content_hash=row["content_hash"],
+                        estimated_tokens=max(1, len(text) // 4),
+                        relevance=0.7,
+                        confidence=0.85,
+                        freshness=0.9,
+                        mandatory=False,
+                        trust_level="WORKSPACE_DATA",
+                        dependencies=(),
+                        selection_reason=f"Source-test association for {source_path}",
+                        representation="SKELETON",
+                        content=text,
+                    ))
+
         # 4. Bounded graph expansion: include direct dependencies/dependents from indexed refs.
         seed_paths = {c.path for c in candidates if c.path}
         if seed_paths and (plan.include_dependencies or plan.include_dependents):
@@ -246,3 +274,19 @@ class HybridRetrievalPipeline:
                 """,
                 (path,),
             ).fetchone()
+
+    def _paired_test_paths(self, source_path: str) -> List[str]:
+        path = Path(source_path)
+        stem, suffix = path.stem, path.suffix
+        candidates = {
+            str(path.with_name(f"test_{stem}{suffix}")),
+            str(path.with_name(f"{stem}_test{suffix}")),
+            f"tests/test_{stem}{suffix}",
+            f"tests/{stem}_test{suffix}",
+        }
+        with self.index._lock:
+            rows = self.index._conn.execute(
+                "SELECT path FROM files WHERE path IN (%s) ORDER BY path" % ",".join("?" for _ in candidates),
+                tuple(candidates),
+            ).fetchall()
+        return [row["path"] for row in rows]

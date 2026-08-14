@@ -401,5 +401,20 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertIn("working set", selected[0].selection_reason.lower())
             index.close()
 
+    def test_retrieval_includes_paired_tests_when_requested(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "app.py").write_text("def calculate_total():\n    return 42\n", encoding="utf-8")
+            (root / "test_app.py").write_text("def test_calculate_total():\n    assert calculate_total() == 42\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            selected = HybridRetrievalPipeline(index).retrieve("add tests for `calculate_total`", max_tokens=1000)
+            paths = {candidate.path for candidate in selected}
+
+            self.assertIn("app.py", paths)
+            self.assertIn("test_app.py", paths)
+            index.close()
+
 if __name__ == "__main__":
     unittest.main()
