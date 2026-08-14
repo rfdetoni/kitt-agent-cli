@@ -1,29 +1,18 @@
 from typing import List, Dict, Set
 from collections import defaultdict
 from kitt.domain.entities import FileTags
+from kitt.index.graph import RepositoryGraph
 
 class ContextRanker:
-    """Graph dependency builder and PageRank file ranking engine."""
+    """Compatibility ranker backed by the linear RepositoryGraph implementation."""
 
     def compute_pagerank(self, nodes: List[str], edges: Dict[str, Set[str]], damping: float = 0.85, max_iter: int = 20) -> Dict[str, float]:
-        n = len(nodes)
-        if n == 0:
-            return {}
-
-        rank = {node: 1.0 / n for node in nodes}
-        out_degree = {node: len(edges.get(node, set())) for node in nodes}
-
-        for _ in range(max_iter):
-            new_rank = {}
-            for node in nodes:
-                rank_sum = 0.0
-                for predecessor in nodes:
-                    if node in edges.get(predecessor, set()):
-                        rank_sum += rank[predecessor] / max(out_degree[predecessor], 1)
-                new_rank[node] = (1.0 - damping) / n + damping * rank_sum
-            rank = new_rank
-
-        return rank
+        graph = RepositoryGraph()
+        graph.nodes.update(nodes)
+        for src, targets in edges.items():
+            for dst in targets:
+                graph.add_edge(src, dst)
+        return graph.compute_pagerank(damping=damping, max_iterations=max_iter)
 
     def rank_files(
         self,

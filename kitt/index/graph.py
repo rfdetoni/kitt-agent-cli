@@ -72,9 +72,10 @@ class RepositoryGraph:
         for _ in range(max_iterations):
             new_scores = {}
             max_diff = 0.0
+            dangling_sum = sum(scores[src] for src in node_list if out_sums.get(src, 0.0) <= 0) / num_nodes
 
             for dst in node_list:
-                incoming_sum = 0.0
+                incoming_sum = dangling_sum
                 for src, weight in self.rev_adj.get(dst, []):
                     total_out = out_sums.get(src, 0.0)
                     if total_out > 0:
@@ -101,7 +102,8 @@ class RepositoryGraph:
                 break
             next_layer = set()
             for node in current_layer:
-                for neighbor, _ in self.adj.get(node, []):
+                neighbors = [*self.adj.get(node, []), *self.rev_adj.get(node, [])]
+                for neighbor, _ in neighbors:
                     if neighbor not in visited:
                         visited.add(neighbor)
                         next_layer.add(neighbor)

@@ -12,6 +12,7 @@ from kitt.index.scanner import RepositoryScanner
 from kitt.index.repository import RepositoryIndex
 from kitt.context_engine.engine import ContextEngine
 from kitt.context_engine.indexer import LocalFileIndexer
+from kitt.context_engine.graph import ContextRanker
 
 class TestContextAndIndex(unittest.TestCase):
     def test_calibrated_token_estimator(self):
@@ -54,6 +55,9 @@ class TestContextAndIndex(unittest.TestCase):
         expanded = graph.expand_neighborhood({"a.py"}, max_hops=2)
         self.assertIn("b.py", expanded)
         self.assertIn("c.py", expanded)
+        reverse_expanded = graph.expand_neighborhood({"c.py"}, max_hops=2)
+        self.assertIn("a.py", reverse_expanded)
+        self.assertAlmostEqual(sum(scores.values()), 1.0, places=6)
 
     def test_repository_graph_deduplicates_edges_and_updates_weight(self):
         graph = RepositoryGraph()
@@ -66,6 +70,16 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertEqual(len(graph.rev_adj["b.py"]), 1)
         self.assertEqual(graph.adj["a.py"][0], ("b.py", 2.0))
         self.assertEqual(graph.generation, generation + 1)
+
+    def test_context_ranker_uses_linear_repository_graph_adapter(self):
+        ranker = ContextRanker()
+        scores = ranker.compute_pagerank(
+            ["a.py", "b.py", "c.py"],
+            {"a.py": {"b.py"}, "b.py": {"c.py"}},
+        )
+
+        self.assertEqual(set(scores), {"a.py", "b.py", "c.py"})
+        self.assertAlmostEqual(sum(scores.values()), 1.0, places=6)
 
     def test_repository_index_incremental_update_and_search(self):
         with tempfile.TemporaryDirectory() as tmpdir:
