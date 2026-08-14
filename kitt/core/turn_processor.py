@@ -425,7 +425,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             working_paths = self.working_set.paths(cmd.conversation_id)
             context_query = " ".join([cmd.prompt, *working_paths])
             context_blocks = (
-                self.context_engine.get_relevant_context(context_query, max_tokens=2048, root_dir=str(self.root_path))
+                self.context_engine.get_relevant_context(
+                    context_query,
+                    max_tokens=2048,
+                    root_dir=str(self.root_path),
+                    working_set_paths=working_paths,
+                )
                 if needs_project_context else []
             )
             context_map_str = "\n\n".join(b.content for b in context_blocks)

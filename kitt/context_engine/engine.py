@@ -48,7 +48,8 @@ class ContextEngine:
         self,
         task_description: str,
         max_tokens: int = 2048,
-        root_dir: str = "."
+        root_dir: str = ".",
+        working_set_paths: List[str] | None = None,
     ) -> List[ContextBlock]:
         root_path = Path(root_dir).resolve()
         if self.index is None or self.index.root_path != root_path:
@@ -62,6 +63,7 @@ class ContextEngine:
             explicit_files=set(plan.exact_paths),
             max_tokens=max_tokens,
             plan=plan,
+            working_set_paths=set(working_set_paths or ()),
         )
         compiled = self.compiler.compile(
             plan,

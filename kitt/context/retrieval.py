@@ -22,9 +22,10 @@ class HybridRetrievalPipeline:
         self,
         prompt: str,
         explicit_files: Set[str] | None = None,
-        max_tokens: int = 2048
+        max_tokens: int = 2048,
+        working_set_paths: Set[str] | None = None,
     ) -> List[ContextCandidate]:
-        selected, _discarded, _plan = self.retrieve_with_rejections(prompt, explicit_files, max_tokens)
+        selected, _discarded, _plan = self.retrieve_with_rejections(prompt, explicit_files, max_tokens, working_set_paths=working_set_paths)
         return selected
 
     def retrieve_with_rejections(
@@ -33,10 +34,12 @@ class HybridRetrievalPipeline:
         explicit_files: Set[str] | None = None,
         max_tokens: int = 2048,
         plan: QueryPlan | None = None,
+        working_set_paths: Set[str] | None = None,
     ) -> tuple[List[ContextCandidate], List[ContextCandidate], QueryPlan]:
         candidates: List[ContextCandidate] = []
         now = time.time()
         plan = plan or QueryPlanner.plan(prompt, explicit_files=explicit_files or (), token_budget=max_tokens)
+        working_set_paths = set(working_set_paths or ())
 
         # 1. Explicit files (Mandatory)
         if plan.exact_paths:
@@ -111,6 +114,7 @@ class HybridRetrievalPipeline:
                 continue
             text = res["content"]
             est = max(1, len(text) // 4)
+            in_working_set = res["path"] in working_set_paths
             candidates.append(ContextCandidate(
                 candidate_id=cand_id,
                 source_type="file",
@@ -119,15 +123,41 @@ class HybridRetrievalPipeline:
                 end_line=res.get("end_line") or len(text.splitlines()),
                 content_hash=res.get("content_hash") or hashlib.sha256(text.encode("utf-8")).hexdigest(),
                 estimated_tokens=est,
-                relevance=0.85 - (idx * 0.05),
+                relevance=(0.95 if in_working_set else 0.85) - (idx * 0.05),
                 confidence=0.9,
                 freshness=0.9,
                 mandatory=False,
                 trust_level="WORKSPACE_DATA",
                 dependencies=(),
-                selection_reason=f"Matched via {res['method']} search",
+                selection_reason=f"Matched via {res['method']} search" + ("; working set boost" if in_working_set else ""),
                 representation="SLICE",
                 content=text
+            ))
+
+        for rel in sorted(working_set_paths):
+            if any(c.path == rel for c in candidates):
+                continue
+            row = self._first_chunk(rel)
+            if not row:
+                continue
+            text = row["content"]
+            candidates.append(ContextCandidate(
+                candidate_id=f"working:{rel}",
+                source_type="file",
+                path=row["path"],
+                start_line=row["start_line"],
+                end_line=row["end_line"],
+                content_hash=row["content_hash"],
+                estimated_tokens=max(1, len(text) // 4),
+                relevance=0.65,
+                confidence=0.8,
+                freshness=1.0,
+                mandatory=False,
+                trust_level="WORKSPACE_DATA",
+                dependencies=(),
+                selection_reason="Recent conversation working set",
+                representation="SKELETON",
+                content=text,
             ))
 
         # Project-overview fallback: bounded catalog slices, not whole repo.
@@ -176,18 +206,7 @@ class HybridRetrievalPipeline:
         if seed_paths and (plan.include_dependencies or plan.include_dependents):
             expanded = self.index.graph.expand_neighborhood(set(seed_paths), max_hops=plan.graph_hops, max_nodes=25)
             for path in sorted(expanded - seed_paths):
-                with self.index._lock:
-                    row = self.index._conn.execute(
-                        """
-                        SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
-                        FROM files f
-                        JOIN chunks c ON c.file_id = f.file_id
-                        WHERE f.path = ?
-                        ORDER BY c.start_line
-                        LIMIT 1
-                        """,
-                        (path,),
-                    ).fetchone()
+                row = self._first_chunk(path)
                 if not row:
                     continue
                 text = row["content"]
@@ -213,3 +232,17 @@ class HybridRetrievalPipeline:
         # 5. Apply ContextSelector (greedy value/token selection)
         selected, discarded = ContextSelector.select_candidates(candidates, max_token_budget=max_tokens)
         return selected, discarded, plan
+
+    def _first_chunk(self, path: str):
+        with self.index._lock:
+            return self.index._conn.execute(
+                """
+                SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
+                FROM files f
+                JOIN chunks c ON c.file_id = f.file_id
+                WHERE f.path = ?
+                ORDER BY c.start_line
+                LIMIT 1
+                """,
+                (path,),
+            ).fetchone()

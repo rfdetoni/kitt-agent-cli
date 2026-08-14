@@ -368,5 +368,23 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertIn("[truncated explicit file]", selected[0].content)
             index.close()
 
+    def test_retrieval_includes_working_set_path_without_lexical_match(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "recent.py").write_text("def recent_context():\n    return 42\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            selected = HybridRetrievalPipeline(index).retrieve(
+                "continue previous task",
+                max_tokens=1000,
+                working_set_paths={"recent.py"},
+            )
+
+            self.assertTrue(selected)
+            self.assertEqual(selected[0].path, "recent.py")
+            self.assertIn("working set", selected[0].selection_reason.lower())
+            index.close()
+
 if __name__ == "__main__":
     unittest.main()
