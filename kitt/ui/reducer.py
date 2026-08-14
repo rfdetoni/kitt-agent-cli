@@ -92,14 +92,26 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
             core_task.summary = "Raciocínio concluído; gerando resposta/código..."
             core_task.progress = 35
     elif isinstance(event, ToolCallProposed):
-        target = event.args.get("path") if isinstance(event.args, dict) else ""
-        target_str = f" ({target})" if target else ""
-        state.status_text = f"DEVELOPING: {event.tool_name or 'código'}"
+        tool_name = event.tool_name or "tool"
+        bullet_text = format_tool_bullet(tool_name, event.args if isinstance(event.args, dict) else {})
+        state.status_text = f"DEVELOPING: {tool_name}"
+        
+        running_block = next((b for b in reversed(state.transcript) if b.kind == "tool" and b.status == "running" and not b.call_id), None)
+        if not running_block:
+            state.transcript.append(TranscriptBlock(
+                f"tool-{len(state.transcript)+1}", "tool", bullet_text, "running",
+                started_at=time.time(),
+            ))
+        else:
+            running_block.text = bullet_text
+
         core_task = next((t for t in state.active_tasks if t.id == "core" or t.kind == "core_agent"), None)
         if core_task:
             bytes_gen = event.args.get("bytes", 0) if isinstance(event.args, dict) else 0
+            target = event.args.get("path", "") if isinstance(event.args, dict) else ""
+            target_str = f" ({target})" if target else ""
             core_task.status = "running"
-            core_task.summary = f"Gerando payload para {event.tool_name}{target_str} ({bytes_gen} bytes)..."
+            core_task.summary = f"Gerando payload para {tool_name}{target_str} ({bytes_gen} bytes)..."
             core_task.progress = min(80, 40 + int(bytes_gen / 100))
     elif isinstance(event, TextDelta):
         state.status_text = "RESPONDING"
@@ -124,10 +136,16 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
         state.status_text = f"TOOL: {event.tool_name}"
         bullet_text = format_tool_bullet(event.tool_name, getattr(event, "args", {}))
         call_id = getattr(event, "call_id", "")
-        state.transcript.append(TranscriptBlock(
-            f"tool-{len(state.transcript)+1}", "tool", bullet_text, "running",
-            call_id=call_id, started_at=time.time(),
-        ))
+        
+        running_block = next((b for b in reversed(state.transcript) if b.kind == "tool" and b.status == "running" and not b.call_id), None)
+        if running_block:
+            running_block.text = bullet_text
+            running_block.call_id = call_id
+        else:
+            state.transcript.append(TranscriptBlock(
+                f"tool-{len(state.transcript)+1}", "tool", bullet_text, "running",
+                call_id=call_id, started_at=time.time(),
+            ))
         
         tool_task_id = f"tool-{call_id if call_id else event.tool_name}"
         tool_task = next((t for t in state.active_tasks if t.id == tool_task_id or t.id == "compute"), None)
