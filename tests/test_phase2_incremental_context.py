@@ -61,6 +61,35 @@ class TestPhase2IncrementalContext(unittest.TestCase):
         self.assertTrue(any(t.name == "findPayments" and "accountId" in t.signature for t in java_tags.tags))
         self.assertFalse(any(t.name in {"fakeComment", "FakeString"} and t.kind == "def" for t in java_tags.tags))
 
+    def test_ts_go_rust_parser_extracts_imports_receivers_and_refs(self):
+        ts_file = self.root_path / "view.ts"
+        ts_file.write_text(
+            "import { UserService as Service } from './service';\n"
+            "export function renderUser() { return UserService(); }\n",
+            encoding="utf-8",
+        )
+        go_file = self.root_path / "server.go"
+        go_file.write_text(
+            "package main\ntype Server struct{}\nfunc (s *Server) Run(ctx Context) {}\n",
+            encoding="utf-8",
+        )
+        rs_file = self.root_path / "lib.rs"
+        rs_file.write_text(
+            "pub struct State;\nimpl State { pub fn run(&self) -> Result<()> { Ok(()) } }\n",
+            encoding="utf-8",
+        )
+
+        ts_tags = self.parser.extract_file_tags(ts_file, "view.ts").tags
+        go_tags = self.parser.extract_file_tags(go_file, "server.go").tags
+        rs_tags = self.parser.extract_file_tags(rs_file, "lib.rs").tags
+
+        self.assertTrue(any(t.kind == "ref" and t.name == "UserService" for t in ts_tags))
+        self.assertTrue(any(t.kind == "def" and t.name == "renderUser" for t in ts_tags))
+        self.assertTrue(any(t.kind == "def" and t.name == "Run" and t.sub_kind == "method" for t in go_tags))
+        self.assertTrue(any(t.kind == "ref" and t.name == "Context" for t in go_tags))
+        self.assertTrue(any(t.kind == "def" and t.name == "State" for t in rs_tags))
+        self.assertTrue(any(t.kind == "ref" and t.name == "Result" for t in rs_tags))
+
     def test_pagerank_graph_ranking(self):
         f1 = self.root_path / "controller.py"
         f1.write_text("from service import UserService\nclass Controller:\n  def run(self):\n    UserService()\n", encoding='utf-8')

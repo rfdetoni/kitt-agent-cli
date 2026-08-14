@@ -17,6 +17,10 @@ class SymbolParser:
         r'^\s*(export\s+)?(async\s+)?(function|class|interface|type|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)',
         re.MULTILINE
     )
+    TS_JS_IMPORT_REGEX = re.compile(
+        r'^\s*import\s+(?:type\s+)?(?:\{([^}]+)\}|([A-Za-z_$][A-Za-z0-9_$]*)).*?\s+from\s+[\'"]([^\'"]+)[\'"]',
+        re.MULTILINE
+    )
 
     PY_DEF_REGEX = re.compile(
         r'^\s*(async\s+)?(def|class)\s+([A-Za-z_][A-Za-z0-9_]*)',
@@ -180,23 +184,40 @@ class SymbolParser:
     def _extract_ts_js_tags(self, content: str) -> List[Tag]:
         tags: List[Tag] = []
         lines = content.splitlines()
+        for match in self.TS_JS_IMPORT_REGEX.finditer(content):
+            line_no = content[:match.start()].count("\n") + 1
+            names = match.group(1) or match.group(2) or ""
+            for raw_name in names.split(","):
+                name = raw_name.strip().split(" as ")[0].strip()
+                if name:
+                    tags.append(Tag(kind='ref', name=name, line=line_no, signature=f"import {name} from {match.group(3)}", sub_kind='import'))
         for idx, line in enumerate(lines, start=1):
             match = self.TS_JS_DEF_REGEX.match(line)
             if match:
                 name = match.group(4)
                 sig = line.strip().rstrip('{').rstrip(';')
                 tags.append(Tag(kind='def', name=name, line=idx, signature=sig, sub_kind=match.group(3)))
+            for call in re.findall(r'\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(', line):
+                if call not in {'if', 'for', 'while', 'switch', 'catch', 'function'}:
+                    tags.append(Tag(kind='ref', name=call, line=idx, signature=call, sub_kind='call'))
 
         return tags
 
     def _extract_go_tags(self, content: str) -> List[Tag]:
         tags: List[Tag] = []
         go_def = re.compile(r'^\s*(func|type)\s+([A-Za-z0-9_]+)', re.MULTILINE)
+        go_method = re.compile(r'^\s*func\s+\([^)]*\)\s+([A-Za-z0-9_]+)', re.MULTILINE)
         lines = content.splitlines()
         for idx, line in enumerate(lines, start=1):
-            m = go_def.match(line)
-            if m:
-                tags.append(Tag(kind='def', name=m.group(2), line=idx, signature=line.strip(), sub_kind=m.group(1)))
+            mm = go_method.match(line)
+            if mm:
+                tags.append(Tag(kind='def', name=mm.group(1), line=idx, signature=line.strip(), sub_kind='method'))
+            else:
+                m = go_def.match(line)
+                if m:
+                    tags.append(Tag(kind='def', name=m.group(2), line=idx, signature=line.strip(), sub_kind=m.group(1)))
+            for ref in re.findall(r'\b([A-Z][A-Za-z0-9_]*)\b', line):
+                tags.append(Tag(kind='ref', name=ref, line=idx, signature=ref, sub_kind='type_ref'))
         return tags
 
     def _extract_rust_tags(self, content: str) -> List[Tag]:
@@ -207,6 +228,8 @@ class SymbolParser:
             m = rs_def.match(line)
             if m:
                 tags.append(Tag(kind='def', name=m.group(4), line=idx, signature=line.strip(), sub_kind=m.group(3)))
+            for ref in re.findall(r'\b([A-Z][A-Za-z0-9_]*)\b', line):
+                tags.append(Tag(kind='ref', name=ref, line=idx, signature=ref, sub_kind='type_ref'))
         return tags
 
     def _extract_generic_tags(self, content: str) -> List[Tag]:
