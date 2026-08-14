@@ -53,6 +53,7 @@ class CommandRegistry:
             ("code", "Code", "Turn", "Force code-editing mode", ["/code"]),
             ("model", "Model", "Models", "Set one role or all roles: /model <role|all> [provider] <model>", ["/model", "/models"]),
             ("setup_models", "Setup Models", "Models", "Configure models; optional remote Ollama URL", ["/setup-models"]),
+            ("reasoning", "Reasoning Effort", "Models", "Adjust thinking depth: /reasoning <0-100> (Ctrl+Left/Right)", ["/reasoning", "/think", "/effort"]),
             ("router", "Router", "Models", "Show task routing configuration", ["/router"]),
             ("context_stats", "Context Stats", "Analytics", "Show context budget telemetry", ["/context-stats"]),
             ("stats", "Telemetry Stats", "Analytics", "Show token and latency telemetry", ["/stats", "/metrics"]),

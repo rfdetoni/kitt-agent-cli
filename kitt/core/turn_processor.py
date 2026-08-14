@@ -94,6 +94,7 @@ class TurnProcessor:
         self.session_state = SessionState()
         self.pending_actions: Dict[str, PendingAction] = {}
         self.cancelled_turns: set[str] = set()
+        self.reasoning_effort: int = 50
         self._closed = False
 
         self.context_client = context_client
@@ -703,6 +704,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             ).strip() if plan.enabled_tools else (
                 f"{base_sys}\n\nProject context:\n{context_map_str}".strip() if context_map_str else base_sys
             )
+
+            reasoning_instruction = ""
+            if plan.enabled_tools:
+                if self.reasoning_effort <= 0:
+                    reasoning_instruction = "\n\nReasoning Policy: 0% effort (Fast/Direct). Skip chain of thought reasoning entirely. Do not produce <think> tags. Output your response or tool call directly."
+                elif self.reasoning_effort < 40:
+                    reasoning_instruction = f"\n\nReasoning Policy: {self.reasoning_effort}% effort (Low). Keep chain of thought brief and concise (1-3 sentences) inside <think>...</think> before acting."
+                elif self.reasoning_effort <= 75:
+                    reasoning_instruction = f"\n\nReasoning Policy: {self.reasoning_effort}% effort (Medium). Provide clear, balanced step-by-step reasoning inside <think>...</think>."
+                else:
+                    reasoning_instruction = f"\n\nReasoning Policy: {self.reasoning_effort}% effort (Deep/Max). Perform thorough, deep, and exhaustive chain of thought inside <think>...</think> exploring all nuances and edge cases."
+
+            sys_prompt = sys_prompt + reasoning_instruction
 
             request = ExecutionRequest(
                 system_prompt=sys_prompt,

@@ -27,7 +27,7 @@ class StatusBarComponent:
         else:
             ctx_part = ""
 
-        right = f"{ctx_part}Tokens: {state.tokens_used} | Saved: {state.net_saved_tokens} "
+        right = f"{ctx_part}🧠 {state.reasoning_effort}% (Ctrl+←/→) | Tokens: {state.tokens_used} | Saved: {state.net_saved_tokens} "
         
         # Balance space across width
         spaces = max(1, width - len(left) - len(center) - len(right))

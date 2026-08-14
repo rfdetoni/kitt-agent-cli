@@ -165,7 +165,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             "/doctor", "/add sample.txt", "/drop sample.txt", "/files", "/memory", "/remember keep tests",
             "/clear-memory", "/skills", "/setup-skills", "/skill-install", "/skill-remove", "/repomap",
             "/diff", "/undo", "/ask", "/code", "/router", "/context-stats", "/stats", "/status",
-            "/compact", "/child", "/tasks", "/cancel", "/approvals", "/autonomy", "/workspace", "/clear", "/help",
+            "/compact", "/child", "/tasks", "/cancel", "/reasoning", "/approvals", "/autonomy", "/workspace", "/clear", "/help",
         ]
         tested = set()
         with patch("kitt.router.model_selector.ModelConfigurator.fetch_ollama_models", return_value=["local-test"]):

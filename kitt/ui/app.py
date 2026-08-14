@@ -354,6 +354,22 @@ class KittUIApp:
                 self._show_result("Active turn cancelled.")
             else:
                 self._show_result("No active turn to cancel.")
+        elif found.id == "reasoning":
+            if arg:
+                try:
+                    val = max(0, min(100, int(arg.replace("%", "").strip())))
+                    self.state.reasoning_effort = val
+                    if hasattr(self.runtime, "processor"):
+                        self.runtime.processor.reasoning_effort = val
+                    blocks = int(val / 10)
+                    bar = "█" * blocks + "░" * (10 - blocks)
+                    self._show_result(f"Reasoning effort definido para {val}% [{bar}] (Modelo: {self.state.large_model})")
+                except ValueError:
+                    self._show_result("Uso: /reasoning <0-100> (ex: /reasoning 80)")
+            else:
+                blocks = int(self.state.reasoning_effort / 10)
+                bar = "█" * blocks + "░" * (10 - blocks)
+                self._show_result(f"Reasoning atual: {self.state.reasoning_effort}% [{bar}]\nModelo em uso: {self.state.large_model}\n\nUse Ctrl+← / Ctrl+→ para alterar em tempo de execução, ou /reasoning <0-100>.")
         elif found.id in {"autonomy", "permissions"}:
             store = getattr(self.runtime, "autonomy_store", None)
             if not arg:
@@ -900,6 +916,32 @@ class KittUIApp:
         @kb.add("c-o", filter=~palette)
         def _(event): self.state.toggle_last_tool_collapse(); event.app.invalidate()
 
+        @kb.add("c-right", filter=~model_setup & ~palette)
+        @kb.add("c-x", "right")
+        def increase_reasoning(event):
+            self.state.reasoning_effort = min(100, self.state.reasoning_effort + 10)
+            if hasattr(self.runtime, "processor"):
+                self.runtime.processor.reasoning_effort = self.state.reasoning_effort
+            blocks = int(self.state.reasoning_effort / 10)
+            bar = "█" * blocks + "░" * (10 - blocks)
+            model_name = self.state.large_model or "execution"
+            self.state.add_toast(f"🧠 Reasoning: {self.state.reasoning_effort}% [{bar}] ({model_name})", duration=2.0)
+            if self.application:
+                self.application.invalidate()
+
+        @kb.add("c-left", filter=~model_setup & ~palette)
+        @kb.add("c-x", "left")
+        def decrease_reasoning(event):
+            self.state.reasoning_effort = max(0, self.state.reasoning_effort - 10)
+            if hasattr(self.runtime, "processor"):
+                self.runtime.processor.reasoning_effort = self.state.reasoning_effort
+            blocks = int(self.state.reasoning_effort / 10)
+            bar = "█" * blocks + "░" * (10 - blocks)
+            model_name = self.state.large_model or "execution"
+            self.state.add_toast(f"🧠 Reasoning: {self.state.reasoning_effort}% [{bar}] ({model_name})", duration=2.0)
+            if self.application:
+                self.application.invalidate()
+
         @kb.add("down", filter=session_picker)
         @kb.add("c-n", filter=session_picker)
         def _(event):
@@ -1200,7 +1242,13 @@ class KittUIApp:
         ]
 
     def _header_text(self):
-        return [("class:primary", " K.I.T.T. "), ("class:text.muted", self.state.workspace_path)]
+        model_name = self.state.large_model or "execution"
+        return [
+            ("class:primary", " K.I.T.T. "),
+            ("class:text.muted", f" {self.state.workspace_path} "),
+            ("class:status", f" [{model_name}] "),
+            ("class:primary", f" 🧠 Reasoning: {self.state.reasoning_effort}% (Ctrl+←/→) "),
+        ]
 
     def _transcript_text(self):
         out = []
@@ -1245,7 +1293,8 @@ class KittUIApp:
         return (
             f" WORKSPACE\n {self.state.workspace_name}\n\n"
             f" CONVERSATION\n {(self.state.active_conversation_id or 'new')[:12]}\n\n"
-            f" MODELS\n {self.state.small_model}\n {self.state.large_model}\n\n"
+            f" MODELS\n {self.state.small_model}\n {self.state.large_model}\n"
+            f" 🧠 Reasoning: {self.state.reasoning_effort}%\n\n"
             f" CONTEXT\n {self.state.tokens_used}/{self.state.context_window} ({pct}%)\n"
             f" SAVED {self.state.net_saved_tokens}"
         )

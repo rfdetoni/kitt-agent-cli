@@ -87,6 +87,7 @@ class UIState:
     active_turn_id: str | None = None
     small_model: str = "context"
     large_model: str = "execution"
+    reasoning_effort: int = 50
     status_text: str = "SYSTEM ONLINE"
     is_thinking: bool = False
     is_executing_tool: bool = False
