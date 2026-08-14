@@ -43,6 +43,21 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertIn(dep, selected)
         self.assertIn(duplicate, discarded)
 
+    def test_context_selector_applies_jaccard_redundancy_penalty(self):
+        first = ContextCandidate(
+            "first", "file", "a.py", 1, 20, "h1", 100, 1.0, 1.0, 1.0, False,
+            "WORKSPACE", (), "first", content="alpha beta gamma delta epsilon"
+        )
+        redundant = ContextCandidate(
+            "redundant", "file", "b.py", 1, 20, "h2", 120, 0.95, 1.0, 1.0, False,
+            "WORKSPACE", (), "same", content="alpha beta gamma delta epsilon"
+        )
+
+        selected, discarded = ContextSelector.select_candidates([first, redundant], max_token_budget=300)
+
+        self.assertIn(first, selected)
+        self.assertIn(redundant, discarded)
+
     def test_repository_graph_pagerank(self):
         graph = RepositoryGraph()
         graph.add_edge("a.py", "b.py")

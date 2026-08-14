@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Tuple, List, Optional
 
@@ -32,6 +33,24 @@ class ContextCandidate:
 
 class ContextSelector:
     """Greedy value/token knapsack selector enforcing mandatory context and token budgets."""
+
+    @staticmethod
+    def _terms(candidate: ContextCandidate) -> set[str]:
+        text = f"{candidate.path or ''}\n{candidate.content}"
+        return set(re.findall(r"[A-Za-z0-9_]{3,}", text.lower()))
+
+    @classmethod
+    def _too_redundant(cls, candidate: ContextCandidate, selected: List[ContextCandidate]) -> bool:
+        cand_terms = cls._terms(candidate)
+        for chosen in selected:
+            if candidate.content_hash and candidate.content_hash == chosen.content_hash:
+                return True
+            if candidate.path == chosen.path and candidate.start_line == chosen.start_line and candidate.end_line == chosen.end_line:
+                return True
+            chosen_terms = cls._terms(chosen)
+            if cand_terms and chosen_terms and len(cand_terms & chosen_terms) / len(cand_terms | chosen_terms) >= 0.85:
+                return True
+        return False
 
     @staticmethod
     def select_candidates(
@@ -69,13 +88,7 @@ class ContextSelector:
 
         # 3. Greedy selection with cheap MMR-style de-duplication by same range.
         for cand in remaining:
-            duplicate = any(
-                cand.path == chosen.path
-                and cand.start_line == chosen.start_line
-                and cand.end_line == chosen.end_line
-                for chosen in selected
-            )
-            if duplicate:
+            if ContextSelector._too_redundant(cand, selected):
                 discarded.append(cand)
                 continue
             if spent_tokens + cand.estimated_tokens <= max_token_budget:
