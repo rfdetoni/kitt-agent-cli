@@ -480,3 +480,38 @@ class RepositoryIndex:
                 }
                 for row in rows
             ]
+
+    def find_symbol_location(self, symbol: str, path: str | None = None) -> Optional[Dict[str, Any]]:
+        """Return first indexed definition location for symbol, optionally constrained to path."""
+        with self._lock:
+            params: list[Any] = [symbol, symbol]
+            path_filter = ""
+            if path:
+                path_filter = " AND f.path = ?"
+                params.append(path)
+            params.append(1)
+            row = self._conn.execute(
+                f"""
+                SELECT f.path, s.name, s.qualified_name, s.kind, s.start_line, s.end_line, s.symbol_hash
+                FROM symbols s
+                JOIN files f ON f.file_id = s.file_id
+                WHERE (s.name = ? OR s.qualified_name = ?){path_filter}
+                ORDER BY
+                    CASE WHEN s.qualified_name = ? THEN 0 ELSE 1 END,
+                    length(f.path),
+                    s.start_line
+                LIMIT ?
+                """,
+                (*params[:-1], symbol, params[-1]),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "path": row["path"],
+                "symbol": row["name"],
+                "qualified_name": row["qualified_name"],
+                "kind": row["kind"],
+                "start_line": row["start_line"],
+                "end_line": row["end_line"],
+                "symbol_hash": row["symbol_hash"],
+            }

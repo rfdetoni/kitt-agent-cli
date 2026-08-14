@@ -105,7 +105,14 @@ class ToolRegistry:
         arg_schemas = {
             "list_files": {"path": "relative dir, default ."},
             "search": {"pattern": "literal text or regex", "regex": "bool, default false"},
-            "read_file": {"path": "relative file", "start_line": "int >=1", "end_line": "int, max 5000 lines"},
+            "read_file": {
+                "path": "relative file, optional with around_symbol",
+                "around_symbol": "indexed symbol name",
+                "context_lines": "int, default 20",
+                "start_line": "int >=1",
+                "end_line": "int, max 5000 lines",
+                "max_bytes": "int, optional output cap",
+            },
             "repository_map": {"query": "text", "max_tokens": "int <=4000"},
             "python_compute": {"code": "safe Python subset", "inputs": "JSON object", "result_var": "name, default _result"},
             "write_file": {"path": "relative file", "content": "full file text", "expected_content_hash": "optional sha256"},
@@ -170,30 +177,53 @@ class ToolRegistry:
 
             elif tool_name == "read_file":
                 rel = args.get("path", "")
+                around_symbol = str(args.get("around_symbol", "") or "")
+                if around_symbol and self.repository_index is not None:
+                    symbol_row = self.repository_index.find_symbol_location(around_symbol, rel or None)
+                    if not symbol_row:
+                        return ToolResult(success=False, output="", error=f"Symbol not found: {around_symbol}")
+                    rel = symbol_row["path"]
+                    context_lines = max(0, min(int(args.get("context_lines", 20)), 200))
+                    args["start_line"] = max(1, int(symbol_row["start_line"]) - context_lines)
+                    args["end_line"] = int(symbol_row["end_line"]) + context_lines
                 is_safe, target, err = self.path_policy.validate_path(rel)
                 if not is_safe or not target or not target.exists() or not target.is_file():
                     return ToolResult(success=False, output="", error=err or "File not found or outside workspace.")
                 start = max(1, int(args.get("start_line", 1))) - 1
                 requested_end = int(args.get("end_line", start + 200))
                 max_lines = 5000
+                max_bytes = max(0, int(args.get("max_bytes", 0) or 0))
                 end = min(requested_end, start + max_lines)
                 out = []
+                used_bytes = 0
+                truncated = False
                 with target.open("r", encoding="utf-8", errors="ignore") as fh:
                     for idx, line in enumerate(fh, 1):
                         if idx <= start:
                             continue
                         if idx > end:
                             break
-                        out.append(line.rstrip("\n"))
+                        line_text = line.rstrip("\n")
+                        line_bytes = len((("\n" if out else "") + line_text).encode("utf-8"))
+                        if max_bytes and used_bytes + line_bytes > max_bytes:
+                            remaining = max_bytes - used_bytes - (1 if out else 0)
+                            if remaining > 0:
+                                out.append(line_text.encode("utf-8")[:remaining].decode("utf-8", errors="ignore"))
+                            truncated = True
+                            break
+                        out.append(line_text)
+                        used_bytes += line_bytes
                 chunk = "\n".join(out)
                 stat = target.stat()
                 digest = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
                 return ToolResult(
                     success=True,
                     output=chunk,
+                    truncated=truncated,
                     metadata={
                         "content_hash": digest,
                         "hash_scope": "returned_range",
+                        "path": rel,
                         "start_line": start + 1,
                         "end_line": start + len(out),
                         "file_size": stat.st_size,

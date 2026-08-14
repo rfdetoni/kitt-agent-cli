@@ -43,6 +43,38 @@ class TestToolRegistry(unittest.TestCase):
         self.assertEqual(res.metadata["hash_scope"], "returned_range")
         self.assertEqual(res.metadata["end_line"], 2)
 
+    def test_read_file_around_symbol_uses_repository_index(self):
+        f = self.root_path / "sample.py"
+        f.write_text("line1\n\ndef target_symbol():\n    return 1\n\nline6\n", encoding="utf-8")
+        index = RepositoryIndex(self.tmp_dir.name, in_memory=True)
+        index.build_or_update()
+        registry = ToolRegistry(root_dir=self.tmp_dir.name, context_engine=ContextEngine(index))
+
+        res = registry.execute_tool(
+            "read_file",
+            {"around_symbol": "target_symbol", "context_lines": 0},
+            enabled_tools=["read_file"],
+        )
+
+        self.assertTrue(res.success, res.error)
+        self.assertEqual(res.metadata["path"], "sample.py")
+        self.assertIn("def target_symbol", res.output)
+        index.close()
+
+    def test_read_file_respects_max_bytes(self):
+        f = self.root_path / "sample.py"
+        f.write_text("abcdef\nuvwxyz\n", encoding="utf-8")
+
+        res = self.registry.execute_tool(
+            "read_file",
+            {"path": "sample.py", "start_line": 1, "end_line": 2, "max_bytes": 5},
+            enabled_tools=["read_file"],
+        )
+
+        self.assertTrue(res.success)
+        self.assertTrue(res.truncated)
+        self.assertLessEqual(len(res.output.encode("utf-8")), 5)
+
     def test_search_uses_repository_index_by_default(self):
         f = self.root_path / "sample.py"
         f.write_text("def target_symbol():\n    return 1\n", encoding='utf-8')
