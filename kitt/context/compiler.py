@@ -31,6 +31,7 @@ class ContextQuality:
     coverage: float
     missing: Tuple[str, ...] = ()
     degraded: bool = False
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,13 @@ class ContextQualityGate:
         required = len(plan.exact_paths) + min(5, len(plan.exact_symbols))
         found = max(0, required - len(missing))
         coverage = 1.0 if required == 0 else found / required
-        return ContextQuality(ok=not missing or coverage >= 0.7, coverage=coverage, missing=tuple(missing), degraded=bool(missing))
+        return ContextQuality(
+            ok=not missing,
+            coverage=coverage,
+            missing=tuple(missing),
+            degraded=bool(missing),
+            reason="explicit_requirement_missing" if missing else "",
+        )
 
 
 class ContextCompiler:
@@ -97,7 +104,7 @@ class ContextCompiler:
         for atom in atom_tuple:
             if atom.path and atom.path not in path_ids:
                 path_ids[atom.path] = f"P{len(path_ids) + 1}"
-        lines = [f"## Context v1 gen={generation} partial={str(partial).lower()} coverage={quality.coverage:.2f}"]
+        lines = [f"## Context v1 gen={generation} partial={str(partial).lower()} ok={str(quality.ok).lower()} coverage={quality.coverage:.2f}"]
         if path_ids:
             lines.append("\n### Paths")
             for path, path_id in sorted(path_ids.items(), key=lambda item: item[1]):
@@ -118,7 +125,7 @@ class ContextCompiler:
                     lines.append("```")
         if quality.missing:
             lines.append("\n### Missing")
-            lines.extend(f"- {item}" for item in quality.missing)
+            lines.extend(f"- not_found:{item}" for item in quality.missing)
         text = "\n".join(lines).strip()
         return CompiledContext(
             text=text,

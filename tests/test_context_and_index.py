@@ -302,8 +302,28 @@ class TestContextAndIndex(unittest.TestCase):
 
         self.assertTrue(compiled.quality.ok)
         self.assertEqual(compiled.quality.coverage, 1.0)
+        self.assertIn("ok=true", compiled.text)
         self.assertIn("[P1] app.py", compiled.text)
         self.assertIn("def useful_symbol", compiled.text)
+
+    def test_context_compiler_marks_missing_explicit_requirements_not_ok(self):
+        plan = QueryPlanner.plan(
+            "Corrija `missing_symbol` em app.py e missing.py",
+            explicit_files={"app.py", "missing.py"},
+            token_budget=500,
+        )
+        cand = ContextCandidate(
+            "c1", "file", "app.py", 1, 2, "hash", 20, 1.0, 1.0, 1.0,
+            True, "WORKSPACE_DATA", (), "explicit target", content="def other_symbol():\n    return 42\n"
+        )
+
+        compiled = ContextCompiler().compile(plan, [cand], [])
+
+        self.assertFalse(compiled.quality.ok)
+        self.assertTrue(compiled.quality.degraded)
+        self.assertIn("ok=false", compiled.text)
+        self.assertIn("not_found:path:missing.py", compiled.text)
+        self.assertIn("not_found:symbol:missing_symbol", compiled.text)
 
     def test_query_plan_does_not_treat_sentence_words_or_acronyms_as_symbols(self):
         plan = QueryPlanner.plan("Crie um HTML explicando este projeto.")
