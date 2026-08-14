@@ -16,6 +16,6 @@ class HistoryContextBuilder:
             role=payload.get("role",entry.entry_type.lower())
             candidate=f"{role}: {redact(str(content))}"
             if TokenCounter.count_tokens("\n".join(reversed(lines+[candidate]))) > max_tokens:
-                break
+                continue
             lines.append(candidate)
         return "\n".join(reversed(lines))

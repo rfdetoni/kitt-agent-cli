@@ -22,6 +22,7 @@ class ContextCandidate:
     trust_level: str  # SYSTEM_POLICY|USER_REQUEST|WORKSPACE_DATA|TOOL_OUTPUT|REMOTE_CONTENT
     dependencies: Tuple[str, ...]
     selection_reason: str
+    representation: str = "SLICE"
     content: str = ""
 
     @property

@@ -23,6 +23,18 @@ class ContextResolved(TurnEvent):
     resolved_count: int = 0
 
 @dataclass
+class ContextBuildCompleted(TurnEvent):
+    selected_count: int = 0
+    rejected_count: int = 0
+    total_tokens: int = 0
+    coverage: float = 1.0
+    degraded: bool = False
+    duration_ms: int = 0
+    index_scanned: int = 0
+    index_updated: int = 0
+    index_deleted: int = 0
+
+@dataclass
 class BudgetApplied(TurnEvent):
     total_input_tokens: int = 0
     reserved_output_tokens: int = 1200

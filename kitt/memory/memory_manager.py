@@ -1,7 +1,8 @@
-import os
+import re
 from pathlib import Path
 from typing import List, Literal
 from dataclasses import dataclass, field
+from kitt.context_filter.prompt_budget import TokenCounter
 
 @dataclass
 class MemoryItem:
@@ -61,33 +62,38 @@ class MemoryManager:
         return items
 
     def get_relevant_memories(self, prompt: str) -> List[MemoryItem]:
-        words = set(w.lower() for w in prompt.split() if len(w) > 3)
+        words = set(re.findall(r"[a-zA-Z0-9_+-]{4,}", prompt.lower()))
         all_items = self.get_items()
         if not words:
-            return all_items
+            return sorted(all_items, key=lambda item: item.priority, reverse=True)[:5]
 
         relevant = []
         for item in all_items:
-            item_words = set(item.text.lower().split())
-            if words.intersection(item_words) or item.scope == 'PROJECT':
-                relevant.append(item)
-        return relevant
+            item_words = set(re.findall(r"[a-zA-Z0-9_+-]{4,}", item.text.lower()))
+            score = len(words.intersection(item_words)) + item.priority
+            if words.intersection(item_words):
+                relevant.append((score, item))
+        return [item for _score, item in sorted(relevant, key=lambda row: row[0], reverse=True)[:8]]
 
-    def get_memory_context(self) -> str:
+    def get_memory_context(self, prompt: str = "", max_tokens: int = 400) -> str:
+        if not prompt:
+            lines = []
+            if self.global_mem_path.exists():
+                g_content = self.global_mem_path.read_text(encoding='utf-8', errors='ignore').strip()
+                if g_content:
+                    lines.append(f"--- Global Memory ---\n{g_content}")
+            if self.project_mem_path.exists():
+                p_content = self.project_mem_path.read_text(encoding='utf-8', errors='ignore').strip()
+                if p_content:
+                    lines.append(f"--- Project Memory ---\n{p_content}")
+            return "\n\n".join(lines)
         lines = []
-        if self.global_mem_path.exists():
-            g_content = self.global_mem_path.read_text(encoding='utf-8', errors='ignore').strip()
-            if g_content:
-                lines.append(f"--- Global Memory ---\n{g_content}")
-
-        if self.project_mem_path.exists():
-            p_content = self.project_mem_path.read_text(encoding='utf-8', errors='ignore').strip()
-            if p_content:
-                lines.append(f"--- Project Memory ---\n{p_content}")
-
-        return "\n\n".join(lines)
-
-    def clear_project_memory(self):
-        if not self.persistence_enabled:
-            return
-        self.project_mem_path.write_text("# Project Memory & Guidelines\n\n", encoding='utf-8')
+        used = 0
+        for item in self.get_relevant_memories(prompt):
+            line = f"- [{item.scope}] {item.text}"
+            tokens = TokenCounter.count_tokens(line)
+            if used + tokens > max_tokens:
+                continue
+            lines.append(line)
+            used += tokens
+        return "\n".join(lines)

@@ -26,8 +26,10 @@ class TestEvalsAndBenchmarks(unittest.TestCase):
 
         ablations = runner.run_ablations(caps)
         self.assertEqual(len(ablations), 5)
-        self.assertIn("1_deterministic", ablations)
+        self.assertIn("1_naive_full_context", ablations)
+        self.assertIn("3_hybrid_structural", ablations)
         self.assertIn("5_large_direct", ablations)
+        self.assertNotEqual(ablations["1_naive_full_context"], ablations["3_hybrid_structural"])
 
     def test_retrieval_eval_and_context_benchmark_entrypoints(self):
         eval_metrics = run_eval()

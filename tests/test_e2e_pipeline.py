@@ -48,6 +48,24 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertTrue(res.success)
         self.assertEqual(app_file.read_text(), "def hello(): return 'hello K.I.T.T.'\n")
 
+    def test_context_build_completed_event_is_emitted_for_project_context(self):
+        from kitt.core.turn_command import TurnCommand
+        from kitt.core.turn_events import ContextBuildCompleted
+        from kitt.context_engine.engine import ContextEngine
+        from kitt.index.repository import RepositoryIndex
+
+        (self.root_path / "app.py").write_text("def useful_symbol():\n    return 42\n", encoding="utf-8")
+        index = RepositoryIndex(self.tmp_dir.name, in_memory=True)
+        self.processor.context_engine = ContextEngine(repository_index=index)
+        self.processor.enable_context_summary = True
+
+        events = list(self.processor.run_turn(TurnCommand("conv-context-event", "analise useful_symbol neste projeto")))
+        event = next(item for item in events if isinstance(item, ContextBuildCompleted))
+
+        self.assertGreaterEqual(event.selected_count, 1)
+        self.assertGreater(event.total_tokens, 0)
+        index.close()
+
     def test_simple_ask_skips_repository_context(self):
         class FakeExecutionClient:
             def chat_stream(self, *args, **kwargs):
@@ -155,7 +173,7 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertIn("Projeto de exemplo", context.calls[1][0][0]["content"])
         self.assertIn("Repo Map:\napp.py contém função main", captured["system_prompt"])
         self.assertNotIn("python_compute", captured["system_prompt"])
-        self.assertIn("Compact Project Context", (self.root_path / ".kitt" / "context" / "latest.md").read_text(encoding="utf-8"))
+        self.assertFalse((self.root_path / ".kitt" / "context" / "latest.md").exists())
 
     def test_kitt_mention_enables_agent_identity_prompt(self):
         captured = {}
@@ -202,15 +220,14 @@ class TestE2EPipeline(unittest.TestCase):
         events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
         self.assertEqual(events[0][1].delta, "resposta visível")
 
-    def test_context_summary_fallback_is_persisted(self):
+    def test_context_summary_fallback_is_not_persisted(self):
         class UnavailableContext:
             def chat(self, *args, **kwargs): raise RuntimeError("unavailable")
 
         processor = TurnProcessor(root_dir=self.tmp_dir.name, enable_context_summary=True)
         summary = processor._summarize_project_context(UnavailableContext(), "Explain project", "stable structural context")
         self.assertEqual(summary, "stable structural context")
-        cached = (self.root_path / ".kitt" / "context" / "latest.md").read_text(encoding="utf-8")
-        self.assertIn("stable structural context", cached)
+        self.assertFalse((self.root_path / ".kitt" / "context" / "latest.md").exists())
 
 if __name__ == '__main__':
     unittest.main()

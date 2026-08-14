@@ -210,8 +210,10 @@ class RepositoryIndex:
                     return []
                 rows = self._conn.execute(
                     """
-                    SELECT path, content, bm25(fts_chunks, 2.0, 2.5, 1.0) AS score
+                    SELECT fts_chunks.path, fts_chunks.content, c.start_line, c.end_line, c.content_hash,
+                           bm25(fts_chunks, 2.0, 2.5, 1.0) AS score
                     FROM fts_chunks
+                    JOIN chunks c ON c.chunk_id = fts_chunks.chunk_id
                     WHERE fts_chunks MATCH ?
                     ORDER BY score
                     LIMIT ?
@@ -219,7 +221,10 @@ class RepositoryIndex:
                     (fts_query, limit)
                 ).fetchall()
                 for r in rows:
-                    results.append({"path": r["path"], "content": r["content"], "method": "fts5", "score": r["score"]})
+                    results.append({
+                        "path": r["path"], "content": r["content"], "method": "fts5", "score": r["score"],
+                        "start_line": r["start_line"], "end_line": r["end_line"], "content_hash": r["content_hash"],
+                    })
                 return results
             except sqlite3.Error as exc:
                 results.append({"path": "", "content": "", "method": "fts5_error", "error": str(exc)})
@@ -230,9 +235,17 @@ class RepositoryIndex:
             return [r for r in results if r.get("path")]
         where = " AND ".join("c.content LIKE ?" for _ in terms)
         rows = self._conn.execute(
-            f"SELECT f.path, c.content FROM chunks c JOIN files f ON c.file_id = f.file_id WHERE {where} LIMIT ?",
+            f"""
+            SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
+            FROM chunks c JOIN files f ON c.file_id = f.file_id
+            WHERE {where}
+            LIMIT ?
+            """,
             tuple(f"%{term}%" for term in terms) + (limit,)
         ).fetchall()
         for r in rows:
-            results.append({"path": r["path"], "content": r["content"], "method": "lexical"})
+            results.append({
+                "path": r["path"], "content": r["content"], "method": "lexical",
+                "start_line": r["start_line"], "end_line": r["end_line"], "content_hash": r["content_hash"],
+            })
         return [r for r in results if r.get("path")]

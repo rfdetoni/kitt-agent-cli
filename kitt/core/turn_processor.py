@@ -36,7 +36,7 @@ from kitt.core.turn_command import TurnCommand
 import uuid
 from kitt.core.turn_events import (
     TurnEvent, TurnStarted, FilterCompleted, ContextResolved, BudgetApplied,
-    ModelSelected, TextDelta, ApprovalRequired, ToolStarted, ToolCompleted,
+    ContextBuildCompleted, ModelSelected, TextDelta, ApprovalRequired, ToolStarted, ToolCompleted,
     ThinkingStarted, ThinkingCompleted,
     EditApplied, MetricsRecorded, TurnCompleted, TurnFailed,
     TurnCancelled, TurnBlocked
@@ -238,6 +238,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     def _summarize_project_context(self, client: LLMClient, prompt: str, context_map: str) -> str:
         if not context_map:
             return ""
+        # The compiled context pack is already selected by value/token. Calling
+        # a small model here would spend tokens to summarize a bounded package.
+        if "## Context v1" in context_map and TokenCounter.count_tokens(context_map) <= 4096:
+            return context_map
         fallback = context_map[:2400]
         try:
             profile = getattr(client, "profile", None)
@@ -251,10 +255,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             summary = self._without_thinking(summary)[:6000] or fallback
         except Exception:
             summary = fallback
-        if self.config.persistence_enabled:
-            summary_path = self.root_path / ".kitt" / "context" / "latest.md"
-            summary_path.parent.mkdir(parents=True, exist_ok=True)
-            summary_path.write_text(f"# Compact Project Context\n\n{summary}\n", encoding="utf-8")
         return summary
 
     def _source_context_excerpt(self, paths: List[str]) -> str:
@@ -400,6 +400,20 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 if needs_project_context else []
             )
             context_map_str = "\n\n".join(b.content for b in context_blocks)
+            build_stats = getattr(self.context_engine, "last_build_stats", {}) if needs_project_context else {}
+            if build_stats:
+                self._emit("ContextBuildCompleted", build_stats)
+                yield ContextBuildCompleted(
+                    selected_count=int(build_stats.get("selected", 0)),
+                    rejected_count=int(build_stats.get("rejected", 0)),
+                    total_tokens=int(build_stats.get("tokens", 0)),
+                    coverage=float(build_stats.get("coverage", 1.0)),
+                    degraded=bool(build_stats.get("degraded", False)),
+                    duration_ms=int(build_stats.get("duration_ms", 0)),
+                    index_scanned=int(build_stats.get("scanned", 0)),
+                    index_updated=int(build_stats.get("updated", 0)),
+                    index_deleted=int(build_stats.get("deleted", 0)),
+                )
             if self.enable_context_summary:
                 sources = self._source_context_excerpt([block.path for block in context_blocks])
                 overview = []
@@ -418,7 +432,18 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 explicit_items = self.context_resolver.resolve_explicit_files(list(cmd.explicit_files))
             explicit_str = "\n\n".join(item.content for item in explicit_items)
 
-            agents_items = self.context_resolver.resolve_agents_instructions() if plan.enabled_tools else []
+            target_paths = list(dict.fromkeys([*(cmd.explicit_files or ()), *task.paths]))
+            if plan.enabled_tools and target_paths:
+                seen_agents = set()
+                agents_items = []
+                for target_path in target_paths[:4]:
+                    for item in self.context_resolver.resolve_agents_instructions(target_path):
+                        digest = hashlib.sha256(item.content.encode("utf-8")).hexdigest()
+                        if digest not in seen_agents:
+                            seen_agents.add(digest)
+                            agents_items.append(item)
+            else:
+                agents_items = self.context_resolver.resolve_agents_instructions() if plan.enabled_tools else []
             agents_str = "\n\n".join(item.content for item in agents_items)
 
             yield ContextResolved(resolved_count=len(context_blocks) + len(explicit_items))
@@ -434,7 +459,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             skills_found = SkillDiscovery().discover(discovery_dirs)
             selected_skills = ProgressiveSkillLoader().select(skills_found, cmd.prompt,
                                                               max_skills=self.config.max_skills_per_prompt)
-            skills_str = "\n\n".join(ProgressiveSkillLoader().load(s) for s in selected_skills) if selected_skills else "No specific skills loaded."
+            skills_str = "\n\n".join(
+                ProgressiveSkillLoader().load(s, max_chars=self.config.max_skill_body_chars)
+                for s in selected_skills
+            ) if selected_skills else "No specific skills loaded."
 
             use_agent_prompt = bool(plan.enabled_tools) or agent_addressed
             if plan.enabled_tools:
@@ -442,10 +470,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 base_sys = (
                     f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
                     f"Tool Contract:\n{tool_contract}\n\n"
-                    f"Memory:\n{self.memory.get_memory_context()}\n\n"
+                    f"Memory:\n{self.memory.get_memory_context(cmd.prompt)}\n\n"
                     f"Active Skills:\n{skills_str}\n\n"
                     f"Project Guidelines:\n{agents_str}\n\n"
-                    f"Learned Harness:\n{self.harness_service.prompt(workspace_id, cmd.conversation_id) if self.harness_service and self.history_service else ''}"
+                    f"Learned Harness:\n{self.harness_service.prompt(workspace_id, cmd.conversation_id, max_chars=self.config.max_harness_chars) if self.harness_service and self.history_service else ''}"
                 ).strip()
             elif use_agent_prompt:
                 base_sys = "You are K.I.T.T., the autonomous coding agent. Answer in one direct, concise sentence. Do not expose reasoning."

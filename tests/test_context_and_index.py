@@ -4,6 +4,8 @@ from pathlib import Path
 
 from kitt.context.token_estimator import CalibratedTokenEstimator
 from kitt.context.candidates import ContextCandidate, ContextSelector
+from kitt.context.compiler import ContextCompiler
+from kitt.context.query_plan import QueryPlanner
 from kitt.index.graph import RepositoryGraph
 from kitt.index.scanner import RepositoryScanner
 from kitt.index.repository import RepositoryIndex
@@ -98,8 +100,24 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertIs(engine.index, index)
             self.assertTrue(blocks)
             self.assertIn("useful_symbol", blocks[0].content)
+            self.assertIn("## Context v1", blocks[0].content)
+            self.assertEqual(engine.last_compiled_context.selected_count, 1)
             self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
             index.close()
+
+    def test_query_plan_and_context_compiler_quality_gate(self):
+        plan = QueryPlanner.plan("Corrija `useful_symbol` em app.py", explicit_files={"app.py"}, token_budget=500)
+        cand = ContextCandidate(
+            "c1", "file", "app.py", 1, 2, "hash", 20, 1.0, 1.0, 1.0,
+            True, "WORKSPACE_DATA", (), "explicit target", content="def useful_symbol():\n    return 42\n"
+        )
+
+        compiled = ContextCompiler().compile(plan, [cand], [])
+
+        self.assertTrue(compiled.quality.ok)
+        self.assertEqual(compiled.quality.coverage, 1.0)
+        self.assertIn("[P1] app.py", compiled.text)
+        self.assertIn("def useful_symbol", compiled.text)
 
     def test_repository_index_removes_deleted_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
