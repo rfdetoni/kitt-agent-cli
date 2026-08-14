@@ -53,6 +53,8 @@ class RepositoryIndex:
         self.parser_registry = ParserRegistry()
         self._lock = threading.RLock()
         self.last_search_error = ""
+        self._background_thread: threading.Thread | None = None
+        self._closed = False
         self._init_db()
 
     def _init_db(self) -> None:
@@ -92,6 +94,10 @@ class RepositoryIndex:
             return int(row["value"]) if row else 0
 
     def close(self) -> None:
+        self._closed = True
+        thread = self._background_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
         try:
             with self._lock:
                 self._conn.close()
@@ -160,6 +166,61 @@ class RepositoryIndex:
             "scanned": len(files),
             "updated": updated_count,
             "deleted": len(stale),
+            "generation": generation,
+            "state": meta["state"],
+            "freshness": meta.get("last_scan_at", ""),
+            "partial_reason": meta.get("partial_reason", ""),
+            "schema_version": meta.get("schema_version", ""),
+        }
+
+    def bootstrap_then_background(self, paths: List[str] | None = None) -> Dict[str, int]:
+        """Index explicit/recent paths now and schedule full indexing in background."""
+        paths = list(dict.fromkeys(paths or []))
+        stats = self.update_paths(paths) if paths else self._mark_bootstrap_partial("background index scheduled")
+        self._mark_bootstrap_partial("background index in progress")
+        meta = self.metadata()
+        result = {
+            **stats,
+            "state": meta.get("state", "PARTIAL"),
+            "partial_reason": meta.get("partial_reason", ""),
+            "freshness": meta.get("last_scan_at", ""),
+        }
+        self._start_background_update()
+        return result
+
+    def wait_for_background(self, timeout: float = 5.0) -> None:
+        thread = self._background_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=timeout)
+
+    def _start_background_update(self) -> None:
+        thread = self._background_thread
+        if thread and thread.is_alive():
+            return
+        self._background_thread = threading.Thread(target=self._background_build, name="kitt-index-build", daemon=True)
+        self._background_thread.start()
+
+    def _background_build(self) -> None:
+        if self._closed:
+            return
+        try:
+            self.build_or_update()
+        except Exception as exc:
+            with self._lock, self._conn:
+                self._set_meta_locked("state", "DEGRADED")
+                self._set_meta_locked("partial_reason", f"background index failed: {exc}")
+
+    def _mark_bootstrap_partial(self, reason: str) -> Dict[str, int]:
+        with self._lock, self._conn:
+            self._set_meta_locked("state", "PARTIAL")
+            self._set_meta_locked("partial_reason", reason)
+            self._set_meta_locked("last_scan_at", str(time.time()))
+            generation = int(self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()["value"])
+            meta = self.metadata()
+        return {
+            "scanned": 0,
+            "updated": 0,
+            "deleted": 0,
             "generation": generation,
             "state": meta["state"],
             "freshness": meta.get("last_scan_at", ""),

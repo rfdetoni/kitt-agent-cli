@@ -236,6 +236,23 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertTrue(index.search_text("after symbol"))
             index.close()
 
+    def test_repository_index_bootstraps_explicit_paths_before_background_scan(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "target.py").write_text("def target_symbol():\n    return 1\n", encoding="utf-8")
+            (root / "later.py").write_text("def later_symbol():\n    return 2\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            self.addCleanup(index.close)
+
+            stats = index.bootstrap_then_background(["target.py"])
+
+            self.assertEqual(stats["state"], "PARTIAL")
+            self.assertTrue(index.search_text("target symbol"))
+            index.wait_for_background(timeout=5)
+            meta = index.metadata()
+            self.assertEqual(meta["state"], "READY")
+            self.assertTrue(index.search_text("later symbol"))
+
     def test_repository_scanner_respects_kittignore(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

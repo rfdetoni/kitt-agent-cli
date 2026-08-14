@@ -487,7 +487,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             explicit_str = "\n\n".join(item.content for item in explicit_items)
 
             target_paths = list(dict.fromkeys([*(cmd.explicit_files or ()), *task.paths, *working_paths]))
-            if plan.enabled_tools and target_paths:
+            if (plan.enabled_tools or needs_project_context) and target_paths:
                 seen_agents = set()
                 agents_items = []
                 for target_path in target_paths[:4]:
@@ -499,6 +499,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             else:
                 agents_items = self.context_resolver.resolve_agents_instructions() if plan.enabled_tools else []
             agents_str = "\n\n".join(item.content for item in agents_items)
+            if agents_str and not plan.enabled_tools:
+                context_map_str = f"Project Guidelines:\n{agents_str}\n\n{context_map_str}".strip()
 
             yield ContextResolved(resolved_count=len(context_blocks) + len(explicit_items))
 
