@@ -8,7 +8,7 @@ class TestBulletToolVisualFeedback(unittest.TestCase):
         self.assertEqual(format_tool_bullet("search", {"pattern": "Grep run_turn", "path": "turn_processor.py"}), "● Search(Grep run_turn in turn_processor.py)")
         self.assertEqual(format_tool_bullet("read_file", {"path": "kitt/core/turn_processor.py"}), "● Read(kitt/core/turn_processor.py)")
         self.assertEqual(format_tool_bullet("write_file", {"path": "teste.py"}), "● Write(teste.py)")
-        self.assertEqual(format_tool_bullet("run_command", {"command": "python3 -m unittest"}), "● Run(python3 -m unittest)")
+        self.assertEqual(format_tool_bullet("run_command", {"command": "python3 -m unittest"}), "● Bash(python3 -m unittest)")
 
     def test_reducer_appends_bullet_lines(self):
         state = UIState()

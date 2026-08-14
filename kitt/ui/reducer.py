@@ -29,10 +29,11 @@ def format_tool_bullet(tool_name: str, args: dict | None) -> str:
     elif tool_name == "apply_patch":
         patch = str(args.get("patch", ""))
         first_line = patch.strip().split("\n")[0] if patch else ""
-        return f"● Patch({first_line or 'SEARCH/REPLACE'})"
-    elif tool_name == "run_command":
+        target = first_line.split("<<<<<<<")[0].strip() or first_line
+        return f"● Edit({target or 'patch'})"
+    elif tool_name in {"run_command", "bash"}:
         cmd = args.get("command", args.get("cmd", ""))
-        return f"● Run({cmd})"
+        return f"● Bash({cmd})"
     elif tool_name == "list_files":
         path = args.get("path", ".")
         return f"● List({path})"
