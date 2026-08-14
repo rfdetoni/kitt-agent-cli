@@ -363,6 +363,17 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             )
         return ""
 
+    @staticmethod
+    def _clean_visible_text(text: str) -> str:
+        """Strip internal tags (<think>, </think>, <kitt-tool>, etc.) from user-visible stream deltas."""
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+        text = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL)
+        text = re.sub(r"<kitt-tool>.*?</kitt-tool>", "", text, flags=re.DOTALL)
+        text = re.sub(r"<kitt-python-compute>.*?</kitt-python-compute>", "", text, flags=re.DOTALL)
+        for tag in ("<think>", "</think>", "<thought>", "</thought>", "<kitt-tool>", "</kitt-tool>", "<kitt-python-compute>", "</kitt-python-compute>"):
+            text = text.replace(tag, "")
+        return text
+
     def _stream_execution_response(self, client: LLMClient, messages: List[Dict[str, str]], system_prompt: str, turn_id: str = "", started_at: float = 0.0):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
@@ -379,11 +390,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return
 
         full_response = ""
-        prefix_buffer: Optional[str] = ""
-        suppress = False
-        in_think = False
-        thought_emitted = False
-        thought_buffer = ""
+        thinking_completed = False
+        thought_text = ""
+        tool_detected = False
+        buffer = ""
+
+        TAG_OPENERS = ("<kitt-python-compute>", "<kitt-tool>", "<think>", "<thought>", "</think>", "</thought>", "</kitt-tool>", "</kitt-python-compute>")
 
         for chunk in client.chat_stream(messages, system_prompt=system_prompt):
             if turn_id and turn_id in self.cancelled_turns:
@@ -391,75 +403,86 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             full_response += chunk
 
             # 1. Handle reasoning inside <think>...</think> or <thought>...</thought>
-            if not thought_emitted:
-                if "<think>" in full_response or "<thought>" in full_response or full_response.lstrip().startswith("<think") or full_response.lstrip().startswith("<thought"):
-                    in_think = True
-                    close_tag = "</think>" if ("</think>" in full_response or "<think" in full_response) else "</thought>"
+            if not thinking_completed:
+                clean_lstrip = full_response.lstrip()
+                if clean_lstrip.startswith("<think>") or clean_lstrip.startswith("<thought>"):
+                    close_tag = "</think>" if clean_lstrip.startswith("<think>") else "</thought>"
                     if close_tag in full_response:
                         parts = full_response.split(close_tag, 1)
                         m = re.search(r"<(?:think|thought)>(.*)", parts[0], re.DOTALL)
-                        thought_buffer = m.group(1).strip() if m else re.sub(r"<(?:think|thought)>", "", parts[0]).strip()
+                        thought_text = m.group(1).strip() if m else re.sub(r"<(?:think|thought)>", "", parts[0]).strip()
                         dur_ms = int((time.time() - (started_at or time.time())) * 1000)
-                        thought_emitted = True
-                        in_think = False
+                        thinking_completed = True
                         yield full_response, ThinkingCompleted(
                             duration_ms=dur_ms,
-                            tokens=TokenCounter.count_tokens(thought_buffer),
-                            thought=thought_buffer,
+                            tokens=TokenCounter.count_tokens(thought_text),
+                            thought=thought_text,
                         )
-                        remainder = parts[1].lstrip()
-                        if remainder:
-                            if any(remainder.startswith(tag) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
-                                suppress = True
-                                prefix_buffer = None
-                                continue
-                            elif any(tag.startswith(remainder) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
-                                prefix_buffer = remainder
-                                continue
-                            else:
-                                yield full_response, TextDelta(delta=remainder)
-                                prefix_buffer = None
+                        buffer = parts[1]
+                    else:
+                        continue
+                elif any(tag.startswith(clean_lstrip) for tag in ("<think>", "<thought>")):
+                    # Still forming opening think tag
                     continue
                 else:
-                    thought_emitted = True
+                    thinking_completed = True
                     dur_ms = int((time.time() - (started_at or time.time())) * 1000)
                     yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=0, thought="")
-
-            if in_think:
-                continue
-
-            if suppress:
-                tool_match = re.search(r'"name"\s*:\s*"([a-zA-Z0-9_-]+)"', full_response)
-                tool_name = tool_match.group(1) if tool_match else "código"
-                path_match = re.search(r'"path"\s*:\s*"([^"]+)"', full_response)
-                target_path = path_match.group(1) if path_match else ""
-                yield full_response, ToolCallProposed(tool_name=tool_name, args={"path": target_path, "bytes": len(full_response)})
-                continue
-
-            if prefix_buffer is not None:
-                prefix_buffer += chunk
-                stripped = prefix_buffer.lstrip()
-                if any(tag.startswith(stripped) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
-                    continue
-                if any(stripped.startswith(tag) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
-                    suppress = True
-                    prefix_buffer = None
-                    tool_match = re.search(r'"name"\s*:\s*"([a-zA-Z0-9_-]+)"', full_response)
-                    tool_name = tool_match.group(1) if tool_match else "código"
-                    yield full_response, ToolCallProposed(tool_name=tool_name, args={"bytes": len(full_response)})
-                    continue
-                yield full_response, TextDelta(delta=prefix_buffer)
-                prefix_buffer = None
+                    buffer = full_response
             else:
-                if any(tag in full_response for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
-                    suppress = True
+                buffer += chunk
+
+            # 2. Process buffer for tool envelopes vs visible assistant text
+            if buffer:
+                if tool_detected or any(tag in full_response for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
+                    tool_detected = True
+                    buffer = ""
                     tool_match = re.search(r'"name"\s*:\s*"([a-zA-Z0-9_-]+)"', full_response)
                     tool_name = tool_match.group(1) if tool_match else "código"
-                    yield full_response, ToolCallProposed(tool_name=tool_name, args={"bytes": len(full_response)})
+                    path_match = re.search(r'"path"\s*:\s*"([^"]+)"', full_response)
+                    target_path = path_match.group(1) if path_match else ""
+                    yield full_response, ToolCallProposed(tool_name=tool_name, args={"path": target_path, "bytes": len(full_response)})
                     continue
-                yield full_response, TextDelta(delta=chunk)
 
-        if not thought_emitted:
+                buf_lstrip = buffer.lstrip()
+                if any(buf_lstrip.startswith(tag) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
+                    tool_detected = True
+                    buffer = ""
+                    tool_match = re.search(r'"name"\s*:\s*"([a-zA-Z0-9_-]+)"', full_response)
+                    tool_name = tool_match.group(1) if tool_match else "código"
+                    path_match = re.search(r'"path"\s*:\s*"([^"]+)"', full_response)
+                    target_path = path_match.group(1) if path_match else ""
+                    yield full_response, ToolCallProposed(tool_name=tool_name, args={"path": target_path, "bytes": len(full_response)})
+                    continue
+
+                if any(tag.startswith(buf_lstrip) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
+                    # Buffer is actively forming <kitt-tool>
+                    continue
+
+                # Check if buffer ends with a partial tag prefix (e.g. "<", "<kitt", "</think")
+                partial_tag = None
+                for tag_candidate in TAG_OPENERS:
+                    for length in range(1, len(tag_candidate)):
+                        prefix = tag_candidate[:length]
+                        if buffer.endswith(prefix):
+                            partial_tag = prefix
+                            break
+                    if partial_tag:
+                        break
+
+                if partial_tag:
+                    safe_part = buffer[:-len(partial_tag)]
+                    clean_safe = self._clean_visible_text(safe_part)
+                    if clean_safe:
+                        yield full_response, TextDelta(delta=clean_safe)
+                    buffer = partial_tag
+                else:
+                    clean = self._clean_visible_text(buffer)
+                    if clean:
+                        yield full_response, TextDelta(delta=clean)
+                    buffer = ""
+
+        if not thinking_completed:
             dur_ms = int((time.time() - (started_at or time.time())) * 1000)
             thought_text = ""
             m = re.search(r"<(?:think|thought)>(.*?)(?:</(?:think|thought)>|$)", full_response, re.DOTALL)
@@ -467,8 +490,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 thought_text = m.group(1).strip()
             yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=TokenCounter.count_tokens(thought_text), thought=thought_text)
 
-        if not suppress and prefix_buffer:
-            yield full_response, TextDelta(delta=prefix_buffer)
+        if not tool_detected and buffer:
+            clean = self._clean_visible_text(buffer)
+            if clean:
+                yield full_response, TextDelta(delta=clean)
         yield full_response, None
 
     def run_turn(self, cmd: TurnCommand) -> Iterator[TurnEvent]:
