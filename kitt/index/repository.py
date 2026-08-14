@@ -19,9 +19,10 @@ from kitt.context_engine.parser import SymbolParser
 class RepositoryIndex:
     """Shared single-instance SQLite repository index for workspace files, symbols, and graph."""
 
-    def __init__(self, root_dir: str | Path, in_memory: bool = False):
+    def __init__(self, root_dir: str | Path, in_memory: bool = False, max_files: int = 20000):
         self.root_path = Path(root_dir).resolve()
         self.in_memory = in_memory or (root_dir == ":memory:")
+        self.max_files = max_files
 
         if self.in_memory:
             self.db_path = ":memory:"
@@ -53,7 +54,7 @@ class RepositoryIndex:
         """Incremental index update based on mtime_ns, size, and content_hash."""
         scanner = RepositoryScanner(self.root_path)
         self._index_modules(scanner.detect_modules())
-        files = scanner.scan_files()
+        files = scanner.scan_files(max_files=self.max_files)
         updated_count = 0
         seen_paths = set()
 
@@ -150,12 +151,14 @@ class RepositoryIndex:
                     "SELECT file_id, path FROM files WHERE path NOT IN (%s)" % ",".join("?" for _ in seen_paths),
                     tuple(seen_paths),
                 ).fetchall()
-                for row in stale:
-                    if self.has_fts5:
-                        self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (row["file_id"],))
-                    self._conn.execute("DELETE FROM files WHERE file_id=?", (row["file_id"],))
+            else:
+                stale = self._conn.execute("SELECT file_id, path FROM files").fetchall()
+            for row in stale:
+                if self.has_fts5:
+                    self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (row["file_id"],))
+                self._conn.execute("DELETE FROM files WHERE file_id=?", (row["file_id"],))
 
-        return {"scanned": len(files), "updated": updated_count}
+        return {"scanned": len(files), "updated": updated_count, "deleted": len(stale)}
 
     def _index_modules(self, modules: List[Dict[str, str]]) -> None:
         with self._conn:

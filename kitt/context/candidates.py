@@ -41,6 +41,7 @@ class ContextSelector:
         discarded: List[ContextCandidate] = []
         spent_tokens = 0
         selected_ids = set()
+        by_id = {cand.candidate_id: cand for cand in candidates}
 
         # 1. Select mandatory items first
         for cand in candidates:
@@ -49,6 +50,15 @@ class ContextSelector:
                     selected.append(cand)
                     selected_ids.add(cand.candidate_id)
                     spent_tokens += cand.estimated_tokens
+                    for dep_id in cand.dependencies:
+                        dep = by_id.get(dep_id)
+                        if dep and dep.candidate_id not in selected_ids:
+                            if spent_tokens + dep.estimated_tokens <= max_token_budget:
+                                selected.append(dep)
+                                selected_ids.add(dep.candidate_id)
+                                spent_tokens += dep.estimated_tokens
+                            else:
+                                discarded.append(dep)
                 else:
                     discarded.append(cand)
 
@@ -56,12 +66,30 @@ class ContextSelector:
         remaining = [c for c in candidates if not c.mandatory and c.candidate_id not in selected_ids]
         remaining.sort(key=lambda c: (c.marginal_value / max(1, c.estimated_tokens)), reverse=True)
 
-        # 3. Greedy selection
+        # 3. Greedy selection with cheap MMR-style de-duplication by same range.
         for cand in remaining:
+            duplicate = any(
+                cand.path == chosen.path
+                and cand.start_line == chosen.start_line
+                and cand.end_line == chosen.end_line
+                for chosen in selected
+            )
+            if duplicate:
+                discarded.append(cand)
+                continue
             if spent_tokens + cand.estimated_tokens <= max_token_budget:
                 selected.append(cand)
                 selected_ids.add(cand.candidate_id)
                 spent_tokens += cand.estimated_tokens
+                for dep_id in cand.dependencies:
+                    dep = by_id.get(dep_id)
+                    if dep and dep.candidate_id not in selected_ids:
+                        if spent_tokens + dep.estimated_tokens <= max_token_budget:
+                            selected.append(dep)
+                            selected_ids.add(dep.candidate_id)
+                            spent_tokens += dep.estimated_tokens
+                        else:
+                            discarded.append(dep)
             else:
                 discarded.append(cand)
 

@@ -49,20 +49,33 @@ class RepositoryScanner:
             modules.append({"root_path": ".", "kind": "generic", "manifest_path": None})
         return modules
 
-    def scan_files(self, max_files: int = 10000) -> List[Path]:
+    def scan_files(self, max_files: int = 20000) -> List[Path]:
         """Scan workspace files using git ls-files if available, else os.scandir."""
-        git_dir = self.root_path / ".git"
-        if git_dir.exists():
+        try:
+            inside = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=str(self.root_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2,
+            )
+            is_git = inside.returncode == 0 and inside.stdout.strip() == "true"
+        except Exception:
+            is_git = False
+        if is_git:
             try:
                 out = subprocess.check_output(
-                    ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+                    ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
                     cwd=str(self.root_path),
                     stderr=subprocess.DEVNULL,
-                    text=True
+                    timeout=5,
                 )
                 files = []
-                for line in out.splitlines():
-                    p = self.root_path / line.strip()
+                for raw in out.split(b"\0"):
+                    if not raw:
+                        continue
+                    p = self.root_path / raw.decode("utf-8", errors="surrogateescape")
                     if p.is_file() and p.suffix not in IGNORED_EXTS:
                         files.append(p)
                         if len(files) >= max_files:

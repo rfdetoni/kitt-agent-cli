@@ -85,7 +85,7 @@ class KittRuntime:
         from kitt.security.path_policy import PathPolicy
         from kitt.security.network_policy import NetworkPolicy
 
-        repository_index = RepositoryIndex(canon_root, in_memory=in_memory)
+        repository_index = RepositoryIndex(canon_root, in_memory=in_memory, max_files=config.max_index_files)
         context_engine = ContextEngine(repository_index=repository_index, persistence_enabled=persistence_enabled)
         registry = ToolRegistry(canon_root, context_engine=context_engine)
         registry.policy = policy
@@ -145,7 +145,6 @@ class KittRuntime:
         processor.path_policy = path_policy
         processor.network_policy = network_policy
 
-        registry.repository_index = repository_index
         registry.path_policy = path_policy
 
         runtime = cls(

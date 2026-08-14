@@ -27,6 +27,17 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertIn(c2, selected)
         self.assertNotIn(c3, selected)
 
+    def test_context_selector_includes_dependencies_and_deduplicates_ranges(self):
+        target = ContextCandidate("target", "file", "a.py", 10, 20, "h1", 100, 1.0, 1.0, 1.0, True, "USER", ("dep",), "target")
+        dep = ContextCandidate("dep", "file", "b.py", 1, 5, "h2", 50, 0.8, 1.0, 1.0, False, "WORKSPACE", (), "dependency")
+        duplicate = ContextCandidate("dup", "file", "a.py", 10, 20, "h1", 20, 0.9, 1.0, 1.0, False, "WORKSPACE", (), "duplicate")
+
+        selected, discarded = ContextSelector.select_candidates([target, dep, duplicate], max_token_budget=200)
+
+        self.assertIn(target, selected)
+        self.assertIn(dep, selected)
+        self.assertIn(duplicate, discarded)
+
     def test_repository_graph_pagerank(self):
         graph = RepositoryGraph()
         graph.add_edge("a.py", "b.py")
@@ -88,6 +99,22 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertTrue(blocks)
             self.assertIn("useful_symbol", blocks[0].content)
             self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
+            index.close()
+
+    def test_repository_index_removes_deleted_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "gone.py"
+            p.write_text("def removed_symbol():\n    return 1\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+            self.assertTrue(index.search_text("removed symbol"))
+
+            p.unlink()
+            stats = index.build_or_update()
+            results = index.search_text("removed symbol")
+
+            self.assertEqual(stats["deleted"], 1)
+            self.assertEqual(results, [])
             index.close()
 
 if __name__ == "__main__":

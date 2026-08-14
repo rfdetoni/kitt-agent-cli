@@ -1,5 +1,6 @@
 import shlex
 import re
+import hashlib
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Set
@@ -47,6 +48,15 @@ class ToolRegistry:
         self.child_manager = None
         self.child_tools = None
         self.harness_service = None
+
+    @property
+    def repository_index(self):
+        return getattr(self.context_engine, "index", None)
+
+    def _refresh_index(self) -> None:
+        index = self.repository_index
+        if index is not None:
+            index.build_or_update()
 
     def attach_services(self, artifacts=None, queue_service=None, goal_service=None, child_manager=None, harness_service=None):
         self.artifacts = artifacts
@@ -140,16 +150,43 @@ class ToolRegistry:
                 is_safe, target, err = self.path_policy.validate_path(rel)
                 if not is_safe or not target or not target.exists() or not target.is_file():
                     return ToolResult(success=False, output="", error=err or "File not found or outside workspace.")
-                lines = target.read_text(encoding='utf-8', errors='ignore').splitlines()
                 start = max(1, int(args.get("start_line", 1))) - 1
-                end = min(len(lines), int(args.get("end_line", start + 200)))
-                chunk = "\n".join(lines[start:end])
-                return ToolResult(success=True, output=chunk)
+                requested_end = int(args.get("end_line", start + 200))
+                max_lines = 5000
+                end = min(requested_end, start + max_lines)
+                out = []
+                with target.open("r", encoding="utf-8", errors="ignore") as fh:
+                    for idx, line in enumerate(fh, 1):
+                        if idx <= start:
+                            continue
+                        if idx > end:
+                            break
+                        out.append(line.rstrip("\n"))
+                chunk = "\n".join(out)
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                return ToolResult(success=True, output=chunk, metadata={"content_hash": digest, "start_line": start + 1, "end_line": start + len(out)})
 
             elif tool_name == "search":
                 pattern = str(args.get("pattern", ""))
                 if not pattern or len(pattern) > 500:
                     return ToolResult(False, "", "Invalid search pattern.")
+                if not bool(args.get("regex", False)) and self.repository_index is not None:
+                    self._refresh_index()
+                    rows = self.repository_index.search_text(pattern, limit=200)
+                    terms = self.repository_index._query_terms(pattern)
+                    matches = []
+                    for row in rows:
+                        path = row.get("path")
+                        content = row.get("content", "")
+                        if not path:
+                            continue
+                        for no, line in enumerate(content.splitlines(), 1):
+                            if any(term.lower() in line.lower() for term in terms):
+                                matches.append(f"{path}:{no}:{line[:300]}")
+                                break
+                        if len(matches) >= 200:
+                            break
+                    return ToolResult(True, "\n".join(matches), truncated=len(matches) >= 200, metadata={"method": "index"})
                 try:
                     rx = re.compile(pattern)
                 except re.error as exc:
@@ -182,14 +219,22 @@ class ToolRegistry:
                 if not is_safe or not target:
                     return ToolResult(success=False, output="", error=err or "Access outside workspace denied.")
                 target.parent.mkdir(parents=True, exist_ok=True)
+                expected_hash = args.get("expected_content_hash")
+                if expected_hash and target.exists():
+                    actual_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                    if actual_hash != expected_hash:
+                        return ToolResult(success=False, output="", error="expected_content_hash mismatch.")
                 target.write_text(content, encoding="utf-8")
-                return ToolResult(success=True, output=f"Successfully wrote {len(content)} bytes to {rel}.")
+                self._refresh_index()
+                new_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                return ToolResult(success=True, output=f"Successfully wrote {len(content)} bytes to {rel}.", metadata={"content_hash": new_hash})
 
             elif tool_name == "apply_patch":
                 patch_text = args.get("patch", "")
                 blocks = self.parser.parse(patch_text)
                 edit_res = self.applier.apply(blocks, root_dir=str(self.root_path), allow_overwrite_existing=True)
                 if edit_res.success:
+                    self._refresh_index()
                     output = f"Applied edit to {len(edit_res.applied_files + edit_res.created_files)} file(s)."
                     return ToolResult(success=True, output=output, metadata={"edit_result": edit_res})
                 else:
