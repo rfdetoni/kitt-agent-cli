@@ -292,6 +292,13 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertEqual(plan.exact_symbols, ())
         self.assertIn("html", plan.lexical_terms)
 
+    def test_query_plan_extracts_traceback_paths_as_exact_paths(self):
+        prompt = 'Traceback:\n  File "app.py", line 42, in run\nValueError: bad input\n'
+        plan = QueryPlanner.plan(prompt)
+
+        self.assertIn("app.py", plan.exact_paths)
+        self.assertTrue(plan.diagnostics)
+
     def test_repository_index_removes_deleted_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "gone.py"

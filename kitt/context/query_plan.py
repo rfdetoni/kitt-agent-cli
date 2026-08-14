@@ -32,6 +32,7 @@ class QueryPlanner:
     """Cheap host-side planner. LLM rerank can sit after this, not before it."""
 
     _IDENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b")
+    _TRACE_PATH_RE = re.compile(r'File ["\']([^"\']+)["\'], line \d+')
     _DIAG_RE = re.compile(r"(?i)\b(error|exception|traceback|failed|cannot find symbol|undefined|typeerror|valueerror)\b.*")
     _STOP = {
         "the", "and", "for", "with", "this", "that", "from", "como", "para", "este",
@@ -49,7 +50,8 @@ class QueryPlanner:
         deadline_ms: int = 120,
     ) -> QueryPlan:
         features = TaskFeatureExtractor.extract(prompt, explicit_files=tuple(explicit_files or ()))
-        paths = tuple(dict.fromkeys((*features.paths, *(explicit_files or ()))))
+        trace_paths = tuple(path for path in cls._TRACE_PATH_RE.findall(prompt) if not path.startswith("<"))
+        paths = tuple(dict.fromkeys((*features.paths, *trace_paths, *(explicit_files or ()))))
         quoted = re.findall(r"`([^`]+)`", prompt)
         quoted_ids = set(cls._IDENT_RE.findall(" ".join(quoted)))
         identifiers = [
