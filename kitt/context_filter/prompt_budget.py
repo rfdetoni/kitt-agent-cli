@@ -2,17 +2,21 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
+from kitt.context.token_estimator import CalibratedTokenEstimator
+
 class PromptTooLargeError(Exception):
     """Raised when task prompt and mandatory constraints exceed the context window."""
 
 class TokenCounter:
-    """Conservative two-level token counter."""
+    """Compatibility facade over the single calibrated token estimator."""
+
+    estimator = CalibratedTokenEstimator()
 
     @staticmethod
     def count_tokens(text: str, num_messages: int = 1) -> int:
         if not text:
             return 0
-        return (len(text) // 4) + (num_messages * 3)
+        return TokenCounter.estimator.count_text(text).count + (num_messages * 3)
 
 @dataclass
 class TelemetryData:
