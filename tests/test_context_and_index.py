@@ -11,6 +11,7 @@ from kitt.index.graph import RepositoryGraph
 from kitt.index.scanner import RepositoryScanner
 from kitt.index.repository import RepositoryIndex
 from kitt.context_engine.engine import ContextEngine
+from kitt.context_engine.indexer import LocalFileIndexer
 
 class TestContextAndIndex(unittest.TestCase):
     def test_calibrated_token_estimator(self):
@@ -229,6 +230,18 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertIn("lazy_symbol", blocks[0].content)
             self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
             engine.index.close()
+
+    def test_local_file_indexer_delegates_to_repository_index_without_json_cache(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text("def adapter_symbol():\n    return 42\n", encoding="utf-8")
+            indexer = LocalFileIndexer(tmpdir, persistence_enabled=False)
+
+            tags = indexer.scan()
+
+            self.assertTrue(any(tag.name == "adapter_symbol" for file_tags in tags for tag in file_tags.tags))
+            self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
+            indexer.close()
 
     def test_query_plan_and_context_compiler_quality_gate(self):
         plan = QueryPlanner.plan("Corrija `useful_symbol` em app.py", explicit_files={"app.py"}, token_budget=500)
