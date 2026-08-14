@@ -216,6 +216,17 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertNotIn("ignored.py", paths)
             self.assertNotIn("secret_dir/hidden.py", paths)
 
+    def test_repository_scanner_skips_binary_files_by_sample(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "text.txt").write_text("useful text\n", encoding="utf-8")
+            (root / "binary.txt").write_bytes(b"abc\0def")
+
+            paths = {p.relative_to(root).as_posix() for p in RepositoryScanner(tmpdir).scan_files()}
+
+            self.assertIn("text.txt", paths)
+            self.assertNotIn("binary.txt", paths)
+
     def test_repository_scanner_detects_extended_module_manifests(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

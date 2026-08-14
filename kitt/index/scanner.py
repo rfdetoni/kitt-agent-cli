@@ -101,6 +101,13 @@ class RepositoryScanner:
                 return False
             if size > max_file_bytes or total_bytes + size > max_total_bytes:
                 return False
+            try:
+                with path.open("rb") as fh:
+                    sample = fh.read(4096)
+            except OSError:
+                return False
+            if b"\0" in sample:
+                return False
             total_bytes += size
             return True
 
