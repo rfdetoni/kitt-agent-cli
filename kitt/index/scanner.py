@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import subprocess
+import fnmatch
 from pathlib import Path
-from typing import List, Dict, Set, Tuple
+from typing import List, Dict
 
 MANIFEST_NAMES = {
     "pyproject.toml": "python",
@@ -31,12 +32,33 @@ class RepositoryScanner:
 
     def __init__(self, root_dir: str | Path):
         self.root_path = Path(root_dir).resolve()
+        self._kittignore = self._load_kittignore()
+
+    def _load_kittignore(self) -> List[str]:
+        path = self.root_path / ".kittignore"
+        if not path.exists():
+            return []
+        patterns = []
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            clean = line.strip()
+            if clean and not clean.startswith("#"):
+                patterns.append(clean.rstrip("/"))
+        return patterns
+
+    def _is_ignored(self, rel_path: str) -> bool:
+        parts = Path(rel_path).parts
+        if any(part in IGNORED_DIRS for part in parts):
+            return True
+        for pattern in self._kittignore:
+            if fnmatch.fnmatch(rel_path, pattern) or any(fnmatch.fnmatch(part, pattern) for part in parts):
+                return True
+        return False
 
     def detect_modules(self) -> List[Dict[str, str]]:
         """Find module roots by manifest files."""
         modules = []
         for path, dirs, files in os.walk(self.root_path):
-            dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
+            dirs[:] = [d for d in dirs if not self._is_ignored(str((Path(path) / d).relative_to(self.root_path)))]
             for file in files:
                 if file in MANIFEST_NAMES:
                     rel_dir = str(Path(path).relative_to(self.root_path))
@@ -49,8 +71,28 @@ class RepositoryScanner:
             modules.append({"root_path": ".", "kind": "generic", "manifest_path": None})
         return modules
 
-    def scan_files(self, max_files: int = 20000) -> List[Path]:
+    def scan_files(
+        self,
+        max_files: int = 20000,
+        max_file_bytes: int = 512 * 1024,
+        max_total_bytes: int = 256 * 1024 * 1024,
+    ) -> List[Path]:
         """Scan workspace files using git ls-files if available, else os.scandir."""
+        total_bytes = 0
+
+        def accept(path: Path, rel_path: str) -> bool:
+            nonlocal total_bytes
+            if path.suffix in IGNORED_EXTS or self._is_ignored(rel_path):
+                return False
+            try:
+                size = path.stat().st_size
+            except OSError:
+                return False
+            if size > max_file_bytes or total_bytes + size > max_total_bytes:
+                return False
+            total_bytes += size
+            return True
+
         try:
             inside = subprocess.run(
                 ["git", "rev-parse", "--is-inside-work-tree"],
@@ -75,8 +117,9 @@ class RepositoryScanner:
                 for raw in out.split(b"\0"):
                     if not raw:
                         continue
-                    p = self.root_path / raw.decode("utf-8", errors="surrogateescape")
-                    if p.is_file() and p.suffix not in IGNORED_EXTS:
+                    rel = raw.decode("utf-8", errors="surrogateescape")
+                    p = self.root_path / rel
+                    if p.is_file() and accept(p, rel):
                         files.append(p)
                         if len(files) >= max_files:
                             break
@@ -87,10 +130,11 @@ class RepositoryScanner:
         # Fallback to os.scandir
         files = []
         for root, dirs, filenames in os.walk(self.root_path):
-            dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
+            dirs[:] = [d for d in dirs if not self._is_ignored(str((Path(root) / d).relative_to(self.root_path)))]
             for filename in filenames:
                 p = Path(root) / filename
-                if p.is_file() and p.suffix not in IGNORED_EXTS:
+                rel = str(p.relative_to(self.root_path))
+                if p.is_file() and accept(p, rel):
                     files.append(p)
                     if len(files) >= max_files:
                         break

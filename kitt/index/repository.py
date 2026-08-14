@@ -20,10 +20,19 @@ from kitt.context_engine.parser import SymbolParser
 class RepositoryIndex:
     """Shared single-instance SQLite repository index for workspace files, symbols, and graph."""
 
-    def __init__(self, root_dir: str | Path, in_memory: bool = False, max_files: int = 20000):
+    def __init__(
+        self,
+        root_dir: str | Path,
+        in_memory: bool = False,
+        max_files: int = 20000,
+        max_file_bytes: int = 512 * 1024,
+        max_total_bytes: int = 256 * 1024 * 1024,
+    ):
         self.root_path = Path(root_dir).resolve()
         self.in_memory = in_memory or (root_dir == ":memory:")
         self.max_files = max_files
+        self.max_file_bytes = max_file_bytes
+        self.max_total_bytes = max_total_bytes
 
         if self.in_memory:
             self.db_path = ":memory:"
@@ -69,7 +78,11 @@ class RepositoryIndex:
     def build_or_update(self) -> Dict[str, int]:
         """Incremental index update based on mtime_ns, size, and content_hash."""
         scanner = RepositoryScanner(self.root_path)
-        files = scanner.scan_files(max_files=self.max_files)
+        files = scanner.scan_files(
+            max_files=self.max_files,
+            max_file_bytes=self.max_file_bytes,
+            max_total_bytes=self.max_total_bytes,
+        )
         updated_count = 0
         seen_paths = set()
 

@@ -123,6 +123,35 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertTrue(index.search_text("after symbol"))
             index.close()
 
+    def test_repository_scanner_respects_kittignore(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".kittignore").write_text("ignored.py\nsecret_dir\n", encoding="utf-8")
+            (root / "kept.py").write_text("def kept(): pass\n", encoding="utf-8")
+            (root / "ignored.py").write_text("def ignored(): pass\n", encoding="utf-8")
+            (root / "secret_dir").mkdir()
+            (root / "secret_dir" / "hidden.py").write_text("def hidden(): pass\n", encoding="utf-8")
+
+            paths = {p.relative_to(root).as_posix() for p in RepositoryScanner(tmpdir).scan_files()}
+
+            self.assertIn("kept.py", paths)
+            self.assertNotIn("ignored.py", paths)
+            self.assertNotIn("secret_dir/hidden.py", paths)
+
+    def test_repository_index_respects_file_size_limit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "small.py").write_text("def small_symbol(): pass\n", encoding="utf-8")
+            (root / "large.py").write_text("def large_symbol():\n    pass\n" + ("x = 1\n" * 200), encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True, max_file_bytes=64)
+
+            stats = index.build_or_update()
+
+            self.assertEqual(stats["scanned"], 1)
+            self.assertTrue(index.search_text("small symbol"))
+            self.assertFalse(index.search_text("large symbol"))
+            index.close()
+
     def test_context_engine_uses_shared_repository_index(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "app.py"

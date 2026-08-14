@@ -73,7 +73,10 @@ class TestE2EPipeline(unittest.TestCase):
 
         captured = {}
         self.processor.enable_context_summary = True
-        self.processor.working_set.touch_paths("conv-working", ["note.txt"], "turn-prev", weight=2.0, kind="read_file")
+        (self.root_path / "pkg").mkdir()
+        (self.root_path / "pkg" / "note.txt").write_text("working note\n", encoding="utf-8")
+        (self.root_path / "pkg" / "AGENTS.md").write_text("Use local package guideline.\n", encoding="utf-8")
+        self.processor.working_set.touch_paths("conv-working", ["pkg/note.txt"], "turn-prev", weight=2.0, kind="read_file")
 
         class ExecutionClient:
             def chat_stream(self, messages, system_prompt=None):
@@ -84,7 +87,8 @@ class TestE2EPipeline(unittest.TestCase):
         list(self.processor.run_turn(TurnCommand("conv-working", "analise este projeto")))
 
         self.assertIn("Working Set:", captured["system_prompt"])
-        self.assertIn("note.txt", captured["system_prompt"])
+        self.assertIn("pkg/note.txt", captured["system_prompt"])
+        self.assertIn("Use local package guideline.", captured["system_prompt"])
 
     def test_tool_output_is_trimmed_to_execution_budget(self):
         profile = type("Profile", (), {"context_window": 900, "max_output_tokens": 300})()

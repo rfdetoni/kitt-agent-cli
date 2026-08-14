@@ -466,7 +466,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 explicit_items = self.context_resolver.resolve_explicit_files(list(cmd.explicit_files))
             explicit_str = "\n\n".join(item.content for item in explicit_items)
 
-            target_paths = list(dict.fromkeys([*(cmd.explicit_files or ()), *task.paths]))
+            target_paths = list(dict.fromkeys([*(cmd.explicit_files or ()), *task.paths, *working_paths]))
             if plan.enabled_tools and target_paths:
                 seen_agents = set()
                 agents_items = []
