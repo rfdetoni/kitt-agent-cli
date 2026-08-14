@@ -100,6 +100,21 @@ class TestE2EPipeline(unittest.TestCase):
         selected = next(event for event in events if isinstance(event, ModelSelected))
         self.assertEqual((selected.profile_name, selected.model), ("execute", "principal-model"))
 
+    def test_policy_blocks_remote_principal_when_offline(self):
+        from dataclasses import replace
+        from kitt.core.turn_command import TurnCommand
+        from kitt.core.turn_events import ModelSelected, TurnBlocked
+
+        self.processor.config = replace(self.processor.config, privacy_mode="offline")
+        self.processor.router.config.profiles["execute"] = replace(
+            self.processor.router.config.profiles["execute"], backend="openai", model="cloud-model"
+        )
+
+        events = list(self.processor.run_turn(TurnCommand("conv-offline", "hello")))
+
+        self.assertTrue(any(isinstance(event, TurnBlocked) for event in events))
+        self.assertFalse(any(isinstance(event, ModelSelected) for event in events))
+
     def test_uncited_code_request_reaches_llm_without_agent_tools(self):
         captured = {}
         class DirectClient:

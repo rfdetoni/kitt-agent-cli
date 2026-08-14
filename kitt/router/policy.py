@@ -13,6 +13,52 @@ class RoutingPolicy:
     def __init__(self, policy_version: str = "v2.0"):
         self.policy_version = policy_version
 
+    def _eligibility_reason(
+        self,
+        features: TaskFeatures,
+        cap: ModelCapabilities,
+        privacy_mode: str,
+    ) -> Optional[str]:
+        if privacy_mode in ("offline", "local_only") and not cap.is_local:
+            return f"profile '{cap.profile_name}' blocked by privacy mode '{privacy_mode}'"
+        if cap.health == "unhealthy":
+            return f"profile '{cap.profile_name}' is unhealthy"
+        if features.expected_context_tokens > cap.input_context_limit:
+            return f"profile '{cap.profile_name}' context window too small"
+        if features.requires_tools and not (cap.supports_native_tools or cap.supports_json):
+            return f"profile '{cap.profile_name}' lacks required tool support"
+        return None
+
+    def _blocked_decision(
+        self,
+        privacy_mode: str,
+        reasons: List[str],
+        scores: Dict[str, float],
+    ) -> RoutingDecision:
+        return RoutingDecision(
+            route_id=uuid.uuid4().hex[:12],
+            selected_profile="",
+            selected_tier="",
+            context_profile=None,
+            reasons=tuple(reasons),
+            component_scores=scores,
+            escalation_conditions=("adjust_privacy_mode", "select_eligible_profile"),
+            privacy_mode=privacy_mode,
+            privacy_decision="BLOCKED",
+            policy_version=self.policy_version,
+            created_at=str(time.time())
+        )
+
+    def _context_profile(
+        self,
+        selected: ModelCapabilities,
+        eligible: List[Tuple[ModelCapabilities, float]],
+    ) -> str:
+        for cap, _score in eligible:
+            if cap.tier == "small":
+                return cap.profile_name
+        return selected.profile_name
+
     def select_route(
         self,
         features: TaskFeatures,
@@ -23,40 +69,22 @@ class RoutingPolicy:
         reasons: List[str] = []
         scores: Dict[str, float] = {}
 
-        if user_override_profile and user_override_profile in capabilities:
-            chosen = capabilities[user_override_profile]
-            reasons.append(f"User override specified profile '{user_override_profile}'")
-            return RoutingDecision(
-                route_id=uuid.uuid4().hex[:12],
-                selected_profile=chosen.profile_name,
-                selected_tier=chosen.tier,
-                context_profile=chosen.profile_name,
-                reasons=tuple(reasons),
-                component_scores={chosen.profile_name: 1.0},
-                escalation_conditions=("validation_failure", "too_many_retries"),
-                privacy_mode=privacy_mode,
-                privacy_decision="ALLOWED",
-                policy_version=self.policy_version,
-                created_at=str(time.time())
-            )
+        if user_override_profile:
+            chosen = capabilities.get(user_override_profile)
+            if not chosen:
+                reasons.append(f"User override profile '{user_override_profile}' not found")
+                return self._blocked_decision(privacy_mode, reasons, scores)
+            reason = self._eligibility_reason(features, chosen, privacy_mode)
+            if reason:
+                reasons.append(reason)
+                return self._blocked_decision(privacy_mode, reasons, scores)
 
         eligible: List[Tuple[ModelCapabilities, float]] = []
 
         for name, cap in capabilities.items():
-            # Hard Rule 1: Offline / local_only prohiibt non-local providers
-            if privacy_mode in ("offline", "local_only") and not cap.is_local:
-                continue
-
-            # Hard Rule 2: Unhealthy profile excluded
-            if cap.health == "unhealthy":
-                continue
-
-            # Hard Rule 3: Context limit must accommodate prompt
-            if features.expected_context_tokens > cap.input_context_limit:
-                continue
-
-            # Hard Rule 4: Required tool support
-            if features.requires_tools and not (cap.supports_native_tools or cap.supports_json):
+            reason = self._eligibility_reason(features, cap, privacy_mode)
+            if reason:
+                reasons.append(reason)
                 continue
 
             # Score calculation
@@ -76,7 +104,6 @@ class RoutingPolicy:
                 context_fit * 0.15 -
                 latency_pen - resource_pen - recent_fail_pen
             )
-            scores[name] = round(final_score, 3)
 
             # Prefer small tier for low/medium complexity, small risk
             if features.complexity in ("LOW", "MEDIUM") and features.risk in ("LOW", "MEDIUM") and cap.tier == "small":
@@ -86,32 +113,20 @@ class RoutingPolicy:
             if (features.complexity == "HIGH" or features.risk == "CRITICAL" or features.cross_module) and cap.tier == "large":
                 final_score += 0.3
 
+            scores[name] = round(final_score, 3)
             eligible.append((cap, final_score))
 
         if not eligible:
-            # Fallback: pick any available profile
-            fallback_cap = list(capabilities.values())[0] if capabilities else ModelCapabilities(
-                profile_name="fallback", tier="small", input_context_limit=8192, max_output_tokens=2048,
-                supports_json=True, supports_native_tools=True, tool_call_reliability=0.8, code_edit_score=0.7,
-                reasoning_score=0.7, languages=(), is_local=True, privacy_class="local"
-            )
-            reasons.append("Fallback route selected (no strictly eligible profile)")
-            return RoutingDecision(
-                route_id=uuid.uuid4().hex[:12],
-                selected_profile=fallback_cap.profile_name,
-                selected_tier=fallback_cap.tier,
-                context_profile=fallback_cap.profile_name,
-                reasons=tuple(reasons),
-                component_scores=scores,
-                escalation_conditions=("validation_failure",),
-                privacy_mode=privacy_mode,
-                privacy_decision="FALLBACK",
-                policy_version=self.policy_version,
-                created_at=str(time.time())
-            )
+            reasons.append("No eligible profile available")
+            return self._blocked_decision(privacy_mode, reasons, scores)
 
         eligible.sort(key=lambda x: x[1], reverse=True)
-        selected_cap, best_score = eligible[0]
+        if user_override_profile:
+            selected_cap = capabilities[user_override_profile]
+            best_score = scores.get(selected_cap.profile_name, 1.0)
+            reasons.append(f"User override specified profile '{user_override_profile}'")
+        else:
+            selected_cap, best_score = eligible[0]
 
         reasons.append(
             f"Selected profile '{selected_cap.profile_name}' (tier={selected_cap.tier}, score={best_score}) "
@@ -122,7 +137,7 @@ class RoutingPolicy:
             route_id=uuid.uuid4().hex[:12],
             selected_profile=selected_cap.profile_name,
             selected_tier=selected_cap.tier,
-            context_profile=selected_cap.profile_name,
+            context_profile=self._context_profile(selected_cap, eligible),
             reasons=tuple(reasons),
             component_scores=scores,
             escalation_conditions=("small_attempt_failed", "patch_invalid", "validation_failed"),

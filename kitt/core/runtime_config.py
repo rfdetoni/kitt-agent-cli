@@ -18,6 +18,7 @@ class RuntimeConfig:
 
     history_enabled: bool = True
     persistence_enabled: bool = True
+    privacy_mode: str = "hybrid_redacted"
 
     # Artifacts
     artifact_inline_limit: int = 32768

@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Iterator
 from kitt.domain.entities import EditResult
 from kitt.router.router import TaskRouter
+from kitt.router.features import TaskFeatureExtractor
+from kitt.router.models import ModelCapabilities
+from kitt.router.policy import RoutingPolicy
 from kitt.memory.memory_manager import MemoryManager
 from kitt.skills.skill_manager import SkillManager
 from kitt.context_engine.engine import ContextEngine
@@ -111,6 +114,28 @@ class TurnProcessor:
     def _emit(self, event_name: str, payload: Dict[str, Any]):
         if self.event_callback and not self._closed:
             self.event_callback(event_name, payload)
+
+    def _routing_capabilities(self) -> Dict[str, ModelCapabilities]:
+        local_backends = {"ollama", "lmstudio", "antigravity", "local"}
+        caps: Dict[str, ModelCapabilities] = {}
+        for name, profile in self.router.config.profiles.items():
+            is_local = profile.backend in local_backends
+            tier = "small" if name == "context" or profile.context_window <= 8192 else "large"
+            caps[name] = ModelCapabilities(
+                profile_name=name,
+                tier=tier,
+                input_context_limit=profile.context_window,
+                max_output_tokens=profile.max_output_tokens,
+                supports_json=profile.supports_json,
+                supports_native_tools=True,
+                tool_call_reliability=0.8 if profile.supports_tools else 0.6,
+                code_edit_score=0.75 if tier == "small" else 0.9,
+                reasoning_score=0.75 if tier == "small" else 0.9,
+                languages=(),
+                is_local=is_local,
+                privacy_class="local" if is_local else "cloud",
+            )
+        return caps
 
     async def arun_turn(self, cmd: TurnCommand):
         """Bridge the blocking providers to asyncio without buffering the stream."""
@@ -342,10 +367,23 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             self._emit("FilterCompleted", {"filter_res": filter_res})
             yield FilterCompleted(filter_res=filter_res)
 
-            # 2. Resolve the final-answer model from the configured principal role.
-            # The context profile may summarize/filter, but it must not replace the
-            # user's selected principal model for the visible answer.
-            exe_profile_name, exe_profile = self.router.resolve_profile_for_task("code-generation")
+            # 2. Resolve the final-answer model through policy while preserving the
+            # configured principal role as the user's explicit execution preference.
+            configured_exe_name, configured_exe = self.router.resolve_profile_for_task("code-generation")
+            features = TaskFeatureExtractor.extract(cmd.prompt, explicit_files=tuple(cmd.explicit_files))
+            routing_decision = RoutingPolicy().select_route(
+                features,
+                self._routing_capabilities(),
+                privacy_mode=getattr(self.config, "privacy_mode", "hybrid_redacted"),
+                user_override_profile=configured_exe_name,
+            )
+            if not routing_decision.selected_profile:
+                reason = "; ".join(routing_decision.reasons) or "No eligible execution profile"
+                self._emit("TurnBlocked", {"reason": reason})
+                yield TurnBlocked(reason=reason)
+                return
+            exe_profile_name = routing_decision.selected_profile
+            exe_profile = self.router.config.profiles.get(exe_profile_name, configured_exe)
 
             self._emit("ModelSelected", {"profile_name": exe_profile_name, "model": exe_profile.model})
             yield ModelSelected(profile_name=exe_profile_name, model=exe_profile.model)
