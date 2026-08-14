@@ -13,6 +13,7 @@ from kitt.tools.safe_python import SafePythonExecutor
 from kitt.tools.process_runner import ProcessRunner
 from kitt.context_engine.engine import ContextEngine
 from kitt.index.repository import RepositoryIndex
+from kitt.index.scanner import RepositoryScanner
 
 from kitt.tools.artifact_tools import ArtifactTools
 from kitt.tools.child_tools import ChildTools
@@ -196,16 +197,19 @@ class ToolRegistry:
                 except re.error as exc:
                     return ToolResult(False, "", f"Invalid regex: {exc}")
                 matches = []
-                for path in self.root_path.rglob("*"):
+                for path in RepositoryScanner(self.root_path).scan_files():
                     if len(matches) >= 200:
                         break
-                    if not path.is_file() or ".git" in path.parts or ".kitt" in path.parts:
-                        continue
                     try:
-                        for no, line in enumerate(path.read_text("utf-8", errors="ignore").splitlines(), 1):
-                            if rx.search(line):
-                                matches.append(f"{path.relative_to(self.root_path)}:{no}:{line[:300]}")
-                                if len(matches) >= 200: break
+                        rel_path = path.relative_to(self.root_path)
+                        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+                            for no, line in enumerate(fh, 1):
+                                if no > 5000:
+                                    break
+                                if rx.search(line):
+                                    matches.append(f"{rel_path}:{no}:{line.rstrip()[:300]}")
+                                    if len(matches) >= 200:
+                                        break
                     except OSError:
                         continue
                 return ToolResult(True, "\n".join(matches), truncated=len(matches) >= 200)

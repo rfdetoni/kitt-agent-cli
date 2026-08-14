@@ -53,6 +53,21 @@ class TestToolRegistry(unittest.TestCase):
         self.assertIn("sample.py", res.output)
         index.close()
 
+    def test_regex_search_uses_bounded_scanner_ignores_kittignore(self):
+        (self.root_path / ".kittignore").write_text("ignored.py\n", encoding="utf-8")
+        (self.root_path / "kept.py").write_text("def kept_match(): pass\n", encoding="utf-8")
+        (self.root_path / "ignored.py").write_text("def ignored_match(): pass\n", encoding="utf-8")
+
+        res = self.registry.execute_tool(
+            "search",
+            {"pattern": ".*_match", "regex": True},
+            enabled_tools=["search"],
+        )
+
+        self.assertTrue(res.success)
+        self.assertIn("kept.py", res.output)
+        self.assertNotIn("ignored.py", res.output)
+
     def test_write_file_updates_repository_index(self):
         index = RepositoryIndex(self.tmp_dir.name, in_memory=True)
         registry = ToolRegistry(root_dir=self.tmp_dir.name, context_engine=ContextEngine(index))
