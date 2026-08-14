@@ -121,12 +121,25 @@ class TestContextAndIndex(unittest.TestCase):
             meta = index.metadata()
 
             self.assertEqual(meta["schema_version"], "2")
-            self.assertEqual(meta["parser_registry_version"], "symbol-parser-v1")
+            self.assertEqual(meta["parser_registry_version"], "parser-registry-v1")
             self.assertIn("workspace_identity", meta)
             self.assertIn("capabilities", meta)
             self.assertEqual(stats["schema_version"], "2")
             self.assertIn("freshness", stats)
             self.assertIn("partial_reason", stats)
+            index.close()
+
+    def test_repository_index_uses_parser_registry_adapter_version(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "app.py"
+            p.write_text("def registry_symbol():\n    return 1\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            row = index._conn.execute("SELECT parser_version FROM files WHERE path='app.py'").fetchone()
+
+            self.assertEqual(row["parser_version"], "v1")
+            self.assertTrue(index.search_text("registry symbol"))
             index.close()
 
     def test_repository_index_fts_handles_natural_language_and_tail_content(self):

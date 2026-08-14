@@ -15,10 +15,9 @@ from typing import List, Dict, Any, Optional
 from kitt.index.schema import INDEX_SCHEMA_SQL, setup_fts5_tables
 from kitt.index.scanner import RepositoryScanner
 from kitt.index.graph import RepositoryGraph
-from kitt.context_engine.parser import SymbolParser
+from kitt.index.parser_registry import ParserRegistry
 
 INDEX_SCHEMA_VERSION = "2"
-PARSER_REGISTRY_VERSION = "symbol-parser-v1"
 
 
 class RepositoryIndex:
@@ -51,7 +50,7 @@ class RepositoryIndex:
 
         self.has_fts5 = False
         self.graph = RepositoryGraph()
-        self.parser = SymbolParser()
+        self.parser_registry = ParserRegistry()
         self._lock = threading.RLock()
         self.last_search_error = ""
         self._init_db()
@@ -62,7 +61,7 @@ class RepositoryIndex:
             self.has_fts5 = setup_fts5_tables(self._conn)
             with self._conn:
                 self._set_meta_locked("schema_version", INDEX_SCHEMA_VERSION)
-                self._set_meta_locked("parser_registry_version", PARSER_REGISTRY_VERSION)
+                self._set_meta_locked("parser_registry_version", self.parser_registry.version)
                 self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('index_generation', '0')")
                 self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('state', 'EMPTY')")
                 self._set_meta_locked("workspace_identity", hashlib.sha256(str(self.root_path).encode("utf-8")).hexdigest()[:16])
@@ -252,15 +251,25 @@ class RepositoryIndex:
         self._conn.execute(
             """
             INSERT INTO files (path, module_id, language, size_bytes, mtime_ns, content_hash, parser_version, indexed_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'v1', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 module_id=excluded.module_id,
                 mtime_ns=excluded.mtime_ns,
                 size_bytes=excluded.size_bytes,
                 content_hash=excluded.content_hash,
+                parser_version=excluded.parser_version,
                 indexed_at=excluded.indexed_at
             """,
-            (rel_path, module_id, path.suffix.lstrip("."), stat.st_size, stat.st_mtime_ns, content_hash, str(time.time())),
+            (
+                rel_path,
+                module_id,
+                path.suffix.lstrip("."),
+                stat.st_size,
+                stat.st_mtime_ns,
+                content_hash,
+                self.parser_registry.adapter_for(path).version,
+                str(time.time()),
+            ),
         )
         file_id = self._conn.execute("SELECT file_id FROM files WHERE path=?", (rel_path,)).fetchone()["file_id"]
         self._conn.execute("DELETE FROM refs WHERE file_id=?", (file_id,))
@@ -269,7 +278,7 @@ class RepositoryIndex:
         if self.has_fts5:
             self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (file_id,))
 
-        tags = self.parser.extract_file_tags(path, rel_path)
+        tags = self.parser_registry.parse(path, rel_path)
         symbol_names = []
         if tags:
             for tag in tags.tags:
