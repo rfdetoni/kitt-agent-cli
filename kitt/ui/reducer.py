@@ -79,6 +79,10 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
                 block.status = "done"
                 block.duration_ms = event.duration_ms
                 block.tokens = event.tokens
+                thought_str = getattr(event, "thought", "")
+                if thought_str:
+                    block.collapsed = True
+                    block.metadata["full_output"] = safe_text(thought_str)
                 break
     elif isinstance(event, TextDelta):
         state.status_text = "RESPONDING"

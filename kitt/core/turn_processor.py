@@ -363,24 +363,70 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             )
         return ""
 
-    def _stream_execution_response(self, client: LLMClient, messages: List[Dict[str, str]], system_prompt: str, turn_id: str = ""):
-        """Stream normal text while hiding an exact tool-call envelope from the UI."""
+    def _stream_execution_response(self, client: LLMClient, messages: List[Dict[str, str]], system_prompt: str, turn_id: str = "", started_at: float = 0.0):
+        """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
         if "lfm" in getattr(profile, "model", "").lower():
-            full_response = self._visible_lfm_response("".join(client.chat_stream(messages, system_prompt=system_prompt)))
+            raw_text = "".join(client.chat_stream(messages, system_prompt=system_prompt))
+            thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
+            thought_text = thought_match.group(1).strip() if thought_match else ""
+            dur_ms = int((time.time() - (started_at or time.time())) * 1000)
+            yield raw_text, ThinkingCompleted(duration_ms=dur_ms, tokens=TokenCounter.count_tokens(thought_text), thought=thought_text)
+            full_response = self._visible_lfm_response(raw_text)
             if full_response:
                 yield full_response, TextDelta(delta=full_response)
             yield full_response, None
             return
+
         full_response = ""
         prefix_buffer: Optional[str] = ""
         suppress = False
+        in_think = False
+        thought_emitted = False
+        thought_buffer = ""
+
         for chunk in client.chat_stream(messages, system_prompt=system_prompt):
             if turn_id and turn_id in self.cancelled_turns:
                 break
             full_response += chunk
-            if suppress:
+
+            # 1. Handle reasoning inside <think>...</think>
+            if not thought_emitted:
+                if "<think>" in full_response or full_response.lstrip().startswith("<think"):
+                    in_think = True
+                    if "</think>" in full_response:
+                        parts = full_response.split("</think>", 1)
+                        m = re.search(r"<think>(.*)", parts[0], re.DOTALL)
+                        thought_buffer = m.group(1).strip() if m else parts[0].replace("<think>", "").strip()
+                        dur_ms = int((time.time() - (started_at or time.time())) * 1000)
+                        thought_emitted = True
+                        in_think = False
+                        yield full_response, ThinkingCompleted(
+                            duration_ms=dur_ms,
+                            tokens=TokenCounter.count_tokens(thought_buffer),
+                            thought=thought_buffer,
+                        )
+                        remainder = parts[1].lstrip()
+                        if remainder:
+                            if any(remainder.startswith(tag) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
+                                suppress = True
+                                prefix_buffer = None
+                                continue
+                            elif any(tag.startswith(remainder) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
+                                prefix_buffer = remainder
+                                continue
+                            else:
+                                yield full_response, TextDelta(delta=remainder)
+                                prefix_buffer = None
+                    continue
+                else:
+                    thought_emitted = True
+                    dur_ms = int((time.time() - (started_at or time.time())) * 1000)
+                    yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=0, thought="")
+
+            if in_think or suppress:
                 continue
+
             if prefix_buffer is not None:
                 prefix_buffer += chunk
                 stripped = prefix_buffer.lstrip()
@@ -394,6 +440,14 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 prefix_buffer = None
             else:
                 yield full_response, TextDelta(delta=chunk)
+
+        if not thought_emitted:
+            dur_ms = int((time.time() - (started_at or time.time())) * 1000)
+            thought_text = ""
+            if "<think>" in full_response:
+                m = re.search(r"<think>(.*)", full_response, re.DOTALL)
+                thought_text = m.group(1).strip() if m else full_response.replace("<think>", "").strip()
+            yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=TokenCounter.count_tokens(thought_text), thought=thought_text)
 
         if not suppress and prefix_buffer:
             yield full_response, TextDelta(delta=prefix_buffer)
@@ -639,23 +693,21 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
                 self._rebudget_execution_messages(execution_messages, request.system_prompt, exe_profile)
                 for streamed_response, event in self._stream_execution_response(
-                    exe_client, execution_messages, request.system_prompt, turn_id=cmd.turn_id
+                    exe_client, execution_messages, request.system_prompt, turn_id=cmd.turn_id, started_at=thinking_started_at
                 ):
                     if cmd.turn_id in self.cancelled_turns:
                         self.cancelled_turns.discard(cmd.turn_id)
                         return
                     full_response = streamed_response
                     if event is not None:
-                        if not thinking_completed:
+                        if isinstance(event, ThinkingCompleted):
                             thinking_completed = True
-                            dur_ms = int((time.time() - thinking_started_at) * 1000)
-                            yield ThinkingCompleted(duration_ms=dur_ms, tokens=0)
                         yield event
 
                 if not thinking_completed:
                     thinking_completed = True
                     dur_ms = int((time.time() - thinking_started_at) * 1000)
-                    yield ThinkingCompleted(duration_ms=dur_ms, tokens=0)
+                    yield ThinkingCompleted(duration_ms=dur_ms, tokens=0, thought="")
 
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)

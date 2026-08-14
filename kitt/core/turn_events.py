@@ -78,6 +78,7 @@ class ThinkingStarted(TurnEvent):
 class ThinkingCompleted(TurnEvent):
     duration_ms: int = 0
     tokens: int = 0
+    thought: str = ""
 
 @dataclass
 class ToolStarted(TurnEvent):

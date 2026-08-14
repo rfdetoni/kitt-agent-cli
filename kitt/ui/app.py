@@ -1207,11 +1207,11 @@ class KittUIApp:
 
                 if block.collapsed:
                     first_line = text.split("\n")[0]
-                    out.append(("class:tool", f"{first_line} (ctrl+o para expandir)\n"))
+                    out.append((f"class:{block.kind}", f"{first_line} (ctrl+o para expandir)\n"))
                 elif "full_output" in block.metadata:
-                    out.append(("class:tool", f"{text}\n    {block.metadata['full_output']}\n    (ctrl+o para recolher)\n"))
+                    out.append((f"class:{block.kind}", f"{text}\n    {block.metadata['full_output']}\n    (ctrl+o para recolher)\n"))
                 else:
-                    out.append(("class:tool", f"{text}\n"))
+                    out.append((f"class:{block.kind}", f"{text}\n"))
             else:
                 label = labels.get(block.kind, block.kind.upper())
                 out += [(f"class:{block.kind}", f"\n{label}  "), ("class:text", block.text + "\n")]

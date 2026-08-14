@@ -2,6 +2,7 @@ import unittest
 import tempfile
 from pathlib import Path
 from kitt.core.turn_processor import TurnProcessor
+from kitt.core.turn_events import TextDelta, ThinkingCompleted
 from kitt.edit_format.applier import DiffApplier
 from kitt.domain.entities import EditBlock
 
@@ -21,7 +22,7 @@ class TestE2EPipeline(unittest.TestCase):
         app_file.write_text("def hello(): return 'world'\n", encoding='utf-8')
 
         from kitt.core.turn_command import TurnCommand
-        from kitt.core.turn_events import FilterCompleted, BudgetApplied
+        from kitt.core.turn_events import FilterCompleted, BudgetApplied, TextDelta, ThinkingCompleted
         
         cmd = TurnCommand(conversation_id="conv-1", prompt="Refactor app.py to return hello K.I.T.T.", explicit_files={"app.py"})
         
@@ -272,7 +273,11 @@ class TestE2EPipeline(unittest.TestCase):
                 yield "<think>hidden reasoning</think>Final answer"
 
         events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
-        self.assertEqual(events[0][1].delta, "Final answer")
+        deltas = [ev for _, ev in events if isinstance(ev, TextDelta)]
+        self.assertEqual(deltas[0].delta, "Final answer")
+        from kitt.core.turn_events import ThinkingCompleted
+        thinks = [ev for _, ev in events if isinstance(ev, ThinkingCompleted)]
+        self.assertEqual(thinks[0].thought, "hidden reasoning")
 
     def test_incomplete_lfm_thinking_is_not_used_as_context(self):
         self.assertEqual(self.processor._without_thinking("<think>unfinished"), "")
@@ -286,7 +291,8 @@ class TestE2EPipeline(unittest.TestCase):
                 yield "<think>unfinished reasoning"
 
         events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
-        self.assertIn("Não recebi uma resposta final", events[0][1].delta)
+        deltas = [ev for _, ev in events if isinstance(ev, TextDelta)]
+        self.assertIn("Não recebi uma resposta final", deltas[0].delta)
 
     def test_incomplete_lfm_thinking_uses_final_answer_marker(self):
         class LfmClient:
@@ -296,7 +302,8 @@ class TestE2EPipeline(unittest.TestCase):
                 yield "<think>reasoning without closing tag\nResposta final: resposta visível"
 
         events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
-        self.assertEqual(events[0][1].delta, "resposta visível")
+        deltas = [ev for _, ev in events if isinstance(ev, TextDelta)]
+        self.assertEqual(deltas[0].delta, "resposta visível")
 
     def test_context_summary_fallback_is_not_persisted(self):
         class UnavailableContext:

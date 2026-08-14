@@ -64,9 +64,11 @@ class TestTUIVisualFeedback(unittest.TestCase):
         self.assertEqual(state.status_text, "THINKING")
         self.assertIn("aguardando primeira resposta visível", state.active_tasks[0].summary)
 
-        reduce_ui_event(state, ThinkingCompleted(duration_ms=5000, tokens=161))
+        reduce_ui_event(state, ThinkingCompleted(duration_ms=5000, tokens=161, thought="1. Analisar estrutura\n2. Criar arquivo"))
         self.assertEqual(state.transcript[-1].text, "▸ Thought for 5s, 161 tokens")
         self.assertEqual(state.transcript[-1].status, "done")
+        self.assertTrue(state.transcript[-1].collapsed)
+        self.assertEqual(state.transcript[-1].metadata.get("full_output"), "1. Analisar estrutura\n2. Criar arquivo")
 
     def test_tool_duration_and_tokens_formatting(self):
         state = UIState()
