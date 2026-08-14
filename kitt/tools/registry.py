@@ -168,8 +168,20 @@ class ToolRegistry:
                             break
                         out.append(line.rstrip("\n"))
                 chunk = "\n".join(out)
-                digest = hashlib.sha256(target.read_bytes()).hexdigest()
-                return ToolResult(success=True, output=chunk, metadata={"content_hash": digest, "start_line": start + 1, "end_line": start + len(out)})
+                stat = target.stat()
+                digest = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
+                return ToolResult(
+                    success=True,
+                    output=chunk,
+                    metadata={
+                        "content_hash": digest,
+                        "hash_scope": "returned_range",
+                        "start_line": start + 1,
+                        "end_line": start + len(out),
+                        "file_size": stat.st_size,
+                        "mtime_ns": stat.st_mtime_ns,
+                    },
+                )
 
             elif tool_name == "search":
                 pattern = str(args.get("pattern", ""))
