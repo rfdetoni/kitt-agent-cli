@@ -40,5 +40,16 @@ class TestContextResolver(unittest.TestCase):
         self.assertEqual(req.max_output_tokens, 1200)
         self.assertIn("read_file", req.enabled_tools)
 
+    def test_agents_instructions_skip_incoherent_stack_claims(self):
+        (self.root_path / "kitt").mkdir()
+        (self.root_path / "AGENTS.md").write_text(
+            "This project uses Node.js, Bun, TypeScript, React and Ink.\n",
+            encoding="utf-8",
+        )
+
+        items = self.resolver.resolve_agents_instructions()
+
+        self.assertEqual(items, [])
+
 if __name__ == '__main__':
     unittest.main()
