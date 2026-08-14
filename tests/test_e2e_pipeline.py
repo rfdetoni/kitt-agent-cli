@@ -129,6 +129,22 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertLessEqual(total, profile.context_window - profile.max_output_tokens)
         self.assertIn("[truncated]", output)
 
+    def test_follow_up_messages_are_rebudgeted_after_tool_results(self):
+        from kitt.context_filter.prompt_budget import TokenCounter
+
+        profile = type("Profile", (), {"context_window": 900, "max_output_tokens": 300})()
+        messages = [
+            {"role": "user", "content": "original request"},
+            {"role": "assistant", "content": "a" * 5000},
+            {"role": "user", "content": "b" * 5000},
+        ]
+
+        self.processor._rebudget_execution_messages(messages, "system", profile)
+
+        total = TokenCounter.count_tokens("system") + TokenCounter.count_messages(messages).count
+        self.assertLessEqual(total, profile.context_window - profile.max_output_tokens)
+        self.assertEqual(messages[0]["content"], "original request")
+
     def test_simple_ask_skips_repository_context(self):
         class FakeExecutionClient:
             def chat_stream(self, *args, **kwargs):

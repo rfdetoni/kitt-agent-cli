@@ -32,11 +32,12 @@ class SymbolParser:
         re.MULTILINE
     )
 
-    def extract_file_tags(self, file_path: Path, relative_path: str) -> Optional[FileTags]:
-        try:
-            content = file_path.read_text(encoding='utf-8', errors='ignore')
-        except Exception:
-            return None
+    def extract_file_tags(self, file_path: Path, relative_path: str, content: str | None = None) -> Optional[FileTags]:
+        if content is None:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+            except Exception:
+                return None
 
         ext = file_path.suffix.lower()
         tags: List[Tag] = []

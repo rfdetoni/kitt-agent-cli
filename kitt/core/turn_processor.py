@@ -105,6 +105,7 @@ class TurnProcessor:
         self.compaction_service = compaction_service
         self._workspace_id = workspace_id
         self.enable_context_summary = enable_context_summary
+        self._context_summary_cache: Dict[str, str] = {}
 
     @property
     def workspace_id(self) -> str:
@@ -151,6 +152,28 @@ class TurnProcessor:
         if TokenCounter.count_tokens(output) <= remaining:
             return output
         return PromptBudget(profile.context_window, profile.max_output_tokens)._truncate_to_tokens(output, remaining)
+
+    def _rebudget_execution_messages(
+        self, messages: List[Dict[str, str]], system_prompt: str, profile
+    ) -> None:
+        """Keep each follow-up request inside provider input budget."""
+        available = max(256, profile.context_window - profile.max_output_tokens)
+        used = TokenCounter.count_tokens(system_prompt) + TokenCounter.count_messages(messages).count
+        if used <= available:
+            return
+        excess = used - available
+        for index in range(1, len(messages)):
+            if excess <= 0:
+                break
+            message = messages[index]
+            current = message.get("content", "")
+            current_tokens = TokenCounter.count_tokens(current)
+            if current_tokens <= 64:
+                continue
+            target = max(64, current_tokens - excess)
+            trimmed = PromptBudget(profile.context_window, profile.max_output_tokens)._truncate_to_tokens(current, target)
+            message["content"] = trimmed
+            excess -= max(0, current_tokens - TokenCounter.count_tokens(trimmed))
 
     def _routing_capabilities(self) -> Dict[str, ModelCapabilities]:
         local_backends = {"ollama", "lmstudio", "antigravity", "local"}
@@ -279,9 +302,14 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         # a small model here would spend tokens to summarize a bounded package.
         if "## Context v1" in context_map and TokenCounter.count_tokens(context_map) <= 4096:
             return context_map
+        profile = getattr(client, "profile", None)
+        cache_key = hashlib.sha256(
+            f"{getattr(profile, 'model', '')}\0{prompt}\0{context_map}".encode("utf-8")
+        ).hexdigest()
+        if cache_key in self._context_summary_cache:
+            return self._context_summary_cache[cache_key]
         fallback = context_map[:2400]
         try:
-            profile = getattr(client, "profile", None)
             summary_client = LLMClient(replace(
                 profile, max_output_tokens=max(128, profile.max_output_tokens), request_timeout_seconds=min(12, profile.request_timeout_seconds),
             )) if profile and "lfm" in profile.model.lower() else client
@@ -292,6 +320,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             summary = self._without_thinking(summary)[:6000] or fallback
         except Exception:
             summary = fallback
+        self._context_summary_cache[cache_key] = summary
+        if len(self._context_summary_cache) > 32:
+            self._context_summary_cache.pop(next(iter(self._context_summary_cache)))
         return summary
 
     def _source_context_excerpt(self, paths: List[str]) -> str:
@@ -595,6 +626,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     self.cancelled_turns.discard(cmd.turn_id)
                     return
 
+                self._rebudget_execution_messages(execution_messages, request.system_prompt, exe_profile)
                 for streamed_response, event in self._stream_execution_response(
                     exe_client, execution_messages, request.system_prompt, turn_id=cmd.turn_id
                 ):
@@ -831,15 +863,17 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 + self._history_context(cmd.conversation_id, 100, cmd.prompt)
             )
             saved = max(0, naive_tokens - allocated["total_input_tokens"])
+            actual_input_tokens = TokenCounter.count_tokens(request.system_prompt) + TokenCounter.count_messages(execution_messages).count
             metrics = TurnMetrics(
                 turn_id=cmd.turn_id, conversation_id=cmd.conversation_id,
                 context_model=ctx_profile.model, execution_model=exe_profile.model,
                 naive_input_tokens=naive_tokens,
-                actual_input_tokens=allocated["total_input_tokens"],
+                actual_input_tokens=actual_input_tokens,
                 actual_output_tokens=output_tokens,
                 duration_ms=(time.time() - turn_started_at) * 1000,
             )
-            if self.metrics_collector:
+            # Runtime event bus is single writer; standalone processors write directly.
+            if self.metrics_collector and not self.event_callback:
                 self.metrics_collector.record_turn(metrics)
             self._emit("MetricsRecorded", metrics)
             yield MetricsRecorded(

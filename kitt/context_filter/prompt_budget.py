@@ -18,6 +18,11 @@ class TokenCounter:
             return 0
         return TokenCounter.estimator.count_text(text).count + (num_messages * 3)
 
+    @staticmethod
+    def count_messages(messages: List[Dict[str, Any]]) -> Any:
+        """Estimate serialized provider messages with one shared estimator."""
+        return TokenCounter.estimator.count_messages(messages)
+
 @dataclass
 class TelemetryData:
     timestamp: float = field(default_factory=time.time)

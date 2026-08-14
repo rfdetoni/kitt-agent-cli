@@ -8,6 +8,8 @@ from pathlib import Path
 
 from kitt.context.query_plan import QueryPlanner
 from kitt.context.retrieval import HybridRetrievalPipeline
+from kitt.context.candidates import ContextCandidate
+from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.index.repository import RepositoryIndex
 
 
@@ -25,6 +27,56 @@ CASES = (
     RetrievalCase("paired tests", "add tests for `calculate_total`", "test_calc.py"),
     RetrievalCase("git focus", "analise arquivos alterados no git", "changed.py"),
 )
+
+
+def _score_cases(index: RepositoryIndex, mode: str) -> dict:
+    pipeline = HybridRetrievalPipeline(index)
+    hit1 = hit5 = 0
+    reciprocal = []
+    details = []
+    for case in CASES:
+        plan = QueryPlanner.plan(case.prompt, token_budget=1200)
+        if mode == "naive_full_context":
+            with index._lock:
+                rows = index._conn.execute(
+                    "SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash "
+                    "FROM files f JOIN chunks c ON c.file_id=f.file_id ORDER BY f.path, c.start_line LIMIT 50"
+                ).fetchall()
+            candidates = [ContextCandidate(
+                f"naive:{row['path']}:{row['start_line']}", "file", row["path"],
+                row["start_line"], row["end_line"], row["content_hash"],
+                max(1, TokenCounter.count_tokens(row["content"])), 0.5, 0.5, 0.5,
+                False, "WORKSPACE_DATA", (), "naive full-context baseline", content=row["content"]
+            ) for row in rows]
+            selected = candidates[:12]
+        elif mode == "deterministic_exact_lexical":
+            results = index.search_text(" ".join(plan.lexical_terms), limit=5)
+            selected = [ContextCandidate(
+                f"lex:{row['path']}:{row['start_line']}", "file", row["path"],
+                row["start_line"], row["end_line"], row["content_hash"],
+                max(1, TokenCounter.count_tokens(row["content"])), 0.8, 0.8, 0.9,
+                False, "WORKSPACE_DATA", (), "deterministic lexical", content=row["content"]
+            ) for row in results]
+        else:
+            selected = pipeline.retrieve(case.prompt, explicit_files=set(plan.exact_paths), max_tokens=1200)
+            if mode == "hybrid_graph_small_rerank":
+                selected = sorted(selected, key=lambda item: (-item.marginal_value, item.candidate_id))
+            elif mode == "large_direct":
+                selected = selected[:1]
+        paths = [item.path for item in selected if item.path][:5]
+        rank = next((i for i, path in enumerate(paths, 1) if path == case.expected_path), 0)
+        hit1 += int(rank == 1)
+        hit5 += int(rank > 0)
+        reciprocal.append(1 / rank if rank else 0)
+        details.append({"case": case.name, "expected": case.expected_path, "paths": paths, "rank": rank})
+    total = len(CASES)
+    return {
+        "cases": total,
+        "recall_at_1": round(hit1 / total, 3),
+        "recall_at_5": round(hit5 / total, 3),
+        "mrr": round(sum(reciprocal) / total, 3),
+        "details": details,
+    }
 
 
 def run_eval() -> dict:
@@ -68,6 +120,13 @@ def run_eval() -> dict:
                 "rank": rank,
                 "ok": bool(rank),
             })
+        ablations = {
+            mode: _score_cases(index, mode)
+            for mode in (
+                "naive_full_context", "deterministic_exact_lexical", "hybrid_structural",
+                "hybrid_graph", "hybrid_graph_small_rerank", "large_direct",
+            )
+        }
         index.close()
         total = len(CASES)
         return {
@@ -81,6 +140,7 @@ def run_eval() -> dict:
                 "schema_version": stats["schema_version"],
             },
             "details": details,
+            "ablations": ablations,
         }
 
 

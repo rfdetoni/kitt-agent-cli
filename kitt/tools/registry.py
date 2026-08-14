@@ -1,6 +1,8 @@
 import shlex
 import re
 import hashlib
+import os
+import tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Set
@@ -60,7 +62,7 @@ class ToolRegistry:
         if index is not None:
             if paths and hasattr(index, "update_paths"):
                 index.update_paths(paths)
-            else:
+            elif index.index_generation() == 0:
                 index.build_or_update()
 
     def attach_services(self, artifacts=None, queue_service=None, goal_service=None, child_manager=None, harness_service=None):
@@ -313,7 +315,20 @@ class ToolRegistry:
                     actual_hash = hashlib.sha256(target.read_bytes()).hexdigest()
                     if actual_hash != expected_hash:
                         return ToolResult(success=False, output="", error="expected_content_hash mismatch.")
-                target.write_text(content, encoding="utf-8")
+                # Atomic replace prevents readers/indexers from seeing partial content.
+                fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=str(target.parent))
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        handle.write(content)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary_name, target)
+                except Exception:
+                    try:
+                        os.unlink(temporary_name)
+                    except OSError:
+                        pass
+                    raise
                 self._refresh_index([str(target.relative_to(self.root_path))])
                 new_hash = hashlib.sha256(target.read_bytes()).hexdigest()
                 return ToolResult(success=True, output=f"Successfully wrote {len(content)} bytes to {rel}.", metadata={"content_hash": new_hash})

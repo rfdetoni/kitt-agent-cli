@@ -129,11 +129,22 @@ class RepositoryIndex:
                 stat = p.stat()
 
                 row = self._conn.execute(
-                    "SELECT file_id, mtime_ns, size_bytes FROM files WHERE path=?", (rel_path,)
+                    "SELECT file_id, mtime_ns, size_bytes, content_hash FROM files WHERE path=?", (rel_path,)
                 ).fetchone()
 
                 if row and row["mtime_ns"] == stat.st_mtime_ns and row["size_bytes"] == stat.st_size:
                     continue
+
+                # mtime can change during checkout/copy without changing bytes.
+                # Hash first; reparsing is the expensive part of incremental update.
+                if row and row["size_bytes"] == stat.st_size:
+                    content_hash = self._file_hash(p)
+                    if content_hash == row["content_hash"]:
+                        self._conn.execute(
+                            "UPDATE files SET mtime_ns=?, indexed_at=? WHERE file_id=?",
+                            (stat.st_mtime_ns, str(time.time()), row["file_id"]),
+                        )
+                        continue
 
                 self._index_file_locked(p, rel_path, modules)
                 updated_count += 1
@@ -173,6 +184,14 @@ class RepositoryIndex:
             "schema_version": meta.get("schema_version", ""),
         }
 
+    @staticmethod
+    def _file_hash(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
     def bootstrap_then_background(self, paths: List[str] | None = None) -> Dict[str, int]:
         """Index explicit/recent paths now and schedule full indexing in background."""
         paths = list(dict.fromkeys(paths or []))
@@ -187,6 +206,23 @@ class RepositoryIndex:
         }
         self._start_background_update()
         return result
+
+    def ready_stats(self) -> Dict[str, int]:
+        """Return current index state without traversing workspace."""
+        meta = self.metadata()
+        with self._lock:
+            counts = self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        return {
+            "scanned": 0,
+            "updated": 0,
+            "deleted": 0,
+            "generation": self.index_generation(),
+            "state": meta.get("state", "EMPTY"),
+            "freshness": meta.get("last_scan_at", ""),
+            "partial_reason": meta.get("partial_reason", ""),
+            "schema_version": meta.get("schema_version", ""),
+            "indexed_files": counts,
+        }
 
     def wait_for_background(self, timeout: float = 5.0) -> None:
         thread = self._background_thread
@@ -237,11 +273,23 @@ class RepositoryIndex:
                 path = (self.root_path / rel_path).resolve()
                 if self.root_path not in path.parents and path != self.root_path:
                     continue
-                row = self._conn.execute("SELECT file_id FROM files WHERE path=?", (rel_path,)).fetchone()
+                row = self._conn.execute(
+                    "SELECT file_id, mtime_ns, size_bytes, content_hash FROM files WHERE path=?",
+                    (rel_path,),
+                ).fetchone()
                 if not path.is_file():
                     if row:
                         self._delete_file_locked(row["file_id"])
                         deleted += 1
+                    continue
+                stat = path.stat()
+                if row and row["mtime_ns"] == stat.st_mtime_ns and row["size_bytes"] == stat.st_size:
+                    continue
+                if row and row["size_bytes"] == stat.st_size and self._file_hash(path) == row["content_hash"]:
+                    self._conn.execute(
+                        "UPDATE files SET mtime_ns=?, indexed_at=? WHERE file_id=?",
+                        (stat.st_mtime_ns, str(time.time()), row["file_id"]),
+                    )
                     continue
                 self._index_file_locked(path, rel_path, modules)
                 updated += 1
@@ -339,7 +387,7 @@ class RepositoryIndex:
         if self.has_fts5:
             self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (file_id,))
 
-        tags = self.parser_registry.parse(path, rel_path)
+        tags = self.parser_registry.parse(path, rel_path, content=content)
         symbol_names = []
         if tags:
             for tag in tags.tags:
@@ -395,7 +443,16 @@ class RepositoryIndex:
             return
         chunk_count = self._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         fts_count = self._conn.execute("SELECT COUNT(*) FROM fts_chunks").fetchone()[0]
-        if chunk_count == fts_count:
+        mismatch = self._conn.execute(
+            """
+            SELECT 1
+            FROM fts_chunks x
+            LEFT JOIN chunks c ON c.chunk_id = x.chunk_id
+            WHERE c.chunk_id IS NULL OR c.file_id != x.file_id
+            LIMIT 1
+            """
+        ).fetchone()
+        if chunk_count == fts_count and mismatch is None:
             return
         self._conn.execute("DELETE FROM fts_chunks")
         rows = self._conn.execute(
@@ -533,6 +590,7 @@ class RepositoryIndex:
             rows = self._conn.execute(
                 """
                 SELECT f.path, s.name, s.qualified_name, s.kind, s.signature,
+                       s.start_line AS symbol_start, s.end_line AS symbol_end,
                        c.content, c.start_line, c.end_line, c.content_hash
                 FROM symbols s
                 JOIN files f ON f.file_id = s.file_id
@@ -544,21 +602,37 @@ class RepositoryIndex:
                 """,
                 (symbol, symbol, limit),
             ).fetchall()
-            return [
-                {
+            results = []
+            for row in rows:
+                content = self._read_line_range(row["path"], row["symbol_start"], row["symbol_end"])
+                results.append({
                     "path": row["path"],
                     "symbol": row["name"],
                     "qualified_name": row["qualified_name"],
                     "kind": row["kind"],
                     "signature": row["signature"],
-                    "content": row["content"],
+                    "content": content or row["content"],
                     "method": "symbol",
-                    "start_line": row["start_line"],
-                    "end_line": row["end_line"],
-                    "content_hash": row["content_hash"],
-                }
-                for row in rows
-            ]
+                    "start_line": row["symbol_start"],
+                    "end_line": row["symbol_end"],
+                    "content_hash": hashlib.sha256((content or row["content"]).encode("utf-8")).hexdigest(),
+                })
+            return results
+
+    def _read_line_range(self, rel_path: str, start_line: int, end_line: int) -> str:
+        """Read only indexed symbol range; never load unrelated file body."""
+        try:
+            with (self.root_path / rel_path).open("r", encoding="utf-8", errors="ignore") as handle:
+                lines = []
+                for number, line in enumerate(handle, 1):
+                    if number < start_line:
+                        continue
+                    if number > end_line:
+                        break
+                    lines.append(line.rstrip("\n"))
+                return "\n".join(lines)
+        except OSError:
+            return ""
 
     def find_symbol_location(self, symbol: str, path: str | None = None) -> Optional[Dict[str, Any]]:
         """Return first indexed definition location for symbol, optionally constrained to path."""

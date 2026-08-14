@@ -38,5 +38,5 @@ class ParserRegistry:
                 return adapter
         return self.adapters[-1]
 
-    def parse(self, file_path: Path, relative_path: str) -> Optional[FileTags]:
-        return self.symbol_parser.extract_file_tags(file_path, relative_path)
+    def parse(self, file_path: Path, relative_path: str, content: str | None = None) -> Optional[FileTags]:
+        return self.symbol_parser.extract_file_tags(file_path, relative_path, content=content)

@@ -1,3 +1,5 @@
+import os
+import tempfile
 from pathlib import Path
 from typing import List, Tuple, Set
 from kitt.domain.entities import EditBlock, EditResult, FileSnapshot
@@ -9,6 +11,22 @@ class DiffApplier:
 
     def __init__(self, changeset_tracker: ChangeSetTracker = None):
         self.tracker = changeset_tracker or ChangeSetTracker()
+
+    @staticmethod
+    def _atomic_write(path: Path, content: str) -> None:
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_name, path)
+        except Exception:
+            try:
+                os.unlink(temporary_name)
+            except OSError:
+                pass
+            raise
 
     def _find_fuzzy_replacement(self, current_content: str, search_content: str) -> Tuple[bool, str, int]:
         import difflib
@@ -122,7 +140,7 @@ class DiffApplier:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             if not full_path.exists() or block.is_new_file:
                 existed_before = full_path.exists()
-                full_path.write_text(block.replace_content, encoding='utf-8')
+                self._atomic_write(full_path, block.replace_content)
                 if existed_before:
                     applied_files.append(rel_path)
                 else:
@@ -132,7 +150,7 @@ class DiffApplier:
                 found, target, _ = self._find_fuzzy_replacement(current_content, block.search_content)
                 if found:
                     updated_content = current_content.replace(target, block.replace_content, 1)
-                    full_path.write_text(updated_content, encoding='utf-8')
+                    self._atomic_write(full_path, updated_content)
                     applied_files.append(rel_path)
 
         changeset = self.tracker.record_changeset(

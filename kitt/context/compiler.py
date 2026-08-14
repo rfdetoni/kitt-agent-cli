@@ -47,7 +47,7 @@ class CompiledContext:
 
 class ContextQualityGate:
     @staticmethod
-    def evaluate(plan: QueryPlan, atoms: Tuple[ContextAtom, ...]) -> ContextQuality:
+    def evaluate(plan: QueryPlan, atoms: Tuple[ContextAtom, ...], partial: bool = False) -> ContextQuality:
         present_paths = {atom.path for atom in atoms if atom.path}
         text = "\n".join(atom.content for atom in atoms).lower()
         missing: List[str] = []
@@ -64,8 +64,8 @@ class ContextQualityGate:
             ok=not missing,
             coverage=coverage,
             missing=tuple(missing),
-            degraded=bool(missing),
-            reason="explicit_requirement_missing" if missing else "",
+            degraded=bool(missing) or partial,
+            reason=("explicit_requirement_missing" if missing else "index_partial" if partial else ""),
         )
 
 
@@ -99,7 +99,7 @@ class ContextCompiler:
                 content=cand.content,
             ))
         atom_tuple = tuple(atoms)
-        quality = ContextQualityGate.evaluate(plan, atom_tuple)
+        quality = ContextQualityGate.evaluate(plan, atom_tuple, partial=partial)
         path_ids: Dict[str, str] = {}
         for atom in atom_tuple:
             if atom.path and atom.path not in path_ids:

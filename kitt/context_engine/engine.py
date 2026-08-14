@@ -60,8 +60,11 @@ class ContextEngine:
         bootstrap_paths = list(dict.fromkeys([*plan.exact_paths, *list(working_set_paths or [])]))
         if self.index.index_generation() == 0 and bootstrap_paths:
             stats = self.index.bootstrap_then_background(bootstrap_paths)
+        elif bootstrap_paths:
+            # Targeted freshness check; do not rescan unrelated repository files.
+            stats = self.index.update_paths(bootstrap_paths)
         else:
-            stats = self.index.build_or_update()
+            stats = self.index.ready_stats() if self.index.index_generation() else self.index.build_or_update()
         selected, rejected, plan = HybridRetrievalPipeline(self.index).retrieve_with_rejections(
             task_description,
             explicit_files=set(plan.exact_paths),

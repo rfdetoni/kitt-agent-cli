@@ -48,16 +48,23 @@ class HybridRetrievalPipeline:
                 full_p = self.index.root_path / rel
                 if full_p.is_file():
                     try:
-                        text = full_p.read_text(encoding="utf-8", errors="ignore")
+                        # Explicit path is authoritative, but still bounded.
+                        char_limit = max(1, max_tokens * 4)
+                        with full_p.open("r", encoding="utf-8", errors="ignore") as handle:
+                            text = handle.read(char_limit + 1)
                     except Exception:
                         text = ""
-                    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    with self.index._lock:
+                        indexed = self.index._conn.execute(
+                            "SELECT content_hash FROM files WHERE path=?", (rel,)
+                        ).fetchone()
+                    digest = indexed["content_hash"] if indexed else hashlib.sha256(text.encode("utf-8")).hexdigest()
                     est = max(1, len(text) // 4)
                     representation = "BODY"
                     reason = "Explicit file requested by user"
-                    if est > max_tokens:
+                    if len(text) > char_limit or est > max_tokens:
                         suffix = "\n... [truncated explicit file]"
-                        text = text[: max(0, max_tokens * 4 - len(suffix))] + suffix
+                        text = text[: max(0, char_limit - len(suffix))] + suffix
                         est = max(1, len(text) // 4)
                         representation = "TARGETED_SLICE"
                         reason = "Explicit file requested by user; truncated to fit budget"

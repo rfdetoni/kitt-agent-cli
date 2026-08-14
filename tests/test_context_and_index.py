@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 from kitt.context.token_estimator import CalibratedTokenEstimator
@@ -186,6 +187,26 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertEqual(row["end_line"], 3)
             index.close()
 
+    def test_symbol_search_returns_only_indexed_symbol_range(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "app.py"
+            path.write_text(
+                "header = True\n\n"
+                "def target_symbol(value):\n    return value + 1\n\n"
+                "trailer = False\n",
+                encoding="utf-8",
+            )
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            index.build_or_update()
+
+            result = index.search_symbol("target_symbol")[0]
+
+            self.assertEqual(result["start_line"], 3)
+            self.assertEqual(result["end_line"], 4)
+            self.assertIn("return value + 1", result["content"])
+            self.assertNotIn("trailer = False", result["content"])
+            index.close()
+
     def test_repository_index_persistent_fts_survives_reopen(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "app.py"
@@ -234,6 +255,21 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertEqual(stats["updated"], 1)
             self.assertFalse(index.search_text("before symbol"))
             self.assertTrue(index.search_text("after symbol"))
+            index.close()
+
+    def test_repository_index_skips_reparse_when_only_mtime_changes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "stable.py"
+            path.write_text("def stable_symbol():\n    return 1\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            first = index.build_or_update()
+            os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 1_000_000))
+
+            second = index.build_or_update()
+
+            self.assertEqual(first["generation"], second["generation"])
+            self.assertEqual(second["updated"], 0)
+            self.assertTrue(index.search_symbol("stable_symbol"))
             index.close()
 
     def test_repository_index_bootstraps_explicit_paths_before_background_scan(self):
@@ -326,6 +362,24 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertIn("## Context v1", blocks[0].content)
             self.assertEqual(engine.last_compiled_context.selected_count, 1)
             self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
+            index.close()
+
+    def test_context_engine_warm_query_does_not_rescan_repository(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "app.py"
+            path.write_text("def warm_symbol():\n    return 42\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=True)
+            engine = ContextEngine(repository_index=index)
+            engine.get_relevant_context("warm symbol", root_dir=tmpdir)
+
+            def fail_full_scan():
+                raise AssertionError("warm query unexpectedly rescanned workspace")
+
+            index.build_or_update = fail_full_scan
+            blocks = engine.get_relevant_context("explain warm symbol", root_dir=tmpdir)
+
+            self.assertTrue(blocks)
+            self.assertIn("warm_symbol", blocks[0].content)
             index.close()
 
     def test_context_engine_without_supplied_index_uses_repository_index(self):
