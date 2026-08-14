@@ -88,6 +88,27 @@ class TestToolRegistry(unittest.TestCase):
         self.assertIn("sample.py", res.output)
         index.close()
 
+    def test_repository_map_uses_index_modes(self):
+        (self.root_path / "controller.py").write_text(
+            "from service import Service\nclass Controller:\n    def run(self):\n        return Service()\n",
+            encoding="utf-8",
+        )
+        (self.root_path / "service.py").write_text("class Service:\n    pass\n", encoding="utf-8")
+        index = RepositoryIndex(self.tmp_dir.name, in_memory=True)
+        registry = ToolRegistry(root_dir=self.tmp_dir.name, context_engine=ContextEngine(index))
+
+        workspace = registry.execute_tool("repository_map", {"mode": "workspace"}, enabled_tools=["repository_map"])
+        symbols = registry.execute_tool("repository_map", {"mode": "symbol", "query": "Controller"}, enabled_tools=["repository_map"])
+        impact = registry.execute_tool("repository_map", {"mode": "impact", "query": "Service"}, enabled_tools=["repository_map"])
+
+        self.assertTrue(workspace.success, workspace.error)
+        self.assertEqual(workspace.metadata["method"], "index")
+        self.assertIn("files=2", workspace.output)
+        self.assertIn("controller.py", symbols.output)
+        self.assertIn("Controller", symbols.output)
+        self.assertIn("controller.py -> service.py", impact.output)
+        index.close()
+
     def test_regex_search_uses_bounded_scanner_ignores_kittignore(self):
         (self.root_path / ".kittignore").write_text("ignored.py\n", encoding="utf-8")
         (self.root_path / "kept.py").write_text("def kept_match(): pass\n", encoding="utf-8")

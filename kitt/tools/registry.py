@@ -78,7 +78,7 @@ class ToolRegistry:
             {"name": "list_files", "description": "List files in directory"},
             {"name": "search", "description": "Search regex pattern across repository"},
             {"name": "read_file", "description": "Read file lines with start_line and end_line bounds"},
-            {"name": "repository_map", "description": "Get repository AST symbol map"},
+            {"name": "repository_map", "description": "Get compact indexed repository map"},
             {
                 "name": "python_compute",
                 "description": (
@@ -113,7 +113,13 @@ class ToolRegistry:
                 "end_line": "int, max 5000 lines",
                 "max_bytes": "int, optional output cap",
             },
-            "repository_map": {"query": "text", "max_tokens": "int <=4000"},
+            "repository_map": {
+                "mode": "workspace|module|symbol|impact, default workspace",
+                "query": "symbol/module/text",
+                "path": "optional relative file/module path",
+                "limit": "int <=500",
+                "max_tokens": "int <=4000",
+            },
             "python_compute": {"code": "safe Python subset", "inputs": "JSON object", "result_var": "name, default _result"},
             "write_file": {"path": "relative file", "content": "full file text", "expected_content_hash": "optional sha256"},
             "apply_patch": {"patch": "SEARCH/REPLACE blocks"},
@@ -275,10 +281,25 @@ class ToolRegistry:
                 return ToolResult(True, "\n".join(matches), truncated=len(matches) >= 200)
 
             elif tool_name == "repository_map":
-                blocks = self.context_engine.get_relevant_context(
-                    str(args.get("query", "")), max_tokens=min(int(args.get("max_tokens", 1200)), 4000),
-                    root_dir=str(self.root_path))
-                return ToolResult(True, "\n\n".join(b.content for b in blocks))
+                if self.repository_index is None:
+                    return ToolResult(False, "", "Repository index unavailable.")
+                self._refresh_index()
+                mode = str(args.get("mode", "workspace") or "workspace")
+                rows = self.repository_index.repository_map(
+                    mode=mode,
+                    query=str(args.get("query", "") or ""),
+                    path=str(args.get("path", "") or ""),
+                    limit=min(int(args.get("limit", 80)), 500),
+                )
+                output = self._format_repository_map(mode, rows)
+                max_tokens = min(int(args.get("max_tokens", 1200)), 4000)
+                max_chars = max_tokens * 4
+                return ToolResult(
+                    True,
+                    output[:max_chars],
+                    truncated=len(output) > max_chars,
+                    metadata={"method": "index", "mode": mode, "rows": len(rows)},
+                )
 
             elif tool_name == "write_file":
                 rel = args.get("path", "") or args.get("file", "")
@@ -409,3 +430,21 @@ class ToolRegistry:
 
         except Exception as e:
             return ToolResult(success=False, output="", error=f"Tool error: {e}")
+
+    @staticmethod
+    def _format_repository_map(mode: str, rows: List[Dict[str, Any]]) -> str:
+        if mode == "workspace":
+            return "\n".join(
+                f"{row['root_path']} | {row['kind']} | manifest={row['manifest_path'] or '-'} | files={row['files']}"
+                for row in rows
+            )
+        if mode == "module":
+            return "\n".join(f"{row['path']} | symbols={row['symbols']}" for row in rows)
+        if mode == "symbol":
+            return "\n".join(
+                f"{row['path']}:{row['start_line']}-{row['end_line']} | {row['kind']} | {row['signature'] or row['name']}"
+                for row in rows
+            )
+        if mode == "impact":
+            return "\n".join(f"{row['source']} -> {row['target']} | {row['kind']} | weight={row['weight']}" for row in rows)
+        return "\n".join(str(row) for row in rows)

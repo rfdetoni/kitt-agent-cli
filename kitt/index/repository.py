@@ -515,3 +515,74 @@ class RepositoryIndex:
                 "end_line": row["end_line"],
                 "symbol_hash": row["symbol_hash"],
             }
+
+    def repository_map(self, mode: str = "workspace", query: str = "", path: str = "", limit: int = 80) -> List[Dict[str, Any]]:
+        """Return compact indexed repository facts for tool-facing maps."""
+        mode = mode or "workspace"
+        limit = max(1, min(limit, 500))
+        with self._lock:
+            if mode == "workspace":
+                rows = self._conn.execute(
+                    """
+                    SELECT m.root_path, m.kind, m.manifest_path, COUNT(f.file_id) AS files
+                    FROM modules m
+                    LEFT JOIN files f ON f.module_id = m.module_id
+                    GROUP BY m.module_id
+                    ORDER BY m.root_path
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+                return [dict(row) for row in rows]
+
+            if mode == "module":
+                root = path or query or "."
+                rows = self._conn.execute(
+                    """
+                    SELECT f.path, COUNT(s.symbol_id) AS symbols
+                    FROM files f
+                    LEFT JOIN symbols s ON s.file_id = f.file_id
+                    WHERE ? = '.' OR f.path = ? OR f.path LIKE ?
+                    GROUP BY f.file_id
+                    ORDER BY f.path
+                    LIMIT ?
+                    """,
+                    (root, root, root.rstrip("/") + "/%", limit),
+                ).fetchall()
+                return [dict(row) for row in rows]
+
+            if mode == "symbol":
+                like = f"%{query}%"
+                rows = self._conn.execute(
+                    """
+                    SELECT f.path, s.name, s.qualified_name, s.kind, s.signature, s.start_line, s.end_line
+                    FROM symbols s
+                    JOIN files f ON f.file_id = s.file_id
+                    WHERE ? = '' OR s.name LIKE ? OR s.qualified_name LIKE ? OR f.path = ?
+                    ORDER BY s.name, f.path, s.start_line
+                    LIMIT ?
+                    """,
+                    (query, like, like, path or query, limit),
+                ).fetchall()
+                return [dict(row) for row in rows]
+
+            if mode == "impact":
+                target = path
+                if query and not target:
+                    loc = self.find_symbol_location(query)
+                    target = loc["path"] if loc else query
+                rows = self._conn.execute(
+                    """
+                    SELECT sf.path AS source, tf.path AS target, e.kind, e.weight
+                    FROM edges e
+                    JOIN files sf ON sf.file_id = e.source_file_id
+                    JOIN files tf ON tf.file_id = e.target_file_id
+                    WHERE sf.path = ? OR tf.path = ?
+                    ORDER BY sf.path, tf.path
+                    LIMIT ?
+                    """,
+                    (target, target, limit),
+                ).fetchall()
+                return [dict(row) for row in rows]
+
+        return []
