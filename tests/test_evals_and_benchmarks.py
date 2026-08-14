@@ -1,6 +1,8 @@
 import unittest
 from kitt.router.models import ModelCapabilities
 from kitt.evals.corpus import EvalRunner
+from kitt.benchmarks.context_benchmark import run_once
+from kitt.evals.retrieval import run_eval
 
 class TestEvalsAndBenchmarks(unittest.TestCase):
     def test_eval_runner_accuracy_and_ablations(self):
@@ -26,6 +28,14 @@ class TestEvalsAndBenchmarks(unittest.TestCase):
         self.assertEqual(len(ablations), 5)
         self.assertIn("1_deterministic", ablations)
         self.assertIn("5_large_direct", ablations)
+
+    def test_retrieval_eval_and_context_benchmark_entrypoints(self):
+        eval_metrics = run_eval()
+        bench = run_once(10)
+
+        self.assertEqual(eval_metrics["recall_at_5"], 1.0)
+        self.assertEqual(bench["files"], 10)
+        self.assertEqual(bench["top_path"], "pkg/mod_9.py")
 
 if __name__ == "__main__":
     unittest.main()
