@@ -215,6 +215,24 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertNotIn("ignored.py", paths)
             self.assertNotIn("secret_dir/hidden.py", paths)
 
+    def test_repository_scanner_detects_extended_module_manifests(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "go.work").write_text("go 1.22\n", encoding="utf-8")
+            service = root / "service"
+            service.mkdir()
+            (service / "settings.gradle.kts").write_text("pluginManagement {}\n", encoding="utf-8")
+            api = root / "api"
+            api.mkdir()
+            (api / "Api.csproj").write_text("<Project />\n", encoding="utf-8")
+
+            modules = RepositoryScanner(tmpdir).detect_modules()
+            by_manifest = {module["manifest_path"]: module["kind"] for module in modules}
+
+            self.assertEqual(by_manifest["./go.work"], "go")
+            self.assertEqual(by_manifest["service/settings.gradle.kts"], "java")
+            self.assertEqual(by_manifest["api/Api.csproj"], "dotnet")
+
     def test_repository_index_respects_file_size_limit(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

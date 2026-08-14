@@ -14,8 +14,18 @@ MANIFEST_NAMES = {
     "package.json": "node",
     "pom.xml": "java",
     "build.gradle": "java",
+    "build.gradle.kts": "java",
+    "settings.gradle": "java",
+    "settings.gradle.kts": "java",
     "Cargo.toml": "rust",
-    "go.mod": "go"
+    "go.mod": "go",
+    "go.work": "go",
+}
+
+MANIFEST_SUFFIXES = {
+    ".sln": "dotnet",
+    ".csproj": "dotnet",
+    ".fsproj": "dotnet",
 }
 
 IGNORED_DIRS = {
@@ -60,11 +70,12 @@ class RepositoryScanner:
         for path, dirs, files in os.walk(self.root_path):
             dirs[:] = [d for d in dirs if not self._is_ignored(str((Path(path) / d).relative_to(self.root_path)))]
             for file in files:
-                if file in MANIFEST_NAMES:
+                kind = MANIFEST_NAMES.get(file) or MANIFEST_SUFFIXES.get(Path(file).suffix)
+                if kind:
                     rel_dir = str(Path(path).relative_to(self.root_path))
                     modules.append({
                         "root_path": "." if rel_dir == "." else rel_dir,
-                        "kind": MANIFEST_NAMES[file],
+                        "kind": kind,
                         "manifest_path": os.path.join(rel_dir, file)
                     })
         if not modules:
