@@ -193,6 +193,39 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             mock_open.assert_not_called()
         self.assertIsNone(self.ui.state.active_overlay)
 
+    async def test_ctrl_o_toggles_tool_collapse_while_editor_focused(self):
+        from kitt.ui.state import TranscriptBlock
+        b = TranscriptBlock(id="t1", kind="tool", text="Write(test.py)", collapsed=True, status="done")
+        b.metadata["full_output"] = "content"
+        self.ui.state.transcript.append(b)
+
+        # Press Ctrl+O (0x0f)
+        self.pipe.send_bytes(b"\x0f")
+        await asyncio.sleep(0.05)
+        self.assertFalse(b.collapsed)
+
+        # Press Ctrl+O again to re-collapse
+        self.pipe.send_bytes(b"\x0f")
+        await asyncio.sleep(0.05)
+        self.assertTrue(b.collapsed)
+
+    async def test_ctrl_c_dismisses_permission_and_unblocks_state(self):
+        await self.ui._execute_command("/run echo test")
+        self.assertEqual(self.ui.state.active_overlay, "permission")
+        self.assertEqual(len(self.ui.state.pending_approvals), 1)
+
+        # Send Ctrl+C (0x03)
+        self.pipe.send_bytes(b"\x03")
+        await asyncio.sleep(0.05)
+        self.assertIsNone(self.ui.state.active_overlay)
+        self.assertEqual(len(self.ui.state.pending_approvals), 0)
+
+    async def test_ctrl_x_a_opens_agents_dashboard(self):
+        self.pipe.send_bytes(b"\x18a")
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.ui.state.active_overlay, "agents")
+        self.ui.close_overlay()
+
 
 if __name__ == "__main__":
     unittest.main()

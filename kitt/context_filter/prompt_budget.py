@@ -13,10 +13,11 @@ class TokenCounter:
     estimator = CalibratedTokenEstimator()
 
     @staticmethod
-    def count_tokens(text: str, num_messages: int = 1) -> int:
+    def count_tokens(text: str, num_messages: int = 0) -> int:
         if not text:
             return 0
-        return TokenCounter.estimator.count_text(text).count + (num_messages * 3)
+        overhead = num_messages * 3 if num_messages > 0 else 0
+        return TokenCounter.estimator.count_text(text).count + overhead
 
     @staticmethod
     def count_messages(messages: List[Dict[str, Any]]) -> Any:
@@ -55,18 +56,46 @@ class PromptBudget:
             return ""
         if TokenCounter.count_tokens(text) <= target_tokens:
             return text
+
+        # Atom-aware truncation for CompiledContext packs
+        if text.startswith("## Context v1") and "\n[" in text:
+            parts = text.split("\n\n[")
+            if len(parts) > 1:
+                for keep_count in range(len(parts) - 1, 0, -1):
+                    rebuilt = "\n\n[".join(parts[:keep_count])
+                    missing_idx = text.rfind("\n### Missing")
+                    if missing_idx != -1 and "\n### Missing" not in rebuilt:
+                        missing_sec = text[missing_idx:]
+                        rebuilt_with_missing = rebuilt + missing_sec
+                        if TokenCounter.count_tokens(rebuilt_with_missing) <= target_tokens:
+                            return rebuilt_with_missing
+                    if TokenCounter.count_tokens(rebuilt) <= target_tokens:
+                        return rebuilt
+
+        # Safe line-aware & fence-aware truncation
         suffix = "\n... [truncated]"
         if TokenCounter.count_tokens(suffix) > target_tokens:
             return ""
+
         low, high = 0, len(text)
         while low < high:
             mid = (low + high + 1) // 2
-            if TokenCounter.count_tokens(text[:mid] + suffix) <= target_tokens:
+            cand = text[:mid]
+            if cand.count("```") % 2 == 1:
+                cand += "\n```"
+            if TokenCounter.count_tokens(cand + suffix) <= target_tokens:
                 low = mid
             else:
                 high = mid - 1
+
         if low < len(text):
-            return text[:low] + suffix
+            cand = text[:low]
+            nl = cand.rfind("\n")
+            if nl > low // 2:
+                cand = cand[:nl]
+            if cand.count("```") % 2 == 1:
+                cand += "\n```"
+            return cand + suffix
         return text
 
     def allocate_context(

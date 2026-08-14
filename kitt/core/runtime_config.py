@@ -61,6 +61,8 @@ class RuntimeConfig:
     context_window_default: int = 8192
     reserved_output_tokens: int = 1200
     max_tool_output_chars: int = 4000
+    context_retrieval_token_ratio: float = 0.25
+    max_context_retrieval_tokens: int = 8192
 
     # Approval
     approval_ttl_seconds: float = 300.0

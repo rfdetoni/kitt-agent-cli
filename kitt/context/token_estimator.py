@@ -34,14 +34,33 @@ class CalibratedTokenEstimator:
             "default": 3.9
         }
 
-    def count_text(self, text: str, profile: Optional[ModelCapabilities] = None) -> TokenEstimate:
+    def count_text(
+        self,
+        text: str,
+        profile: Optional[ModelCapabilities] = None,
+        language: Optional[str] = None,
+    ) -> TokenEstimate:
         if not text:
             return TokenEstimate(count=0, method="char_fallback", error_margin=0.0, estimator_version=self.version)
 
-        ratio = self.char_ratios["default"]
-        method = "calibrated_lang"
-        margin = 0.08
+        lang_key = (language or "").lower().lstrip(".")
+        if lang_key in ("py", "pyw", "python"):
+            ratio = self.char_ratios["python"]
+            method = "calibrated_lang"
+        elif lang_key in ("json", "json5", "jsonc"):
+            ratio = self.char_ratios["json"]
+            method = "calibrated_lang"
+        elif lang_key in ("md", "markdown", "rst"):
+            ratio = self.char_ratios["markdown"]
+            method = "calibrated_lang"
+        elif lang_key in self.char_ratios:
+            ratio = self.char_ratios[lang_key]
+            method = "calibrated_lang"
+        else:
+            ratio = self.char_ratios["default"]
+            method = "calibrated_lang" if not language else "char_fallback"
 
+        margin = 0.08
         tokens = max(1, int(len(text) / ratio))
         return TokenEstimate(count=tokens, method=method, error_margin=margin, estimator_version=self.version)
 

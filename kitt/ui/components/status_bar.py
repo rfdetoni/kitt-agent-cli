@@ -18,7 +18,16 @@ class StatusBarComponent:
         else:
             center = f"[{state.status_text}]"
 
-        right = f"Tokens: {state.tokens_used} | Saved: {state.net_saved_tokens} "
+        cs = state.context_stats
+        total_ctx = cs.selected_count + cs.rejected_count
+        if total_ctx > 0:
+            ctx_part = f"Ctx: {cs.selected_count}/{total_ctx} ({cs.coverage:.0%}) | "
+        elif cs.index_state:
+            ctx_part = f"Ctx: {cs.index_state} | "
+        else:
+            ctx_part = ""
+
+        right = f"{ctx_part}Tokens: {state.tokens_used} | Saved: {state.net_saved_tokens} "
         
         # Balance space across width
         spaces = max(1, width - len(left) - len(center) - len(right))

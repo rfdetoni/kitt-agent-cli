@@ -78,11 +78,10 @@ class ContextCompiler:
         self,
         plan: QueryPlan,
         selected: List[ContextCandidate],
-        rejected: List[ContextCandidate] | None = None,
+        rejected: List[ContextCandidate],
         generation: int = 0,
         partial: bool = False,
     ) -> CompiledContext:
-        rejected = rejected or []
         atoms: List[ContextAtom] = []
         for idx, cand in enumerate(selected, 1):
             content_hash = cand.content_hash or hashlib.sha256(cand.content.encode("utf-8")).hexdigest()

@@ -120,6 +120,61 @@ class TestPhase1ContextFilter(unittest.TestCase):
         self.assertEqual(res.source, 'LLM')
         self.assertEqual(res.task.intent, 'IMPLEMENT')
 
+    def test_schema_validator_robust_repairs(self):
+        prompt = "Crie um html com referencias do knight rider para apresentar este projeto, html deve ser apresentacao.html e ficar na raiz do projeto."
+        
+        # Case 1: Missing comma with escaped or unescaped quotes
+        raw_json_missing_comma = """{
+            "intent": "IMPLEMENT",
+            "actions": ["create_presentation"]
+            "paths": ["apresentacao.html"],
+            "constraints": [
+                {
+                    "text": "html deve ser \\"apresentacao.html\\" e ficar na raiz do projeto."
+                    "kind": "MANDATORY"
+                }
+            ],
+            "risk": "LOW",
+            "confidence": 0.95
+        }"""
+        valid, task, err = ContextFilterSchemaValidator.validate_and_parse_task(raw_json_missing_comma, prompt)
+        self.assertTrue(valid, f"Failed on missing comma: {err}")
+        self.assertEqual(task.intent, "IMPLEMENT")
+        self.assertIn("apresentacao.html", task.paths)
+
+        # Case 2: Unescaped quotes inside single-line key-value
+        raw_json_unescaped = """{
+            "intent": "IMPLEMENT",
+            "paths": ["apresentacao.html"],
+            "constraints": [
+                {
+                    "text": "html deve ser "apresentacao.html" e ficar na raiz do projeto.",
+                    "kind": "MANDATORY"
+                }
+            ],
+            "confidence": 0.9
+        }"""
+        valid, task, err = ContextFilterSchemaValidator.validate_and_parse_task(raw_json_unescaped, prompt)
+        self.assertTrue(valid, f"Failed on unescaped quotes: {err}")
+        self.assertEqual(task.intent, "IMPLEMENT")
+
+        # Case 3: Comments and Python booleans
+        raw_json_comments = """{
+            "intent": "IMPLEMENT", // main intent
+            "paths": ["apresentacao.html"],
+            "constraints": [
+                {
+                    "text": "ficar na raiz do projeto",
+                    "kind": "MANDATORY",
+                    "mandatory": True
+                },
+            ],
+            "confidence": 0.95
+        }"""
+        valid, task, err = ContextFilterSchemaValidator.validate_and_parse_task(raw_json_comments, prompt)
+        self.assertTrue(valid, f"Failed on comments/booleans: {err}")
+        self.assertEqual(task.intent, "IMPLEMENT")
+
     def test_ollama_completion_profile_skips_json_filter(self):
         profile = ModelProfile(backend="ollama", model="completion-only")
         client = LLMClient(profile)
@@ -127,6 +182,7 @@ class TestPhase1ContextFilter(unittest.TestCase):
         sf = SemanticFilter(profile, client)
         result = sf.filter_and_plan("Analyze this project architecture and describe its request pipeline.")
         self.assertEqual(result.source, "FALLBACK")
+
 
 if __name__ == '__main__':
     unittest.main()

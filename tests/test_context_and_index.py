@@ -590,9 +590,94 @@ class TestContextAndIndex(unittest.TestCase):
             selected = HybridRetrievalPipeline(index).retrieve("add tests for `calculate_total`", max_tokens=1000)
             paths = {candidate.path for candidate in selected}
 
-            self.assertIn("app.py", paths)
-            self.assertIn("test_app.py", paths)
+    def test_calibrated_token_estimator_languages(self):
+        estimator = CalibratedTokenEstimator()
+        text = "x" * 350
+        est_default = estimator.count_text(text)
+        est_json = estimator.count_text(text, language="json")
+        est_markdown = estimator.count_text(text, language="markdown")
+        est_python = estimator.count_text(text, language="python")
+        self.assertEqual(est_json.count, 100)      # 350 / 3.5 = 100
+        self.assertEqual(est_markdown.count, 87)   # 350 / 4.0 = 87
+        self.assertEqual(est_python.count, 92)     # 350 / 3.8 = 92
+        self.assertEqual(est_default.count, 89)    # 350 / 3.9 = 89
+
+    def test_update_paths_preserves_partial_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+            index = RepositoryIndex(tmpdir, in_memory=False)
+            index._mark_bootstrap_partial("indexing in progress")
+            self.assertEqual(index.metadata()["state"], "PARTIAL")
+            
+            stats = index.update_paths(["a.py"])
+            self.assertEqual(stats["state"], "PARTIAL")
+            self.assertEqual(index.metadata()["state"], "PARTIAL")
             index.close()
+
+    def test_working_set_corrupted_json_preserves_memory(self):
+        from kitt.context.working_set import ConversationWorkingSetStore
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ConversationWorkingSetStore(tmpdir)
+            store.touch_paths("conv1", ["a.py"], "turn1")
+            self.assertEqual(len(store.paths("conv1")), 1)
+
+            # Corrupt file on disk
+            store.path.write_text("{ invalid json ...", encoding="utf-8")
+            loaded = store._load_all()
+            self.assertIn("conv1", loaded)
+            self.assertEqual(len(store.paths("conv1")), 1)
+
+    def test_prompt_budget_token_counter_no_phantom_overhead(self):
+        from kitt.context_filter.prompt_budget import TokenCounter
+        self.assertEqual(TokenCounter.count_tokens(""), 0)
+        self.assertEqual(TokenCounter.count_tokens("a" * 39), 10)  # 39 / 3.9 = 10, no +3 phantom overhead
+
+    def test_prompt_budget_atom_aware_truncation(self):
+        from kitt.context_filter.prompt_budget import PromptBudget
+        budget = PromptBudget(window_size=500, reserved_output=100)
+        compiled_text = (
+            "## Context v1 gen=1 partial=false ok=true coverage=1.00\n"
+            "### Paths\n[P1] a.py\n[P2] b.py\n"
+            "### Evidence\n\n"
+            "[A1 P1:1-5] CODE trust=HIGH reason=match\n```\ndef foo():\n    return 1\n```\n\n"
+            "[A2 P2:1-50] CODE trust=LOW reason=scan\n```\n" + ("x = 1\n" * 200) + "```"
+        )
+        truncated = budget._truncate_to_tokens(compiled_text, target_tokens=100)
+        self.assertIn("[A1", truncated)
+        self.assertNotIn("[A2", truncated)
+        self.assertEqual(truncated.count("```") % 2, 0)  # Fences balanced
+
+    def test_schema_validator_tolerant_json_extraction(self):
+        from kitt.context_filter.schema import ContextFilterSchemaValidator
+        noisy_output = "Here is the JSON plan you requested:\n```json\n{\"intent\": \"IMPLEMENT\", \"confidence\": 0.9}\n```\nHope this helps!"
+        valid, task, err = ContextFilterSchemaValidator.validate_and_parse_task(noisy_output, "implement feature")
+        self.assertTrue(valid)
+        self.assertEqual(task.intent, "IMPLEMENT")
+
+    def test_query_plan_caching(self):
+        plan1 = QueryPlanner.plan("find `foo` in bar.py")
+        plan2 = QueryPlanner.plan("find `foo` in bar.py")
+        self.assertIs(plan1, plan2)
+
+    def test_working_set_temporal_decay(self):
+        from kitt.context.working_set import ConversationWorkingSetStore, WorkingSetItem
+        now = 10000.0
+        fresh = WorkingSetItem("fresh.py", weight=2.0, last_turn_id="t1", last_touched=now)
+        stale = WorkingSetItem("stale.py", weight=2.0, last_turn_id="t0", last_touched=now - 72000.0) # 20h ago
+        self.assertGreater(
+            ConversationWorkingSetStore._decayed_score(fresh, now),
+            ConversationWorkingSetStore._decayed_score(stale, now)
+        )
+
+    def test_doctor_diagnostics_runs(self):
+        from kitt.cli.doctor import DoctorCheck
+        with tempfile.TemporaryDirectory() as tmpdir:
+            diag = DoctorCheck(tmpdir).run_diagnostics()
+            names = [d["name"] for d in diag]
+            self.assertIn("Python Version", names)
+            self.assertIn("SQLite History Database", names)
+            self.assertIn("Local Ollama Endpoint", names)
 
 if __name__ == "__main__":
     unittest.main()

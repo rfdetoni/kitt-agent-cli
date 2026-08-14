@@ -38,12 +38,14 @@ class ConversationWorkingSetStore:
             return self._memory
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-            return {
+            loaded = {
                 conv: {path: WorkingSetItem(**item) for path, item in items.items()}
                 for conv, items in raw.items()
             }
+            self._memory = loaded
+            return self._memory
         except Exception:
-            return {}
+            return self._memory
 
     def _save_all(self, data: Dict[str, Dict[str, WorkingSetItem]]) -> None:
         self._memory = data
@@ -51,7 +53,9 @@ class ConversationWorkingSetStore:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {conv: {path: asdict(item) for path, item in items.items()} for conv, items in data.items()}
-        self.path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+        tmp_path = self.path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+        tmp_path.replace(self.path)
 
     def touch_paths(
         self,
@@ -83,12 +87,20 @@ class ConversationWorkingSetStore:
         data[conversation_id] = {item.path: item for item in ranked}
         self._save_all(data)
 
+    @staticmethod
+    def _decayed_score(item: WorkingSetItem, now: float) -> float:
+        # Ponytail: simple hour-based decay score
+        elapsed_hours = max(0.0, (now - item.last_touched) / 3600.0)
+        return item.weight / (1.0 + 0.1 * elapsed_hours)
+
     def paths(self, conversation_id: str, limit: int = 12) -> List[str]:
         items = self._load_all().get(conversation_id, {})
-        ranked = sorted(items.values(), key=lambda item: (item.weight, item.last_touched), reverse=True)
+        now = time.time()
+        ranked = sorted(items.values(), key=lambda item: (self._decayed_score(item, now), item.last_touched), reverse=True)
         return [item.path for item in ranked[:limit]]
 
     def context(self, conversation_id: str, max_items: int = 12) -> str:
         items = self._load_all().get(conversation_id, {})
-        ranked = sorted(items.values(), key=lambda item: (item.weight, item.last_touched), reverse=True)[:max_items]
+        now = time.time()
+        ranked = sorted(items.values(), key=lambda item: (self._decayed_score(item, now), item.last_touched), reverse=True)[:max_items]
         return "\n".join(f"- {item.path} ({item.kind}, weight={item.weight:.2f})" for item in ranked)

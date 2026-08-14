@@ -132,7 +132,7 @@ class ModelProfile:
     supports_tools: bool = False
     supports_json: bool = False
     keep_alive: Optional[str] = None
-    request_timeout_seconds: int = 120
+    request_timeout_seconds: int = 300
 
 @dataclass
 class RouterConfig:

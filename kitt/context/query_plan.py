@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from typing import Tuple
@@ -49,9 +50,21 @@ class QueryPlanner:
         candidate_limit: int = 20,
         deadline_ms: int = 120,
     ) -> QueryPlan:
-        features = TaskFeatureExtractor.extract(prompt, explicit_files=tuple(explicit_files or ()))
+        return cls._plan_cached(prompt, tuple(explicit_files or ()), token_budget, candidate_limit, deadline_ms)
+
+    @classmethod
+    @functools.lru_cache(maxsize=128)
+    def _plan_cached(
+        cls,
+        prompt: str,
+        explicit_files: Tuple[str, ...],
+        token_budget: int,
+        candidate_limit: int,
+        deadline_ms: int,
+    ) -> QueryPlan:
+        features = TaskFeatureExtractor.extract(prompt, explicit_files=explicit_files)
         trace_paths = tuple(path for path in cls._TRACE_PATH_RE.findall(prompt) if not path.startswith("<"))
-        paths = tuple(dict.fromkeys((*features.paths, *trace_paths, *(explicit_files or ()))))
+        paths = tuple(dict.fromkeys((*features.paths, *trace_paths, *explicit_files)))
         quoted = re.findall(r"`([^`]+)`", prompt)
         quoted_ids = set(cls._IDENT_RE.findall(" ".join(quoted)))
         identifiers = [

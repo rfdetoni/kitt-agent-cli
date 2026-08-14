@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+    <title>K.I.T.T. Agent CLI - Project Presentation</title>
+    <style>
+        body {
+            background-color: #000;
+            color: #00f3ff;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 50px;
+            border: 2px solid #00f3ff;
+            border-radius: 15px;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            text-transform: uppercase;
+            letter-spacing: 5px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            font-size: 3em;
+        }
+        p {
+            font-size: 18px;
+            line-height: 1.6;
+            color: #fff;
+            max-width: 800px;
+        }
+        .scanner {
+            width: 200px;
+            height: 40px;
+            border: 2px solid #ff0000;
+            border-radius: 50%;
+            margin: 20px auto;
+            position: relative;
+            overflow: hidden;
+        }
+        .scanner::after {
+            content: '';
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(to right, transparent 50%, #ff0000 50%);
+            animation: scan 2s infinite;
+        }
+        @keyframes scan {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+    </style>
+</head>
+<body>
+    <h1>K.I.T.T. Agent CLI</h1>
+    <div class='scanner'></div>
+    <p>Welcome to the K.I.T.T. Agent CLI project, a cutting-edge tool for software development and deployment.</p>
+    <p>Our team is dedicated to delivering high-quality code with minimal effort. We use Python as our primary language and ensure that all operations are secure and efficient.</p>
+    <p>To get started, you can visit the <a href='https://github.com/kitt-agent-cli' style='color: #00f3ff;'>GitHub repository</a> and explore the source code.</p>
+</body>
+</html>

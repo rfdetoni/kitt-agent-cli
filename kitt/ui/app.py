@@ -478,8 +478,8 @@ class KittUIApp:
             fallback, model=model, backend=provider,
             base_url=base_url or (fallback.base_url if fallback.backend == provider else default_url),
             api_key=fallback.api_key if fallback.backend == provider else default_key,
-            max_output_tokens=max(fallback.max_output_tokens, 2048) if role == "principal" else fallback.max_output_tokens,
-            supports_json=provider in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity"},
+            max_output_tokens=max(fallback.max_output_tokens, 2048) if role == "principal" else max(fallback.max_output_tokens, 1024),
+            supports_json=provider in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama"},
         )
         for task in tasks:
             router.config.routing[task] = profile_name
@@ -775,8 +775,18 @@ class KittUIApp:
             pass
 
     def close_overlay(self) -> None:
+        was_permission = (self.state.active_overlay == "permission")
         self.state.pop_overlay()
         frame = self.focus_stack.pop() if self.focus_stack else None
+        if was_permission and self.state.pending_approvals:
+            for req in list(self.state.pending_approvals):
+                try:
+                    self.runtime.approval.deny(req["approval_id"], "Permission closed with escape/cancel")
+                except Exception:
+                    pass
+            self.state.pending_approvals.clear()
+            if self.bridge and self.bridge.is_active:
+                asyncio.create_task(self.bridge.cancel("Permission cancelled"))
         if self.application:
             target = None
             if self.focus_stack and self.focus_stack[-1].preferred_focus:
@@ -867,12 +877,16 @@ class KittUIApp:
 
         @kb.add("a", filter=~editor_focused & ~palette & ~permission)
         @kb.add("c-x", "a")
+        @kb.add("c-x", "c-a")
         def _(event): self.open_overlay("agents", self.agents_control)
 
         @kb.add("c-x", "s")
         def _(event): self.state.add_toast(self._status_text()); event.app.invalidate()
 
-        @kb.add("c-o", filter=~editor_focused & ~palette)
+        @kb.add("c-x", "c")
+        def _(event): self.state.add_toast(self._context_details_text(), persistent=True); event.app.invalidate()
+
+        @kb.add("c-o", filter=~palette)
         def _(event): self.state.toggle_last_tool_collapse(); event.app.invalidate()
 
         @kb.add("down", filter=session_picker)
@@ -1167,11 +1181,11 @@ class KittUIApp:
     def _home_text(self):
         scanner = DEFAULT_THEME.scanner_frame(self.state.scanner_step, 22)
         return [
-            ("class:primary.bright", f"\n       [{scanner}]\n"),
-            ("class:primary", "          K.I.T.T.\n"),
-            ("class:text.muted", " Knowledge & Inference Task Tool\n"),
-            ("class:accent", f" {self.state.workspace_path}\n"),
-            ("class:text.muted", f" {self.state.small_model} / {self.state.large_model}")
+            ("class:primary.bright", f"\n[{scanner}]\n"),
+            ("class:primary", "K.I.T.T.\n"),
+            ("class:text.muted", "Knowledge & Inference Task Tool\n"),
+            ("class:accent", f"{self.state.workspace_path}\n"),
+            ("class:text.muted", f"{self.state.small_model} / {self.state.large_model}")
         ]
 
     def _header_text(self):
@@ -1235,6 +1249,23 @@ class KittUIApp:
         if self.state.width < 80:
             return f" {self.state.status_text} | {self.state.large_model[:16]} | {pct}% "
         return f" {self.state.workspace_name} | {self.state.status_text} | {self.state.large_model} | context {pct}% "
+
+    def _context_details_text(self) -> str:
+        cs = self.state.context_stats
+        total = cs.selected_count + cs.rejected_count
+        lines = [
+            "◈ DETALHES DO MOTOR DE CONTEXTO / CONTEXT ENGINE ◈",
+            f"• Estado do Índice: {cs.index_state or 'READY'} (Geração: {cs.index_generation})",
+            f"• Candidatos: {cs.selected_count} selecionados / {cs.rejected_count} rejeitados (Total: {total})",
+            f"• Cobertura: {cs.coverage:.0%}{' [DEGRADADO]' if cs.degraded else ''}",
+            f"• Tokens no Pacote: {cs.context_tokens} tokens",
+            f"• Filtro Semântico: {cs.filter_source or 'N/A'}{f' ({cs.filter_fallback_reason})' if cs.filter_fallback_reason else ''} - Latência: {int(cs.filter_latency_ms)}ms",
+        ]
+        if cs.partial_reason:
+            lines.append(f"• Motivo parcial: {cs.partial_reason}")
+        if cs.index_scanned or cs.index_updated or cs.index_deleted:
+            lines.append(f"• Índice: {cs.index_scanned} escaneados, {cs.index_updated} atualizados, {cs.index_deleted} removidos")
+        return "\n".join(lines)
 
     def _toast_text(self) -> str:
         toasts = self.state.active_toasts()

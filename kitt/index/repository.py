@@ -299,8 +299,11 @@ class RepositoryIndex:
                 self._conn.execute(
                     "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
                 )
-                self._set_meta_locked("state", "READY")
-                self._set_meta_locked("partial_reason", "")
+                curr_row = self._conn.execute("SELECT value FROM index_meta WHERE key='state'").fetchone()
+                curr_state = curr_row["value"] if curr_row else "BOOTSTRAP"
+                if curr_state == "READY":
+                    self._set_meta_locked("state", "READY")
+                    self._set_meta_locked("partial_reason", "")
                 self._set_meta_locked("last_scan_at", str(time.time()))
             generation = int(self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()["value"])
             meta = self.metadata()

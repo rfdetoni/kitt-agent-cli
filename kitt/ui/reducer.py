@@ -3,7 +3,7 @@ from kitt.core.turn_events import (
     ApprovalRequired, BudgetApplied, EditApplied, MetricsRecorded, ModelSelected,
     TextDelta, ToolCompleted, ToolStarted, TurnBlocked, TurnCancelled,
     TurnCompleted, TurnFailed, TurnStarted, ChildAgentSpawned, ChildAgentProgress, ChildAgentFinished,
-    ThinkingStarted, ThinkingCompleted
+    ThinkingStarted, ThinkingCompleted, FilterCompleted, ContextResolved, ContextBuildCompleted
 )
 from kitt.ui.state import AgentTaskStep, TranscriptBlock, UIState, safe_text
 
@@ -133,11 +133,11 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
             block.status = "done" if event.success else "error"
             block.duration_ms = int(secs * 1000)
             block.tokens = event.tokens
-            if not event.success:
-                block.text += f"\n    ↳ {safe_text(event.error or event.output)[:200]}"
-            if len(event.output or "") > 400:
+            out_str = str(event.output or "")
+            is_code_tool = getattr(event, "tool_name", "") in {"read_file", "apply_patch", "python_compute", "write_file"}
+            if len(out_str) > 120 or "\n" in out_str or is_code_tool:
                 block.collapsed = True
-                block.metadata["full_output"] = safe_text(event.output)
+                block.metadata["full_output"] = safe_text(out_str)
 
         tool_task_id = f"tool-{call_id if call_id else event.tool_name}"
         tool_task = next((t for t in state.active_tasks if t.id == tool_task_id or t.id == f"tool-{event.tool_name}"), None)
@@ -157,6 +157,55 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
             "affected_paths": affected, "diff_preview": patch,
         })
         state.push_overlay("permission")
+    elif isinstance(event, FilterCompleted):
+        if event.filter_res:
+            res = event.filter_res
+            state.context_stats.filter_source = str(res.source)
+            state.context_stats.filter_fallback_reason = str(res.fallback_reason or "")
+            state.context_stats.filter_latency_ms = float(res.latency_ms)
+            state.context_stats.intent = str(getattr(res.task, "intent", ""))
+            if res.source == "FALLBACK":
+                reason_str = f" ({res.fallback_reason})" if res.fallback_reason else ""
+                state.transcript.append(TranscriptBlock(
+                    f"ctx-{len(state.transcript)+1}",
+                    "context",
+                    f"◐ Contexto: filtro semântico em fallback{reason_str} — usando heurística determinística",
+                    status="warning",
+                ))
+    elif isinstance(event, ContextResolved):
+        state.context_stats.resolved_count = event.resolved_count
+    elif isinstance(event, ContextBuildCompleted):
+        cs = state.context_stats
+        cs.index_state = event.index_state
+        cs.index_generation = event.index_generation
+        cs.selected_count = event.selected_count
+        cs.rejected_count = event.rejected_count
+        cs.context_tokens = event.total_tokens
+        cs.coverage = event.coverage
+        cs.degraded = event.degraded
+        cs.duration_ms = event.duration_ms
+        cs.index_scanned = event.index_scanned
+        cs.index_updated = event.index_updated
+        cs.index_deleted = event.index_deleted
+        cs.partial_reason = event.partial_reason
+        
+        core_task = next((t for t in state.active_tasks if t.id == "core" or t.kind == "core_agent"), None)
+        if core_task:
+            total_cand = event.selected_count + event.rejected_count
+            core_task.summary = f"Contexto: {event.selected_count}/{total_cand} candidatos, cobertura {event.coverage:.0%}"
+            
+        if event.index_state in ("PARTIAL", "DEGRADED") or (event.degraded and event.partial_reason):
+            detail = f"◐ Contexto: índice {event.index_state or 'DEGRADADO'} (gen {event.index_generation}), " \
+                     f"selecionados {event.selected_count}, rejeitados {event.rejected_count}, " \
+                     f"cobertura {event.coverage:.0%}"
+            if event.partial_reason:
+                detail += f" — motivo: {event.partial_reason}"
+            state.transcript.append(TranscriptBlock(
+                f"ctx-{len(state.transcript)+1}",
+                "context",
+                detail,
+                status="error" if event.degraded or event.index_state == "DEGRADED" else "warning",
+            ))
     elif isinstance(event, BudgetApplied):
         state.tokens_used = event.total_input_tokens
         state.context_window = event.window_size

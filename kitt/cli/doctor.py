@@ -47,4 +47,34 @@ class DoctorCheck:
         except Exception as e:
             results.append({"name": "Workspace .kitt Directory", "status": "FAIL", "detail": str(e)})
 
+        # 5. History SQLite Database
+        db_path = kitt_dir / "history" / "history.sqlite3"
+        if db_path.exists():
+            import sqlite3
+            try:
+                conn = sqlite3.connect(str(db_path))
+                quick_check = conn.execute("PRAGMA quick_check;").fetchone()
+                conn.close()
+                results.append({
+                    "name": "SQLite History Database",
+                    "status": "PASS" if quick_check and quick_check[0] == "ok" else "WARN",
+                    "detail": f"{db_path.name} integrity: {quick_check[0] if quick_check else 'unknown'}"
+                })
+            except Exception as e:
+                results.append({"name": "SQLite History Database", "status": "FAIL", "detail": str(e)})
+        else:
+            results.append({"name": "SQLite History Database", "status": "PASS", "detail": "Ready (uninitialized)"})
+
+        # 6. Local Ollama Server
+        import urllib.request
+        try:
+            req = urllib.request.Request("http://127.0.0.1:11434/api/tags", headers={"User-Agent": "kitt-doctor"})
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    results.append({"name": "Local Ollama Endpoint", "status": "PASS", "detail": "Online at 127.0.0.1:11434"})
+                else:
+                    results.append({"name": "Local Ollama Endpoint", "status": "WARN", "detail": f"HTTP {resp.status}"})
+        except Exception:
+            results.append({"name": "Local Ollama Endpoint", "status": "INFO", "detail": "Not running on 127.0.0.1:11434"})
+
         return results

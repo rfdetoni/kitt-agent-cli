@@ -66,6 +66,14 @@ class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
             pipe.send_bytes(b"\x04")
             await asyncio.wait_for(task, 2)
 
+    def test_home_text_formatting_no_leading_padding(self):
+        ui = KittUIApp(self.runtime, "tui", input=DummyOutput(), output=DummyOutput(), no_animation=True)
+        items = ui._home_text()
+        # Ensure texts do not have arbitrary leading whitespace interfering with WindowAlign.CENTER
+        for style_cls, text in items:
+            stripped_line = text.lstrip("\n")
+            self.assertFalse(stripped_line.startswith(" "), f"Unexpected leading spaces in '{text}'")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ import time
 @dataclass
 class TranscriptBlock:
     id: str
-    kind: Literal["user", "assistant", "tool", "system", "error", "thought"]
+    kind: Literal["user", "assistant", "tool", "system", "error", "thought", "context"]
     text: str = ""
     status: str | None = None
     collapsed: bool = False
@@ -47,6 +47,27 @@ class AgentTaskStep:
     scanner_phase: int = 0
     started_at: float = field(default_factory=time.time)
     error_message: str | None = None
+
+
+@dataclass
+class ContextRunStats:
+    filter_source: str = ""          # LLM | DETERMINISTIC_BYPASS | FALLBACK
+    filter_fallback_reason: str = ""
+    filter_latency_ms: float = 0.0
+    intent: str = ""
+    index_state: str = ""            # READY | PARTIAL | BOOTSTRAP | DEGRADED | EMPTY
+    index_generation: int = 0
+    selected_count: int = 0
+    rejected_count: int = 0
+    context_tokens: int = 0
+    coverage: float = 1.0
+    degraded: bool = False
+    duration_ms: int = 0
+    index_scanned: int = 0
+    index_updated: int = 0
+    index_deleted: int = 0
+    partial_reason: str = ""
+    resolved_count: int = 0
 
 
 @dataclass
@@ -82,6 +103,7 @@ class UIState:
     context_window: int = 8192
     gross_saved_tokens: int = 0
     net_saved_tokens: int = 0
+    context_stats: ContextRunStats = field(default_factory=ContextRunStats)
     follow_tail: bool = True
     unseen_output: bool = False
     scanner_step: int = 0
@@ -147,7 +169,7 @@ class UIState:
 
 
     def append_message(self, role: str, content: str) -> None:
-        kind = role if role in {"user", "assistant", "tool", "system", "error"} else "system"
+        kind = role if role in {"user", "assistant", "tool", "system", "error", "context"} else "system"
         self.transcript.append(TranscriptBlock(f"block-{len(self.transcript)+1}", kind, safe_text(content)))
         del self.transcript[:-500]
 

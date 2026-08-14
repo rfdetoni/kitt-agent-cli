@@ -1,4 +1,3 @@
-import re
 import time
 from pathlib import Path
 from typing import List
@@ -28,21 +27,8 @@ class ContextEngine:
     def extract_task_focus(self, task_description: str) -> TaskFocus:
         if not task_description:
             return TaskFocus()
-
-        file_regex = re.compile(r'[a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+')
-        matched_files = list(set(file_regex.findall(task_description)))
-
-        symbol_regex = re.compile(r'\b[A-Za-z_$][A-Za-z0-9_$]{2,}\b')
-        matched_symbols = list(set(symbol_regex.findall(task_description)))
-
-        stopwords = {
-            'the', 'and', 'for', 'that', 'with', 'this', 'from', 'have', 'file',
-            'function', 'class', 'method', 'add', 'create', 'update', 'fix', 'remove',
-            'delete', 'change', 'make', 'use', 'code', 'task', 'test', 'repo'
-        }
-        focus_symbols = [s for s in matched_symbols if s.lower() not in stopwords]
-
-        return TaskFocus(focus_files=matched_files, focus_symbols=focus_symbols)
+        plan = QueryPlanner.plan(task_description)
+        return TaskFocus(focus_files=list(plan.exact_paths), focus_symbols=list(plan.exact_symbols))
 
     def get_relevant_context(
         self,
