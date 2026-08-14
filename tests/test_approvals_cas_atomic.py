@@ -8,6 +8,9 @@ class TestApprovalsCASAtomic(unittest.TestCase):
         self.db = HistoryDatabase(in_memory=True)
         self.mgr = ApprovalManager(db=self.db)
 
+    def tearDown(self):
+        self.db.close()
+
     def test_grant_without_pending_request_is_rejected(self):
         grant = self.mgr.issue_grant("t1", "c1", "w1", "hash_action", approval_id="app_1")
         self.assertIsNone(grant)

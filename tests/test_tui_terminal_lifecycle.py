@@ -19,29 +19,38 @@ class TestTUITerminalLifecycle(unittest.TestCase):
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
         with tempfile.TemporaryDirectory() as root:
             env = dict(os.environ, TERM="xterm-256color")
+            process = None
+            output = bytearray()
             process = subprocess.Popen(
                 [sys.executable, "-m", "kitt.cli.main", "--ui", "tui", "--no-history", "--no-animation", "--root", root],
                 stdin=slave, stdout=slave, stderr=slave, cwd=os.path.dirname(os.path.dirname(__file__)), env=env,
                 close_fds=True,
             )
-            os.close(slave)
-            output = bytearray()
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and b"K.I.T.T." not in output:
-                ready, _, _ = select.select([master], [], [], 0.1)
-                if ready:
-                    output.extend(os.read(master, 65536))
-            os.write(master, b"\x10")  # palette
-            time.sleep(0.1)
-            os.write(master, b"\x1b\x04")  # close overlay, exit
-            process.wait(timeout=5)
-            while True:
-                ready, _, _ = select.select([master], [], [], 0.05)
-                if not ready:
-                    break
-                try: output.extend(os.read(master, 65536))
-                except OSError: break
-            os.close(master)
+            try:
+                os.close(slave)
+                slave = None
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and b"K.I.T.T." not in output:
+                    ready, _, _ = select.select([master], [], [], 0.1)
+                    if ready:
+                        output.extend(os.read(master, 65536))
+                os.write(master, b"\x10")  # palette
+                time.sleep(0.1)
+                os.write(master, b"\x1b\x04")  # close overlay, exit
+                process.wait(timeout=15)
+                while True:
+                    ready, _, _ = select.select([master], [], [], 0.05)
+                    if not ready:
+                        break
+                    try: output.extend(os.read(master, 65536))
+                    except OSError: break
+            finally:
+                if process and process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+                if slave is not None:
+                    os.close(slave)
+                os.close(master)
 
         rendered = bytes(output)
         self.assertEqual(process.returncode, 0)

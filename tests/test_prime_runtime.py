@@ -187,14 +187,21 @@ class TestLegacyMigrations(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             path=Path(root)/".kitt"/"history"; path.mkdir(parents=True)
             db_path=path/"history.sqlite3"
-            with sqlite3.connect(db_path) as conn:
+            conn = sqlite3.connect(db_path)
+            try:
                 conn.executescript(CREATE_TABLES_SQL)
                 conn.execute("INSERT INTO schema_info(version) VALUES(1)")
+                conn.commit()
+            finally:
+                conn.close()
             db=HistoryDatabase(root)
-            with db.get_connection() as conn:
-                cols={r[1] for r in conn.execute("PRAGMA table_info(conversations)")}
-                version=conn.execute("SELECT MAX(version) FROM schema_info").fetchone()[0]
-                tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            try:
+                with db.get_connection() as conn:
+                    cols={r[1] for r in conn.execute("PRAGMA table_info(conversations)")}
+                    version=conn.execute("SELECT MAX(version) FROM schema_info").fetchone()[0]
+                    tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            finally:
+                db.close()
             self.assertGreaterEqual(version, 4)
             self.assertIn("active_entry_id",cols)
             self.assertIn("child_sessions",tables)
@@ -203,13 +210,20 @@ class TestLegacyMigrations(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             path=Path(root)/".kitt"/"history"; path.mkdir(parents=True)
             db_path=path/"history.sqlite3"
-            with sqlite3.connect(db_path) as conn:
+            conn = sqlite3.connect(db_path)
+            try:
                 conn.executescript(CREATE_TABLES_SQL)
                 conn.execute("INSERT INTO schema_info(version) VALUES(5)")
+                conn.commit()
+            finally:
+                conn.close()
             db=HistoryDatabase(root)
-            with db.get_connection() as conn:
-                version=conn.execute("SELECT MAX(version) FROM schema_info").fetchone()[0]
-                tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            try:
+                with db.get_connection() as conn:
+                    version=conn.execute("SELECT MAX(version) FROM schema_info").fetchone()[0]
+                    tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            finally:
+                db.close()
             self.assertGreaterEqual(version, 6)
             self.assertIn("harness_entries",tables)
             self.assertIn("child_sessions",tables)
