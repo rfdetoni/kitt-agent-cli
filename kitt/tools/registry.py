@@ -102,6 +102,24 @@ class ToolRegistry:
             ,{"name": "child_spawn", "description": "Spawn an isolated child task with restricted scope and budget"}
             ,{"name": "harness_remember", "description": "Persist a learned guideline entry into the harness repository"}
         ]
+        arg_schemas = {
+            "list_files": {"path": "relative dir, default ."},
+            "search": {"pattern": "literal text or regex", "regex": "bool, default false"},
+            "read_file": {"path": "relative file", "start_line": "int >=1", "end_line": "int, max 5000 lines"},
+            "repository_map": {"query": "text", "max_tokens": "int <=4000"},
+            "python_compute": {"code": "safe Python subset", "inputs": "JSON object", "result_var": "name, default _result"},
+            "write_file": {"path": "relative file", "content": "full file text", "expected_content_hash": "optional sha256"},
+            "apply_patch": {"patch": "SEARCH/REPLACE blocks"},
+            "run_command": {"command": "shell command allowed by policy"},
+            "artifact_read": {"artifact_id": "id", "offset": "int", "limit": "int"},
+            "goal_create": {"objective": "text", "token_budget": "optional int"},
+            "goal_add_gate": {"command": "validation command"},
+            "child_spawn": {"task": "text", "scope": "optional path/tool constraints"},
+            "harness_remember": {"text": "guideline text"},
+        }
+        for tool in all_tools:
+            if tool["name"] in arg_schemas:
+                tool["args"] = arg_schemas[tool["name"]]
         if enabled_tools is None:
             return all_tools
         return [t for t in all_tools if t["name"] in enabled_tools]

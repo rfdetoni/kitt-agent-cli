@@ -21,6 +21,7 @@ class TestToolRegistry(unittest.TestCase):
         self.assertIn("read_file", names)
         self.assertIn("git_status", names)
         self.assertNotIn("apply_patch", names)
+        self.assertIn("path", defs[names.index("read_file")]["args"])
 
     def test_execute_tool_disabled_rejection(self):
         res = self.registry.execute_tool("apply_patch", {}, enabled_tools=["read_file"])
