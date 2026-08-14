@@ -1,7 +1,7 @@
 import time
 from kitt.core.turn_events import (
     ApprovalRequired, BudgetApplied, EditApplied, MetricsRecorded, ModelSelected,
-    TextDelta, ToolCompleted, ToolStarted, TurnBlocked, TurnCancelled,
+    TextDelta, ToolCallProposed, ToolCompleted, ToolStarted, TurnBlocked, TurnCancelled,
     TurnCompleted, TurnFailed, TurnStarted, ChildAgentSpawned, ChildAgentProgress, ChildAgentFinished,
     ThinkingStarted, ThinkingCompleted, FilterCompleted, ContextResolved, ContextBuildCompleted
 )
@@ -84,6 +84,22 @@ def reduce_ui_event(state: UIState, event: object) -> UIState:
                     block.collapsed = True
                     block.metadata["full_output"] = safe_text(thought_str)
                 break
+        state.status_text = "DEVELOPING"
+        core_task = next((t for t in state.active_tasks if t.id == "core" or t.kind == "core_agent"), None)
+        if core_task:
+            core_task.status = "running"
+            core_task.summary = "Raciocínio concluído; gerando resposta/código..."
+            core_task.progress = 35
+    elif isinstance(event, ToolCallProposed):
+        target = event.args.get("path") if isinstance(event.args, dict) else ""
+        target_str = f" ({target})" if target else ""
+        state.status_text = f"DEVELOPING: {event.tool_name or 'código'}"
+        core_task = next((t for t in state.active_tasks if t.id == "core" or t.kind == "core_agent"), None)
+        if core_task:
+            bytes_gen = event.args.get("bytes", 0) if isinstance(event.args, dict) else 0
+            core_task.status = "running"
+            core_task.summary = f"Gerando payload para {event.tool_name}{target_str} ({bytes_gen} bytes)..."
+            core_task.progress = min(80, 40 + int(bytes_gen / 100))
     elif isinstance(event, TextDelta):
         state.status_text = "RESPONDING"
         delta = safe_text(event.delta)

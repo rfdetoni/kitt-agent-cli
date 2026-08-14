@@ -122,5 +122,28 @@ class TestTUIVisualFeedback(unittest.TestCase):
         state.toggle_last_tool_collapse()
         self.assertFalse(block.collapsed)
 
+    def test_tool_call_proposed_progress_and_payload_tokens(self):
+        from kitt.core.turn_events import ToolCallProposed
+
+        state = UIState()
+        reduce_ui_event(state, TurnStarted(turn_id="t1", conversation_id="c1", prompt="Crie arquivo"))
+        reduce_ui_event(state, ThinkingCompleted(duration_ms=3000, tokens=50, thought="Vou criar o arquivo"))
+        self.assertEqual(state.status_text, "DEVELOPING")
+        self.assertIn("Raciocínio concluído", state.active_tasks[0].summary)
+
+        reduce_ui_event(state, ToolCallProposed(tool_name="write_file", args={"path": "apresenta2.html", "bytes": 2500}))
+        self.assertIn("DEVELOPING: write_file", state.status_text)
+        self.assertIn("apresenta2.html", state.active_tasks[0].summary)
+        self.assertIn("2500 bytes", state.active_tasks[0].summary)
+
+        reduce_ui_event(state, ToolStarted(tool_name="write_file", args={"path": "apresenta2.html"}, call_id="w1"))
+        self.assertEqual(state.status_text, "TOOL: write_file")
+
+        reduce_ui_event(state, ToolCompleted(tool_name="write_file", success=True, output="Successfully wrote 6000 bytes", call_id="w1", tokens=1450))
+        last_block = state.transcript[-1]
+        self.assertIn("1450 tok", last_block.text)
+        self.assertTrue(last_block.text.endswith("✔"))
+
+
 if __name__ == "__main__":
     unittest.main()

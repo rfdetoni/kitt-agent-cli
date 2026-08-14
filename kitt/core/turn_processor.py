@@ -37,7 +37,7 @@ from kitt.core.turn_command import TurnCommand
 import uuid
 from kitt.core.turn_events import (
     TurnEvent, TurnStarted, FilterCompleted, ContextResolved, BudgetApplied,
-    ContextBuildCompleted, ModelSelected, TextDelta, ApprovalRequired, ToolStarted, ToolCompleted,
+    ContextBuildCompleted, ModelSelected, TextDelta, ToolCallProposed, ApprovalRequired, ToolStarted, ToolCompleted,
     ThinkingStarted, ThinkingCompleted,
     EditApplied, MetricsRecorded, TurnCompleted, TurnFailed,
     TurnCancelled, TurnBlocked
@@ -425,7 +425,15 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     dur_ms = int((time.time() - (started_at or time.time())) * 1000)
                     yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=0, thought="")
 
-            if in_think or suppress:
+            if in_think:
+                continue
+
+            if suppress:
+                tool_match = re.search(r'"name"\s*:\s*"([a-zA-Z0-9_-]+)"', full_response)
+                tool_name = tool_match.group(1) if tool_match else "código"
+                path_match = re.search(r'"path"\s*:\s*"([^"]+)"', full_response)
+                target_path = path_match.group(1) if path_match else ""
+                yield full_response, ToolCallProposed(tool_name=tool_name, args={"path": target_path, "bytes": len(full_response)})
                 continue
 
             if prefix_buffer is not None:
@@ -436,12 +444,18 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 if any(stripped.startswith(tag) for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
                     suppress = True
                     prefix_buffer = None
+                    tool_match = re.search(r'"name"\s*:\s*"([a-zA-Z0-9_-]+)"', full_response)
+                    tool_name = tool_match.group(1) if tool_match else "código"
+                    yield full_response, ToolCallProposed(tool_name=tool_name, args={"bytes": len(full_response)})
                     continue
                 yield full_response, TextDelta(delta=prefix_buffer)
                 prefix_buffer = None
             else:
                 if any(tag in full_response for tag in (PYTHON_TOOL_CALL_OPEN, TOOL_CALL_OPEN)):
                     suppress = True
+                    tool_match = re.search(r'"name"\s*:\s*"([a-zA-Z0-9_-]+)"', full_response)
+                    tool_name = tool_match.group(1) if tool_match else "código"
+                    yield full_response, ToolCallProposed(tool_name=tool_name, args={"bytes": len(full_response)})
                     continue
                 yield full_response, TextDelta(delta=chunk)
 
@@ -814,13 +828,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                         kind=tool_name,
                         content_hash=str(tool_result.metadata.get("content_hash", "")),
                     )
+                payload_content = str(tool_args.get("content") or tool_args.get("patch") or tool_args.get("code") or "")
+                output_content = str(tool_result.output if tool_result.success else (tool_result.error or ""))
+                tool_tokens = max(
+                    TokenCounter.count_tokens(payload_content),
+                    TokenCounter.count_tokens(output_content),
+                )
                 yield ToolCompleted(
                     tool_name=tool_name,
                     success=tool_result.success,
                     output=tool_result.output,
                     error=tool_result.error,
                     call_id=call_id,
-                    tokens=TokenCounter.count_tokens(tool_result.output if tool_result.success else str(tool_result.error or "")),
+                    tokens=tool_tokens,
                 )
                 execution_messages.append({"role": "assistant", "content": full_response})
 
