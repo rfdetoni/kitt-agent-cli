@@ -26,7 +26,7 @@ def run_once(files: int) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _make_fixture(root, files)
-        index = RepositoryIndex(root, in_memory=True, max_files=files)
+        index = RepositoryIndex(root, in_memory=True, max_files=files + 1)
         cold_ms, cold_stats = _time_ms(index.build_or_update)
         warm_ms, warm_stats = _time_ms(index.build_or_update)
         search_ms, results = _time_ms(lambda: index.search_text(f"symbol_{files - 1}", limit=5))
