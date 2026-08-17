@@ -9,158 +9,55 @@ License-File: LICENSE
 Requires-Dist: prompt-toolkit<4,>=3.0.52
 Provides-Extra: tui
 Requires-Dist: prompt-toolkit<4,>=3.0.52; extra == "tui"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.21; extra == "dev"
 Dynamic: license-file
 
-# K.I.T.T. — Knowledge & Inference Task Tool (`kitt-agent-cli`)
+# K.I.T.T. Agent CLI
 
-> **Knight Rider Subsystem • Autonomous AI Coding Architecture for Local & Cloud LLMs**
+Agente de codificação Python local-first, com suporte a Ollama e APIs
+OpenAI-compatible, histórico persistente, aprovações, ferramentas e TUI
+opcional (`prompt_toolkit`). O caminho principal usa apenas biblioteca padrão e
+SQLite (`sqlite3`).
 
-K.I.T.T. is a Python 3.10+ CLI coding agent with a Standard-Library-first runtime.
-It combines dual-model local inference, structural context selection, persistent branching
-history, bounded autonomy and a capability-separated tool layer. `prompt_toolkit` is optional;
-the application falls back to the native terminal when it is absent.
+## Arquitetura
 
-## ⚡ Key Architecture & Features
+- `KittRuntime` compõe uma única instância de `ContextEngine` e `RepositoryIndex`.
+- O motor de contexto analisa a tarefa deterministicamente, indexa o workspace
+  incrementalmente, recupera paths/símbolos/FTS5/grafo/testes/Git e compila um
+  pacote de evidências com ranges, hashes, provenance e trust level.
+- Bootstrap de paths explícitos é síncrono; varredura completa pode continuar em
+  background. FTS5 tem fallback lexical explícito.
+- Budget considera system prompt, tarefa, histórico, contexto, ferramentas e
+  reserva de output. Resultados grandes viram artifacts; follow-ups são
+  rebudgetados antes de cada chamada ao modelo.
+- `AGENTS.md`, memória, skills e tool output entram como dados não confiáveis,
+  subordinados à política do sistema.
 
-- 🧠 **Dual-Model Task Router (`/setup-models`)**:
-  - Automatically routes sub-tasks between small local models (e.g. `qwen2.5:7b-instruct` for context gathering/summaries) and large execution models (e.g. `qwen2.5:32b-instruct` for diff generation).
-  - Mutually exclusive role assignments (`main_chat`, `context`, `commit`, `edit`, `code_generation`).
-  - For project tasks, context model condenses ranked source excerpts and `README.md` into `.kitt/context/latest.md` before execution model receives it.
+## Uso
 
-- 🗺️ **Context Engine (`/repomap`)**:
-  - AST symbol graph extraction (Python AST, TypeScript/JavaScript/Java/Go/Rust regex parsers, generic regex fallback for C/C++) with PageRank file scoring.
-  - Automatically trims repo context to exact symbol signatures to maximize token budget efficiency.
+```bash
+python3 -m kitt.cli.main --help
+python3 -m kitt.cli.main
+```
 
-- 📝 **Structured `SEARCH/REPLACE` Diffs**:
-  - Precise block diff parser and applier with fuzzy-whitespace tolerance designed specifically for local LLMs.
+Instale dependências opcionais com `pip install -r requirements.txt`. Ollama e
+outros providers são configurados pela CLI/configuração local.
 
-- 🐍 **Safe Python Compute Tool (`python_compute`)**:
-  - Executes a useful, side-effect-free subset of Python in a separate process.
-  - Uses a custom AST interpreter: model code is never passed to `eval` or `exec`.
-  - Has no imports, filesystem, network, environment, shell, reflection, threads, processes, or package installation.
-  - Exposes allowlisted pure operations from `math`, `statistics`, `json`, `Decimal`, and `Fraction`.
-  - Enforces source, AST, step, collection, memory, output, CPU, and wall-clock limits using only the Python Standard Library.
-  - For project data, the agent must use contained tools such as `read_file` and pass selected JSON data through `inputs`.
+## Validação
 
-  Example tool payload:
+```bash
+python3 -m compileall -q kitt tests
+python3 -m unittest discover -s tests -v
+python3 -m kitt.evals.retrieval
+python3 -m kitt.benchmarks.context_benchmark --files 1000,20000,100000
+```
 
-  ```json
-  {
-    "code": "values = [v * 2 for v in inputs['values']]
-_result = statistics.mean(values)",
-    "inputs": {"values": [1, 2, 3]},
-    "result_var": "_result"
-  }
+O índice suporta limites de arquivos, bytes, resultados e timeout de operações
+externas. Arquivos escritos por tools são substituídos atomicamente e tornam-se
+visíveis ao índice antes da próxima chamada relevante.
 
-## 🚀 Getting Started
+## Licença
 
-To get started with K.I.T.T., follow these steps:
-
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/your-repo/kitt-agent-cli.git
-   cd kitt-agent-cli
-   ```
-
-2. **Install Dependencies**:
-   Ensure you have Python 3.10+ installed, then run:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Run the CLI**:
-   ```bash
-   python kitt-agent-cli.py
-   ```
-
-## 🛠️ Development & Contribution
-
-- **Code of Conduct**: Follow the [Contributing Guidelines](CONTRIBUTING.md) for contribution expectations.
-- **Testing**: Run tests using `pytest` to ensure your changes do not break existing functionality.
-- **Documentation**: Update relevant documentation files in the `docs/` directory when making changes.
-
-## 📝 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## 🙋‍♂️ Contact
-
-For any questions or issues, please open an issue on the [GitHub repository](https://github.com/your-repo/kitt-agent-cli/issues).
-
----
-
-# K.I.T.T. — Knowledge & Inference Task Tool (`kitt-agent-cli`)
-
-> **Knight Rider Subsystem • Autonomous AI Coding Architecture for Local & Cloud LLMs**
-
-K.I.T.T. is a Python 3.10+ CLI coding agent with a Standard-Library-first runtime.
-It combines dual-model local inference, structural context selection, persistent branching
-history, bounded autonomy and a capability-separated tool layer. `prompt_toolkit` is optional;
-the application falls back to the native terminal when it is absent.
-
-## ⚡ Key Architecture & Features
-
-- 🧠 **Dual-Model Task Router (`/setup-models`)**:
-  - Automatically routes sub-tasks between small local models (e.g. `qwen2.5:7b-instruct` for context gathering/summaries) and large execution models (e.g. `qwen2.5:32b-instruct` for diff generation).
-  - Mutually exclusive role assignments (`main_chat`, `context`, `commit`, `edit`, `code_generation`).
-  - For project tasks, context model condenses ranked source excerpts and `README.md` into `.kitt/context/latest.md` before execution model receives it.
-
-- 🗺️ **Context Engine (`/repomap`)**:
-  - AST symbol graph extraction (Python AST, TypeScript/JavaScript/Java/Go/Rust regex parsers, generic regex fallback for C/C++) with PageRank file scoring.
-  - Automatically trims repo context to exact symbol signatures to maximize token budget efficiency.
-
-- 📝 **Structured `SEARCH/REPLACE` Diffs**:
-  - Precise block diff parser and applier with fuzzy-whitespace tolerance designed specifically for local LLMs.
-
-- 🐍 **Safe Python Compute Tool (`python_compute`)**:
-  - Executes a useful, side-effect-free subset of Python in a separate process.
-  - Uses a custom AST interpreter: model code is never passed to `eval` or `exec`.
-  - Has no imports, filesystem, network, environment, shell, reflection, threads, processes, or package installation.
-  - Exposes allowlisted pure operations from `math`, `statistics`, `json`, `Decimal`, and `Fraction`.
-  - Enforces source, AST, step, collection, memory, output, CPU, and wall-clock limits using only the Python Standard Library.
-  - For project data, the agent must use contained tools such as `read_file` and pass selected JSON data through `inputs`.
-
-  Example tool payload:
-
-  ```json
-  {
-    "code": "values = [v * 2 for v in inputs['values']]
-_result = statistics.mean(values)",
-    "inputs": {"values": [1, 2, 3]},
-    "result_var": "_result"
-  }
-
-## 🚀 Getting Started
-
-To get started with K.I.T.T., follow these steps:
-
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/your-repo/kitt-agent-cli.git
-   cd kitt-agent-cli
-   ```
-
-2. **Install Dependencies**:
-   Ensure you have Python 3.10+ installed, then run:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Run the CLI**:
-   ```bash
-   python kitt-agent-cli.py
-   ```
-
-## 🛠️ Development & Contribution
-
-- **Code of Conduct**: Follow the [Contributing Guidelines](CONTRIBUTING.md) for contribution expectations.
-- **Testing**: Run tests using `pytest` to ensure your changes do not break existing functionality.
-- **Documentation**: Update relevant documentation files in the `docs/` directory when making changes.
-
-## 📝 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## 🙋‍♂️ Contact
-
-For any questions or issues, please open an issue on the [GitHub repository](https://github.com/your-repo/kitt-agent-cli/issues).
+MIT. Consulte [LICENSE](LICENSE).

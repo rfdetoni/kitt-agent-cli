@@ -5,6 +5,7 @@ from kitt.domain.entities import ContextBlock, TaskFocus
 from kitt.context.compiler import ContextCompiler, CompiledContext
 from kitt.context.query_plan import QueryPlanner
 from kitt.context.retrieval import HybridRetrievalPipeline
+from kitt.context.cache import ContextCache
 from kitt.context_engine.parser import SymbolParser
 from kitt.index.repository import RepositoryIndex
 
@@ -16,11 +17,12 @@ IGNORED_DIRS = {
 class ContextEngine:
     """Incremental Context Engine facade with mtime/hash caching and PageRank symbol graph integration."""
 
-    def __init__(self, repository_index=None, persistence_enabled: bool = True):
+    def __init__(self, repository_index=None, persistence_enabled: bool = True, cache: ContextCache | None = None):
         self.parser = SymbolParser()
         self.index = repository_index
         self.persistence_enabled = persistence_enabled
         self.compiler = ContextCompiler()
+        self.cache = cache or ContextCache()
         self.last_compiled_context: CompiledContext | None = None
         self.last_build_stats = {}
 
@@ -42,6 +44,14 @@ class ContextEngine:
             self.index = RepositoryIndex(root_path, in_memory=not self.persistence_enabled)
 
         started = time.time()
+        if not working_set_paths:
+            cached = self.cache.get(task_description, self.index.index_generation(), max_tokens)
+            if cached:
+                self.last_compiled_context = cached
+                if not cached.text:
+                    return []
+                return [ContextBlock(path="ContextPack", content=cached.text, token_count=cached.total_tokens)]
+
         plan = QueryPlanner.plan(task_description, token_budget=max_tokens)
         bootstrap_paths = list(dict.fromkeys([*plan.exact_paths, *list(working_set_paths or [])]))
         if self.index.index_generation() == 0 and bootstrap_paths:
@@ -66,6 +76,7 @@ class ContextEngine:
             partial=stats.get("state") == "PARTIAL",
         )
         self.last_compiled_context = compiled
+        self.cache.put(task_description, stats.get("generation", 0), compiled, max_tokens)
         self.last_build_stats = {
             **stats,
             "duration_ms": int((time.time() - started) * 1000),

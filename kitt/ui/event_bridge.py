@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import (
-    TextDelta, TurnCompleted, TurnEvent, TurnFailed,
+    TextDelta, TurnCancelled, TurnCompleted, TurnEvent, TurnFailed,
 )
 
 _END = object()
@@ -47,16 +47,39 @@ class TurnEventBridge:
     def is_active(self) -> bool:
         return self._consumer is not None and not self._consumer.done()
 
+    def _drop_oldest_non_critical(self) -> None:
+        try:
+            item = self._queue.get_nowait()
+            if isinstance(item, tuple) and len(item) == 2:
+                _, event = item
+                if isinstance(event, (TurnCompleted, TurnFailed)):
+                    self._queue.put_nowait(item)
+        except Exception:
+            pass
+
     def _produce(self, gen: int, events: Iterable[TurnEvent]) -> None:
         try:
             for event in events:
                 if self._closed.is_set() or gen != self._turn_generation:
                     break
-                self._queue.put((gen, event))
+                try:
+                    self._queue.put((gen, event), timeout=5.0)
+                except queue.Full:
+                    self._drop_oldest_non_critical()
+                    try:
+                        self._queue.put((gen, event), timeout=1.0)
+                    except queue.Full:
+                        pass
         except BaseException as exc:
-            self._queue.put((gen, TurnFailed(error=str(exc))))
+            try:
+                self._queue.put((gen, TurnFailed(error=str(exc))), timeout=2.0)
+            except queue.Full:
+                pass
         finally:
-            self._queue.put((gen, _END))
+            try:
+                self._queue.put((gen, _END), timeout=2.0)
+            except queue.Full:
+                pass
 
     async def _consume(self, gen: int) -> None:
         pending_delta = ""
@@ -157,10 +180,10 @@ class TurnEventBridge:
         self.invalidation_count += 1
         self.invalidate()
 
-    async def start(self, prompt: str, conversation_id: str, explicit_files=frozenset(), no_history: bool = False) -> str:
+    async def start(self, prompt: str, conversation_id: str, explicit_files=frozenset(), no_history: bool = False, mode: str = "auto") -> str:
         if self._closed.is_set() or (self._consumer and not self._consumer.done()):
             raise RuntimeError("A turn is already active")
-        cmd = TurnCommand(conversation_id=conversation_id, prompt=prompt, explicit_files=set(explicit_files), no_history=no_history)
+        cmd = TurnCommand(conversation_id=conversation_id, prompt=prompt, explicit_files=set(explicit_files), no_history=no_history, mode=mode)
         self._turn_generation += 1
         gen = self._turn_generation
         self._active_turn_id = cmd.turn_id
@@ -194,18 +217,32 @@ class TurnEventBridge:
         )
 
     async def cancel(self, reason: str = "Cancelled by user") -> None:
-        if self._active_turn_id:
+        turn_id = self._active_turn_id
+        self._turn_generation += 1
+        self._active_turn_id = None
+        if turn_id:
             try:
-                events = list(self.runtime.processor.cancel_turn(self._active_turn_id, reason))
+                events = list(self.runtime.processor.cancel_turn(turn_id, reason))
                 for event in events:
                     self._deliver(event)
             except Exception:
                 pass
-        self._turn_generation += 1
-        self._active_turn_id = None
+        else:
+            self._deliver(TurnCancelled(reason=reason))
+
+        if self._producer_future and not self._producer_future.done():
+            self._producer_future.cancel()
         if self._consumer and not self._consumer.done():
             self._consumer.cancel()
         self._consumer = None
+
+        # Drain queue
+        try:
+            while not self._queue.empty():
+                self._queue.get_nowait()
+        except Exception:
+            pass
+        self.invalidate()
 
     async def shutdown(self, timeout: float = 3.0) -> None:
         self._closed.set()

@@ -43,10 +43,17 @@ class ApprovalManager:
         self.ttl_seconds = ttl_seconds
         self.used_nonces: Set[str] = set()
         self.used_grants: Set[str] = set()
-        self._requests: dict[str, ApprovalRequest] = {}
+        self._requests_by_id: dict[str, ApprovalRequest] = {}
+        self._requests_by_binding: dict[tuple, ApprovalRequest] = {}
         self.db = db
         self.remembered_rules: list[RememberedRule] = []
         self._load_remembered_rules()
+
+    @property
+    def _requests(self) -> dict:
+        merged = dict(self._requests_by_id)
+        merged.update(self._requests_by_binding)
+        return merged
 
     def _load_remembered_rules(self) -> None:
         if self.db:
@@ -119,8 +126,8 @@ class ApprovalManager:
             summary=summary,
             state="PENDING"
         )
-        self._requests[approval_id] = req
-        self._requests[(turn_id, conversation_id, workspace_id, action_hash)] = req
+        self._requests_by_id[approval_id] = req
+        self._requests_by_binding[(turn_id, conversation_id, workspace_id, action_hash)] = req
 
         if self.db:
             try:
@@ -146,10 +153,10 @@ class ApprovalManager:
     def issue_grant(self, turn_id: str, conversation_id: str, workspace_id: str, action_hash: str,
                     approval_id: Optional[str] = None) -> Optional[ApprovalGrant]:
         req = None
-        if approval_id and approval_id in self._requests:
-            req = self._requests[approval_id]
+        if approval_id and approval_id in self._requests_by_id:
+            req = self._requests_by_id[approval_id]
         if not req:
-            req = self._requests.get((turn_id, conversation_id, workspace_id, action_hash))
+            req = self._requests_by_binding.get((turn_id, conversation_id, workspace_id, action_hash))
 
         # Check DB if not in memory
         if not req and self.db:
@@ -179,7 +186,8 @@ class ApprovalManager:
                             summary="",
                             state=row["state"]
                         )
-                        self._requests[req.approval_id] = req
+                        self._requests_by_id[req.approval_id] = req
+                        self._requests_by_binding[(req.turn_id, req.conversation_id, req.workspace_id, req.normalized_args_hash)] = req
             except Exception:
                 pass
 
@@ -284,24 +292,21 @@ class ApprovalManager:
         self.expire_pending()
         now = time.time()
         res = []
-        seen_ids = set()
-        for req in list(self._requests.values()):
-            if req.approval_id in seen_ids:
-                continue
+        for req in self._requests_by_id.values():
             if req.expires_at > now and req.state == "PENDING":
                 if workspace_id and req.workspace_id != workspace_id:
                     continue
                 if conversation_id and req.conversation_id != conversation_id:
                     continue
-                seen_ids.add(req.approval_id)
                 res.append(req)
         return res
 
     def deny(self, approval_id: str, reason: str = "Denied by user") -> bool:
         now = time.time()
         updated = False
-        if approval_id in self._requests:
-            del self._requests[approval_id]
+        req = self._requests_by_id.pop(approval_id, None)
+        if req:
+            self._requests_by_binding.pop((req.turn_id, req.conversation_id, req.workspace_id, req.normalized_args_hash), None)
             updated = True
 
         if self.db:
@@ -320,10 +325,12 @@ class ApprovalManager:
     def expire_pending(self) -> int:
         now = time.time()
         expired_count = 0
-        to_remove = [k for k, v in self._requests.items() if getattr(v, "expires_at", 0) <= now]
-        for k in to_remove:
-            del self._requests[k]
-            expired_count += 1
+        expired_ids = [aid for aid, req in list(self._requests_by_id.items()) if getattr(req, "expires_at", 0) <= now]
+        for aid in expired_ids:
+            req = self._requests_by_id.pop(aid, None)
+            if req:
+                self._requests_by_binding.pop((req.turn_id, req.conversation_id, req.workspace_id, req.normalized_args_hash), None)
+                expired_count += 1
 
         if self.db:
             try:
@@ -344,6 +351,24 @@ class ApprovalManager:
                 with self.db.get_connection() as conn:
                     rows = conn.execute(
                         "SELECT approval_id, conversation_id, turn_id, tool_name, state, requested_at, consumed_at FROM approval_requests ORDER BY requested_at DESC LIMIT ?",
+                        (limit,)
+                    ).fetchall()
+                    for row in rows:
+                        res.append(dict(row))
+            except Exception:
+                pass
+        return res
+
+    def get_full_audit(self, limit: int = 100) -> list[dict]:
+        res = []
+        if self.db:
+            try:
+                with self.db.get_connection() as conn:
+                    rows = conn.execute(
+                        """SELECT approval_id, conversation_id, turn_id, workspace_id, tool_name,
+                                  arguments_hash, scope_json, risk_level, state, nonce_hash,
+                                  requested_at, expires_at, decided_at, consumed_at, decision_source, failure_reason
+                           FROM approval_requests ORDER BY requested_at DESC LIMIT ?""",
                         (limit,)
                     ).fetchall()
                     for row in rows:

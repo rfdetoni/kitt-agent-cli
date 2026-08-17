@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -38,6 +39,7 @@ class ChildAgentManager:
         self.max_worker_seconds = max_worker_seconds
         self._on_event = event_callback or (lambda name, payload: None)
         self._pool = ThreadPoolExecutor(max_workers=max_children, thread_name_prefix="kitt-child")
+        self._last_spawn_time: dict[str, float] = {}
 
     def spawn(self, parent_conversation_id: str, parent_turn_id: str, name: str = "child_task",
               task: str = "", worker: Optional[Callable[[str], str]] = None,
@@ -50,12 +52,20 @@ class ChildAgentManager:
         ws_id = workspace_id or self.workspace_id
         if not ws_id:
             raise ValueError("Child requires a persisted workspace_id")
+        now = time.time()
+        last_spawn = self._last_spawn_time.get(parent_conversation_id, 0.0)
+        if now - last_spawn < 2.0:
+            raise ValueError("Child spawn rate limit: please wait 2 seconds between spawns")
+        existing_children = self.repo.list(parent_conversation_id, 100)
+        if len(existing_children) >= 10:
+            raise ValueError("Total child spawn limit per conversation reached (max 10)")
         enabled_tools = enabled_tools or allowed_tools or ["read_file", "search", "repository_map", "python_compute"]
         if depth > self.max_depth:
             raise ValueError("Child depth limit exceeded")
-        running = sum(c.state in {"CREATED", "RUNNING", "QUEUED"} for c in self.repo.list(parent_conversation_id, 100))
+        running = sum(c.state in {"CREATED", "RUNNING", "QUEUED"} for c in existing_children)
         if running >= self.max_children:
             raise ValueError("Child concurrency limit exceeded")
+        self._last_spawn_time[parent_conversation_id] = now
         paths = validate_child_paths(self.root, allowed_paths or [])
         child = self.repo.create(parent_conversation_id, parent_turn_id, name, task, depth, model_profile,
                                  paths, enabled_tools, token_budget, timeout_seconds)
@@ -129,7 +139,7 @@ class ChildAgentManager:
     def _kill_tree(proc: subprocess.Popen) -> None:
         try:
             if sys.platform != "win32":
-                os_killpg(proc.pid)
+                os.killpg(proc.pid, signal.SIGKILL)
             else:
                 proc.kill()
         except ProcessLookupError:
@@ -169,11 +179,6 @@ class ChildAgentManager:
 
     def close(self):
         self._pool.shutdown(wait=False, cancel_futures=True)
-
-
-def os_killpg(pid: int) -> None:
-    import os
-    os.killpg(pid, signal.SIGKILL)
 
 
 _CHILD_WORKER_SCRIPT = r"""

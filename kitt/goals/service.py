@@ -1,6 +1,9 @@
-import json,time,uuid
-from typing import List,Optional
-from kitt.goals.models import Goal,QualityGate
+import json
+import sqlite3
+import time
+import uuid
+from typing import List, Optional
+from kitt.goals.models import Goal, QualityGate
 from kitt.history.database import HistoryDatabase
 
 class GoalService:
@@ -89,11 +92,21 @@ class GoalService:
         if argv is None and isinstance(name, list):
             argv = name
             name = "QualityGate"
-        if not argv or any(not isinstance(x, str) or not x for x in argv): raise ValueError("argv required")
+        if not argv or any(not isinstance(x, str) or not x for x in argv):
+            raise ValueError("argv required")
         qid = f"gate_{uuid.uuid4().hex}"
         with self.db.get_connection() as c:
             try:
-                c.execute("INSERT INTO quality_gates(id,goal_id,name,argv_json,timeout_seconds,status) VALUES(?,?,?,?,?,'PENDING')", (qid, goal_id, name, json.dumps(argv), timeout_seconds))
-            except Exception:
-                c.execute("INSERT INTO quality_gates(id,goal_id,argv_json,status) VALUES(?,?,?,'PENDING')", (qid, goal_id, json.dumps(argv)))
+                c.execute(
+                    "INSERT INTO quality_gates(id, goal_id, name, argv_json, timeout_seconds, status) VALUES (?, ?, ?, ?, ?, 'PENDING')",
+                    (qid, goal_id, name, json.dumps(argv), timeout_seconds),
+                )
+            except sqlite3.OperationalError as exc:
+                if "no column named" in str(exc).lower():
+                    c.execute(
+                        "INSERT INTO quality_gates(id, goal_id, argv_json, status) VALUES (?, ?, ?, 'PENDING')",
+                        (qid, goal_id, json.dumps(argv)),
+                    )
+                else:
+                    raise
         return QualityGate(qid, goal_id, name, argv, "PENDING", timeout_seconds)

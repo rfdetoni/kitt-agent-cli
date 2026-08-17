@@ -62,10 +62,14 @@ class PlainLineUI:
         self.output.flush()
 
     def print_banner(self) -> None:
-        title = "K.I.T.T. Agent CLI — SYSTEM ONLINE"
-        if getattr(self.output, "isatty", lambda: False)():
-            title = DEFAULT_THEME.format_primary(title)
-        self._write(title + "\n")
+        scanner = "\033[1;31m  ┌─────────────────────────────────────────────────────────────────────────────┐\n  │  \033[1;91m[ ░▒▓████████████████████████████████████████████████████████████████▓▒░ ]\033[1;31m  │\n  └─────────────────────────────────────────────────────────────────────────────┘\033[0m\n"
+        art = "\033[1;31m   ██╗  ██╗    ██╗    ████████╗   ████████╗\n   ██║ ██╔╝    ██║    ╚══██╔══╝   ╚══██╔══╝\n   █████╔╝     ██║       ██║         ██║   \n   ██╔═██╗     ██║       ██║         ██║   \n   ██║  ██╗    ██║       ██║         ██║   \n   ╚═╝  ╚═╝    ╚═╝       ╚═╝         ╚═╝   \033[0m\n"
+        title = "  \033[1;37mK.I.T.T.\033[0m — \033[1;36mKnowledge & Inference Task Tool\033[0m \033[90mv1.0.0 • SYSTEM ONLINE\033[0m\n"
+        is_tty = getattr(self.output, "isatty", lambda: False)()
+        if is_tty:
+            self._write(scanner + art + title)
+        else:
+            self._write("K.I.T.T. Agent CLI — SYSTEM ONLINE\n")
         if self.reason:
             self._write(f"TUI unavailable: {self.reason}. Using plain mode.\n")
         self._write(f"Workspace: {self.runtime.canonical_root}\nType /help or /quit.\n\n")

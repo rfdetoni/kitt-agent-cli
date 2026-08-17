@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 import time
 from dataclasses import dataclass
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 
 
 PRIVACY_MODES = {"offline", "local_only", "hybrid_redacted", "cloud_allowed"}
@@ -56,7 +56,7 @@ class EgressPolicy:
             return False, None, "Egress denied: privacy mode is 'offline'"
 
         if self.mode == "local_only" and not is_local:
-            return False, None, f"Egress denied: privacy mode 'local_only' prohiibts remote host '{host}'"
+            return False, None, f"Egress denied: privacy mode 'local_only' prohibits remote host '{host}'"
 
         manifest = EgressManifest(
             manifest_id=uuid.uuid4().hex[:12],

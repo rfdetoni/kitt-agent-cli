@@ -163,8 +163,8 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         commands = [
             "/new", "/history", "/thread", "/resume 1", "/conversation", "/fork", "/export-conversation",
             "/doctor", "/add sample.txt", "/drop sample.txt", "/files", "/memory", "/remember keep tests",
-            "/clear-memory", "/skills", "/setup-skills", "/skill-install", "/skill-remove", "/repomap",
-            "/diff", "/undo", "/ask", "/code", "/router", "/context-stats", "/stats", "/status",
+            "/clear-memory", "/dream", "/skills", "/setup-skills", "/skill-install", "/skill-remove", "/repomap",
+            "/diff", "/undo", "/ask", "/plan", "/code", "/router", "/context-stats", "/stats", "/status",
             "/compact", "/child", "/tasks", "/cancel", "/reasoning", "/approvals", "/autonomy", "/workspace", "/clear", "/help",
         ]
         tested = set()
@@ -233,9 +233,37 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         last_block = self.ui.state.transcript[-1]
         self.assertIn("Nenhum agente ou sub-tarefa ativo", last_block.text)
 
-        await self.ui.submit("/cancel")
+    async def test_export_command_markdown_and_json(self):
+        conv = self.runtime.history.get_or_create_active()
+        self.runtime.history.repo.save_message(conv["id"], "turn_1", "user", "Hello KITT")
+        self.runtime.history.repo.save_message(conv["id"], "turn_1", "assistant", "Hello User")
+
+        await self.ui._execute_command("/export markdown")
         last_block = self.ui.state.transcript[-1]
-        self.assertIn("No active turn to cancel", last_block.text)
+        self.assertIn("Exportado: kitt_export_", last_block.text)
+
+        await self.ui._execute_command("/export json")
+        last_block2 = self.ui.state.transcript[-1]
+        self.assertIn("Exportado: kitt_export_", last_block2.text)
+
+    async def test_plan_command_toggle_and_turn_execution(self):
+        self.assertFalse(self.ui.state.planning_mode)
+        await self.ui._execute_command("/plan")
+        self.assertTrue(self.ui.state.planning_mode)
+        header_text = [t[1] for t in self.ui._header_text()]
+        self.assertTrue(any("PLAN MODE" in t for t in header_text))
+        status_text = self.ui._status_text()
+        self.assertIn("[PLAN]", status_text)
+
+        await self.ui._execute_command("/plan")
+        self.assertFalse(self.ui.state.planning_mode)
+
+    async def test_slash_command_execution_maintains_prompt_focus(self):
+        await self.ui.submit("/status")
+        self.assertIs(self.ui.application.layout.current_control, self.ui.prompt_control)
+
+        await self.ui.submit("/memory")
+        self.assertIs(self.ui.application.layout.current_control, self.ui.prompt_control)
 
 
 if __name__ == "__main__":

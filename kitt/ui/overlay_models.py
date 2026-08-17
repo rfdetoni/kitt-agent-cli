@@ -84,15 +84,34 @@ class DiffViewerModel:
         self.scroll_offset = max(0, min(self.scroll_offset + delta, max(0, len(lines) - 10)))
 
 
+class _ProvidersProperty:
+    def __get__(self, instance, owner):
+        if instance is None:
+            return owner.default_providers
+        custom_names = [cp["name"] for cp in instance.custom_providers if cp["name"] not in instance.default_providers]
+        ordered = []
+        for f in instance.favorite_providers:
+            if f not in ordered:
+                ordered.append(f)
+        for p in instance.default_providers:
+            if p not in ordered:
+                ordered.append(p)
+        for c in custom_names:
+            if c not in ordered:
+                ordered.append(c)
+        return tuple(ordered)
+
+
 class ModelSetupModel:
-    """Focusable model-role picker. Persisting is owned by KittUIApp."""
+    """Focusable model-role picker with favorites and provider dropdown support."""
 
     roles = ("principal", "context", "validation")
-    providers = (
+    default_providers = (
         "ollama", "lmstudio", "openai", "anthropic", "gemini", "deepseek",
         "groq", "together", "mistral", "openrouter", "xai", "fireworks",
         "cohere", "azure", "antigravity"
     )
+    providers = _ProvidersProperty()
 
     def __init__(self):
         self.models: list[str] = []
@@ -100,6 +119,9 @@ class ModelSetupModel:
         self.model_index = 0
         self.provider_index = 0
         self.base_url_override: str | None = None
+        self.favorite_providers: list[str] = ["ollama", "openai", "anthropic", "gemini"]
+        self.custom_providers: list[dict] = []
+        self.provider_popup_index: int = 1
 
     @property
     def selected_role(self) -> str:
@@ -111,7 +133,10 @@ class ModelSetupModel:
 
     @property
     def selected_provider(self) -> str:
-        return self.providers[self.provider_index]
+        provs = self.providers
+        if self.provider_index >= len(provs):
+            self.provider_index = 0
+        return provs[self.provider_index]
 
     def move_role(self, delta: int) -> None:
         self.role_index = (self.role_index + delta) % len(self.roles)
@@ -121,4 +146,61 @@ class ModelSetupModel:
             self.model_index = (self.model_index + delta) % len(self.models)
 
     def move_provider(self, delta: int) -> None:
-        self.provider_index = (self.provider_index + delta) % len(self.providers)
+        provs = self.providers
+        self.provider_index = (self.provider_index + delta) % len(provs)
+
+    def toggle_favorite(self, provider: str) -> bool:
+        if provider in self.favorite_providers:
+            self.favorite_providers.remove(provider)
+            return False
+        else:
+            self.favorite_providers.append(provider)
+            return True
+
+    def add_custom_provider(self, name: str, base_url: str, backend: str = "openai") -> None:
+        name = name.strip().lower()
+        if not name:
+            return
+        self.custom_providers = [cp for cp in self.custom_providers if cp["name"] != name]
+        self.custom_providers.append({"name": name, "base_url": base_url.strip(), "backend": backend})
+        if name not in self.favorite_providers:
+            self.favorite_providers.append(name)
+        provs = self.providers
+        if name in provs:
+            self.provider_index = provs.index(name)
+
+    def get_popup_entries(self) -> list[dict]:
+        entries = []
+        entries.append({"kind": "header", "title": "⭐ PROVEDORES FAVORITOS", "id": ""})
+        for f in self.favorite_providers:
+            entries.append({"kind": "provider", "name": f, "is_favorite": True, "id": f})
+
+        others = [p for p in self.providers if p not in self.favorite_providers]
+        if others:
+            entries.append({"kind": "header", "title": "🌐 TODOS OS PROVEDORES", "id": ""})
+            for o in others:
+                entries.append({"kind": "provider", "name": o, "is_favorite": False, "id": o})
+
+        entries.append({"kind": "header", "title": "➕ AÇÕES", "id": ""})
+        entries.append({"kind": "action", "name": "add_provider", "title": "[+ Adicionar Novo Provedor Customizado]", "id": "add_provider"})
+        return entries
+
+    def get_selectable_indices(self) -> list[int]:
+        entries = self.get_popup_entries()
+        return [idx for idx, e in enumerate(entries) if e["kind"] in ("provider", "action")]
+
+    def move_popup_selection(self, delta: int) -> None:
+        selectables = self.get_selectable_indices()
+        if not selectables:
+            return
+        curr_selectable_pos = 0
+        if self.provider_popup_index in selectables:
+            curr_selectable_pos = selectables.index(self.provider_popup_index)
+        next_pos = (curr_selectable_pos + delta) % len(selectables)
+        self.provider_popup_index = selectables[next_pos]
+
+    def get_selected_popup_entry(self) -> dict | None:
+        entries = self.get_popup_entries()
+        if 0 <= self.provider_popup_index < len(entries):
+            return entries[self.provider_popup_index]
+        return None

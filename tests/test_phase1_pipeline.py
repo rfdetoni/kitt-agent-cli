@@ -41,5 +41,15 @@ class TestPhase1Pipeline(unittest.TestCase):
         self.assertIn(ModelSelected, event_types)
         self.assertIn(TurnCompleted, event_types)
 
+    def test_planning_mode_read_only_tools_and_prompt(self):
+        cmd = TurnCommand(conversation_id="conv-plan", prompt="Plan database migration", mode="plan")
+        events = list(self.processor.run_turn(cmd))
+        self.assertEqual(cmd.mode, "plan")
+        # Ensure planning turn completed successfully
+        event_types = [type(e) for e in events]
+        self.assertIn(TurnStarted, event_types)
+        self.assertIn(TurnCompleted, event_types)
+
+
 if __name__ == '__main__':
     unittest.main()

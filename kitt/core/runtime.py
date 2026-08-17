@@ -29,10 +29,19 @@ from kitt.tools.approval import ApprovalManager
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.registry import ToolRegistry
 from kitt.index.repository import RepositoryIndex
+from kitt.core.autonomy_store import AutonomyStore
+from kitt.security.egress import EgressPolicy
+from kitt.security.sensitive_data import SensitiveDataScanner
+from kitt.security.path_policy import PathPolicy
+from kitt.security.network_policy import NetworkPolicy
+from kitt.dreaming.repository import MemoryRepository
+from kitt.dreaming.service import DreamingService
+from kitt.dreaming.scheduler import DreamScheduler
 
 
 @dataclass
 class KittRuntime:
+    """Primary composition container orchestrating all K.I.T.T. runtime services and lifecycle."""
     config: RuntimeConfig
     database: HistoryDatabase
     history: HistoryService
@@ -55,6 +64,13 @@ class KittRuntime:
     processor: TurnProcessor
     memory: MemoryManager
     autonomy_store: AutonomyStore
+    egress_policy: EgressPolicy
+    sensitive_scanner: SensitiveDataScanner
+    path_policy: PathPolicy
+    network_policy: NetworkPolicy
+    memory_repo: Optional[MemoryRepository] = None
+    dream_service: Optional[DreamingService] = None
+    dream_scheduler: Optional[DreamScheduler] = None
 
     def __post_init__(self):
         self._closed = False
@@ -63,7 +79,6 @@ class KittRuntime:
     @classmethod
     def build(cls, root_dir: str, config: Optional[RuntimeConfig] = None) -> "KittRuntime":
         from kitt.core.workspace_identity import canonical_workspace_path
-        from kitt.core.autonomy_store import AutonomyStore
         config = config or RuntimeConfig()
         canon_root = canonical_workspace_path(root_dir)
         ephemeral = config.ephemeral
@@ -80,10 +95,6 @@ class KittRuntime:
         autonomy_store = AutonomyStore(canon_root, persistence_enabled=persistence_enabled)
         approval = ApprovalManager(db=db, ttl_seconds=config.approval_ttl_seconds)
         policy = PolicyEngine(canon_root, autonomy=autonomy_store.get(), approval_manager=approval)
-        from kitt.security.egress import EgressPolicy
-        from kitt.security.sensitive_data import SensitiveDataScanner
-        from kitt.security.path_policy import PathPolicy
-        from kitt.security.network_policy import NetworkPolicy
 
         repository_index = RepositoryIndex(
             canon_root,
@@ -119,11 +130,22 @@ class KittRuntime:
             event_callback=lambda name, payload: events.publish(name, payload),
         )
         registry.attach_services(artifacts, queue, goals, children, harness)
-        memory = MemoryManager(canon_root, persistence_enabled=persistence_enabled)
+        memory_repo = MemoryRepository(db)
+        memory = MemoryManager(canon_root, persistence_enabled=persistence_enabled, memory_repo=memory_repo, workspace_id=identity.id)
         egress_policy = EgressPolicy(mode=getattr(config, "privacy_mode", "hybrid_redacted"))
         sensitive_scanner = SensitiveDataScanner()
         path_policy = PathPolicy(canon_root)
         network_policy = NetworkPolicy()
+
+        dream_service = DreamingService(
+            db=db,
+            memory_repo=memory_repo,
+            history_repo=history_repo,
+            session_tree=tree,
+            root_dir=canon_root,
+            egress_policy=egress_policy,
+            event_callback=lambda name, payload: events.publish(name, payload),
+        )
 
         processor = TurnProcessor(
             canon_root,
@@ -148,17 +170,36 @@ class KittRuntime:
 
         registry.path_policy = path_policy
 
-        runtime = cls(
+        def _is_idle() -> bool:
+            active_conv = history.get_active_read_only()
+            conv_id = active_conv["id"] if active_conv else ""
+            pending = len(processor.pending_actions)
+            queued = len(queue.repo.pending(conv_id)) if conv_id else 0
+            has_pending_approval = bool(approval.list_pending())
+            return pending == 0 and queued == 0 and not has_pending_approval
+
+        dream_scheduler = DreamScheduler(
+            dream_service=dream_service,
+            memory_repo=memory_repo,
+            db=db,
+            config=config,
+            idle_checker=_is_idle,
+            workspace_id_getter=lambda: identity.id,
+        )
+
+        return cls(
             config, db, history, artifacts, metrics, policy, approval, repository_index,
             context_engine, working_set, registry, skills,
             harness, goals, queue, children, compaction, tree, events, processor,
             memory, autonomy_store,
+            egress_policy,
+            sensitive_scanner,
+            path_policy,
+            network_policy,
+            memory_repo=memory_repo,
+            dream_service=dream_service,
+            dream_scheduler=dream_scheduler,
         )
-        runtime.egress_policy = egress_policy
-        runtime.sensitive_scanner = sensitive_scanner
-        runtime.path_policy = path_policy
-        runtime.network_policy = network_policy
-        return runtime
 
     @property
     def workspace_id(self) -> str:
@@ -192,6 +233,7 @@ class KittRuntime:
             self._closed = True
             errors = []
             for name, close in (
+                ("dream_scheduler", getattr(self.dream_scheduler, "close", lambda: None)),
                 ("processor", self.processor.close), ("children", self.children.close),
                 ("metrics", self.metrics.close), ("artifacts", self.artifacts.close),
                 ("events", self.events.close), ("database", self.database.close),

@@ -44,4 +44,22 @@ class SearchReplaceParser:
                 is_deletion=is_deletion
             ))
 
+        if not blocks and text.strip():
+            clean = text.strip()
+            first_line = clean.splitlines()[0].strip(":`'\"#* ")
+            m_file = self.FILENAME_EXTRACTOR.search(first_line)
+            if m_file and len(clean.splitlines()) > 1:
+                target_file = m_file.group(1)
+                body = "\n".join(clean.splitlines()[1:]).strip()
+                code_m = re.search(r'```(?:[a-zA-Z0-9_\-]+)?\s*\n([\s\S]*?)\n```', body)
+                replace_content = code_m.group(1) if code_m else body
+                if replace_content and (code_m or target_file.endswith(('.html', '.css', '.js', '.ts', '.tsx', '.jsx', '.py', '.json', '.md', '.txt', '.sh'))):
+                    blocks.append(EditBlock(
+                        file_path=target_file,
+                        search_content="",
+                        replace_content=replace_content,
+                        is_new_file=False,
+                        is_deletion=False
+                    ))
+
         return blocks

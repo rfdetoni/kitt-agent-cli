@@ -3,8 +3,11 @@ import urllib.request
 import urllib.error
 import socket
 import threading
+import time
+import random
 from typing import Generator, List, Dict, Any, Optional
 from kitt.domain.entities import ModelProfile
+from kitt.llm.retry import RetryPolicy, RetryConfig
 
 LFM_CHAT_TEMPLATE = """{{ if .System }}<|startoftext|><|im_start|>system
 {{ .System }}<|im_end|>
@@ -32,14 +35,21 @@ class UnsupportedProviderError(LLMError):
     """Raised when backend provider is unknown or unsupported."""
 
 
+def _with_retry(fn, max_retries: int = 3, base_delay: float = 0.5):
+    """Backward-compatible helper delegating to RetryPolicy."""
+    policy = RetryPolicy(RetryConfig(max_retries=max_retries, base_delay_ms=int(base_delay * 1000)))
+    yield from policy.execute_with_retry(fn)
+
+
 class LLMClient:
     """Native Python HTTP client for Ollama and OpenAI-compatible APIs."""
 
-    def __init__(self, profile: ModelProfile, executor=None):
+    def __init__(self, profile: ModelProfile, executor=None, retry_policy: Optional[RetryPolicy] = None):
         import concurrent.futures
         self.profile = profile
         self._external_executor = executor is not None
         self._executor = executor or concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="llm_client_worker")
+        self.retry_policy = retry_policy or RetryPolicy()
 
     def close(self):
         """Shut down owned thread pool executor."""
@@ -126,13 +136,21 @@ class LLMClient:
         }
 
         if backend == "ollama":
-            yield from self._chat_ollama_stream(messages, system_prompt, response_format)
+            yield from _with_retry(
+                lambda: self._chat_ollama_stream(messages, system_prompt, response_format)
+            )
         elif backend in OPENAI_COMPATIBLE:
-            yield from self._chat_openai_stream(messages, system_prompt, response_format)
+            yield from _with_retry(
+                lambda: self._chat_openai_stream(messages, system_prompt, response_format)
+            )
         elif backend == "anthropic":
-            yield from self._chat_anthropic_stream(messages, system_prompt, response_format)
+            yield from _with_retry(
+                lambda: self._chat_anthropic_stream(messages, system_prompt, response_format)
+            )
         elif backend == "antigravity":
-            yield from self._chat_antigravity_stream(messages, system_prompt, response_format)
+            yield from _with_retry(
+                lambda: self._chat_antigravity_stream(messages, system_prompt, response_format)
+            )
         else:
             raise UnsupportedProviderError(f"Backend '{self.profile.backend}' is unsupported or unknown.")
 
@@ -142,7 +160,79 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None
     ) -> Generator[str, None, None]:
-        yield from self._generate_ollama_stream(messages, system_prompt, response_format)
+        if "lfm" in self.profile.model.lower():
+            yield from self._generate_ollama_stream(messages, system_prompt, response_format)
+            return
+
+        url = f"{self.profile.base_url.rstrip('/')}/api/chat"
+        formatted_messages = []
+        if system_prompt:
+            formatted_messages.append({"role": "system", "content": system_prompt})
+        for m in messages:
+            formatted_messages.append({"role": m["role"], "content": m["content"]})
+
+        payload: Dict[str, Any] = {
+            "model": self.profile.model,
+            "messages": formatted_messages,
+            "stream": True,
+            "options": {
+                "temperature": self.profile.temperature,
+                "num_ctx": self.profile.context_window,
+                "num_predict": self.profile.max_output_tokens,
+            },
+        }
+        if response_format == "json":
+            payload["format"] = "json"
+        if self.profile.keep_alive:
+            payload["keep_alive"] = self.profile.keep_alive
+
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.profile.request_timeout_seconds) as response:
+                in_thinking = False
+                for line in response:
+                    if line:
+                        chunk_obj = json.loads(line.decode("utf-8"))
+                        msg = chunk_obj.get("message", {})
+                        content = msg.get("content", "") or chunk_obj.get("response", "")
+                        thinking = msg.get("thinking", "") or msg.get("reasoning_content", "") or msg.get("thought", "")
+                        if thinking:
+                            if not in_thinking:
+                                in_thinking = True
+                                yield "<think>"
+                            yield thinking
+                        else:
+                            if in_thinking:
+                                in_thinking = False
+                                yield "</think>\n"
+                            if content:
+                                yield content
+                if in_thinking:
+                    yield "</think>\n"
+        except socket.timeout:
+            raise LLMTimeoutError(f"Ollama request timed out after {self.profile.request_timeout_seconds}s")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                yield from self._generate_ollama_stream(messages, system_prompt, response_format)
+                return
+            body = ""
+            try:
+                body = e.read().decode("utf-8")
+                err_json = json.loads(body)
+                if "error" in err_json:
+                    body = err_json["error"] if isinstance(err_json["error"], str) else err_json["error"].get("message", body)
+            except Exception:
+                pass
+            err_detail = f"HTTP Error {e.code}: {e.reason}" + (f" - {body}" if body else "")
+            raise LLMConnectionError(f"Could not connect to Ollama at {url}: {err_detail}")
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, socket.timeout):
+                raise LLMTimeoutError(f"Ollama request timed out after {self.profile.request_timeout_seconds}s")
+            # Try fallback to generate
+            try:
+                yield from self._generate_ollama_stream(messages, system_prompt, response_format)
+            except Exception:
+                raise LLMConnectionError(f"Could not connect to Ollama at {url}: {e}")
 
     def _generate_ollama_stream(
         self,
@@ -179,6 +269,19 @@ class LLMClient:
                             yield content
         except socket.timeout:
             raise LLMTimeoutError(f"Ollama request timed out after {self.profile.request_timeout_seconds}s")
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8")
+                err_json = json.loads(body)
+                if "error" in err_json:
+                    body = err_json["error"] if isinstance(err_json["error"], str) else err_json["error"].get("message", body)
+            except Exception:
+                pass
+            err_detail = f"HTTP Error {e.code}: {e.reason}" + (f" - {body}" if body else "")
+            if e.code == 404:
+                raise LLMConnectionError(f"Model '{self.profile.model}' not found in Ollama at {self.profile.base_url} ({err_detail}). Configure an installed model via /setup-models or run 'ollama pull {self.profile.model}'.")
+            raise LLMConnectionError(f"Could not connect to Ollama at {url}: {err_detail}")
         except urllib.error.URLError as e:
             if isinstance(e.reason, socket.timeout):
                 raise LLMTimeoutError(f"Ollama request timed out after {self.profile.request_timeout_seconds}s")
@@ -217,7 +320,8 @@ class LLMClient:
         headers = {"Content-Type": "application/json"}
         if self.profile.api_key:
             headers["Authorization"] = f"Bearer {self.profile.api_key}"
-            headers["api-key"] = self.profile.api_key
+            if (self.profile.backend or "").lower() == "azure":
+                headers["api-key"] = self.profile.api_key
 
         backend = (self.profile.backend or "").lower()
         if backend == "openrouter":
@@ -244,6 +348,17 @@ class LLMClient:
                             yield delta
         except socket.timeout:
             raise LLMTimeoutError(f"LLM request timed out after {self.profile.request_timeout_seconds}s")
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8")
+                err_json = json.loads(body)
+                if "error" in err_json:
+                    body = err_json["error"] if isinstance(err_json["error"], str) else err_json["error"].get("message", body)
+            except Exception:
+                pass
+            err_detail = f"HTTP Error {e.code}: {e.reason}" + (f" - {body}" if body else "")
+            raise LLMConnectionError(f"Error from {self.profile.backend} at {url}: {err_detail}")
         except urllib.error.URLError as e:
             if isinstance(e.reason, socket.timeout):
                 raise LLMTimeoutError(f"LLM request timed out after {self.profile.request_timeout_seconds}s")
@@ -297,6 +412,17 @@ class LLMClient:
                             pass
         except socket.timeout:
             raise LLMTimeoutError(f"Anthropic request timed out after {self.profile.request_timeout_seconds}s")
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8")
+                err_json = json.loads(body)
+                if "error" in err_json:
+                    body = err_json["error"] if isinstance(err_json["error"], str) else err_json["error"].get("message", body)
+            except Exception:
+                pass
+            err_detail = f"HTTP Error {e.code}: {e.reason}" + (f" - {body}" if body else "")
+            raise LLMConnectionError(f"Error from Anthropic at {url}: {err_detail}")
         except urllib.error.URLError as e:
             raise LLMConnectionError(f"Could not connect to Anthropic endpoint at {url}: {e}")
 

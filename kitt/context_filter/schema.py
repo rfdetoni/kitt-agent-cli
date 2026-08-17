@@ -12,9 +12,23 @@ class ContextFilterSchemaValidator:
     """Validates raw LLM JSON responses against SemanticTask and ContextPlan contracts."""
 
     @staticmethod
+    def _validate_nesting_depth(obj: Any, depth: int = 1, max_depth: int = 10) -> None:
+        if depth > max_depth:
+            raise ValueError(f"JSON nesting depth exceeds safety limit of {max_depth}")
+        if isinstance(obj, dict):
+            for v in obj.values():
+                ContextFilterSchemaValidator._validate_nesting_depth(v, depth + 1, max_depth)
+        elif isinstance(obj, list):
+            for item in obj:
+                ContextFilterSchemaValidator._validate_nesting_depth(item, depth + 1, max_depth)
+
+    @staticmethod
     def _parse_json_robust(s: str) -> dict:
         import re
         import ast
+
+        if len(s) > 65536:
+            raise ValueError(f"Payload size {len(s)} bytes exceeds 64KB safety limit")
 
         cleaned = s.strip()
         if "```" in cleaned:
@@ -27,7 +41,10 @@ class ContextFilterSchemaValidator:
             cleaned = cleaned[start:end+1]
 
         try:
-            return json.loads(cleaned)
+            res = json.loads(cleaned)
+            if isinstance(res, dict):
+                ContextFilterSchemaValidator._validate_nesting_depth(res)
+                return res
         except Exception:
             pass
 
@@ -104,65 +121,78 @@ class ContextFilterSchemaValidator:
         # 7. Strip non-printable ASCII control chars except \n, \t, \r
         repaired = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', repaired)
 
+        parsed_dict = None
         try:
-            return json.loads(repaired)
+            res = json.loads(repaired)
+            if isinstance(res, dict):
+                parsed_dict = res
         except Exception:
             pass
 
         # 8. Fallback: ast.literal_eval on python dict representation
-        try:
-            py_dict = ast.literal_eval(cleaned)
-            if isinstance(py_dict, dict):
-                return py_dict
-        except Exception:
-            pass
+        if parsed_dict is None:
+            try:
+                py_dict = ast.literal_eval(cleaned)
+                if isinstance(py_dict, dict):
+                    parsed_dict = py_dict
+            except Exception:
+                pass
 
-        try:
-            py_repaired = re.sub(r'\btrue\b', 'True', repaired)
-            py_repaired = re.sub(r'\bfalse\b', 'False', py_repaired)
-            py_repaired = re.sub(r'\bnull\b', 'None', py_repaired)
-            py_dict = ast.literal_eval(py_repaired)
-            if isinstance(py_dict, dict):
-                return py_dict
-        except Exception:
-            pass
+        if parsed_dict is None:
+            try:
+                py_repaired = re.sub(r'\btrue\b', 'True', repaired)
+                py_repaired = re.sub(r'\bfalse\b', 'False', py_repaired)
+                py_repaired = re.sub(r'\bnull\b', 'None', py_repaired)
+                py_dict = ast.literal_eval(py_repaired)
+                if isinstance(py_dict, dict):
+                    parsed_dict = py_dict
+            except Exception:
+                pass
 
         # 9. Fallback: Auto-close truncated JSON (unclosed strings, brackets, braces)
-        try:
-            closed = repaired.strip()
-            unescaped_quotes = len(re.findall(r'(?<!\\)"', closed))
-            if unescaped_quotes % 2 != 0:
-                closed += '"'
-            stack = []
-            in_str = False
-            escape = False
-            for ch in closed:
-                if escape:
-                    escape = False
-                    continue
-                if ch == '\\':
-                    escape = True
-                    continue
-                if ch == '"':
-                    in_str = not in_str
-                    continue
-                if not in_str:
-                    if ch in "{[":
-                        stack.append(ch)
-                    elif ch in "}]":
-                        if stack and ((ch == "}" and stack[-1] == "{") or (ch == "]" and stack[-1] == "[")):
-                            stack.pop()
-            for opener in reversed(stack):
-                if opener == "{":
-                    closed += "}"
-                elif opener == "[":
-                    closed += "]"
-            closed = re.sub(r',\s*([\}\]])', r'\1', closed)
-            return json.loads(closed)
-        except Exception:
-            pass
+        if parsed_dict is None:
+            try:
+                closed = repaired.strip()
+                unescaped_quotes = len(re.findall(r'(?<!\\)"', closed))
+                if unescaped_quotes % 2 != 0:
+                    closed += '"'
+                stack = []
+                in_str = False
+                escape = False
+                for ch in closed:
+                    if escape:
+                        escape = False
+                        continue
+                    if ch == '\\':
+                        escape = True
+                        continue
+                    if ch == '"':
+                        in_str = not in_str
+                        continue
+                    if not in_str:
+                        if ch in "{[":
+                            stack.append(ch)
+                        elif ch in "}]":
+                            if stack and ((ch == "}" and stack[-1] == "{") or (ch == "]" and stack[-1] == "[")):
+                                stack.pop()
+                for opener in reversed(stack):
+                    if opener == "{":
+                        closed += "}"
+                    elif opener == "[":
+                        closed += "]"
+                closed = re.sub(r',\s*([\}\]])', r'\1', closed)
+                res = json.loads(closed)
+                if isinstance(res, dict):
+                    parsed_dict = res
+            except Exception:
+                pass
 
-        return json.loads(repaired)
+        if parsed_dict is None:
+            parsed_dict = json.loads(repaired)
+
+        if isinstance(parsed_dict, dict):
+            ContextFilterSchemaValidator._validate_nesting_depth(parsed_dict)
+        return parsed_dict
 
     @staticmethod
     def validate_and_parse_task(raw_json_str: str, original_prompt: str) -> Tuple[bool, SemanticTask, str]:
@@ -215,15 +245,20 @@ class ContextFilterSchemaValidator:
                             )
                         )
 
+            goal = str(data.get("goal", "")).strip()[:300]
+            validation_hints = [str(v).strip()[:200] for v in data.get("validation_hints", []) if str(v).strip()][:8]
+
             task = SemanticTask(
                 original_prompt=original_prompt,
                 intent=intent,
                 secondary_intents=[i for i in data.get("secondary_intents", []) if i in VALID_INTENTS],
-                actions=[str(a) for a in data.get("actions", [])[:8]],
-                symbols=[str(s) for s in data.get("symbols", [])[:20]],
-                paths=[str(p) for p in data.get("paths", [])[:12] if ".." not in str(p)],
-                technologies=[str(t) for t in data.get("technologies", [])[:10]],
+                goal=goal,
+                actions=[str(a).strip()[:200] for a in data.get("actions", []) if str(a).strip()][:8],
+                symbols=[str(s).strip() for s in data.get("symbols", []) if str(s).strip()][:20],
+                paths=[str(p).strip() for p in data.get("paths", []) if str(p).strip() and ".." not in str(p)][:12],
+                technologies=[str(t).strip() for t in data.get("technologies", []) if str(t).strip()][:10],
                 constraints=valid_constraints[:12],
+                validation_hints=validation_hints,
                 risk=risk,
                 confidence=confidence
             )

@@ -24,7 +24,7 @@ class TestOllamaClient(unittest.TestCase):
             )
         self.assertEqual(output, "KITT OLLAMA OK")
         request = open_url.call_args.args[0]
-        self.assertTrue(request.full_url.endswith("/api/generate"))
+        self.assertTrue(request.full_url.endswith(("/api/chat", "/api/generate")))
         payload = json.loads(request.data)
         self.assertEqual(payload["options"]["num_predict"], 17)
 

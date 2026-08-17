@@ -96,3 +96,55 @@ class QueryPlanner:
             token_budget=token_budget,
             confidence=features.confidence,
         )
+
+    @classmethod
+    def plan_task(
+        cls,
+        task: Any,
+        explicit_files=(),
+        token_budget: int = 2048,
+        candidate_limit: int = 20,
+        deadline_ms: int = 120,
+    ) -> QueryPlan:
+        """Derive QueryPlan directly from compiled SemanticTask IR."""
+        if not hasattr(task, "intent") or not hasattr(task, "paths"):
+            return cls.plan(str(task), explicit_files, token_budget, candidate_limit, deadline_ms)
+
+        paths = tuple(dict.fromkeys((*task.paths, *explicit_files)))
+        symbols = tuple(dict.fromkeys(task.symbols))[:16]
+        
+        # Extract lexical terms from goal and actions
+        raw_words = []
+        if getattr(task, "goal", ""):
+            raw_words.extend(cls._IDENT_RE.findall(task.goal))
+        for act in getattr(task, "actions", ()):
+            raw_words.extend(cls._IDENT_RE.findall(act))
+        terms = tuple(dict.fromkeys(w.lower() for w in raw_words if w.lower() not in cls._STOP))[:12]
+        
+        diagnostics = tuple(
+            h.strip()[:240] for h in getattr(task, "validation_hints", ())
+            if cls._DIAG_RE.search(h)
+        )[:8]
+
+        intent = str(getattr(task, "intent", "UNKNOWN"))
+        is_test_related = intent == "TEST" or any(
+            "test" in a.lower() for a in getattr(task, "actions", ())
+        )
+
+        return QueryPlan(
+            intent=intent,
+            exact_paths=paths,
+            exact_symbols=symbols,
+            lexical_terms=terms,
+            diagnostics=diagnostics,
+            preferred_languages=tuple(getattr(task, "technologies", ())),
+            preferred_modules=(),
+            include_tests=is_test_related,
+            include_dependents=intent in ("REFACTOR", "DEBUG"),
+            include_dependencies=intent in ("IMPLEMENT", "DEBUG", "READ", "TEST"),
+            graph_hops=1,
+            candidate_limit=candidate_limit,
+            deadline_ms=deadline_ms,
+            token_budget=token_budget,
+            confidence=float(getattr(task, "confidence", 1.0)),
+        )

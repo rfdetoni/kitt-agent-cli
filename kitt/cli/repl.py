@@ -42,12 +42,18 @@ from kitt.history.service import HistoryService
 from kitt.cli.doctor import DoctorCheck
 from kitt.cli.ui import prompt_dropdown
 
-# Knight Rider Red LED Scanner & Tech Dashboard Banner
+# Knight Rider Red LED Scanner & Large High-Tech ASCII Art Banner
 KITT_BANNER_TEMPLATE = """\
-\033[1;31m  ┌─────────────────────────────────────────────────────────────┐
-  │  \033[1;91m[░▒▓█\033[1;31m██████████████████\033[1;91m█▓▒░]\033[1;31m   K.I.T.T. SYSTEM ONLINE    │
-  └─────────────────────────────────────────────────────────────┘\033[0m
-  \033[1;37mK.I.T.T.\033[0m — \033[1;36mKnowledge & Inference Task Tool\033[0m \033[90mv1.0.0\033[0m
+\033[1;31m  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │  \033[1;91m[ ░▒▓████████████████████████████████████████████████████████████████▓▒░ ]\033[1;31m  │
+  └─────────────────────────────────────────────────────────────────────────────┘\033[0m
+\033[1;31m   ██╗  ██╗    ██╗    ████████╗   ████████╗
+   ██║ ██╔╝    ██║    ╚══██╔══╝   ╚══██╔══╝
+   █████╔╝     ██║       ██║         ██║   
+   ██╔═██╗     ██║       ██║         ██║   
+   ██║  ██╗    ██║       ██║         ██║   
+   ╚═╝  ╚═╝    ╚═╝       ╚═╝         ╚═╝   \033[0m
+  \033[1;37mK.I.T.T.\033[0m — \033[1;36mKnowledge & Inference Task Tool\033[0m \033[90mv1.0.0 • SYSTEM ONLINE\033[0m
   \033[90mKnight Rider Subsystem • Autonomous AI Coding Architecture\033[0m
 
   \033[1;32m●\033[0m \033[1;37mWorkspace\033[0m      : \033[36m{workspace}\033[0m \033[90m(git: {git_branch})\033[0m
@@ -87,6 +93,7 @@ SLASH_COMMANDS = {
     "/undo": "Revert recent git commit or uncommitted changes",
     "/run": "Execute shell command within security policy",
     "/ask": "Ask question without making code edits",
+    "/plan": "Toggle planning mode or generate execution plan: /plan [prompt]",
     "/code": "Force code editing mode with SEARCH/REPLACE diffs",
     "/status": "Show consolidated runtime snapshot and telemetry",
     "/compact": "Trigger bounded conversation history compaction",
@@ -251,6 +258,15 @@ class KittREPL:
                     continue
 
                 if user_input.startswith('/'):
+                    if user_input.startswith("/plan "):
+                        prefix, value = user_input.split(maxsplit=1)
+                        await self.aprocess_turn(value, mode="plan")
+                        continue
+                    if user_input.strip() == "/plan":
+                        self.planning_mode = not getattr(self, "planning_mode", False)
+                        status = "\033[32mATIVADO (Read-Only Plan Mode)\033[0m" if self.planning_mode else "\033[33mDESATIVADO (Normal Mode)\033[0m"
+                        print(f"\033[1;36m[K.I.T.T.] Modo de Planejamento: {status}\033[0m")
+                        continue
                     if user_input.startswith("/ask ") or user_input.startswith("/code "):
                         prefix, value = user_input.split(maxsplit=1)
                         marker = "[QUESTION ONLY - NO CODE EDITS]" if prefix == "/ask" else "[CODE EDIT REQUIRED]"
@@ -590,12 +606,14 @@ class KittREPL:
             print("\n" + response, end="", flush=True)
         return response
 
-    async def aprocess_turn(self, user_prompt: str):
+    async def aprocess_turn(self, user_prompt: str, mode: str | None = None):
         active_conv = self.history_service.get_or_create_active()
+        turn_mode = mode or ("plan" if getattr(self, "planning_mode", False) else "auto")
         
         cmd = TurnCommand(
             conversation_id=active_conv["id"],
             prompt=user_prompt,
+            mode=turn_mode,
             explicit_files=self.explicit_files,
             no_history=self.no_history
         )

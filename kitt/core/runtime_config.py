@@ -57,6 +57,15 @@ class RuntimeConfig:
     max_index_files: int = 20000
     max_index_bytes: int = 256 * 1024 * 1024
 
+    # Dreaming Mode
+    dream_enabled: bool = True
+    dream_auto_enabled: bool = False
+    dream_auto_commit: bool = False
+    dream_min_interval_hours: int = 24
+    dream_min_completed_sessions: int = 5
+    dream_max_sessions: int = 20
+    dream_max_entries: int = 200
+
     # Context / budget
     context_window_default: int = 8192
     reserved_output_tokens: int = 1200

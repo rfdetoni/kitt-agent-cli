@@ -37,6 +37,34 @@ class CompactionService:
         return CompactionResult(cid,conversation_id,entry.id,summary,before,after,valid,details)
     @staticmethod
     def _deterministic_summary(text: str) -> str:
-        lines=[line.strip() for line in text.splitlines() if line.strip()]
-        if len(lines)<=24: return "\n".join(lines)
-        return "\n".join(lines[:16]+["[... compacted ...]"]+lines[-8:])
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if len(lines) <= 24:
+            return "\n".join(lines)
+
+        signal_keywords = (
+            "error", "fail", "failed", "warning", "todo", "fixme", "constraint",
+            "must", "must not", "path", "file", "class", "def", "function",
+            "method", "import", "return", "raise", "test", "pytest", "git",
+            "changed", "created", "deleted", "decision", "result", "applied"
+        )
+
+        selected_indices = set(range(min(8, len(lines))))
+        selected_indices.update(range(max(0, len(lines) - 8), len(lines)))
+
+        for i in range(8, len(lines) - 8):
+            line_lower = lines[i].lower()
+            if any(sig in line_lower for sig in signal_keywords):
+                selected_indices.add(i)
+                if len(selected_indices) >= 32:
+                    break
+
+        ordered = sorted(selected_indices)
+        res = []
+        last_idx = -1
+        for idx in ordered:
+            if last_idx != -1 and idx > last_idx + 1:
+                res.append("[... compacted ...]")
+            res.append(lines[idx])
+            last_idx = idx
+
+        return "\n".join(res)

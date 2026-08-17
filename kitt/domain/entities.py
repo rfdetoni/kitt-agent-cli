@@ -31,6 +31,22 @@ TaskIntent = Literal[
 RiskLevel = Literal['LOW', 'MEDIUM', 'HIGH']
 Permission = Literal['ALLOW', 'ASK', 'DENY']
 ConstraintKind = Literal['NEGATIVE', 'MANDATORY', 'LIMIT', 'SCOPE']
+SourceKind = Literal['USER_LITERAL', 'DETERMINISTIC', 'LLM_NORMALIZED', 'REPOSITORY_EVIDENCE', 'TOOL_RESULT']
+
+
+@dataclass
+class SemanticConfidence:
+    intent: float = 1.0
+    goal: float = 1.0
+    targets: float = 1.0
+    constraints: float = 1.0
+    actions: float = 1.0
+    overall: float = 1.0
+
+    @classmethod
+    def from_overall(cls, val: float) -> SemanticConfidence:
+        return cls(intent=val, goal=val, targets=val, constraints=val, actions=val, overall=val)
+
 
 @dataclass
 class Constraint:
@@ -39,19 +55,52 @@ class Constraint:
     source_start: int
     source_end: int
     mandatory: bool = True
+    source: SourceKind = 'USER_LITERAL'
+
 
 @dataclass
 class SemanticTask:
     original_prompt: str
     intent: TaskIntent = 'UNKNOWN'
     secondary_intents: List[TaskIntent] = field(default_factory=list)
+    goal: str = ""
     actions: List[str] = field(default_factory=list)
     symbols: List[str] = field(default_factory=list)
     paths: List[str] = field(default_factory=list)
     technologies: List[str] = field(default_factory=list)
     constraints: List[Constraint] = field(default_factory=list)
+    validation_hints: List[str] = field(default_factory=list)
     risk: RiskLevel = 'LOW'
     confidence: float = 1.0
+    semantic_confidence: SemanticConfidence = field(default_factory=SemanticConfidence)
+
+    def fingerprint(self) -> str:
+        import hashlib
+        import json
+        payload = {
+            "intent": self.intent,
+            "goal": self.goal.strip().lower(),
+            "paths": sorted(self.paths),
+            "symbols": sorted(self.symbols),
+            "constraints": sorted([c.text.strip().lower() for c in self.constraints]),
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+    def to_execution_prompt(self) -> str:
+        parts = [f"Intent: {self.intent}"]
+        if self.goal:
+            parts.append(f"Goal:\n{self.goal}")
+        if self.actions:
+            acts = "\n".join(f"- {a}" for a in self.actions)
+            parts.append(f"Actions:\n{acts}")
+        targets = list(dict.fromkeys(self.paths + self.symbols))
+        if targets:
+            tgts = "\n".join(f"- {t}" for t in targets)
+            parts.append(f"Targets:\n{tgts}")
+        if self.validation_hints:
+            val = "\n".join(f"- {v}" for v in self.validation_hints)
+            parts.append(f"Validation:\n{val}")
+        return "\n\n".join(parts)
 
 @dataclass
 class ContextPlan:

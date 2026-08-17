@@ -186,12 +186,12 @@ class HistoryRepository:
         return True
 
     def save_message(self, conv_id: str, turn_id: str, role: str, content: str, token_count: int = 0) -> str:
-        import re
+        from kitt.history.redaction import redact
         msg_id = uuid.uuid4().hex
         now = time.time()
 
-        # Redaction: Replace typical API keys / secrets before persisting
-        content = re.sub(r'(?i)(bearer\s+|api_key[\s=:]+|secret[\s=:]+)[A-Za-z0-9_\-\.]{15,}', r'\1[REDACTED]', content)
+        # Redaction: Centralized redaction before persisting
+        content = redact(content)
 
         c_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
         with self.db.get_connection() as conn:

@@ -29,13 +29,19 @@ class DeterministicFallbackPlanner:
         elif 'plan' in prompt_lower:
             intent = 'PLAN'
 
+        goal = prompt.strip()[:300]
+        actions = ['analyze'] if intent == 'ASK' else ['analyze', 'edit']
+        validation_hints = ['run tests'] if intent == 'TEST' else []
+
         return SemanticTask(
             original_prompt=prompt,
             intent=intent,
-            actions=['analyze'] if intent == 'ASK' else ['analyze', 'edit'],
+            goal=goal,
+            actions=actions,
             symbols=symbols,
             paths=paths,
             constraints=constraints,
+            validation_hints=validation_hints,
             confidence=1.0
         )
 

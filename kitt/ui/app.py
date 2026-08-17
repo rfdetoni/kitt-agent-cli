@@ -5,6 +5,7 @@ import concurrent.futures
 import functools
 import json
 import os
+import re
 import shlex
 import urllib.request
 import uuid
@@ -20,6 +21,17 @@ from kitt.ui.overlay_models import DiffViewerModel, ModelSetupModel, OverlayFram
 from kitt.ui.reducer import reduce_ui_event
 from kitt.ui.state import UIState, safe_text
 from kitt.ui.theme import DEFAULT_THEME
+from kitt.ui.model_commands import handle_model_command, handle_setup_models_command, parse_model_command
+from kitt.ui.session_commands import (
+    handle_resume_command, handle_fork_command, handle_export_command,
+    handle_compact_command, handle_stats_command, handle_status_command
+)
+from kitt.ui.skill_commands import (
+    handle_setup_skills_command, handle_skill_install_command, handle_skill_remove_command,
+    handle_remember_command, handle_clear_memory_command, handle_doctor_command
+)
+from kitt.ui.dream_commands import handle_dream_command, handle_memory_extended_command
+from kitt.ui.overlay_manager import OverlayManager
 
 
 class KittUIApp:
@@ -43,6 +55,7 @@ class KittUIApp:
         self._shutdown = False
         self.palette_index = 0
         self.focus_stack: list[OverlayFrame] = []
+        self.overlay_manager = OverlayManager(self)
 
         self.session_picker_model = SessionPickerModel(runtime)
         self.timeline_model = TimelineModel(runtime)
@@ -80,16 +93,58 @@ class KittUIApp:
 
         class KittCompleter(Completer):
             def get_completions(self, document, complete_event):
+                from kitt.skills.discovery import SkillDiscovery
                 word = document.get_word_before_cursor(WORD=True)
+                if not word:
+                    return
+
+                roots = [
+                    Path(ui.state.workspace_path) / ".kitt" / "skills",
+                    Path(ui.state.workspace_path) / ".gemini" / "skills",
+                    Path.home() / ".kitt" / "skills",
+                    Path.home() / ".gemini" / "config" / "plugins",
+                    Path.home() / ".gemini" / "antigravity-cli" / "builtin" / "skills",
+                    Path.home() / ".claude" / "plugins",
+                ]
+
                 if word.startswith("/"):
+                    # 1. Built-in slash commands
+                    seen = set()
                     for command in ui.commands.search(word):
                         alias = command.aliases[0]
+                        seen.add(alias)
                         yield Completion(alias, start_position=-len(word), display_meta=command.description)
+
+                    # 2. Dynamic Skills and Subskills
+                    try:
+                        discovery = SkillDiscovery()
+                        for cmd, meta in discovery.get_skill_completions(roots):
+                            if cmd not in seen and (cmd.lower().startswith(word.lower()) or word.lower() in cmd.lower()):
+                                seen.add(cmd)
+                                yield Completion(cmd, start_position=-len(word), display_meta=meta)
+                    except Exception:
+                        pass
+
                 elif word.startswith("@"):
                     prefix = word[1:]
-                    for path in Path(ui.state.workspace_path).glob(prefix + "*"):
-                        name = str(path.relative_to(ui.state.workspace_path)) + ("/" if path.is_dir() else "")
-                        yield Completion("@" + name, start_position=-len(word), display_meta="file")
+                    # 1. Files & Directories in workspace
+                    try:
+                        for path in Path(ui.state.workspace_path).glob(prefix + "*"):
+                            name = str(path.relative_to(ui.state.workspace_path)) + ("/" if path.is_dir() else "")
+                            yield Completion("@" + name, start_position=-len(word), display_meta="file")
+                    except Exception:
+                        pass
+
+                    # 2. Mentionable Skills
+                    try:
+                        discovery = SkillDiscovery()
+                        for skill in discovery.discover(roots):
+                            at_cmd = f"@{skill.name}"
+                            if at_cmd.lower().startswith(word.lower()) or word.lower() in at_cmd.lower():
+                                desc = skill.description[:40] if skill.description else "Skill"
+                                yield Completion(at_cmd, start_position=-len(word), display_meta=f"skill: {desc}")
+                    except Exception:
+                        pass
 
         self.prompt_buffer = Buffer(
             multiline=True,
@@ -115,6 +170,12 @@ class KittUIApp:
         self.timeline_control = FormattedTextControl(self._timeline_text, focusable=True)
         self.diff_control = FormattedTextControl(self._diff_text, focusable=True)
         self.model_setup_control = FormattedTextControl(self._model_setup_text, focusable=True)
+        self.provider_popup_control = FormattedTextControl(self._provider_popup_text, focusable=True)
+        self.add_provider_name_buffer = Buffer(multiline=False)
+        self.add_provider_name_control = BufferControl(buffer=self.add_provider_name_buffer, focusable=True)
+        self.add_provider_url_buffer = Buffer(multiline=False, accept_handler=self._accept_add_provider)
+        self.add_provider_url_control = BufferControl(buffer=self.add_provider_url_buffer, focusable=True)
+        self.add_provider_help_control = FormattedTextControl(self._add_provider_help_text)
         self.autonomy_control = FormattedTextControl(self._autonomy_text, focusable=True)
         self.agents_control = FormattedTextControl(self._agents_text, focusable=True)
         self.live_agents_control = FormattedTextControl(self._live_agents_text)
@@ -170,21 +231,39 @@ class KittUIApp:
             self.request_exit()
             return
         if text.startswith("/") and await self._execute_command(text):
+            if self.application:
+                if not self.state.active_overlay:
+                    try:
+                        self.application.layout.focus(self.prompt_control)
+                    except Exception:
+                        pass
+                self.application.invalidate()
             return
         if self.state.is_thinking or (self.bridge and self.bridge.is_active):
             return
-        self.state.is_thinking = True
         conversation = self.runtime.history.get_or_create_active()
+        mode = "plan" if self.state.planning_mode else "auto"
+        inline_files = set(re.findall(r'@([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)', text))
+        if inline_files:
+            self.explicit_files.update(inline_files)
+        combined_explicit = set(self.explicit_files)
         try:
-            await self.bridge.start(text, conversation["id"], explicit_files=self.explicit_files, no_history=not self.runtime.config.history_enabled)
+            await self.bridge.start(text, conversation["id"], explicit_files=combined_explicit, no_history=not self.runtime.config.history_enabled, mode=mode)
         except Exception as err:
             self.state.is_thinking = False
             self.state.add_toast(f"Turn Error: {err}")
 
     def _on_event(self, event) -> None:
+        from kitt.core.turn_events import TurnCompleted, TurnFailed, TurnCancelled, TurnBlocked
         reduce_ui_event(self.state, event)
         if isinstance(event, ApprovalRequired) and self.application:
             self.open_overlay("permission", self.permission_control)
+        elif isinstance(event, (TurnCompleted, TurnFailed, TurnCancelled, TurnBlocked)) and self.application:
+            if not self.state.active_overlay:
+                try:
+                    self.application.layout.focus(self.prompt_control)
+                except Exception:
+                    pass
         if self.state.follow_tail and hasattr(self, "transcript_window"):
             self.transcript_window.vertical_scroll = 10**9
         if self.application:
@@ -205,36 +284,11 @@ class KittUIApp:
         elif found.id == "help":
             self.open_overlay("help", self.help_control)
         elif found.id == "model":
-            if not arg:
-                await self._open_model_setup_overlay()
-            else:
-                role, model, provider, base_url = self._parse_model_command(arg)
-                if model:
-                    roles = self.model_setup_model.roles if role == "all" else (role,)
-                    for selected_role in roles:
-                        await self._set_model_role(selected_role, model, provider, base_url)
-                    self._show_result(f"{role.title()} model saved and active: {(provider or self._profile_for_role(roles[0]).backend)}/{model}")
-                else:
-                    self._show_result("Usage: /model <principal|context|validation|all> [provider] <model> [base_url]")
+            await handle_model_command(self, arg)
         elif found.id == "setup_skills":
-            skills = self.runtime.skills.list_skills()
-            active = set(self.runtime.skills.get_active_skills())
-            action, _, skill_name = arg.partition(" ")
-            if action in {"enable", "disable"} and skill_name.strip():
-                if action == "enable":
-                    active.add(skill_name.strip())
-                else:
-                    active.discard(skill_name.strip())
-                await self._run_blocking(self.runtime.skills.set_active_skills, sorted(active))
-                self._show_result(f"Skill {action}d: {skill_name.strip()}")
-            else:
-                body = "\n".join(f"  {'[x]' if s.name in active else '[ ]'} {s.name} (v{s.version}) — {s.author}" for s in skills) if skills else "  No custom skills installed."
-                self._show_result(f"Skill Configuration:\n\nInstalled Skills:\n{body}\n\n/setup-skills enable <name>\n/setup-skills disable <name>")
+            await handle_setup_skills_command(self, arg)
         elif found.id == "setup_models":
-            if arg and not arg.startswith(("http://", "https://")):
-                self._show_result("Usage: /setup-models [http://server:11434]")
-            else:
-                await self._open_model_setup_overlay(arg or None)
+            await handle_setup_models_command(self, arg)
         elif found.id == "new":
             self._new_conversation()
         elif found.id == "history":
@@ -242,48 +296,47 @@ class KittUIApp:
         elif found.id == "thread":
             await self._show_history(arg)
         elif found.id in {"resume"}:
-            target = arg or "1"
-            conversation = await self._run_blocking(self.runtime.history.resume_conversation, target)
-            if conversation:
-                await self._load_conversation(conversation)
-                self._show_result(f"Resumed: {conversation['title']}")
-            else:
-                self._show_result(f"Conversation not found: {target}")
+            await handle_resume_command(self, arg)
         elif found.id == "conversation":
             conversation = self.runtime.history.get_or_create_active()
             self._show_result(f"Active conversation\n{conversation['id']}\n{conversation['title']}")
-        elif found.id == "fork":
-            conversation = await self._run_blocking(self.runtime.history.fork_conversation, title_suffix=f" ({arg})" if arg else " (Fork)")
-            self._show_result(f"Forked: {conversation['title']}")
-        elif found.id == "export_conversation":
-            fmt = "json" if "json" in arg.lower() else "md"
-            self._show_result(await self._run_blocking(self.runtime.history.export_conversation, fmt=fmt))
-        elif found.id == "memory":
-            self._show_result(self.runtime.memory.get_memory_context() or "No memory entries.")
-        elif found.id == "remember":
+        elif found.id == "plan":
             if arg:
-                await self._run_blocking(self.runtime.memory.add_project_memory, arg)
-                self._show_result(f"Remembered: {arg}")
+                if self.state.is_thinking or (self.bridge and self.bridge.is_active):
+                    return True
+                self.state.is_thinking = True
+                conversation = self.runtime.history.get_or_create_active()
+                try:
+                    await self.bridge.start(arg, conversation["id"], explicit_files=self.explicit_files, no_history=not self.runtime.config.history_enabled, mode="plan")
+                except Exception as err:
+                    self.state.is_thinking = False
+                    self.state.add_toast(f"Turn Error: {err}")
             else:
-                self._show_result("Usage: /remember <rule or guideline>")
+                self.state.planning_mode = not self.state.planning_mode
+                status = "ATIVADO (Modo Leitura / Planejamento)" if self.state.planning_mode else "DESATIVADO (Modo Normal / Execução)"
+                self._show_result(f"Modo de Planejamento: {status}")
+        elif found.id == "fork":
+            await handle_fork_command(self, arg)
+        elif found.id in ("export", "export_conversation"):
+            await handle_export_command(self, arg)
+        elif found.id == "memory":
+            if arg:
+                await handle_memory_extended_command(self, arg)
+            else:
+                self._show_result(self.runtime.memory.get_memory_context() or "No memory entries.")
+        elif found.id == "dream":
+            await handle_dream_command(self, arg)
+        elif found.id == "remember":
+            await handle_remember_command(self, arg)
         elif found.id == "clear_memory":
-            await self._run_blocking(self.runtime.memory.clear_project_memory)
-            self._show_result("Project memory cleared.")
+            await handle_clear_memory_command(self)
         elif found.id == "skills":
             skills = self.runtime.skills.list_skills()
             self._show_result("\n".join(f"{s.name} v{s.version} — {s.author}" for s in skills) or "No skills installed.")
         elif found.id == "skill_install":
-            if not arg:
-                self._show_result("Usage: /skill-install <github/repo or URL>")
-            else:
-                try:
-                    skill = await self._run_blocking(self.runtime.skills.install_from_git, arg)
-                    self._show_result(f"Installed: {skill.name} v{skill.version}")
-                except Exception as exc:
-                    self._show_result(f"Install failed: {exc}")
+            await handle_skill_install_command(self, arg)
         elif found.id == "skill_remove":
-            removed = await self._run_blocking(self.runtime.skills.remove_skill, arg) if arg else False
-            self._show_result("Usage: /skill-remove <skill_name>" if not arg else ("Removed." if removed else "Skill not found."))
+            await handle_skill_remove_command(self, arg)
         elif found.id == "files":
             self._show_result("\n".join(sorted(self.explicit_files)) or "No explicit files added.")
         elif found.id == "add":
@@ -305,17 +358,13 @@ class KittUIApp:
             blocks = await self._run_blocking(self.runtime.processor.context_engine.get_relevant_context, "", 1024, str(self.runtime.canonical_root))
             self._show_result("\n\n".join(block.content for block in blocks) or "Repository map empty.")
         elif found.id == "doctor":
-            from kitt.cli.doctor import DoctorCheck
-            results = await self._run_blocking(DoctorCheck(str(self.runtime.canonical_root)).run_diagnostics)
-            self._show_result("\n".join(f"[{item['status']}] {item['name']}: {item['detail']}" for item in results))
+            await handle_doctor_command(self)
         elif found.id == "diff":
             await self._open_diff_overlay()
         elif found.id == "status":
-            snapshot = self.runtime.snapshot()
-            self._show_result(f"Workspace: {snapshot.workspace_id}\nConversation: {snapshot.active_conversation_id}\nPending actions: {snapshot.pending_actions}\nQueued inputs: {snapshot.queued_inputs}")
+            handle_status_command(self)
         elif found.id == "stats":
-            stats = await self._run_blocking(self.runtime.history.repo.get_telemetry_stats)
-            self._show_result(f"Turns: {stats['count']}  Input: {stats['input']}  Output: {stats['output']}  Saved: {stats['saved']}")
+            await handle_stats_command(self)
         elif found.id == "context_stats":
             config = self.runtime.config
             self._show_result(f"Context window: {config.context_window_default}\nReserved output: {config.reserved_output_tokens}")
@@ -327,9 +376,7 @@ class KittUIApp:
             pending = self.runtime.approval.list_pending(self.runtime.workspace_id)
             self._show_result("\n".join(f"{r.approval_id[:8]} {r.tool_name} ({r.turn_id[:8]})\n  summary: {r.summary}" for r in pending) or "No approval requests.")
         elif found.id == "compact":
-            conversation = self.runtime.history.get_or_create_active()
-            result = await self._run_blocking(self.runtime.compaction.compact, conversation["id"], 4)
-            self._show_result("History compacted." if result else "History already small.")
+            await handle_compact_command(self, arg)
         elif found.id == "child":
             if not arg:
                 self._show_result("Usage: /child <task description>")
@@ -429,8 +476,36 @@ class KittUIApp:
         else:
             self._show_result(f"/{found.aliases[0][1:]} executed.")
         if self.application:
+            if not self.state.active_overlay:
+                try:
+                    self.application.layout.focus(self.prompt_control)
+                except Exception:
+                    pass
             self.application.invalidate()
         return True
+
+    async def _export_conversation(self, fmt: str) -> None:
+        conv = self.runtime.history.get_active_read_only()
+        if not conv:
+            self._show_result("Nenhuma conversa ativa.")
+            return
+        msgs = await self._run_blocking(
+            self.runtime.history.repo.get_messages_for_conversation, conv["id"]
+        )
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        if fmt == "json":
+            content = json.dumps(msgs, indent=2, ensure_ascii=False)
+            filename = f"kitt_export_{timestamp}.json"
+        else:
+            lines = ["# K.I.T.T. Conversation Export\n"]
+            for m in msgs:
+                role = "**User**" if m["role"] == "user" else "**K.I.T.T.**"
+                lines.append(f"\n{role}:\n\n{m['content']}\n\n---")
+            content = "\n".join(lines)
+            filename = f"kitt_export_{timestamp}.md"
+        out_path = Path(self.state.workspace_path) / filename
+        out_path.write_text(content, encoding="utf-8")
+        self._show_result(f"Exportado: {filename}")
 
     def _parse_model_command(self, argument: str) -> tuple[str, str, str | None, str | None]:
         role, separator, remainder = argument.partition(" ")
@@ -484,7 +559,11 @@ class KittUIApp:
             "azure": (os.environ.get("AZURE_OPENAI_ENDPOINT", "https://your-resource.openai.azure.com"), os.environ.get("AZURE_OPENAI_API_KEY", "")),
             "antigravity": ("https://api.antigravity.dev", os.environ.get("ANTIGRAVITY_API_KEY", "")),
         }
-        return defaults.get(provider, ("http://localhost:11434", ""))
+        if provider in defaults:
+            return defaults[provider]
+        env_key = os.environ.get(f"{provider.upper().replace('-', '_')}_API_KEY", "")
+        env_host = os.environ.get(f"{provider.upper().replace('-', '_')}_HOST", "http://localhost:8000/v1")
+        return (env_host, env_key)
 
     async def _set_model_role(self, role: str, model: str, provider: str | None = None, base_url: str | None = None) -> None:
         router = self.runtime.processor.router
@@ -510,59 +589,124 @@ class KittUIApp:
         self.state.add_toast(f"{role.title()} model: {provider}/{model}")
 
     async def _models_for_provider(self, provider: str, base_url: str) -> list[str]:
-        from kitt.router.model_selector import ModelConfigurator
-        defaults = {
-            "openai": ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini", "gpt-4-turbo"],
-            "anthropic": ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
-            "gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-pro"],
-            "deepseek": ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"],
-            "groq": ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "deepseek-r1-distill-llama-70b"],
-            "together": ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen2.5-Coder-32B-Instruct"],
-            "mistral": ["mistral-large-latest", "codestral-latest", "mistral-small-latest"],
-            "openrouter": ["anthropic/claude-3.5-sonnet", "deepseek/deepseek-r1", "google/gemini-2.5-pro-exp-025", "openai/gpt-4o"],
-            "xai": ["grok-2-latest", "grok-beta", "grok-2-vision-latest"],
-            "fireworks": ["accounts/fireworks/models/deepseek-r1", "accounts/fireworks/models/llama-v3p3-70b-instruct"],
-            "cohere": ["command-r-plus", "command-r", "command-light"],
-            "azure": ["gpt-4o", "gpt-4o-mini"],
-            "antigravity": ["ag-pro", "ag-flash", "gemini-2.5-pro", "gemini-2.5-flash"],
-        }
+        from kitt.router.model_selector import ModelConfigurator, fetch_provider_models
+        _, api_key = self._provider_defaults(provider)
+        
+        # 1. Direct dynamic HTTP GET to discover live models from API
         if provider == "ollama":
-            return await self._run_blocking(ModelConfigurator(self.state.workspace_path).fetch_ollama_models, base_url)
-        if provider == "lmstudio":
-            def discover_lmstudio() -> list[str]:
-                request = urllib.request.Request(f"{base_url.rstrip('/')}/v1/models", headers={"User-Agent": "Kitt-CLI"})
-                try:
-                    with urllib.request.urlopen(request, timeout=5) as response:
-                        data = json.loads(response.read().decode("utf-8"))
-                    return [item["id"] for item in data.get("data", []) if item.get("id")]
-                except Exception:
-                    return []
-            return await self._run_blocking(discover_lmstudio)
+            models = await self._run_blocking(ModelConfigurator(self.state.workspace_path).fetch_ollama_models, base_url)
+            if models:
+                return list(dict.fromkeys(models))
+        else:
+            models = await self._run_blocking(fetch_provider_models, provider, base_url, api_key, 3.5)
+            if models:
+                return list(dict.fromkeys(models))
+            
+        # 2. If GET returns empty (offline/unreachable), fallback to standard defaults
+        defaults = {
+            "openai": ["gpt-4.5-preview", "gpt-4o", "gpt-4o-mini", "o1", "o3-mini", "o1-mini", "gpt-4-turbo"],
+            "anthropic": ["claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
+            "gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"],
+            "deepseek": ["deepseek-chat", "deepseek-reasoner", "deepseek-coder", "deepseek-v3", "deepseek-r1"],
+            "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "qwen-qwq-32b", "mixtral-8x7b-32768"],
+            "together": ["deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "Qwen/Qwen2.5-Coder-32B-Instruct"],
+            "mistral": ["mistral-large-latest", "codestral-latest", "ministral-8b-latest", "ministral-3b-latest", "mistral-small-latest"],
+            "openrouter": ["anthropic/claude-3.7-sonnet", "anthropic/claude-3.5-sonnet", "deepseek/deepseek-r1", "deepseek/deepseek-chat", "google/gemini-2.5-pro", "openai/gpt-4o"],
+            "xai": ["grok-2-latest", "grok-2-vision-latest", "grok-beta"],
+            "fireworks": ["accounts/fireworks/models/deepseek-r1", "accounts/fireworks/models/deepseek-v3", "accounts/fireworks/models/llama-v3p3-70b-instruct"],
+            "cohere": ["command-r-plus-08-2024", "command-r-plus", "command-r-08-2024", "command-r"],
+            "azure": ["gpt-4.5-preview", "gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+            "antigravity": ["ag-pro", "ag-flash", "gemini-2.5-pro", "gemini-2.5-flash"],
+            "ollama": ["qwen2.5-coder:7b", "llama3.2:3b", "deepseek-r1:8b", "mistral:7b"],
+        }
         return defaults.get(provider, ["default-model"])
 
-    async def _prepare_model_setup(self, base_url: str | None = None) -> None:
+    async def _prepare_model_setup(self, base_url: str | None = None, provider: str | None = None) -> None:
         self.state.status_text = "DISCOVERING MODELS"
         profile = self._profile_for_role(self.model_setup_model.selected_role)
         self.model_setup_model.base_url_override = base_url.rstrip("/") if base_url else None
-        if base_url:
-            self.model_setup_model.provider_index = self.model_setup_model.providers.index("ollama")
-        elif profile and profile.backend in self.model_setup_model.providers:
-            self.model_setup_model.provider_index = self.model_setup_model.providers.index(profile.backend)
-        provider = self.model_setup_model.selected_provider
-        base_url, _ = self._provider_defaults(provider)
-        endpoint = self.model_setup_model.base_url_override or (profile.base_url if profile and profile.backend == provider else base_url)
-        models = await self._models_for_provider(provider, endpoint)
-        current = [self._model_for_role(role) for role in self.model_setup_model.roles]
-        self.model_setup_model.models = list(dict.fromkeys([*models, *current]))
-        if not self.model_setup_model.models:
-            self.model_setup_model.models = current
+        
+        if provider:
+            if provider in self.model_setup_model.providers:
+                self.model_setup_model.provider_index = self.model_setup_model.providers.index(provider)
+        elif base_url:
+            if "ollama" in self.model_setup_model.providers:
+                self.model_setup_model.provider_index = self.model_setup_model.providers.index("ollama")
+        else:
+            # First time load: sync with current role's profile backend
+            if profile and profile.backend in self.model_setup_model.providers and not self.model_setup_model.models:
+                self.model_setup_model.provider_index = self.model_setup_model.providers.index(profile.backend)
+        
+        active_provider = self.model_setup_model.selected_provider
+        default_url, _ = self._provider_defaults(active_provider)
+        endpoint = self.model_setup_model.base_url_override or (profile.base_url if profile and profile.backend == active_provider else default_url)
+        
+        models = await self._models_for_provider(active_provider, endpoint)
+        self.model_setup_model.models = list(dict.fromkeys(models)) if models else ["default-model"]
+        
         selected = self._model_for_role(self.model_setup_model.selected_role)
-        self.model_setup_model.model_index = self.model_setup_model.models.index(selected) if selected in self.model_setup_model.models else 0
+        if selected in self.model_setup_model.models:
+            self.model_setup_model.model_index = self.model_setup_model.models.index(selected)
+        else:
+            self.model_setup_model.model_index = 0
         self.state.status_text = "SYSTEM ONLINE"
+        if self.application:
+            self.application.invalidate()
 
     async def _open_model_setup_overlay(self, base_url: str | None = None) -> None:
         await self._prepare_model_setup(base_url)
         self.open_overlay("model_setup", self.model_setup_control)
+
+    def _open_provider_popup_overlay(self) -> None:
+        self.open_overlay("provider_popup", self.provider_popup_control)
+
+    def _provider_popup_text(self) -> str:
+        setup = self.model_setup_model
+        entries = setup.get_popup_entries()
+        lines = [
+            "Menu de Provedores  (Espaço/F: Alternar Favorito ★ | A/+: Novo Provedor | Enter: Selecionar | Esc: Fechar)\n"
+        ]
+        for idx, entry in enumerate(entries):
+            if entry["kind"] == "header":
+                lines.append(f"\n {entry['title']}")
+            elif entry["kind"] == "provider":
+                cursor = ">" if idx == setup.provider_popup_index else " "
+                star = "★" if entry["is_favorite"] else "☆"
+                is_current = " [ativo]" if entry["name"] == setup.selected_provider else ""
+                lines.append(f" {cursor} {star} {entry['name']:15}{is_current}")
+            elif entry["kind"] == "action":
+                cursor = ">" if idx == setup.provider_popup_index else " "
+                lines.append(f" {cursor} {entry['title']}")
+        return "\n".join(lines)
+
+    def _open_add_provider_overlay(self) -> None:
+        self.add_provider_name_buffer.text = ""
+        self.add_provider_url_buffer.text = "http://"
+        self.open_overlay("add_provider", self.add_provider_name_control)
+
+    @staticmethod
+    def _add_provider_help_text() -> str:
+        return "Cadastrar Novo Provedor Customizado\n[Tab] Alternar entre Nome e URL  |  [Enter] Salvar  |  [Esc] Cancelar\n"
+
+    def _accept_add_provider(self, buffer) -> bool:
+        name = self.add_provider_name_buffer.text.strip().lower()
+        url = buffer.text.strip().rstrip("/")
+        if not name:
+            self.state.add_toast("Nome do provedor não pode ser vazio.", persistent=True)
+            return False
+        if not url.startswith(("http://", "https://")):
+            self.state.add_toast("URL deve começar com http:// ou https://", persistent=True)
+            return False
+        self.model_setup_model.add_custom_provider(name, url)
+        self.close_overlay()
+        asyncio.get_running_loop().create_task(self._finish_add_provider(name, url))
+        return True
+
+    async def _finish_add_provider(self, name: str, url: str) -> None:
+        await self._prepare_model_setup(url)
+        self.state.add_toast(f"Provedor '{name}' adicionado com sucesso!", persistent=False)
+        if self.application:
+            self.application.invalidate()
 
     def _open_provider_endpoint_overlay(self) -> None:
         profile = self._profile_for_role(self.model_setup_model.selected_role)
@@ -625,6 +769,13 @@ class KittUIApp:
     def _show_result(self, text: str) -> None:
         self.state.route = "session"
         self.state.append_message("system", safe_text(text)[:12000])
+        if self.application:
+            if not self.state.active_overlay:
+                try:
+                    self.application.layout.focus(self.prompt_control)
+                except Exception:
+                    pass
+            self.application.invalidate()
 
     async def _show_history(self, search: str = "") -> None:
         conversations = await self._run_blocking(self.runtime.history.list_history, 20, 0, search or None)
@@ -775,59 +926,10 @@ class KittUIApp:
             self.application.invalidate()
 
     def open_overlay(self, name: str, control=None) -> None:
-        curr_focus = self.application.layout.current_control if self.application else None
-        frame = OverlayFrame(name=name, previous_focus=curr_focus, preferred_focus=control)
-        self.focus_stack.append(frame)
-        self.state.push_overlay(name)
-        if self.application:
-            self.application.invalidate()
-            if control:
-                try:
-                    self.application.layout.focus(control)
-                except ValueError:
-                    # Conditional float joins focus tree on next render.
-                    asyncio.get_running_loop().call_soon(self._focus_if_visible, control)
-
-    def _focus_if_visible(self, control) -> None:
-        if not self.application:
-            return
-        try:
-            self.application.layout.focus(control)
-        except ValueError:
-            pass
+        self.overlay_manager.open(name, control)
 
     def close_overlay(self) -> None:
-        was_permission = (self.state.active_overlay == "permission")
-        self.state.pop_overlay()
-        frame = self.focus_stack.pop() if self.focus_stack else None
-        if was_permission and self.state.pending_approvals:
-            for req in list(self.state.pending_approvals):
-                try:
-                    self.runtime.approval.deny(req["approval_id"], "Permission closed with escape/cancel")
-                except Exception:
-                    pass
-            self.state.pending_approvals.clear()
-            if self.bridge and self.bridge.is_active:
-                asyncio.create_task(self.bridge.cancel("Permission cancelled"))
-        if self.application:
-            target = None
-            if self.focus_stack and self.focus_stack[-1].preferred_focus:
-                target = self.focus_stack[-1].preferred_focus
-            elif frame and frame.previous_focus:
-                target = frame.previous_focus
-            else:
-                target = getattr(self, "prompt_control", None)
-
-            if target:
-                try:
-                    self.application.layout.focus(target)
-                except ValueError:
-                    try:
-                        if hasattr(self, "prompt_control"):
-                            self.application.layout.focus(self.prompt_control)
-                    except ValueError:
-                        pass
-            self.application.invalidate()
+        self.overlay_manager.close()
 
     async def _open_session_picker_overlay(self) -> None:
         await self.session_picker_model.reload()
@@ -856,6 +958,8 @@ class KittUIApp:
         timeline = Condition(lambda: self.state.active_overlay == "timeline")
         diff_overlay = Condition(lambda: self.state.active_overlay == "diff")
         model_setup = Condition(lambda: self.state.active_overlay == "model_setup")
+        provider_popup = Condition(lambda: self.state.active_overlay == "provider_popup")
+        add_provider = Condition(lambda: self.state.active_overlay == "add_provider")
         provider_endpoint = Condition(lambda: self.state.active_overlay == "provider_endpoint")
         editor_focused = Condition(lambda: self.application and self.application.layout.current_control is self.prompt_control)
         can_submit = Condition(
@@ -902,7 +1006,6 @@ class KittUIApp:
         @kb.add("c-x", "m")
         def _(event): asyncio.create_task(self._open_model_setup_overlay())
 
-        @kb.add("a", filter=~editor_focused & ~palette & ~permission)
         @kb.add("c-x", "a")
         @kb.add("c-x", "c-a")
         def _(event): self.open_overlay("agents", self.agents_control)
@@ -995,6 +1098,18 @@ class KittUIApp:
             self.model_setup_model.move_model(-1)
             event.app.invalidate()
 
+        @kb.add("p", filter=model_setup)
+        @kb.add("P", filter=model_setup)
+        @kb.add("space", filter=model_setup)
+        def _(event):
+            self._open_provider_popup_overlay()
+
+        @kb.add("a", filter=model_setup)
+        @kb.add("A", filter=model_setup)
+        @kb.add("+", filter=model_setup)
+        def _(event):
+            self._open_add_provider_overlay()
+
         @kb.add("tab", filter=model_setup)
         def _(event):
             asyncio.create_task(self._move_model_role(1))
@@ -1015,6 +1130,67 @@ class KittUIApp:
 
         @kb.add("enter", filter=model_setup)
         def _(event): asyncio.create_task(self._apply_selected_model())
+
+        # Provider Popup Dropdown keybindings
+        @kb.add("down", filter=provider_popup)
+        @kb.add("c-n", filter=provider_popup)
+        def _(event):
+            self.model_setup_model.move_popup_selection(1)
+            event.app.invalidate()
+
+        @kb.add("up", filter=provider_popup)
+        @kb.add("c-p", filter=provider_popup)
+        def _(event):
+            self.model_setup_model.move_popup_selection(-1)
+            event.app.invalidate()
+
+        @kb.add("f", filter=provider_popup)
+        @kb.add("F", filter=provider_popup)
+        @kb.add("space", filter=provider_popup)
+        def _(event):
+            entry = self.model_setup_model.get_selected_popup_entry()
+            if entry and entry["kind"] == "provider":
+                is_fav = self.model_setup_model.toggle_favorite(entry["name"])
+                tag = "adicionado aos favoritos ★" if is_fav else "removido dos favoritos ☆"
+                self.state.add_toast(f"Provedor '{entry['name']}': {tag}", persistent=False)
+                event.app.invalidate()
+
+        @kb.add("a", filter=provider_popup)
+        @kb.add("A", filter=provider_popup)
+        @kb.add("+", filter=provider_popup)
+        def _(event):
+            self._open_add_provider_overlay()
+
+        @kb.add("enter", filter=provider_popup)
+        def _(event):
+            entry = self.model_setup_model.get_selected_popup_entry()
+            if entry:
+                if entry["kind"] == "action" and entry["name"] == "add_provider":
+                    self._open_add_provider_overlay()
+                elif entry["kind"] == "provider":
+                    p_name = entry["name"]
+                    provs = self.model_setup_model.providers
+                    if p_name in provs:
+                        self.model_setup_model.provider_index = provs.index(p_name)
+                    self.close_overlay()
+                    asyncio.create_task(self._prepare_model_setup())
+
+        # Add Custom Provider Overlay keybindings
+        @kb.add("tab", filter=add_provider)
+        def _(event):
+            if event.app.layout.current_control is self.add_provider_name_control:
+                event.app.layout.focus(self.add_provider_url_control)
+            else:
+                event.app.layout.focus(self.add_provider_name_control)
+            event.app.invalidate()
+
+        @kb.add("enter", filter=add_provider)
+        def _(event):
+            if event.app.layout.current_control is self.add_provider_name_control:
+                event.app.layout.focus(self.add_provider_url_control)
+                event.app.invalidate()
+            else:
+                self.add_provider_url_buffer.validate_and_handle()
 
         @kb.add("enter", filter=provider_endpoint)
         def _(event): event.current_buffer.validate_and_handle()
@@ -1071,9 +1247,26 @@ class KittUIApp:
 
         @kb.add("c-c")
         def _(event):
-            if self.state.active_overlay: self.close_overlay()
-            elif self.state.is_thinking or (self.bridge and self.bridge.is_active): asyncio.create_task(self.bridge.cancel())
-            else: self.request_exit()
+            if self.state.is_thinking or (self.bridge and self.bridge.is_active):
+                if self.state.active_overlay:
+                    self.close_overlay()
+                asyncio.create_task(self.bridge.cancel())
+                self.state.is_thinking = False
+                self.prompt_buffer.reset()
+                if self.application:
+                    try:
+                        self.application.layout.focus(self.prompt_control)
+                    except Exception:
+                        pass
+                    self.application.invalidate()
+            elif self.state.active_overlay:
+                self.close_overlay()
+            elif self.prompt_buffer.text:
+                self.prompt_buffer.reset()
+                if self.application:
+                    self.application.invalidate()
+            else:
+                self.request_exit()
 
         @kb.add("c-d")
         def _(event):
@@ -1171,9 +1364,10 @@ class KittUIApp:
         base_url = profile.base_url if profile and profile.backend == provider else self._provider_defaults(provider)[0]
         self.model_setup_model.models = await self._models_for_provider(provider, base_url)
         selected = self._model_for_role(self.model_setup_model.selected_role)
-        if selected not in self.model_setup_model.models:
-            self.model_setup_model.models.append(selected)
-        self.model_setup_model.model_index = self.model_setup_model.models.index(selected)
+        if selected in self.model_setup_model.models:
+            self.model_setup_model.model_index = self.model_setup_model.models.index(selected)
+        else:
+            self.model_setup_model.model_index = 0
         if self.application:
             self.application.invalidate()
 
@@ -1183,10 +1377,11 @@ class KittUIApp:
         provider = self.model_setup_model.selected_provider
         base_url, _ = self._provider_defaults(provider)
         self.model_setup_model.models = await self._models_for_provider(provider, base_url)
-        current = self._model_for_role(self.model_setup_model.selected_role)
-        if current not in self.model_setup_model.models:
-            self.model_setup_model.models.append(current)
-        self.model_setup_model.model_index = self.model_setup_model.models.index(current) if current in self.model_setup_model.models else 0
+        selected = self._model_for_role(self.model_setup_model.selected_role)
+        if selected in self.model_setup_model.models:
+            self.model_setup_model.model_index = self.model_setup_model.models.index(selected)
+        else:
+            self.model_setup_model.model_index = 0
         if self.application:
             self.application.invalidate()
 
@@ -1232,21 +1427,30 @@ class KittUIApp:
         self._blocking_executor.shutdown(wait=False, cancel_futures=True)
 
     def _home_text(self):
-        scanner = DEFAULT_THEME.scanner_frame(self.state.scanner_step, 22)
+        scanner = DEFAULT_THEME.scanner_frame(self.state.scanner_step, 36)
         return [
-            ("class:primary.bright", f"\n[{scanner}]\n"),
-            ("class:primary", "K.I.T.T.\n"),
-            ("class:text.muted", "Knowledge & Inference Task Tool\n"),
+            ("class:primary.bright", "┌──────────────────────────────────────────────────────────────┐\n"),
+            ("class:primary.bright", f"│  [ {scanner} ]  │\n"),
+            ("class:primary.bright", "└──────────────────────────────────────────────────────────────┘\n"),
+            ("class:primary", "██╗  ██╗    ██╗    ████████╗   ████████╗\n"),
+            ("class:primary", "██║ ██╔╝    ██║    ╚══██╔══╝   ╚══██╔══╝\n"),
+            ("class:primary", "█████╔╝     ██║       ██║         ██║   \n"),
+            ("class:primary", "██╔═██╗     ██║       ██║         ██║   \n"),
+            ("class:primary", "██║  ██╗    ██║       ██║         ██║   \n"),
+            ("class:primary", "╚═╝  ╚═╝    ╚═╝       ╚═╝         ╚═╝   \n"),
+            ("class:primary", "K.I.T.T. "),
+            ("class:text.muted", "— Knowledge & Inference Task Tool • v1.0.0\n"),
             ("class:accent", f"{self.state.workspace_path}\n"),
-            ("class:text.muted", f"{self.state.small_model} / {self.state.large_model}")
+            ("class:text.muted", f"Models: {self.state.small_model} (Context) • {self.state.large_model} (Execute)")
         ]
 
     def _header_text(self):
         model_name = self.state.large_model or "execution"
+        mode_tag = ("class:warning", " [PLAN MODE] ") if self.state.planning_mode else ("class:status", f" [{model_name}] ")
         return [
             ("class:primary", " K.I.T.T. "),
             ("class:text.muted", f" {self.state.workspace_path} "),
-            ("class:status", f" [{model_name}] "),
+            mode_tag,
             ("class:primary", f" 🧠 Reasoning: {self.state.reasoning_effort}% (Ctrl+←/→) "),
         ]
 
@@ -1276,12 +1480,29 @@ class KittUIApp:
                 out += [(f"class:{block.kind}", f"\n{label}  "), ("class:text", block.text + "\n")]
         if self.state.unseen_output:
             out.append(("class:warning", "\n[new output below]"))
-        return out or [("class:text.muted", " Start conversation below.")]
+        if not out:
+            return [
+                ("class:primary", "  ┌─────────────────────────────────────────────────────────────────────────────┐\n"),
+                ("class:error",   "  │  [ ░▒▓████████████████████████████████████████████████████████████████▓▒░ ]  │\n"),
+                ("class:primary", "  └─────────────────────────────────────────────────────────────────────────────┘\n"),
+                ("class:error",   "   ██╗  ██╗    ██╗    ████████╗   ████████╗\n"),
+                ("class:error",   "   ██║ ██╔╝    ██║    ╚══██╔══╝   ╚══██╔══╝\n"),
+                ("class:error",   "   █████╔╝     ██║       ██║         ██║   \n"),
+                ("class:error",   "   ██╔═██╗     ██║       ██║         ██║   \n"),
+                ("class:error",   "   ██║  ██╗    ██║       ██║         ██║   \n"),
+                ("class:error",   "   ╚═╝  ╚═╝    ╚═╝       ╚═╝         ╚═╝   \n"),
+                ("class:primary", "  K.I.T.T. "),
+                ("class:text.muted", "— Knowledge & Inference Task Tool • Autonomous AI Coding Agent\n"),
+                ("class:text.muted", "  Digite sua instrução abaixo ou /help para ver a lista de comandos.\n\n"),
+            ]
+        return out
 
     def _transcript_cursor_position(self):
         from prompt_toolkit.data_structures import Point
         if not self.state.follow_tail:
             return None
+        if not self.state.transcript:
+            return Point(x=0, y=0)
         text_content = self._transcript_text()
         total_lines = 0
         for style, txt in text_content:
@@ -1290,6 +1511,12 @@ class KittUIApp:
 
     def _sidebar_text(self):
         pct = min(100, self.state.tokens_used * 100 // max(1, self.state.context_window))
+        files_section = ""
+        if self.explicit_files:
+            files_lines = "\n".join(f"  • {f}" for f in sorted(self.explicit_files))
+            files_section = f"\n\n ATTACHED FILES ({len(self.explicit_files)})\n{files_lines}"
+        else:
+            files_section = "\n\n ATTACHED FILES\n  (none - use @file or /add)"
         return (
             f" WORKSPACE\n {self.state.workspace_name}\n\n"
             f" CONVERSATION\n {(self.state.active_conversation_id or 'new')[:12]}\n\n"
@@ -1297,18 +1524,20 @@ class KittUIApp:
             f" 🧠 Reasoning: {self.state.reasoning_effort}%\n\n"
             f" CONTEXT\n {self.state.tokens_used}/{self.state.context_window} ({pct}%)\n"
             f" SAVED {self.state.net_saved_tokens}"
+            f"{files_section}"
         )
 
     def _status_text(self):
         pct = min(100, self.state.tokens_used * 100 // max(1, self.state.context_window))
+        plan_badge = "[PLAN] " if self.state.planning_mode else ""
         if self.state.is_thinking:
             elapsed = max(0, int(time.time() - self.state.turn_started_at))
             active = next((t for t in self.state.active_tasks if t.status == "running"), None)
             detail = active.summary if active else "processando solicitação"
-            return f" {self.state.status_text} {elapsed}s | {detail[:48]} | context {pct}% "
+            return f" {plan_badge}{self.state.status_text} {elapsed}s | {detail[:48]} | context {pct}% "
         if self.state.width < 80:
-            return f" {self.state.status_text} | {self.state.large_model[:16]} | {pct}% "
-        return f" {self.state.workspace_name} | {self.state.status_text} | {self.state.large_model} | context {pct}% "
+            return f" {plan_badge}{self.state.status_text} | {self.state.large_model[:16]} | {pct}% "
+        return f" {self.state.workspace_name} | {plan_badge}{self.state.status_text} | {self.state.large_model} | context {pct}% "
 
     def _context_details_text(self) -> str:
         cs = self.state.context_stats
@@ -1400,15 +1629,20 @@ class KittUIApp:
 
     def _model_setup_text(self):
         setup = self.model_setup_model
-        lines = ["Tab: role  Shift+Tab/Ctrl+Left/Right: provider  Up/Down: model  Ctrl+Alt++: add Ollama endpoint  Enter: save\n", "Remote Ollama: Ctrl+Alt++ (or Ctrl+X A) then URL. Custom URL: /model <role> <provider> <model> <base_url>\n", "Role assignments:"]
+        lines = [
+            "Tab: Cargo | P / Espaço: Menu de Provedores ★ | A / +: Novo Provedor | Up/Down: Modelo | Enter: Salvar\n",
+            "Atalhos: [P / Espaço] Dropdown de Provedores com Favoritos  |  [A / +] Novo Provedor  |  [Esc] Fechar\n",
+            "Atribuições de Modelos por Cargo:"
+        ]
         for role in setup.roles:
             marker = ">" if role == setup.selected_role else " "
             profile = self._profile_for_role(role)
             endpoint = profile.base_url if profile else "?"
             lines.append(f"{marker} {role.title():10} {(profile.backend if profile else '?')}/{self._model_for_role(role)} @ {endpoint}")
         endpoint = setup.base_url_override or (self._profile_for_role(setup.selected_role).base_url if self._profile_for_role(setup.selected_role) else "")
-        lines.append(f"\nProvider: {setup.selected_provider} @ {endpoint} (keys use environment API key when required)")
-        lines.append("\nAvailable models:")
+        star = "★" if setup.selected_provider in setup.favorite_providers else "☆"
+        lines.append(f"\nProvedor Atual: {star} {setup.selected_provider} @ {endpoint}  (Pressione P ou Espaço para abrir dropdown)")
+        lines.append("\nModelos Disponíveis:")
         for index, model in enumerate(setup.models[:30]):
             marker = ">" if index == setup.model_index else " "
             lines.append(f"{marker} {model}")
@@ -1416,7 +1650,7 @@ class KittUIApp:
 
     @staticmethod
     def _provider_endpoint_text():
-        return "Remote Ollama URL, including port. Example: http://192.168.1.50:11434\n\nEnter: discover models   Esc: cancel"
+        return "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
 
     def _help_text(self):
         return "\n".join(f"{c.aliases[0]:16} {c.description}" for c in self.commands.commands.values())

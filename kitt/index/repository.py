@@ -9,6 +9,7 @@ import time
 import re
 import threading
 import json
+import weakref
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -55,7 +56,22 @@ class RepositoryIndex:
         self.last_search_error = ""
         self._background_thread: threading.Thread | None = None
         self._closed = False
+        self._finalizer = weakref.finalize(self, self._finalize_conn, self._conn, self._lock)
         self._init_db()
+
+    @staticmethod
+    def _finalize_conn(conn: sqlite3.Connection, lock: threading.RLock) -> None:
+        try:
+            with lock:
+                conn.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "RepositoryIndex":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def _init_db(self) -> None:
         with self._lock:
@@ -103,10 +119,6 @@ class RepositoryIndex:
                 self._conn.close()
         except Exception:
             pass
-
-    def __del__(self) -> None:
-        # ponytail: best-effort cleanup for test/tool instances without owner lifecycle.
-        self.close()
 
     def build_or_update(self) -> Dict[str, int]:
         """Incremental index update based on mtime_ns, size, and content_hash."""

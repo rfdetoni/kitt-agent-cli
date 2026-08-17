@@ -45,19 +45,41 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     if not text:
         return None
 
-    # 1. Locate TOOL_CALL_OPEN in text
+    # 1. Locate TOOL_CALL_OPEN, <tool>, or bare tool json
     start_idx = text.find(TOOL_CALL_OPEN)
-    if start_idx == -1:
-        return None
-
-    body = text[start_idx + len(TOOL_CALL_OPEN) :]
-    end_idx = body.find(TOOL_CALL_CLOSE)
-    if end_idx != -1:
-        body = body[:end_idx]
-    body = body.strip()
+    if start_idx != -1:
+        body = text[start_idx + len(TOOL_CALL_OPEN) :]
+        end_idx = body.find(TOOL_CALL_CLOSE)
+        if end_idx != -1:
+            body = body[:end_idx]
+        body = body.strip()
+    elif "<tool>" in text:
+        start_idx = text.find("<tool>")
+        body = text[start_idx + len("<tool>") :]
+        end_idx = body.find("</tool>")
+        if end_idx != -1:
+            body = body[:end_idx]
+        body = body.strip()
+    else:
+        m = re.search(r'\{\s*"name"\s*:\s*"(?:write_file|apply_patch|read_file|search|run_command|list_files|repository_map|python_compute)"', text)
+        if m:
+            raw_body = text[m.start():]
+            brace_count = 0
+            end_pos = -1
+            for idx, ch in enumerate(raw_body):
+                if ch == '{':
+                    brace_count += 1
+                elif ch == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_pos = idx + 1
+                        break
+            body = raw_body[:end_pos].strip() if end_pos != -1 else raw_body.strip()
+        else:
+            return None
 
     if not body:
-        raise ValueError("Incomplete kitt-tool envelope")
+        raise ValueError("Incomplete tool envelope")
 
     # 2. Try standard json.loads with strict=False (allows unescaped newlines/tabs)
     try:

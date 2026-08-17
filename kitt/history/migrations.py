@@ -261,6 +261,8 @@ MIGRATIONS = [
                 last_output_artifact_id TEXT,
                 last_run_at REAL,
                 status TEXT NOT NULL,
+                name TEXT DEFAULT 'QualityGate',
+                timeout_seconds INTEGER DEFAULT 120,
                 FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE
             );
             """,
@@ -360,7 +362,7 @@ MIGRATIONS.extend([
     Migration(3, "prime_services", (
         """CREATE TABLE IF NOT EXISTS queued_inputs (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('STEERING','FOLLOW_UP')), content TEXT NOT NULL, position INTEGER NOT NULL, status TEXT NOT NULL, target_generation INTEGER NOT NULL, created_at REAL NOT NULL, delivered_at REAL, content_hash TEXT NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE, UNIQUE(conversation_id, kind, position));""",
         """CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, objective TEXT NOT NULL, state TEXT NOT NULL, token_budget INTEGER, max_turns INTEGER NOT NULL, max_wall_seconds INTEGER NOT NULL, tokens_used INTEGER NOT NULL DEFAULT 0, turns_used INTEGER NOT NULL DEFAULT 0, continuations_used INTEGER NOT NULL DEFAULT 0, success_criteria_json TEXT NOT NULL, started_at REAL NOT NULL, updated_at REAL NOT NULL, completed_at REAL, last_error TEXT, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
-        """CREATE TABLE IF NOT EXISTS quality_gates (id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, argv_json TEXT NOT NULL, workspace_hash TEXT, last_exit_code INTEGER, last_output_artifact_id TEXT, last_run_at REAL, status TEXT NOT NULL, FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS quality_gates (id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, argv_json TEXT NOT NULL, workspace_hash TEXT, last_exit_code INTEGER, last_output_artifact_id TEXT, last_run_at REAL, status TEXT NOT NULL, name TEXT DEFAULT 'QualityGate', timeout_seconds INTEGER DEFAULT 120, FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE);""",
         """CREATE TABLE IF NOT EXISTS harness_entries (id TEXT PRIMARY KEY, workspace_id TEXT, conversation_id TEXT, entry_kind TEXT NOT NULL, scope TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL, evidence_json TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL, version INTEGER NOT NULL, supersedes_id TEXT, content_hash TEXT NOT NULL, created_at REAL NOT NULL, created_by TEXT NOT NULL, FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
         """CREATE TABLE IF NOT EXISTS harness_refinements (id TEXT PRIMARY KEY, conversation_id TEXT, proposal_json TEXT NOT NULL, before_snapshot_json TEXT NOT NULL, after_snapshot_json TEXT, state TEXT NOT NULL, created_at REAL NOT NULL, applied_at REAL, rolled_back_at REAL);""",
         """CREATE TABLE IF NOT EXISTS child_sessions (id TEXT PRIMARY KEY, parent_conversation_id TEXT NOT NULL, parent_turn_id TEXT NOT NULL, name TEXT NOT NULL, task TEXT NOT NULL, state TEXT NOT NULL, depth INTEGER NOT NULL, model_profile TEXT NOT NULL, allowed_paths_json TEXT NOT NULL, enabled_tools_json TEXT NOT NULL, token_budget INTEGER NOT NULL, tokens_used INTEGER NOT NULL DEFAULT 0, timeout_seconds INTEGER NOT NULL, result_artifact_id TEXT, error TEXT, created_at REAL NOT NULL, started_at REAL, completed_at REAL, FOREIGN KEY(parent_conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
@@ -377,8 +379,6 @@ MIGRATIONS.extend([
     Migration(5, "quality_gate_name_and_timeout", (
         """CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, objective TEXT NOT NULL, state TEXT NOT NULL, token_budget INTEGER, max_turns INTEGER NOT NULL, max_wall_seconds INTEGER NOT NULL, tokens_used INTEGER NOT NULL DEFAULT 0, turns_used INTEGER NOT NULL DEFAULT 0, continuations_used INTEGER NOT NULL DEFAULT 0, success_criteria_json TEXT NOT NULL, started_at REAL NOT NULL, updated_at REAL NOT NULL, completed_at REAL, last_error TEXT, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);""",
         """CREATE TABLE IF NOT EXISTS quality_gates (id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, argv_json TEXT NOT NULL, workspace_hash TEXT, last_exit_code INTEGER, last_output_artifact_id TEXT, last_run_at REAL, status TEXT NOT NULL, name TEXT DEFAULT 'QualityGate', timeout_seconds INTEGER DEFAULT 120, FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE);""",
-        "ALTER TABLE quality_gates ADD COLUMN name TEXT DEFAULT 'QualityGate';",
-        "ALTER TABLE quality_gates ADD COLUMN timeout_seconds INTEGER DEFAULT 120;",
     )),
 ])
 
@@ -423,6 +423,92 @@ MIGRATIONS.append(Migration(
         """
         CREATE INDEX IF NOT EXISTS idx_approval_state_expiry
         ON approval_requests(state, expires_at);
+        """
+    )
+))
+
+MIGRATIONS.append(Migration(
+    version=9,
+    name="dreaming_and_durable_memory_v9",
+    statements=(
+        """
+        CREATE TABLE IF NOT EXISTS memories (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL,
+            normalized_content TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ACTIVE',
+            importance REAL NOT NULL DEFAULT 0.5,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            last_accessed_at REAL,
+            access_count INTEGER NOT NULL DEFAULT 0,
+            valid_from REAL,
+            valid_until REAL,
+            supersedes_id TEXT,
+            content_hash TEXT NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            metadata_json TEXT DEFAULT '{}',
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_memories_ws_status
+        ON memories(workspace_id, status);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_memories_content_hash
+        ON memories(workspace_id, content_hash);
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS memory_evidence (
+            id TEXT PRIMARY KEY,
+            memory_id TEXT NOT NULL,
+            workspace_id TEXT NOT NULL,
+            session_entry_id TEXT,
+            conversation_id TEXT,
+            source_kind TEXT NOT NULL,
+            evidence_text TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_evidence_memory_id
+        ON memory_evidence(memory_id);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_evidence_session_entry
+        ON memory_evidence(session_entry_id);
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS dream_runs (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            finished_at REAL,
+            status TEXT NOT NULL,
+            sessions_scanned INTEGER NOT NULL DEFAULT 0,
+            entries_scanned INTEGER NOT NULL DEFAULT 0,
+            signals_found INTEGER NOT NULL DEFAULT 0,
+            memories_added INTEGER NOT NULL DEFAULT 0,
+            memories_merged INTEGER NOT NULL DEFAULT 0,
+            memories_superseded INTEGER NOT NULL DEFAULT 0,
+            memories_archived INTEGER NOT NULL DEFAULT 0,
+            model TEXT NOT NULL DEFAULT '',
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            failure_reason TEXT,
+            dry_run INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_dream_runs_ws_started
+        ON dream_runs(workspace_id, started_at);
         """
     )
 ))

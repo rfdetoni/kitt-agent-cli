@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>K.I.T.T. Agent CLI - Apresentação</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: #050510;
+            color: #eef;
+            font-family: 'Courier New', monospace;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+        .hud-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none; z-index: 999;
+            background:
+                linear-gradient(rgba(255,0,85,0.1) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,0,85,0.1) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+        .radar-container {
+            position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
+            width: 320px; height: 180px;
+            background: radial-gradient(ellipse at center, rgba(40,0,60,0.9) 0%, transparent 70%);
+            border: 3px solid #ff0055;
+            border-radius: 50%;
+            box-shadow: 0 0 20px #ff0055,
+                        inset 0 0 40px rgba(255,0,85,0.3);
+        }
+        .radar-sweep {
+            position: absolute; top: -10%; left: 50%; transform-origin: center;
+            width: 60%; height: 70%;
+            background: conic-gradient(from var(--angle), transparent, rgba(255,0,85,0.4));
+            border-radius: 50%;
+        }
+        .radar-target {
+            position: absolute; top: -10px; left: calc(50% + var(--x) * 3); transform-origin: center;
+            width: 8px; height: 8px;
+            background: #ff0055;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ff0055;
+        }
+        .scan-line {
+            position: fixed; top: -20vh; left: 0; right: 0; height: 40vh;
+            background: linear-gradient(to bottom, transparent, rgba(255,0,85,0.3), transparent);
+            animation: scan 6s ease-in-out infinite;
+        }
+        @keyframes scan { from { top: -100%; } to { top: 110%; } }
+        .glitch-text {
+            color: #ff0055; text-shadow:
+                -2px 0 rgba(255,0,85,0.7),
+                 2px 0 rgba(0,255,196,0.7);
+        }
+        .container {
+            max-width: 1400px; margin: 0 auto;
+            padding: 30px 20px;
+            position: relative; z-index: 1;
+        }
+        header {
+            text-align: center;
+            padding: 60px 20px;
+            border-bottom: 4px solid #ff0055;
+            margin-bottom: 30px;
+        }
+        h1 {
+            font-size: clamp(2.5rem, 8vw, 4rem);
+            text-transform: uppercase; letter-spacing: 6px;
+            animation: flicker 3s infinite;
+        }
+        @keyframes flicker { 
+            0%,100% { opacity: 1; } 
+            50% { opacity: 0.8; text-shadow: none; }
+        }
+        .subtitle {
+            font-size: clamp(1rem, 4vw, 1.3rem);
+            color: #6ff;
+            margin-top: 20px;
+            letter-spacing: 3px;
+        }
+        .features-grid {
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+        .feature-card {
+            background: linear-gradient(135deg, rgba(20,0,30,0.9), rgba(0,20,60,0.8));
+            border: 2px solid #ff0055;
+            padding: 30px; position: relative;
+            overflow: hidden;
+        }
+        .feature-card::before {
+            content: ''; 
+            position: absolute; top: -10%; left: -10%;
+            width: 200%; height: 200%;
+            background: conic-gradient(from var(--rotation), transparent, rgba(255,0,85,0.3));
+            animation: rotate 8s linear infinite;
+        }
+        @keyframes rotate { from { --rotation: 0deg; } to { --rotation: 360deg; } }
+        .feature-card h3 {
+            font-size: clamp(1.4rem, 5vw, 2rem);
+            color: #ff0055;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+        }
+        .feature-card p { 
+            line-height: 1.7; font-size: clamp(0.9rem, 3vw, 1rem);
+            color: #ccc;
+        }
+        footer {
+            text-align: center;
+            padding: 40px;
+            border-top: 2px solid #ff0055;
+            margin-top: 60px;
+            font-size: clamp(0.8rem, 3vw, 1rem);
+        }
+    </style>
+</head>
+<body>
+<div class="hud-overlay"></div>
+<div class="scan-line"></div>
+
+<div class="radar-container">
+    <div class="radar-sweep" id="sweep"></div>
+</div>
+
+<div class="container">
+<header>
+    <h1 class="glitch-text">K.I.T.T. AGENT CLI</h1>
+    <p class="subtitle">SISTEMA DE INTELLIGENCE ARTIFICIAL LOCAL-FIRST PARA GERAÇÃO E GESTÃO DE CÓDIGO PYTHON</p>
+</header>
+
+<div class="features-grid">
+    <div class="feature-card" style="--rotation: 0deg; --angle: 45deg;"><h3>🔍 Context Engine Inteligente</h3><p>Análise incremental do workspace com SQLite, FTS5 e grafo de dependências. Recuperação precisa sem enviar todo o repositório.</p></div>
+    <div class="feature-card" style="--rotation: 45deg; --angle: 90deg;"><h3>🛠️ Ferramentas Seguras</h3><p>Polyglot engine com approvals, policy enforcement e handling de secrets. Executa comandos shell dentro da política de segurança.</p></div>
+    <div class="feature-card" style="--rotation: 90deg; --angle: 135deg;"><h3>🧠 Memória & Histórico</h3><p>Persistência em SQLite com memória vetorial e histórico estruturado. Subagentes especializados para tarefas complexas.</p></div>
+    <div class="feature-card" style="--rotation: 135deg; --angle: 180deg;"><h3>📊 Métricas & Telemetria</h3><p>Persistência de eventos e telemetria para monitoramento. Validação com unittest.</p></div>
+    <div class="feature-card" style=\

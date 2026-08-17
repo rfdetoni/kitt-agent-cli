@@ -114,6 +114,7 @@ class MetricsRecorded(TurnEvent):
     input_tokens: int = 0
     output_tokens: int = 0
     saved_tokens: int = 0
+    estimated_usd: float = 0.0
 
 @dataclass
 class TurnCompleted(TurnEvent):

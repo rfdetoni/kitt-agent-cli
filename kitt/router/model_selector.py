@@ -5,27 +5,117 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from kitt.domain.entities import ModelProfile, RouterConfig
 from kitt.router.router import TaskRouter
-from kitt.cli.ui import prompt_dropdown
 
 ROLES = ["main_chat", "context", "commit", "edit", "code_generation"]
 
+def fetch_provider_models(provider: str, base_url: str = "", api_key: str = "", timeout: float = 4.0) -> List[str]:
+    """Issues an HTTP GET request to discover models dynamically from the provider API."""
+    provider = (provider or "").strip().lower()
+    base_url = (base_url or "").strip().rstrip("/")
+    headers = {"User-Agent": "Kitt-CLI"}
+
+    try:
+        # 1. Ollama (/api/tags)
+        if provider == "ollama" or (base_url and ":11434" in base_url):
+            url = f"{base_url or 'http://localhost:11434'}/api/tags"
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                models = data.get("models", [])
+                names = [m.get("name") for m in models if isinstance(m, dict) and m.get("name")]
+                if names:
+                    return names
+
+        # 2. Anthropic (/v1/models)
+        elif provider == "anthropic":
+            url = f"{base_url or 'https://api.anthropic.com'}/v1/models"
+            if api_key:
+                headers["x-api-key"] = api_key
+            headers["anthropic-version"] = "2023-06-01"
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                models = data.get("data", [])
+                names = [m.get("id") for m in models if isinstance(m, dict) and m.get("id")]
+                if names:
+                    return names
+
+        # 3. Gemini / Google (/v1beta/models)
+        elif provider == "gemini":
+            base = base_url or "https://generativelanguage.googleapis.com"
+            url = f"{base}/v1beta/models?key={api_key}" if api_key else f"{base}/v1beta/models"
+            if api_key:
+                headers["x-goog-api-key"] = api_key
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                models = data.get("models", [])
+                names = []
+                for m in models:
+                    if isinstance(m, dict):
+                        methods = m.get("supportedGenerationMethods", [])
+                        if not methods or "generateContent" in methods:
+                            m_name = m.get("name", "")
+                            if m_name.startswith("models/"):
+                                m_name = m_name[7:]
+                            if m_name:
+                                names.append(m_name)
+                if names:
+                    return names
+
+        # 4. OpenAI / LMStudio / DeepSeek / Groq / Together / Mistral / OpenRouter / xAI / Fireworks / Cohere / Azure / Generic
+        else:
+            if not base_url:
+                defaults_url = {
+                    "openai": "https://api.openai.com",
+                    "deepseek": "https://api.deepseek.com",
+                    "groq": "https://api.groq.com/openai",
+                    "together": "https://api.together.xyz",
+                    "mistral": "https://api.mistral.ai",
+                    "openrouter": "https://openrouter.ai/api",
+                    "xai": "https://api.xai.com",
+                    "fireworks": "https://api.fireworks.ai/inference",
+                    "cohere": "https://api.cohere.com",
+                    "lmstudio": "http://localhost:1234",
+                    "antigravity": "https://api.antigravity.dev",
+                }
+                base_url = defaults_url.get(provider, "http://localhost:11434")
+
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            for endpoint_path in ["/v1/models", "/models"]:
+                try:
+                    url = f"{base_url}{endpoint_path}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=timeout) as response:
+                        data = json.loads(response.read().decode('utf-8'))
+                        raw_data = data.get("data", []) if isinstance(data, dict) else data
+                        if isinstance(raw_data, list):
+                            names = [
+                                item.get("id") or item.get("name") 
+                                for item in raw_data 
+                                if isinstance(item, dict) and (item.get("id") or item.get("name"))
+                            ]
+                            if names:
+                                return names
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return []
+
+
 class ModelConfigurator:
-    """Discovers provider models and manages interactive role assignment including Main Chat Model."""
+    """Discovers provider models and manages role assignment including Main Chat Model."""
 
     def __init__(self, root_dir: str = "."):
         self.root_dir = root_dir
         self.router = TaskRouter(root_dir=root_dir)
 
     def fetch_ollama_models(self, base_url: str = "http://localhost:11434") -> List[str]:
-        url = f"{base_url.rstrip('/')}/api/tags"
-        req = urllib.request.Request(url, headers={"User-Agent": "Kitt-CLI"})
-        try:
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                models = data.get("models", [])
-                return [m.get("name") for m in models if "name" in m]
-        except Exception:
-            return ["qwen2.5:7b-instruct", "qwen2.5:32b-instruct"]
+        return fetch_provider_models("ollama", base_url)
 
     def assign_roles(
         self,
@@ -94,6 +184,7 @@ class ModelConfigurator:
 
     def _setup_model_interactively(self, label: str) -> Tuple[str, str, str, str]:
         """Returns (backend, base_url, api_key, model_name)"""
+        from kitt.cli.ui import prompt_dropdown
         print(f"\n\033[1;36m=== Setup {label} ===\033[0m")
         providers = ["ollama", "lmstudio", "antigravity", "gemini", "openai", "anthropic"]
         backend = prompt_dropdown(f"Select provider for {label} [ollama/lmstudio/antigravity/gemini/openai/anthropic] (default: ollama): ", providers, default="ollama").lower()
@@ -145,6 +236,7 @@ class ModelConfigurator:
         return backend, base_url, api_key, model_name
 
     def run_interactive_setup(self):
+        from kitt.cli.ui import prompt_dropdown
         print("\n\033[1;36m=== K.I.T.T. Multi-Model Role & Provider Setup ===\033[0m")
         
         backend_a, base_url_a, api_key_a, model_a = self._setup_model_interactively("Model A (Principal/Contexto)")

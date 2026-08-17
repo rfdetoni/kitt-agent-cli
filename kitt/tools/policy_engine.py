@@ -2,6 +2,7 @@ import re
 import shlex
 import hashlib
 import time
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, List, Dict, Any, Optional
@@ -171,5 +172,4 @@ class PolicyEngine:
         return hashlib.sha256(serialized.encode('utf-8')).hexdigest()
 
 def json_serialize(obj: Any) -> str:
-    import json
     return json.dumps(obj, sort_keys=True)

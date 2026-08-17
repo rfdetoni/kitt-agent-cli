@@ -1,6 +1,9 @@
+"""Manages persistent project and global memory with structured MemoryItem retrieval."""
+from __future__ import annotations
+
 import re
 from pathlib import Path
-from typing import List, Literal
+from typing import List, Literal, Optional, Any
 from dataclasses import dataclass, field
 from kitt.context_filter.prompt_budget import TokenCounter
 
@@ -12,12 +15,21 @@ class MemoryItem:
     tags: List[str] = field(default_factory=list)
     created_at: str = ""
 
+
 class MemoryManager:
     """Manages persistent project and global memory with structured MemoryItem retrieval."""
 
-    def __init__(self, root_dir: str = ".", persistence_enabled: bool = True):
+    def __init__(
+        self,
+        root_dir: str = ".",
+        persistence_enabled: bool = True,
+        memory_repo: Optional[Any] = None,
+        workspace_id: Optional[str] = None,
+    ):
         self.root_dir = Path(root_dir).resolve()
         self.persistence_enabled = persistence_enabled
+        self.memory_repo = memory_repo
+        self.workspace_id = workspace_id or "default"
         self.project_mem_path = self.root_dir / ".kitt" / "memory" / "project_memory.md"
         self.global_mem_path = Path.home() / ".kitt" / "global_memory.md"
 
@@ -33,10 +45,18 @@ class MemoryManager:
         if not self.global_mem_path.exists():
             self.global_mem_path.write_text("# K.I.T.T. Global User Preferences\n\n- Prefer standard library and minimalist diffs.\n", encoding='utf-8')
 
-    def add_project_memory(self, note: str):
+    def add_project_memory(self, note: str, kind: str = "PROJECT_RULE", pinned: bool = True):
         if not self.persistence_enabled:
             return
-        content = self.project_mem_path.read_text(encoding='utf-8')
+        # 1. Update SQLite relational repository if available
+        if self.memory_repo and self.workspace_id:
+            try:
+                self.memory_repo.add_direct_memory(self.workspace_id, note, kind=kind, pinned=pinned)
+            except Exception:
+                pass
+
+        # 2. Update local markdown file
+        content = self.project_mem_path.read_text(encoding='utf-8', errors='ignore') if self.project_mem_path.exists() else ""
         updated = content.rstrip() + f"\n- {note}\n"
         self.project_mem_path.write_text(updated, encoding='utf-8')
 
@@ -47,17 +67,40 @@ class MemoryManager:
 
     def get_items(self) -> List[MemoryItem]:
         items: List[MemoryItem] = []
+        seen_texts = set()
+
+        # 1. Read from canonical SQLite MemoryRepository if present
+        if self.memory_repo and self.workspace_id:
+            try:
+                records = self.memory_repo.get_active_memories(self.workspace_id)
+                for rec in records:
+                    clean = rec.content.strip()
+                    if clean not in seen_texts:
+                        seen_texts.add(clean)
+                        prio = 3 if rec.pinned else 2 if rec.kind in ("PROJECT_RULE", "ARCHITECTURE_DECISION") else 1
+                        items.append(MemoryItem(text=clean, scope='PROJECT', priority=prio))
+            except Exception:
+                pass
+
+        # 2. Read from global memory markdown
         if self.global_mem_path.exists():
             for line in self.global_mem_path.read_text(encoding='utf-8', errors='ignore').splitlines():
                 line_str = line.strip()
                 if line_str.startswith("- "):
-                    items.append(MemoryItem(text=line_str[2:], scope='GLOBAL'))
+                    t = line_str[2:].strip()
+                    if t not in seen_texts:
+                        seen_texts.add(t)
+                        items.append(MemoryItem(text=t, scope='GLOBAL', priority=2))
 
+        # 3. Read from project memory markdown
         if self.project_mem_path.exists():
             for line in self.project_mem_path.read_text(encoding='utf-8', errors='ignore').splitlines():
                 line_str = line.strip()
                 if line_str.startswith("- "):
-                    items.append(MemoryItem(text=line_str[2:], scope='PROJECT'))
+                    t = line_str[2:].strip()
+                    if t not in seen_texts:
+                        seen_texts.add(t)
+                        items.append(MemoryItem(text=t, scope='PROJECT', priority=1))
 
         return items
 
@@ -71,7 +114,7 @@ class MemoryManager:
         for item in all_items:
             item_words = set(re.findall(r"[a-zA-Z0-9_+-]{4,}", item.text.lower()))
             score = len(words.intersection(item_words)) + item.priority
-            if words.intersection(item_words):
+            if words.intersection(item_words) or item.priority >= 2:
                 relevant.append((score, item))
         return [item for _score, item in sorted(relevant, key=lambda row: row[0], reverse=True)[:8]]
 

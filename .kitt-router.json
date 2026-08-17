@@ -2,11 +2,11 @@
   "profiles": {
     "context": {
       "backend": "ollama",
-      "model": "oamazonasgabriel/lfm2.5-2.6b:q4_k_m-8gbGPU",
+      "model": "qwen2.5-coder:1.5b",
       "base_url": "http://localhost:11434",
       "api_key": null,
       "context_window": 8192,
-      "max_output_tokens": 128,
+      "max_output_tokens": 1200,
       "temperature": 0.0,
       "supports_tools": false,
       "supports_json": false,
@@ -15,14 +15,14 @@
     },
     "execute": {
       "backend": "ollama",
-      "model": "batiai/gemma4-12b:iq3",
+      "model": "deepseek-r1:8b",
       "base_url": "http://192.168.100.51:11434",
       "api_key": null,
       "context_window": 32768,
-      "max_output_tokens": 2048,
+      "max_output_tokens": 8192,
       "temperature": 0.0,
       "supports_tools": true,
-      "supports_json": false,
+      "supports_json": true,
       "keep_alive": null,
       "request_timeout_seconds": 120
     },

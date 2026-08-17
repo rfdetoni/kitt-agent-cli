@@ -8,15 +8,17 @@ from kitt.context_filter.schema import ContextFilterSchemaValidator
 from kitt.context_filter.fallback import DeterministicFallbackPlanner
 from kitt.context_filter.context_planner import ContextPlanner
 
-SYSTEM_CONTEXT_FILTER_PROMPT = """You are K.I.T.T. Context Filter, a lightweight, deterministic task classification engine.
-Your sole duty is to analyze the user's prompt and emit ONLY a valid JSON object matching this schema:
+SYSTEM_CONTEXT_FILTER_PROMPT = """You are K.I.T.T.'s Semantic Task Compiler.
+Convert the user's request into a minimal, execution-oriented canonical semantic representation.
 
+Emit ONLY a valid JSON object matching this schema:
 {
   "intent": "IMPLEMENT|ASK|PLAN|DEBUG|TEST|REVIEW|DOCUMENT|REFACTOR|UNKNOWN",
+  "goal": "Concise summary in English (<= 300 chars)",
   "secondary_intents": [],
-  "actions": ["action1"],
-  "symbols": ["SymbolName"],
-  "paths": ["path/to/file.ext"],
+  "actions": ["atomic action in English"],
+  "symbols": ["ExactSymbolName"],
+  "paths": ["exact/path/to/file.ext"],
   "technologies": ["python"],
   "constraints": [
     {
@@ -27,15 +29,18 @@ Your sole duty is to analyze the user's prompt and emit ONLY a valid JSON object
       "mandatory": true
     }
   ],
+  "validation_hints": ["run test command or check"],
   "risk": "LOW|MEDIUM|HIGH",
   "confidence": 1.0
 }
 
 RULES:
-1. DO NOT solve the task or write code.
-2. DO NOT invent files or symbols not in the prompt.
-3. Every constraint "text" MUST be an exact literal substring of the prompt.
-4. Output JSON ONLY. No markdown, no conversation.
+1. DO NOT solve the task or write implementation code.
+2. DO NOT invent files, symbols, requirements, or dependencies not in the prompt.
+3. Normalize natural language fields ('goal', 'actions', 'validation_hints') to concise, imperative English.
+4. Preserve VERBATIM: file paths, identifiers, symbols, class/method names, commands, diagnostics, quoted literals, and constraint 'text'.
+5. Every constraint 'text' MUST be an exact literal substring of the prompt.
+6. Output JSON ONLY. No markdown, no conversation.
 """
 
 FilterSource = Literal['LLM', 'DETERMINISTIC_BYPASS', 'FALLBACK']

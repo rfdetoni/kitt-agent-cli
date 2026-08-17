@@ -1,7 +1,18 @@
 #!/bin/sh
 set -eu
 
-project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Resolve target script path even if executed via symlink
+target="$0"
+while [ -L "$target" ]; do
+    target_dir=$(cd -P "$(dirname "$target")" && pwd)
+    target=$(readlink "$target")
+    case "$target" in
+        /*) ;;
+        *) target="$target_dir/$target" ;;
+    esac
+done
+script_dir=$(cd -P "$(dirname "$target")" && pwd)
+project_dir=$(cd -P "$script_dir/.." && pwd)
 python="$project_dir/.venv/bin/python"
 
 if [ ! -x "$python" ]; then
