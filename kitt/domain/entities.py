@@ -171,10 +171,12 @@ class EditResult:
 
 @dataclass
 class ModelProfile:
-    backend: str  # 'ollama', 'openai'
+    backend: str  # 'ollama', 'openai', 'anthropic', 'gemini', etc.
     model: str
     base_url: str = "http://localhost:11434"
     api_key: str = ""
+    credential_ref: Optional[str] = None
+    protocol: Optional[str] = None
     context_window: int = 8192
     max_output_tokens: int = 1200
     temperature: float = 0.0

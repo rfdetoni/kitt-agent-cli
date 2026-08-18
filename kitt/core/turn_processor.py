@@ -278,8 +278,9 @@ For a host tool, respond with exactly:
 </kitt-tool>
 RULES:
 1. Focus strictly on the user's explicit request. Do not make unrequested changes or edits to other files.
-2. If you need to plan or reason, put your reasoning inside <think>...</think> before calling the tool.
-3. Once the requested task is fulfilled, STOP calling tools and answer directly with a concise summary.
+2. Exact Path Adherence: When the user references a file (e.g. `@apresentacao.html` or `apresentacao.html`) or when files are provided in context, you MUST use the EXACT relative file path specified. NEVER invent new directory structures (such as `src/`, `src/html/`, `html/`, `app/`) and NEVER duplicate the file under a new directory.
+3. If you need to plan or reason, put your reasoning inside <think>...</think> before calling the tool.
+4. Once the requested task is fulfilled, STOP calling tools and answer directly with a concise summary.
 """
         if "write_file" in enabled_tools:
             instructions += """

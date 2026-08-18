@@ -3,6 +3,7 @@ import sys
 import glob
 import shlex
 import subprocess
+import time
 from pathlib import Path
 from typing import List, Dict, Set, Optional
 
@@ -79,6 +80,7 @@ SLASH_COMMANDS = {
     "/memory": "Display persistent project & global memory rules",
     "/remember": "Add persistent rule or guideline to project memory",
     "/clear-memory": "Reset persistent project memory rules",
+    "/dream": "Consolidate persistent memory using Dreaming Mode",
     "/skills": "List installed commercial agent skills",
     "/setup-skills": "Interactive checkbox setup for mandatory skills",
     "/skill-install": "Install skill from Git repo URL or GitHub user/repo",
@@ -86,6 +88,10 @@ SLASH_COMMANDS = {
     "/repomap": "Print AST symbol graph of repository",
     "/context-stats": "Display telemetry and section token budget breakdown",
     "/model": "View or switch active LLM model",
+    "/models": "List and inspect models from catalog/providers (/models [provider] [--refresh] [--verbose])",
+    "/auth": "Manage provider authentication credentials (/auth [list|login|logout])",
+    "/plugins": "List, inspect, and manage KITT runtime plugins (/plugins [list|inspect|enable|disable])",
+    "/mcp": "List, inspect, and manage Model Context Protocol servers (/mcp [list|tools|resources])",
     "/setup-models": "Interactive provider model & exclusive role setup",
     "/router": "Display active dual-model task routing setup",
     "/diff": "Show uncommitted git diff",
@@ -429,6 +435,136 @@ class KittREPL:
             self.memory.clear_project_memory()
             print("\033[33mProject memory guidelines reset.\033[0m")
 
+        elif cmd_name == '/dream':
+            parts = (arg or "").strip().split()
+            flag = parts[0].lower() if parts else ""
+            ws_id = self.runtime.workspace_id
+
+            if not self.runtime.dream_service:
+                print("\033[31mDreaming Mode is not initialized.\033[0m")
+            elif flag in ("--help", "-h", "help"):
+                print("\n\033[1;34mDreaming Mode\033[0m\n")
+                print("  \033[1;37m/dream\033[0m")
+                print("      Analyze and preview memory consolidation without writing changes.\n")
+                print("  \033[1;37m/dream --dry-run\033[0m")
+                print("      Same as /dream. No persistent changes.\n")
+                print("  \033[1;37m/dream --commit\033[0m")
+                print("      Consolidate and persist memory.\n")
+                print("  \033[1;37m/dream --status\033[0m")
+                print("      Show Dreaming Mode status.\n")
+                print("  \033[1;37m/dream --cancel\033[0m")
+                print("      Cancel the current Dreaming Mode cycle.\n")
+                print("  \033[1;37m/dream --help\033[0m")
+                print("      Show this help.\n")
+
+            elif flag in ("--status", "-s", "status"):
+                mem_repo = self.runtime.memory_repo
+                last_run = mem_repo.get_last_dream_run(ws_id) if mem_repo else None
+                active = mem_repo.get_all_memories(ws_id, status="ACTIVE") if mem_repo else []
+                candidates = mem_repo.get_all_memories(ws_id, status="CANDIDATE") if mem_repo else []
+                superseded = mem_repo.get_all_memories(ws_id, status="SUPERSEDED") if mem_repo else []
+                archived = mem_repo.get_all_memories(ws_id, status="ARCHIVED") if mem_repo else []
+
+                is_eligible = self.runtime.dream_scheduler.should_run(ws_id) if self.runtime.dream_scheduler else False
+                is_running = self.runtime.dream_scheduler.is_dreaming if self.runtime.dream_scheduler else False
+
+                last_str = "None"
+                if last_run and last_run.finished_at:
+                    elapsed_hrs = (time.time() - last_run.finished_at) / 3600.0
+                    last_str = f"{elapsed_hrs:.1f}h ago ({time.strftime('%Y-%m-%d %H:%M', time.localtime(last_run.finished_at))})"
+
+                model_name = getattr(self.runtime.dream_service.consolidate_phase, "model_name", "deterministic")
+                model_role = getattr(self.runtime.config, "dream_model_role", "context")
+
+                print("\n\033[1;34m=== Dreaming Mode Status ===\033[0m")
+                print(f"  Dreaming enabled     : \033[36m{'Yes' if getattr(self.runtime.config, 'dream_enabled', True) else 'No'}\033[0m")
+                print(f"  Auto dreaming enabled: \033[36m{'Yes' if getattr(self.runtime.config, 'dream_auto_enabled', False) else 'No'}\033[0m")
+                print(f"  Auto commit          : \033[36m{'Yes' if getattr(self.runtime.config, 'dream_auto_commit', False) else 'No'}\033[0m")
+                print(f"  Dream model role     : \033[33m{model_role}\033[0m")
+                print(f"  Dream model          : \033[33m{model_name}\033[0m")
+                print(f"  Fallback             : \033[32mdeterministic\033[0m")
+                print(f"  Currently running    : \033[33m{'Yes' if is_running else 'No'}\033[0m")
+                print(f"  Last committed dream : \033[37m{last_str}\033[0m")
+                print(f"  Eligible for auto    : \033[32m{'Yes' if is_eligible else 'No'}\033[0m\n")
+                print("\033[1;34m=== Memory Store ===\033[0m")
+                print(f"  Active memories      : \033[32m{len(active)}\033[0m")
+                print(f"  Candidate memories   : \033[33m{len(candidates)}\033[0m")
+                print(f"  Superseded memories  : \033[90m{len(superseded)}\033[0m")
+                print(f"  Archived memories    : \033[90m{len(archived)}\033[0m\n")
+
+            elif flag in ("--cancel", "cancel"):
+                if self.runtime.dream_scheduler:
+                    self.runtime.dream_scheduler.cancel()
+                else:
+                    self.runtime.dream_service.cancel()
+                print("\033[33mDreaming Mode cancellation signal sent.\033[0m")
+
+            elif flag in ("--commit", "-c", "run"):
+                print("\033[36m[Dreaming] Consolidating and persisting memory...\033[0m")
+                t0 = time.time()
+                try:
+                    if self.runtime.dream_scheduler:
+                        result = self.runtime.dream_scheduler.run_manual(ws_id, dry_run=False)
+                    else:
+                        result = self.runtime.dream_service.dream(ws_id, dry_run=False)
+                    elapsed_ms = int((time.time() - t0) * 1000)
+
+                    model_name = getattr(self.runtime.dream_service.consolidate_phase, "model_name", "deterministic")
+                    model_role = getattr(self.runtime.config, "dream_model_role", "context")
+
+                    print(f"\n\033[1;32mK.I.T.T. Dreaming Mode — Consolidation Complete\033[0m\n")
+                    print(f"  Model role           : \033[33m{model_role}\033[0m")
+                    print(f"  Model                : \033[33m{model_name}\033[0m")
+                    print(f"  Sessions scanned     : {result.run.sessions_scanned}")
+                    print(f"  Entries scanned      : {result.run.entries_scanned}")
+                    print(f"  Signals found        : {result.run.signals_found}\n")
+                    print(f"  Memories added       : \033[32m{result.run.memories_added}\033[0m")
+                    print(f"  Memories merged      : \033[32m{result.run.memories_merged}\033[0m")
+                    print(f"  Memories superseded  : \033[33m{result.run.memories_superseded}\033[0m")
+                    print(f"  Memories archived    : \033[90m{result.run.memories_archived}\033[0m\n")
+                    print(f"  MEMORY.md            : \033[36mrebuilt\033[0m")
+                    print(f"  Database             : \033[32mcommitted\033[0m")
+                    print(f"  Duration             : {elapsed_ms} ms\n")
+                except Exception as exc:
+                    print(f"\033[31mDream consolidation failed: {exc}\033[0m")
+
+            else:
+                # Default is dry-run preview (/dream or /dream --dry-run or /dream inspect)
+                print("\033[36m[Dreaming] Analyzing and previewing memory consolidation (dry-run)...\033[0m")
+                try:
+                    if self.runtime.dream_scheduler:
+                        result = self.runtime.dream_scheduler.run_manual(ws_id, dry_run=True)
+                    else:
+                        result = self.runtime.dream_service.dream(ws_id, dry_run=True)
+
+                    model_name = getattr(self.runtime.dream_service.consolidate_phase, "model_name", "deterministic")
+                    model_role = getattr(self.runtime.config, "dream_model_role", "context")
+
+                    # Count proposed operations
+                    op_counts = {"ADD": 0, "MERGE": 0, "SUPERSEDE": 0, "ARCHIVE": 0, "IGNORE": 0}
+                    for op in result.accepted_operations:
+                        op_type = getattr(op, "operation", "ADD")
+                        op_counts[op_type] = op_counts.get(op_type, 0) + 1
+                    for _op, _reason in result.rejected_operations:
+                        op_counts["IGNORE"] = op_counts.get("IGNORE", 0) + 1
+
+                    print(f"\n\033[1;34mK.I.T.T. Dreaming Mode — Preview\033[0m\n")
+                    print(f"  Model role           : \033[33m{model_role}\033[0m")
+                    print(f"  Model                : \033[33m{model_name}\033[0m")
+                    print(f"  Sessions scanned     : {result.run.sessions_scanned}")
+                    print(f"  Entries scanned      : {result.run.entries_scanned}")
+                    print(f"  Signals found        : {result.run.signals_found}\n")
+                    print("  Proposed:")
+                    print(f"    Add                : \033[32m{op_counts.get('ADD', 0)}\033[0m")
+                    print(f"    Merge              : \033[32m{op_counts.get('MERGE', 0)}\033[0m")
+                    print(f"    Supersede          : \033[33m{op_counts.get('SUPERSEDE', 0)}\033[0m")
+                    print(f"    Archive            : \033[90m{op_counts.get('ARCHIVE', 0)}\033[0m")
+                    print(f"    Ignore             : \033[90m{op_counts.get('IGNORE', 0)}\033[0m\n")
+                    print("  Persistent changes   : \033[33mNO\033[0m\n")
+                    print("  \033[90mUse /dream --commit to apply this consolidation.\033[0m\n")
+                except Exception as exc:
+                    print(f"\033[31mDream preview failed: {exc}\033[0m")
+
         elif cmd_name == '/skills':
             skills = self.skill_manager.list_skills()
             if not skills:
@@ -491,11 +627,42 @@ class KittREPL:
         elif cmd_name == '/setup-models':
             ModelConfigurator(self.root_dir).run_interactive_setup()
 
+        elif cmd_name == '/models':
+            from kitt.cli.commands import handle_models_command
+            raw_args = arg.split()
+            refresh = "--refresh" in raw_args
+            verbose = "-v" in raw_args or "--verbose" in raw_args
+            prov = [a for a in raw_args if not a.startswith("-")]
+            target_prov = prov[0] if prov else None
+            handle_models_command(provider=target_prov, refresh=refresh, verbose=verbose)
+
+        elif cmd_name == '/auth':
+            from kitt.cli.commands import handle_auth_command
+            raw_args = arg.split()
+            action = raw_args[0] if raw_args else "list"
+            target_prov = raw_args[1] if len(raw_args) > 1 else None
+            handle_auth_command(action=action, provider=target_prov)
+
+        elif cmd_name == '/plugins':
+            from kitt.cli.commands import handle_plugins_command
+            raw_args = arg.split()
+            action = raw_args[0] if raw_args else "list"
+            target_name = raw_args[1] if len(raw_args) > 1 else None
+            handle_plugins_command(action=action, name=target_name, root_dir=self.root_dir)
+
+        elif cmd_name == '/mcp':
+            from kitt.cli.commands import handle_mcp_command
+            raw_args = arg.split()
+            action = raw_args[0] if raw_args else "list"
+            target_server = raw_args[1] if len(raw_args) > 1 else None
+            handle_mcp_command(action=action, server=target_server, root_dir=self.root_dir)
+
         elif cmd_name in ['/router', '/model']:
             cfg = self.router.config
             print("\n\033[1;34m--- Task Router Configuration ---\033[0m")
             for profile_key, profile in cfg.profiles.items():
-                print(f" Profile \033[36m{profile_key}\033[0m: {profile.backend}/{profile.model}")
+                cred_badge = f"\033[90m({profile.credential_ref})\033[0m" if getattr(profile, "credential_ref", None) else ""
+                print(f" Profile \033[36m{profile_key}\033[0m: {profile.backend}/{profile.model} {cred_badge}")
             for role, handler in cfg.routing.items():
                 print(f"  \033[90m{role:<16}\033[0m -> \033[33m{handler}\033[0m")
             print()
@@ -572,7 +739,6 @@ class KittREPL:
                     print(f"\033[31mDirectory not found: {arg}\033[0m")
 
         elif cmd_name == '/approvals':
-            import time
             reqs = list(self.turn_processor.registry.approval_manager._requests.values())
             print("\n\033[1;34m--- Approval Audit Trail ---\033[0m")
             if not reqs:

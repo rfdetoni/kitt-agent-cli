@@ -1,0 +1,6 @@
+name = "security-guard"
+version = "1.0.0"
+api_version = "1"
+entrypoint = "guard:setup"
+description = "Security guard intercepting and enforcing policy on tool executions"
+permissions = ["tools.observe", "tools.modify"]

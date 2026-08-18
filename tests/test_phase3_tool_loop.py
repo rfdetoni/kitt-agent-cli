@@ -68,7 +68,33 @@ class TestPhase3ToolLoop(unittest.TestCase):
         self.assertEqual(name, "write_file")
         self.assertEqual(args["content"], "Linha 1\nLinha 2")
 
-        # 5. Non-tool text returns None
+        # 5. Call wrapped in markdown code fence with unescaped HTML quotes
+        sample5 = '<kitt-tool>\n```json\n{\n  "name": "write_file",\n  "arguments": {\n    "path": "src/html/apresentacao.html",\n    "content": "<!DOCTYPE html>\\n<html lang=\\"pt-BR\\">\\n<head><meta charset=\\"UTF-8\\"><title>K.I.T.T.</title></head>\\n</html>"\n  }\n}\n```\n</kitt-tool>'
+        name, args = parse_tool_call(sample5)
+        self.assertEqual(name, "write_file")
+        self.assertEqual(args["path"], "src/html/apresentacao.html")
+        self.assertIn("<meta charset=\"UTF-8\">", args["content"])
+
+        # 6. Flat top-level parameters and alias
+        sample6 = '```json\n{"name": "write", "path": "src/html/apresentacao.html", "content": "<h1>Title</h1>"}\n```'
+        name, args = parse_tool_call(sample6)
+        self.assertEqual(name, "write_file")
+        self.assertEqual(args["path"], "src/html/apresentacao.html")
+
+        # 7. Function call syntax Write(path="...", content="...")
+        sample7 = 'Write(path="src/html/apresentacao.html", content="<!DOCTYPE html><html><body>Test</body></html>")'
+        name, args = parse_tool_call(sample7)
+        self.assertEqual(name, "write_file")
+        self.assertEqual(args["path"], "src/html/apresentacao.html")
+
+        # 8. XML tool syntax
+        sample8 = '<write_file path="src/html/apresentacao.html">\n<!DOCTYPE html><html><body>XML Content</body></html>\n</write_file>'
+        name, args = parse_tool_call(sample8)
+        self.assertEqual(name, "write_file")
+        self.assertEqual(args["path"], "src/html/apresentacao.html")
+        self.assertIn("XML Content", args["content"])
+
+        # 9. Non-tool text returns None
         self.assertIsNone(parse_tool_call("Apenas uma resposta em texto sem ferramentas."))
 
 

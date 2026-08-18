@@ -32,9 +32,19 @@ class PolicyEngine:
         self.path_policy = WorkspacePathPolicy(root_dir=root_dir)
         self.autonomy = autonomy or AutonomyPolicy.preset("supervised")
         self.approval_manager = approval_manager
+        self._allowed_custom_tools: Set[str] = set()
+
+    def allow_custom_tool(self, tool_name: str) -> None:
+        self._allowed_custom_tools.add(tool_name)
+
+    def disallow_custom_tool(self, tool_name: str) -> None:
+        self._allowed_custom_tools.discard(tool_name)
 
     def _evaluate_tool_base(self, tool_name: str, args: dict = None, origin: str = 'MODEL') -> Permission:
         args = args or {}
+
+        if tool_name in self._allowed_custom_tools:
+            return 'ALLOW'
 
         if origin == 'MODEL':
             if tool_name in {

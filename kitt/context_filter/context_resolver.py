@@ -89,7 +89,7 @@ class ContextResolver:
                 else:
                     content = "\n".join(lines)
 
-                formatted = f"--- {rel_str} ---\n{content}\n--- end {rel_str} ---"
+                formatted = f"--- TARGET FILE TO EDIT: {rel_str} (Use exact path: '{rel_str}') ---\n{content}\n--- end {rel_str} ---"
                 tokens = TokenCounter.count_tokens(formatted)
 
                 items.append(

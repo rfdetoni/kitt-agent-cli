@@ -54,11 +54,16 @@ class DreamConsolidatePhase:
         self,
         llm_client: Optional[LLMClient] = None,
         egress_policy: Optional[EgressPolicy] = None,
-        model_name: str = "context-gather",
+        model_name: str = "",
     ):
         self.llm_client = llm_client
         self.egress_policy = egress_policy
-        self.model_name = model_name
+        if model_name:
+            self.model_name = model_name
+        elif llm_client and getattr(llm_client, "profile", None):
+            self.model_name = f"{llm_client.profile.backend}/{llm_client.profile.model}"
+        else:
+            self.model_name = "context-gather"
 
     def consolidate(
         self,

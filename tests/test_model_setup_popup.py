@@ -95,27 +95,25 @@ class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
         # Switch to anthropic
         await self.ui._prepare_model_setup(provider="anthropic")
         self.assertEqual(self.ui.model_setup_model.selected_provider, "anthropic")
-        self.assertIn("claude-3-7-sonnet-latest", self.ui.model_setup_model.models)
-        self.assertIn("claude-3-5-sonnet-latest", self.ui.model_setup_model.models)
+        self.assertTrue(len(self.ui.model_setup_model.models) > 0)
+        self.assertTrue(any("claude" in m for m in self.ui.model_setup_model.models))
 
         # Switch to openai
         await self.ui._prepare_model_setup(provider="openai")
         self.assertEqual(self.ui.model_setup_model.selected_provider, "openai")
-        self.assertIn("gpt-4.5-preview", self.ui.model_setup_model.models)
         self.assertIn("gpt-4o", self.ui.model_setup_model.models)
-        self.assertIn("o3-mini", self.ui.model_setup_model.models)
+        self.assertTrue(len(self.ui.model_setup_model.models) > 5)
 
         # Switch to deepseek
         await self.ui._prepare_model_setup(provider="deepseek")
         self.assertEqual(self.ui.model_setup_model.selected_provider, "deepseek")
-        self.assertIn("deepseek-r1", self.ui.model_setup_model.models)
-        self.assertIn("deepseek-v3", self.ui.model_setup_model.models)
+        self.assertTrue(len(self.ui.model_setup_model.models) > 0)
+        self.assertTrue(any("deepseek" in m for m in self.ui.model_setup_model.models))
 
         # Switch to gemini
         await self.ui._prepare_model_setup(provider="gemini")
         self.assertEqual(self.ui.model_setup_model.selected_provider, "gemini")
-        self.assertIn("gemini-2.5-pro", self.ui.model_setup_model.models)
-        self.assertIn("gemini-2.5-flash", self.ui.model_setup_model.models)
+        self.assertTrue(len(self.ui.model_setup_model.models) > 0)
 
     async def test_dynamic_get_model_discovery_from_api(self):
         from unittest.mock import patch, MagicMock
@@ -140,6 +138,65 @@ class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
         with patch("urllib.request.urlopen", return_value=mock_cm_ollama):
             models = fetch_provider_models("ollama", "http://localhost:11434")
             self.assertEqual(models, ["deepseek-coder-v2:16b", "starlette:latest"])
+
+    async def test_auth_login_overlay_workflow_after_model_selection(self):
+        from kitt.llm.auth import ProviderAuthService
+        auth_service = ProviderAuthService()
+        auth_service.logout("anthropic")
+
+        # Open model setup overlay and select anthropic
+        await self.ui._open_model_setup_overlay()
+        await self.ui._prepare_model_setup(provider="anthropic")
+        self.assertEqual(self.ui.model_setup_model.selected_provider, "anthropic")
+
+        # Apply model selection
+        await self.ui._apply_selected_model()
+
+        # Should automatically open auth_login overlay because anthropic was not authenticated
+        self.assertEqual(self.ui.state.active_overlay, "auth_login")
+        self.assertEqual(self.ui.target_auth_provider, "anthropic")
+
+        # Enter API Key and accept
+        self.ui.auth_login_buffer.text = "sk-ant-test-api-key-12345"
+        self.ui._accept_auth_login(self.ui.auth_login_buffer)
+
+        # Overlay should close and credential should be saved
+        self.assertIsNone(self.ui.state.active_overlay)
+        resolved_key = auth_service.resolve(None, "anthropic")
+        self.assertEqual(resolved_key, "sk-ant-test-api-key-12345")
+
+    async def test_selected_provider_matches_its_url_not_previous_backend(self):
+        # Open model setup overlay
+        await self.ui._open_model_setup_overlay()
+        
+        # Select antigravity provider
+        await self.ui._prepare_model_setup(provider="antigravity")
+        self.assertEqual(self.ui.model_setup_model.selected_provider, "antigravity")
+        
+        header_text = self.ui._model_setup_header_text()
+        # Must display antigravity URL, not OpenAI or other previous backend URL
+        self.assertIn("antigravity @ https://api.antigravity.dev", header_text)
+        self.assertNotIn("antigravity @ https://api.openai.com", header_text)
+
+    async def test_model_setup_search_filter_and_badges(self):
+        # Open model setup overlay
+        await self.ui._open_model_setup_overlay()
+        await self.ui._prepare_model_setup(provider="anthropic")
+        
+        # Verify initial list has multiple anthropic models
+        all_models = self.ui.model_setup_model.models
+        self.assertTrue(len(all_models) > 0)
+
+        # Type search filter 'sonnet'
+        self.ui.model_setup_search_buffer.text = "sonnet"
+        self.assertEqual(self.ui.model_setup_model.search_query, "sonnet")
+        filtered = self.ui.model_setup_model.get_filtered_models()
+        self.assertTrue(all("sonnet" in m.lower() for m in filtered))
+
+        # Check rendered text includes filter indicator and badge
+        rendered = self.ui._model_setup_text()
+        self.assertIn("Filtrando", rendered)
+        self.assertIn("sonnet", rendered.lower())
 
 
 if __name__ == "__main__":

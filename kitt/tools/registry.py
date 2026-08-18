@@ -60,7 +60,7 @@ class ToolRegistry:
         self.goal_tools = None
         self.child_manager = None
         self.child_tools = None
-        self.harness_service = None
+        self._custom_tools: Dict[str, Dict[str, Any]] = {}
         self._handlers: Dict[str, ToolHandler] = {
             "list_files": ListFilesHandler(),
             "read_file": ReadFileHandler(),
@@ -81,6 +81,49 @@ class ToolRegistry:
             "child_spawn": ChildSpawnHandler(),
             "harness_remember": HarnessRememberHandler(),
         }
+
+    def register(
+        self,
+        tool_name: str,
+        handler: Any,
+        description: str = "",
+        schema: Optional[Dict[str, Any]] = None,
+        owner_plugin_id: Optional[str] = None,
+    ) -> None:
+        """Registers a dynamic tool from a plugin or MCP server."""
+        class _CustomHandler:
+            def __init__(self, fn):
+                self.fn = fn
+
+            def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+                if hasattr(self.fn, "execute"):
+                    res = self.fn.execute(args)
+                else:
+                    res = self.fn(args)
+                if isinstance(res, ToolResult):
+                    return res
+                return ToolResult(success=True, output=str(res))
+
+        wrapped_handler = handler if (hasattr(handler, "execute") and callable(getattr(handler, "execute")) and not callable(handler)) else _CustomHandler(handler)
+        self._handlers[tool_name] = wrapped_handler
+        self._custom_tools[tool_name] = {
+            "name": tool_name,
+            "description": description or f"Custom tool {tool_name}",
+            "args": schema or {},
+            "owner": owner_plugin_id,
+        }
+        if hasattr(self.policy, "allow_custom_tool"):
+            self.policy.allow_custom_tool(tool_name)
+
+    def unregister_by_owner(self, owner_plugin_id: str) -> int:
+        """Unregisters all tools owned by a plugin or MCP server."""
+        to_remove = [k for k, v in self._custom_tools.items() if v.get("owner") == owner_plugin_id]
+        for k in to_remove:
+            self._handlers.pop(k, None)
+            self._custom_tools.pop(k, None)
+            if hasattr(self.policy, "disallow_custom_tool"):
+                self.policy.disallow_custom_tool(k)
+        return len(to_remove)
 
     @property
     def repository_index(self):
@@ -164,6 +207,12 @@ class ToolRegistry:
         for tool in all_tools:
             if tool["name"] in arg_schemas:
                 tool["args"] = arg_schemas[tool["name"]]
+        for custom_tool in self._custom_tools.values():
+            all_tools.append({
+                "name": custom_tool["name"],
+                "description": custom_tool["description"],
+                "args": custom_tool["args"],
+            })
         if enabled_tools is None:
             return all_tools
         return [t for t in all_tools if t["name"] in enabled_tools]

@@ -87,6 +87,11 @@ class WriteFileHandler:
         is_safe, target, err = ctx.registry.path_policy.validate_path(rel)
         if not is_safe or not target:
             return ToolResult(success=False, output="", error=err or "Access outside workspace denied.")
+        # Guard: If model hallucinates a non-existent subdirectory path (e.g. src/html/file.ext)
+        # while the file already exists directly at the root, redirect to the existing root file.
+        if not target.exists() and not target.parent.exists() and (ctx.registry.root_path / target.name).is_file():
+            target = ctx.registry.root_path / target.name
+            rel = target.name
         target.parent.mkdir(parents=True, exist_ok=True)
         expected_hash = args.get("expected_content_hash")
         if expected_hash and target.exists():

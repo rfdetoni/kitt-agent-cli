@@ -57,6 +57,13 @@ rtk proxy .venv/bin/python3.14 -m compileall -q kitt tests
 rtk proxy .venv/bin/python3.14 -m unittest discover -s tests -v
 ```
 
+## Mandatory Ruthless Security & Performance Review
+
+After every code implementation/edit:
+- Perform aggressive security, concurrency, performance, resource leak, and data-integrity analysis.
+- Verify untrusted input boundaries, parameterized queries, path containment, atomic invariants, structured resource cleanup, and big-O efficiency.
+- Report any concrete findings with Severity, Confidence, Location, Problem, Impact, Secure Fix, and Validation.
+
 ## Context Engine Rules
 
 - `KittRuntime`, `TurnProcessor`, and `ToolRegistry` must share one `ContextEngine` and one `RepositoryIndex`.

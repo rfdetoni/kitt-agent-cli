@@ -77,7 +77,12 @@ def build_root_container(ui):
         Float(content=ConditionalContainer(Box(Frame(Window(ui.session_picker_control, wrap_lines=False, right_margins=[ScrollbarMargin()]), title="Session Picker"), padding=1), filter=visible("session_picker")), left=8, right=8, top=2, bottom=3),
         Float(content=ConditionalContainer(Box(Frame(Window(ui.timeline_control, wrap_lines=False, right_margins=[ScrollbarMargin()]), title="Timeline"), padding=1), filter=visible("timeline")), left=8, right=8, top=2, bottom=3),
         Float(content=ConditionalContainer(Box(Frame(Window(ui.diff_control, wrap_lines=False, right_margins=[ScrollbarMargin(display_arrows=True)]), title="Diff Viewer"), padding=1), filter=visible("diff")), left=4, right=4, top=1, bottom=2),
-        Float(content=ConditionalContainer(Box(Frame(Window(ui.model_setup_control, wrap_lines=False, right_margins=[ScrollbarMargin()]), title="Model Configuration"), padding=1), filter=visible("model_setup")), left=8, right=8, top=2, bottom=3),
+        Float(content=ConditionalContainer(Box(Frame(HSplit([
+            Window(ui.model_setup_header_control, height=5),
+            VSplit([Window(FormattedTextControl(" 🔍 Filtrar Modelo: "), width=19), Window(ui.model_setup_search_control, height=1)]),
+            Window(FormattedTextControl(" ────────────────────────────────────────────────────────────────────────────"), height=1),
+            Window(ui.model_setup_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
+        ]), title="Configuração de Modelos & Provedores (OpenCode Style)"), padding=1), filter=visible("model_setup")), left=6, right=6, top=1, bottom=2),
         Float(content=ConditionalContainer(Box(Frame(Window(ui.provider_popup_control, wrap_lines=False, right_margins=[ScrollbarMargin()]), title="Selecione o Provedor (★ Favoritos)"), padding=1), filter=visible("provider_popup")), left=8, right=8, top=2, bottom=3),
         Float(content=ConditionalContainer(Box(Frame(HSplit([
             Window(ui.add_provider_help_control, height=3),
@@ -90,7 +95,11 @@ def build_root_container(ui):
             Window(ui.provider_endpoint_help_control, height=3),
             VSplit([Window(FormattedTextControl(" Endpoint URL: "), width=16), Window(ui.provider_endpoint_control, height=1)]),
         ]), title="Configurar Endpoint Ollama / Remoto"), padding=1), filter=visible("provider_endpoint")), left=8, right=8, top=5, height=9),
+        Float(content=ConditionalContainer(Box(Frame(HSplit([
+            Window(ui.auth_login_help_control, height=3),
+            VSplit([Window(FormattedTextControl(" API Key / Token: "), width=18), Window(ui.auth_login_control, height=1)]),
+        ]), title="Autenticação do Provedor"), padding=1), filter=visible("auth_login")), left=8, right=8, top=5, height=9),
         Float(content=ConditionalContainer(Box(Frame(Window(ui.help_control, wrap_lines=False, right_margins=[ScrollbarMargin()]), title="Help"), padding=1), filter=visible("help")), left=8, right=8, top=2, bottom=3),
-        Float(content=ConditionalContainer(Frame(Window(ui.toast_control, height=4, wrap_lines=False), title="Notice [Esc/Enter: OK/Fechar]"), filter=Condition(lambda: bool(ui.state.active_toasts()))), right=1, top=1, width=60),
+        Float(content=ConditionalContainer(Frame(Window(ui.toast_control, height=3, wrap_lines=False), title="Notice"), filter=Condition(lambda: bool(ui.state.active_toasts()))), right=1, top=1, width=60),
     ]
     return FloatContainer(content=content, floats=floats)

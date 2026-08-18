@@ -1,0 +1,6 @@
+name = "hello"
+version = "1.0.0"
+api_version = "1"
+entrypoint = "plugin:setup"
+description = "Minimal hello world demonstration plugin"
+permissions = ["events.read"]

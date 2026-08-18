@@ -28,6 +28,7 @@ from kitt.history.repository import HistoryRepository
 from kitt.history.session_tree import SessionTreeRepository
 from kitt.llm.client import LLMClient
 from kitt.security.egress import EgressPolicy
+import threading
 
 
 class DreamingService:
@@ -66,10 +67,17 @@ class DreamingService:
             min_confidence_candidate=min_confidence_candidate,
         )
         self.prune_phase = DreamPruneAndIndexPhase(memory_repo)
-        self._cancelled = False
+        self._cancel_event = threading.Event()
 
     def cancel(self) -> None:
-        self._cancelled = True
+        self._cancel_event.set()
+
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    def _check_cancelled(self, phase_name: str = "") -> None:
+        if self._cancel_event.is_set():
+            raise InterruptedError(f"Dreaming cancelled{f' at {phase_name}' if phase_name else ''}")
 
     def dream(
         self,
@@ -77,39 +85,42 @@ class DreamingService:
         dry_run: bool = False,
     ) -> DreamResult:
         """Executes a full dream cycle: ORIENT -> GATHER -> CONSOLIDATE -> VALIDATE -> PRUNE & INDEX."""
-        self._cancelled = False
+        self._check_cancelled("before start")
+        self._cancel_event.clear()
         dream_run_id = f"dream_{uuid.uuid4().hex[:12]}"
         started_at = time.time()
         self._emit("DreamStarted", {"run_id": dream_run_id, "workspace_id": workspace_id, "dry_run": dry_run})
 
         try:
             # Phase 1: ORIENT
-            if self._cancelled:
-                raise InterruptedError("Dreaming cancelled before ORIENT")
+            self._check_cancelled("before ORIENT")
             snapshot = self.orient_phase.orient(workspace_id)
+            self._check_cancelled("after ORIENT")
             self._emit("DreamPhaseCompleted", {"run_id": dream_run_id, "phase": "ORIENT", "sessions": len(snapshot.recent_sessions)})
 
             # Phase 2: GATHER SIGNAL
-            if self._cancelled:
-                raise InterruptedError("Dreaming cancelled before GATHER")
+            self._check_cancelled("before GATHER")
             signals = self.gather_phase.gather(snapshot)
+            self._check_cancelled("after GATHER")
             self._emit("DreamPhaseCompleted", {"run_id": dream_run_id, "phase": "GATHER", "signals": len(signals)})
 
             # Phase 3: CONSOLIDATE
-            if self._cancelled:
-                raise InterruptedError("Dreaming cancelled before CONSOLIDATE")
+            self._check_cancelled("before CONSOLIDATE")
             plan = self.consolidate_phase.consolidate(snapshot, signals)
+            self._check_cancelled("after CONSOLIDATE")
             self._emit("DreamPhaseCompleted", {"run_id": dream_run_id, "phase": "CONSOLIDATE", "proposals": len(plan.operations)})
 
             # Validation
-            if self._cancelled:
-                raise InterruptedError("Dreaming cancelled before VALIDATE")
+            self._check_cancelled("before VALIDATE")
             accepted_ops, rejected_ops = self.validator.validate_plan(plan, snapshot)
+            self._check_cancelled("after VALIDATE")
             self._emit("DreamPhaseCompleted", {"run_id": dream_run_id, "phase": "VALIDATE", "accepted": len(accepted_ops), "rejected": len(rejected_ops)})
 
             # Prepare mutations
             new_memories: List[MemoryRecord] = []
-            updated_memories: List[MemoryRecord] = []
+            op_updated_memories: List[MemoryRecord] = []
+            new_evidence: List[MemoryEvidence] = []
+            existing_by_id = {m.id: m for m in snapshot.memories}
             new_evidence: List[MemoryEvidence] = []
             existing_by_id = {m.id: m for m in snapshot.memories}
 
@@ -158,7 +169,7 @@ class DreamingService:
                     superseded_id = op.source_memory_ids[0] if op.source_memory_ids else None
                     if superseded_id and superseded_id in existing_by_id:
                         old_mem = existing_by_id[superseded_id]
-                        updated_memories.append(
+                        op_updated_memories.append(
                             MemoryRecord(
                                 id=old_mem.id,
                                 workspace_id=old_mem.workspace_id,
@@ -219,7 +230,7 @@ class DreamingService:
                     for mid in op.source_memory_ids:
                         if mid in existing_by_id:
                             old_mem = existing_by_id[mid]
-                            updated_memories.append(
+                            op_updated_memories.append(
                                 MemoryRecord(
                                     id=old_mem.id,
                                     workspace_id=old_mem.workspace_id,
@@ -260,13 +271,28 @@ class DreamingService:
                     added_count += 1
 
             # Phase 4: PRUNE & INDEX
+            self._check_cancelled("before PRUNE")
             pruned_records, _projection = self.prune_phase.prune_and_index(
-                workspace_id, snapshot, root_dir=self.root_dir
+                workspace_id, snapshot, root_dir=self.root_dir, dry_run=dry_run
             )
+            self._check_cancelled("after PRUNE")
+
+            # Mutation Precedence: SUPERSEDE/MERGE > ARCHIVE > others
+            mutations_by_id: Dict[str, MemoryRecord] = {}
+            for mem in op_updated_memories:
+                mutations_by_id[mem.id] = mem
+
             for pr in pruned_records:
-                if pr.status == "ARCHIVED":
-                    archived_count += 1
-                updated_memories.append(pr)
+                if pr.id not in mutations_by_id:
+                    mutations_by_id[pr.id] = pr
+                    if pr.status == "ARCHIVED":
+                        archived_count += 1
+                elif mutations_by_id[pr.id].status != "SUPERSEDED":
+                    mutations_by_id[pr.id] = pr
+                    if pr.status == "ARCHIVED":
+                        archived_count += 1
+
+            final_updated_memories = list(mutations_by_id.values())
 
             finished_at = time.time()
             dream_run = DreamRun(
@@ -290,16 +316,20 @@ class DreamingService:
 
             # Atomic commit if not dry_run
             if not dry_run:
-                if self._cancelled:
-                    raise InterruptedError("Dreaming cancelled before COMMIT")
+                self._check_cancelled("before COMMIT")
+                self._emit("DreamCommitStarted", {"run_id": dream_run_id, "workspace_id": workspace_id})
                 self.memory_repo.commit_dream(
                     workspace_id=workspace_id,
                     dream_run=dream_run,
                     new_memories=new_memories,
-                    updated_memories=updated_memories,
+                    updated_memories=final_updated_memories,
                     new_evidence=new_evidence,
                 )
-                self.memory_repo.rebuild_materialized_view(workspace_id, root_dir=self.root_dir)
+                self._emit("DreamCommitCompleted", {"run_id": dream_run_id, "workspace_id": workspace_id})
+                try:
+                    self.memory_repo.rebuild_materialized_view(workspace_id, root_dir=self.root_dir)
+                except Exception as proj_err:
+                    self._emit("DreamProjectionFailed", {"run_id": dream_run_id, "error": str(proj_err)})
 
             result = DreamResult(
                 run=dream_run,

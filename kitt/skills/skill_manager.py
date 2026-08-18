@@ -56,16 +56,17 @@ Write minimal, safe, high-quality code. Evaluate:
 """
     },
     "rtk": {
-        "description": "Rust Token Killer CLI output optimization proxy rules",
+        "description": "Rust Token Killer CLI output optimization proxy rules (when available in PATH)",
         "content": """---
 name: rtk
-description: Rust Token Killer CLI output optimization proxy rules
+description: Rust Token Killer CLI output optimization proxy rules (conditional)
 version: 1.0.0
 author: K.I.T.T. Core
 ---
 
-# Mandatory RTK Protocol
-Run bash commands via rtk proxy wrapper to cut tool output tokens.
+# RTK Protocol (Conditional Execution)
+- Use `rtk` proxy wrapper (`rtk <command>`) ONLY when the `rtk` binary is present and available in the system PATH.
+- If `rtk` is NOT present or fails with 'command not found', execute commands directly without `rtk` to avoid errors.
 """
     }
 }

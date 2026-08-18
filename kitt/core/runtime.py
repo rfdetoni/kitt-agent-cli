@@ -37,6 +37,8 @@ from kitt.security.network_policy import NetworkPolicy
 from kitt.dreaming.repository import MemoryRepository
 from kitt.dreaming.service import DreamingService
 from kitt.dreaming.scheduler import DreamScheduler
+from kitt.router.router import TaskRouter
+from kitt.llm.client import LLMClient
 
 
 @dataclass
@@ -71,6 +73,7 @@ class KittRuntime:
     memory_repo: Optional[MemoryRepository] = None
     dream_service: Optional[DreamingService] = None
     dream_scheduler: Optional[DreamScheduler] = None
+    extensions: Optional[ExtensionManager] = None
 
     def __post_init__(self):
         self._closed = False
@@ -137,12 +140,17 @@ class KittRuntime:
         path_policy = PathPolicy(canon_root)
         network_policy = NetworkPolicy()
 
+        task_router = TaskRouter(root_dir=canon_root)
+        _, ctx_profile = task_router.resolve_profile_for_task("context-gather")
+        dream_llm = LLMClient(ctx_profile)
+
         dream_service = DreamingService(
             db=db,
             memory_repo=memory_repo,
             history_repo=history_repo,
             session_tree=tree,
             root_dir=canon_root,
+            llm_client=dream_llm,
             egress_policy=egress_policy,
             event_callback=lambda name, payload: events.publish(name, payload),
         )
@@ -187,6 +195,13 @@ class KittRuntime:
             workspace_id_getter=lambda: identity.id,
         )
 
+        from kitt.extensions.manager import ExtensionManager
+        extensions = ExtensionManager(
+            workspace_root=canon_root,
+            event_bus=events,
+            tool_registry=registry,
+        )
+
         return cls(
             config, db, history, artifacts, metrics, policy, approval, repository_index,
             context_engine, working_set, registry, skills,
@@ -199,6 +214,7 @@ class KittRuntime:
             memory_repo=memory_repo,
             dream_service=dream_service,
             dream_scheduler=dream_scheduler,
+            extensions=extensions,
         )
 
     @property
@@ -233,6 +249,7 @@ class KittRuntime:
             self._closed = True
             errors = []
             for name, close in (
+                ("extensions", getattr(self.extensions, "close", lambda: None)),
                 ("dream_scheduler", getattr(self.dream_scheduler, "close", lambda: None)),
                 ("processor", self.processor.close), ("children", self.children.close),
                 ("metrics", self.metrics.close), ("artifacts", self.artifacts.close),

@@ -319,9 +319,21 @@ class MemoryRepository:
         content = "\n".join(lines).strip() + "\n"
 
         if root_dir:
+            import os
+            import uuid
             target = Path(root_dir) / ".kitt" / "memory" / "MEMORY.md"
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            tmp_path = target.parent / f".MEMORY.md.{uuid.uuid4().hex[:8]}.tmp"
+            try:
+                tmp_path.write_text(content, encoding="utf-8")
+                os.replace(tmp_path, target)
+            except Exception:
+                if tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                raise
 
         return content
 

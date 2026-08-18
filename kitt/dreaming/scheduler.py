@@ -37,15 +37,18 @@ class DreamScheduler:
         self._is_dreaming = False
         self._current_thread: Optional[threading.Thread] = None
         self._closed = False
+        self._last_auto_attempt: Dict[str, float] = {}
 
     @property
     def is_dreaming(self) -> bool:
-        return self._is_dreaming
+        with self._lock:
+            return self._is_dreaming
 
     def should_run(self, workspace_id: Optional[str] = None) -> bool:
         """Determines if the runtime is eligible for an automated background dream run."""
-        if self._closed or self._is_dreaming:
-            return False
+        with self._lock:
+            if self._closed or self._is_dreaming:
+                return False
 
         # Config checks
         dream_enabled = getattr(self.config, "dream_enabled", True)
@@ -62,6 +65,13 @@ class DreamScheduler:
 
         # 1. Interval check (>= dream_min_interval_hours)
         min_interval_seconds = getattr(self.config, "dream_min_interval_hours", 24) * 3600.0
+
+        # Check last automatic attempt cooldown
+        last_auto = self._last_auto_attempt.get(ws_id, 0.0)
+        if (now - last_auto) < min_interval_seconds:
+            return False
+
+        # Check last completed committed dream
         last_run = self.memory_repo.get_last_dream_run(ws_id)
         if last_run and last_run.finished_at:
             if (now - last_run.finished_at) < min_interval_seconds:
@@ -98,6 +108,7 @@ class DreamScheduler:
             if self._is_dreaming or self._closed:
                 return False
             self._is_dreaming = True
+            self._last_auto_attempt[ws_id] = time.time()
 
             def worker():
                 try:
@@ -106,21 +117,38 @@ class DreamScheduler:
                 except Exception as exc:
                     logger.debug("Background dream execution finished with: %s", exc)
                 finally:
-                    self._is_dreaming = False
+                    with self._lock:
+                        self._is_dreaming = False
 
             t = threading.Thread(target=worker, name=f"KittDreamWorker-{ws_id[:8]}", daemon=True)
             self._current_thread = t
             t.start()
             return True
 
+    def run_manual(self, workspace_id: Optional[str] = None, dry_run: bool = True) -> Any:
+        """Coordinates a synchronous manual dream run under exclusive lock."""
+        ws_id = workspace_id or self.workspace_id_getter()
+        with self._lock:
+            if self._is_dreaming:
+                raise RuntimeError("Dreaming Mode is already running.")
+            self._is_dreaming = True
+
+        try:
+            return self.dream_service.dream(ws_id, dry_run=dry_run)
+        finally:
+            with self._lock:
+                self._is_dreaming = False
+
     def cancel(self) -> None:
         """Signals cancellation to the running dream service."""
         self.dream_service.cancel()
 
     def close(self, timeout: float = 2.0) -> None:
-        """Shuts down scheduler and waits for any active worker to terminate."""
+        """Shuts down scheduler and waits for any active worker to terminate without holding lock."""
         self._closed = True
         self.cancel()
         with self._lock:
-            if self._current_thread and self._current_thread.is_alive():
-                self._current_thread.join(timeout=timeout)
+            thread = self._current_thread
+
+        if thread and thread.is_alive():
+            thread.join(timeout=timeout)

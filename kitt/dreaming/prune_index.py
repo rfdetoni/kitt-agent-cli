@@ -37,6 +37,7 @@ class DreamPruneAndIndexPhase:
         workspace_id: str,
         snapshot: DreamSnapshot,
         root_dir: Optional[Path] = None,
+        dry_run: bool = False,
     ) -> Tuple[List[MemoryRecord], str]:
         """Calculates salience, flags low-salience memories for archival, and updates MEMORY.md."""
         now = time.time()
@@ -103,8 +104,11 @@ class DreamPruneAndIndexPhase:
                         )
                     )
 
-        # 4. Rebuild materialized MEMORY.md projection
-        projection = self.memory_repo.rebuild_materialized_view(workspace_id, root_dir=root_dir)
+        # 4. Rebuild materialized MEMORY.md projection (only write to root_dir if not dry_run)
+        projection = self.memory_repo.rebuild_materialized_view(
+            workspace_id,
+            root_dir=root_dir if not dry_run else None,
+        )
 
         return updated_records, projection
 
