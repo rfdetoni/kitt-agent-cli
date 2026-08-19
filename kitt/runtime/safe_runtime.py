@@ -66,6 +66,10 @@ class SafeRuntimeResult:
     context_handles: List[str] = field(default_factory=list)
     tokens_saved: int = 0
     duration_ms: float = 0.0
+    requires_approval: bool = False
+    approval_action: Optional[str] = None
+    approval_payload: Optional[Dict[str, Any]] = None
+    required_capability: Optional[str] = None
 
 
 class SafeRuntime:
@@ -117,8 +121,9 @@ class SafeRuntime:
         turn_id: str = "runtime_turn",
         origin: str = "MODEL",
         effective_capabilities: Optional[Set[str]] = None,
+        security_context: Optional[Any] = None,
     ) -> SafeRuntimeResult:
-        """Execute a typed, policy-governed runtime operation."""
+        """Execute a typed, policy-governed runtime operation with fail-closed capabilities."""
         start = time.perf_counter()
         args = arguments or {}
         op = operation.strip() if operation else ""
@@ -133,12 +138,21 @@ class SafeRuntime:
 
         spec = OPERATION_SPECS[op]
 
-        # Capability enforcement
-        if effective_capabilities is not None and spec.required_capability not in effective_capabilities:
+        # Fail-closed capability enforcement
+        caps: Set[str] = set()
+        if security_context is not None and hasattr(security_context, "capabilities"):
+            caps = set(security_context.capabilities)
+        elif effective_capabilities is not None:
+            caps = set(effective_capabilities)
+        else:
+            # Missing capabilities fail closed to zero capabilities
+            caps = set()
+
+        if spec.required_capability not in caps:
             return SafeRuntimeResult(
                 success=False,
                 operation=op,
-                error=f"Capability '{spec.required_capability}' required for '{op}' is not granted",
+                error=f"Capability '{spec.required_capability}' required for '{op}' is not granted (fail-closed)",
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
 
@@ -166,6 +180,10 @@ class SafeRuntime:
                         success=False,
                         operation=op,
                         error=f"Operation '{op}' requires approval from user.",
+                        requires_approval=True,
+                        approval_action=spec.policy_tool_action or op,
+                        approval_payload=args,
+                        required_capability=spec.required_capability,
                         duration_ms=(time.perf_counter() - start) * 1000,
                     )
 

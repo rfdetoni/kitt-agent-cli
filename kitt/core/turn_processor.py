@@ -1228,6 +1228,13 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 self.cancelled_turns.discard(cmd.turn_id)
                 yield TurnCancelled(reason="Turn cancelled before prompt budgeting")
                 return
+
+            exe_client = self.execution_client or LLMClient(exe_profile)
+            plan.enabled_tools = self.surface_selector.select_tools(
+                plan,
+                model_capabilities=getattr(exe_client, "capabilities", None),
+            )
+
             sys_prompt, base_sys, allocated, request = self._build_system_prompt(
                 cmd, task, plan, exe_profile, context_map_str, explicit_str, agents_str,
                 skills_str, agent_addressed, workspace_id, budget
@@ -1239,7 +1246,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 window_size=exe_profile.context_window
             )
 
-            exe_client = self.execution_client or LLMClient(exe_profile)
             if cmd.dry_run:
                 yield TurnCompleted(response="[Dry Run Completed]", edit_result=None)
                 return

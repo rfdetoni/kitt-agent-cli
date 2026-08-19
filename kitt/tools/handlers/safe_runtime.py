@@ -4,6 +4,7 @@ import json
 from typing import Any, Dict
 from kitt.tools.handlers import ToolContext, ToolHandler
 from kitt.runtime.safe_runtime import SafeRuntime
+from kitt.security.context import ExecutionSecurityContext
 
 
 class SafeRuntimeHandler(ToolHandler):
@@ -38,12 +39,37 @@ class SafeRuntimeHandler(ToolHandler):
             )
             ctx.registry._safe_runtime_instance = safe_runtime
 
+        sec_ctx = getattr(ctx, "security_context", None)
+        if sec_ctx is None:
+            sec_ctx = ExecutionSecurityContext.create_user_context(
+                workspace_id=ctx.workspace_id,
+                conversation_id=ctx.conversation_id,
+                turn_id=ctx.turn_id,
+            )
+
         res = safe_runtime.execute(
             operation=operation,
             arguments=op_args,
             turn_id=ctx.turn_id,
             origin=ctx.origin,
+            security_context=sec_ctx,
         )
+
+        if res.requires_approval:
+            return ToolResult(
+                success=False,
+                output="",
+                error=res.error,
+                requires_approval=True,
+                metadata={
+                    "operation": res.operation,
+                    "requires_approval": True,
+                    "approval_action": res.approval_action,
+                    "approval_payload": res.approval_payload,
+                    "required_capability": res.required_capability,
+                    "duration_ms": res.duration_ms,
+                },
+            )
 
         output_str = json.dumps(res.data, ensure_ascii=False) if isinstance(res.data, (dict, list)) else str(res.data or "")
         return ToolResult(
