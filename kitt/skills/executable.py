@@ -316,42 +316,25 @@ class ExecutableSkillRunner:
         try:
             source = py_file.read_text(encoding="utf-8", errors="replace")
 
-            # 1. AST Validation
-            validate_skill_ast(source)
-
-            # 2. Restricted compilation and sandboxed namespace
-            compiled = compile(source, filename=str(py_file), mode="exec")
-
-            sandbox_globals = {
-                "__builtins__": SAFE_BUILTINS,
-                "json": json,
-                "math": math,
-                "re": re,
-                "datetime": datetime,
-            }
-            sandbox_locals: Dict[str, Any] = {}
-
-            exec(compiled, sandbox_globals, sandbox_locals)
-
-            handler = sandbox_locals.get("execute") or sandbox_locals.get("main")
-            if not callable(handler):
-                raise AttributeError(f"Skill '{skill_name}/skill.py' must define an 'execute(context, arguments)' function")
-
-            ctx = SkillExecutionContext(meta, self.runtime, call_stack=call_stack)
-
-            # 3. Timeout enforcement
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(handler, ctx, arguments)
-                res = future.result(timeout=self.timeout)
-
-            dur = (time.perf_counter() - start) * 1000
-            return SkillResult(success=True, data=res, duration_ms=dur)
+            from kitt.skills.subprocess_sandbox import SubprocessSkillSandbox
+            sandbox = SubprocessSkillSandbox(self.runtime, timeout_seconds=self.timeout)
+            return sandbox.execute(
+                skill_name=skill_name,
+                source=source,
+                arguments=arguments,
+                capabilities=meta.capabilities,
+                call_stack=call_stack,
+            )
         except Exception as exc:
             dur = (time.perf_counter() - start) * 1000
             return SkillResult(success=False, error=f"Skill '{skill_name}' failed: {exc}", duration_ms=dur)
 
     def _find_skill_dir(self, skill_name: str) -> Optional[Path]:
-        root_dir = getattr(self.runtime, "root", Path("."))
+        root_dir = getattr(
+            self.runtime,
+            "canonical_root",
+            getattr(self.runtime, "root_path", getattr(self.runtime, "root", Path("."))),
+        )
         candidates = [
             Path(root_dir) / ".kitt" / "skills" / skill_name,
             Path.home() / ".kitt" / "skills" / skill_name,

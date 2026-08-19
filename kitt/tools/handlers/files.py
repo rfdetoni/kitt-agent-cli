@@ -35,8 +35,10 @@ class ReadFileHandler:
         is_safe, target, err = ctx.registry.path_policy.validate_path(rel)
         if not is_safe or not target or not target.exists() or not target.is_file():
             return ToolResult(success=False, output="", error=err or "File not found or outside workspace.")
-        start = max(1, int(args.get("start_line", 1))) - 1
-        requested_end = int(args.get("end_line", start + 200))
+        start_val = args.get("start_line")
+        start = max(1, int(start_val if start_val is not None else 1)) - 1
+        end_val = args.get("end_line")
+        requested_end = int(end_val if end_val is not None else (start + 200))
         max_lines = 5000
         max_bytes = max(0, int(args.get("max_bytes", 0) or 0))
         end = min(requested_end, start + max_lines)
