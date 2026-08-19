@@ -177,12 +177,20 @@ class ArtifactStore:
             "content_hash": self.get(artifact_id).content_hash,
         }
 
-    def list(self, conversation_id: Optional[str] = None, limit: int = 20,
-             offset: int = 0) -> List[Artifact]:
-        query, args = "SELECT * FROM artifacts", []
+    def list(self, conversation_id: Optional[str] = None, workspace_id: Optional[str] = None,
+             limit: int = 20, offset: int = 0) -> List[Artifact]:
+        conditions = []
+        args = []
+        if workspace_id:
+            conditions.append("workspace_id=?")
+            args.append(workspace_id)
         if conversation_id:
-            query += " WHERE conversation_id=?"
+            conditions.append("conversation_id=?")
             args.append(conversation_id)
+
+        query = "SELECT * FROM artifacts"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?"
         args += [min(max(limit, 1), 100), max(offset, 0)]
         with self.db.get_connection() as conn:
