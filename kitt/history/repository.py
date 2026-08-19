@@ -160,12 +160,12 @@ class HistoryRepository:
             if search:
                 term = f"%{search}%"
                 cur.execute(
-                    "SELECT * FROM conversations WHERE workspace_id = ? AND status != 'DELETED' AND (title LIKE ? OR compact_summary LIKE ?) ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?;",
+                    "SELECT * FROM conversations WHERE workspace_id = ? AND status NOT IN ('DELETED','INTERNAL_CHILD') AND (title LIKE ? OR compact_summary LIKE ?) ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?;",
                     (workspace_id, term, term, limit, offset)
                 )
             else:
                 cur.execute(
-                    "SELECT * FROM conversations WHERE workspace_id = ? AND status != 'DELETED' ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?;",
+                    "SELECT * FROM conversations WHERE workspace_id = ? AND status NOT IN ('DELETED','INTERNAL_CHILD') ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?;",
                     (workspace_id, limit, offset)
                 )
             return [dict(row) for row in cur.fetchall()]
@@ -283,11 +283,12 @@ class HistoryRepository:
                 """INSERT INTO pending_actions
                 (id, approval_request_id, turn_id, conversation_id, workspace_id, tool_name, 
                  normalized_args_json, action_hash, source_response_sha256, affected_paths_json, 
-                 before_hashes_json, created_at, expires_at, state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 before_hashes_json, created_at, expires_at, state, security_context_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (pa.id, pa.approval_request_id, pa.turn_id, pa.conversation_id, pa.workspace_id, pa.tool_name,
                  json.dumps(pa.normalized_args), pa.action_hash, pa.source_response_sha256, 
-                 json.dumps(pa.affected_paths), json.dumps(pa.before_hashes), pa.created_at, pa.expires_at, pa.state)
+                 json.dumps(pa.affected_paths), json.dumps(pa.before_hashes), pa.created_at, pa.expires_at, pa.state,
+                 json.dumps(pa.security_context or {}))
             )
 
     def get_valid_pending_action(self, action_id: str, workspace_id: str) -> Optional['PendingAction']:
@@ -322,7 +323,8 @@ class HistoryRepository:
                 before_hashes=json.loads(row["before_hashes_json"]),
                 created_at=row["created_at"],
                 expires_at=row["expires_at"],
-                state=row["state"]
+                state=row["state"],
+                security_context=json.loads(row["security_context_json"] or "{}")
             )
             
     def consume_pending_action(self, action_id: str) -> bool:

@@ -231,10 +231,12 @@ class SkillManager:
 
         return removed
 
-    def execute_skill(self, skill_name: str, arguments: dict, runtime=None):
+    def execute_skill(self, skill_name: str, arguments: dict, runtime=None, security_context=None):
+        if not getattr(self, "executable_enabled", True):
+            raise PermissionError("Executable skills are disabled by runtime configuration")
         from kitt.skills.executable import ExecutableSkillRunner
         runner = ExecutableSkillRunner(runtime)
-        return runner.execute(skill_name, arguments)
+        return runner.execute(skill_name, arguments, security_context=security_context)
 
     def get_skills_summary_prompt(self) -> str:
         skills = self.list_skills()

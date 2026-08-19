@@ -2,25 +2,34 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
+
 from kitt.tools.handlers import ToolContext, ToolHandler
 from kitt.runtime.safe_runtime import SafeRuntime
-from kitt.security.context import ExecutionSecurityContext
 
 
 class SafeRuntimeHandler(ToolHandler):
-    """Handler for composite kitt_runtime tool operations."""
+    """Composite runtime entry point with mandatory principal context."""
 
     def execute(self, args: Dict[str, Any], ctx: ToolContext) -> Any:
         from kitt.tools.registry import ToolResult
 
-        operation = args.get("operation", "")
+        operation = str(args.get("operation", "")).strip()
         op_args = args.get("arguments", {})
         if not operation:
+            return ToolResult(False, "", "Argument 'operation' is required for kitt_runtime")
+        if not isinstance(op_args, dict):
+            return ToolResult(False, "", "Argument 'arguments' must be an object")
+
+        sec_ctx = ctx.security_context
+        if sec_ctx is None:
             return ToolResult(
-                success=False,
-                output="",
-                error="Argument 'operation' is required for kitt_runtime",
+                False, "",
+                "ExecutionSecurityContext is required for kitt_runtime (fail-closed).",
             )
+        try:
+            sec_ctx.assert_scope(ctx.workspace_id, ctx.conversation_id)
+        except PermissionError as exc:
+            return ToolResult(False, "", str(exc))
 
         safe_runtime = getattr(ctx.registry, "_safe_runtime_instance", None)
         if safe_runtime is None or safe_runtime.conversation_id != ctx.conversation_id:
@@ -39,21 +48,27 @@ class SafeRuntimeHandler(ToolHandler):
             )
             ctx.registry._safe_runtime_instance = safe_runtime
 
-        sec_ctx = getattr(ctx, "security_context", None)
-        if sec_ctx is None:
-            sec_ctx = ExecutionSecurityContext.create_user_context(
-                workspace_id=ctx.workspace_id,
-                conversation_id=ctx.conversation_id,
-                turn_id=ctx.turn_id,
-            )
-
         res = safe_runtime.execute(
             operation=operation,
             arguments=op_args,
             turn_id=ctx.turn_id,
             origin=ctx.origin,
             security_context=sec_ctx,
+            approval_grant=ctx.approval_grant,
+            expected_approval_id=ctx.expected_approval_id,
         )
+
+        event_bus = getattr(ctx.registry, "event_bus", None)
+        if event_bus is not None:
+            event_bus.publish("RuntimeOperation", {
+                "operation": operation,
+                "success": res.success,
+                "requires_approval": res.requires_approval,
+                "duration_ms": res.duration_ms,
+                "trace_id": sec_ctx.trace_id,
+                "principal_type": sec_ctx.principal_type,
+                "principal_id": sec_ctx.principal_id,
+            })
 
         if res.requires_approval:
             return ToolResult(
@@ -71,10 +86,10 @@ class SafeRuntimeHandler(ToolHandler):
                 },
             )
 
-        output_str = json.dumps(res.data, ensure_ascii=False) if isinstance(res.data, (dict, list)) else str(res.data or "")
+        output = json.dumps(res.data, ensure_ascii=False) if isinstance(res.data, (dict, list)) else str(res.data or "")
         return ToolResult(
             success=res.success,
-            output=output_str,
+            output=output,
             error=res.error,
             metadata={
                 "operation": res.operation,

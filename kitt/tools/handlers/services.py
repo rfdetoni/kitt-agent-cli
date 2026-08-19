@@ -27,7 +27,11 @@ class ArtifactReadHandler:
         from kitt.tools.registry import ToolResult
         if not ctx.registry.artifact_tools:
             return ToolResult(False, "", "Artifact tools service unavailable.")
-        raw = ctx.registry.artifact_tools.read_text(str(args.get("artifact_id", "")))
+        raw = ctx.registry.artifact_tools.read_text(
+            str(args.get("artifact_id", "")),
+            workspace_id=ctx.workspace_id,
+            conversation_id=ctx.conversation_id,
+        )
         return ToolResult(True, raw, bytes_count=len(raw.encode()))
 
 
@@ -36,7 +40,11 @@ class ArtifactListHandler:
         from kitt.tools.registry import ToolResult
         if not ctx.registry.artifact_tools:
             return ToolResult(False, "", "Artifact tools service unavailable.")
-        items = ctx.registry.artifact_tools.list(ctx.conversation_id, int(args.get("limit", 20)))
+        items = ctx.registry.artifact_tools.list(
+            conversation_id=ctx.conversation_id,
+            limit=int(args.get("limit", 20)),
+            workspace_id=ctx.workspace_id,
+        )
         return ToolResult(True, "\n".join(f"{a.id} {a.artifact_type} {a.size_bytes}B {a.summary}" for a in items))
 
 
@@ -102,6 +110,7 @@ class ChildSpawnHandler:
             enabled_tools=args.get("enabled_tools") or args.get("allowed_tools") or ["read_file", "search"],
             token_budget=int(args.get("token_budget", 4000)),
             timeout_seconds=float(args.get("timeout_seconds", 60.0)),
+            security_context=ctx.security_context,
         )
         return ToolResult(True, f"Child task spawned with ID {child.id}.", metadata={"child_id": child.id, "child": child})
 

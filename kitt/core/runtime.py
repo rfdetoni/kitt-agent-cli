@@ -84,7 +84,7 @@ class KittRuntime:
     @classmethod
     def build(cls, root_dir: str, config: Optional[RuntimeConfig] = None) -> "KittRuntime":
         from kitt.core.workspace_identity import canonical_workspace_path
-        config = config or RuntimeConfig()
+        config = config or RuntimeConfig.from_env()
         canon_root = canonical_workspace_path(root_dir)
         ephemeral = config.ephemeral
         in_memory = not config.history_enabled
@@ -113,7 +113,9 @@ class KittRuntime:
         registry = ToolRegistry(canon_root, context_engine=context_engine)
         registry.policy = policy
         registry.approval_manager = approval
+        registry.runtime_config = config
         skills = SkillManager(canon_root, persistence_enabled=persistence_enabled)
+        skills.executable_enabled = config.executable_skills_enabled
         artifacts = ArtifactStore(
             canon_root, db,
             inline_limit=config.artifact_inline_limit,
@@ -127,12 +129,17 @@ class KittRuntime:
         queue = InputQueueService(InputQueueRepository(db))
         compaction = CompactionService(db, tree, keep_recent=config.compaction_keep_recent)
         events = EventBus()
+        from kitt.metrics.prime import PrimeMetrics
+        prime_metrics = PrimeMetrics(canon_root)
         events.subscribe("MetricsRecorded", lambda name, payload: metrics.record(payload))
+        events.subscribe("*", prime_metrics.observe)
+        registry.event_bus = events
         children = ChildAgentManager(
             canon_root, ChildRepository(db), artifacts,
             max_children=config.max_children, max_depth=config.max_child_depth,
             workspace_id=identity.id,
             event_callback=lambda name, payload: events.publish(name, payload),
+            enabled=config.retained_agents_enabled,
         )
         memory_repo = MemoryRepository(db)
         memory = MemoryManager(canon_root, persistence_enabled=persistence_enabled, memory_repo=memory_repo, workspace_id=identity.id)
@@ -206,9 +213,13 @@ class KittRuntime:
             workspace_id_getter=lambda: identity.id,
         )
 
+        runtime_holder = {}
+        from kitt.goals.executor import GoalStepExecutor
         goal_scheduler = GoalScheduler(
             db=db,
             goal_service=goals,
+            runtime_step_executor=GoalStepExecutor(lambda: runtime_holder["runtime"]),
+            event_callback=lambda name, payload: events.publish(name, payload),
         )
 
         from kitt.extensions.manager import ExtensionManager
@@ -218,7 +229,7 @@ class KittRuntime:
             tool_registry=registry,
         )
 
-        return cls(
+        runtime = cls(
             config, db, history, artifacts, metrics, policy, approval, repository_index,
             context_engine, working_set, registry, skills,
             harness, goals, queue, children, compaction, tree, events, processor,
@@ -233,6 +244,9 @@ class KittRuntime:
             goal_scheduler=goal_scheduler,
             extensions=extensions,
         )
+        runtime_holder["runtime"] = runtime
+        runtime.prime_metrics = prime_metrics
+        return runtime
 
     @property
     def workspace_id(self) -> str:

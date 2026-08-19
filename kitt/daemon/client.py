@@ -1,74 +1,61 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 from kitt.daemon.protocol import DaemonEvent, decode_line, encode_message
-from kitt.daemon.server import get_default_socket_path, get_default_token_path
 from kitt.daemon.transport import IPCTransport
 
 
 class DaemonClient:
-    """Client for attaching to and interacting with a running KITT Daemon over multiplexed IPC."""
-
-    def __init__(
-        self,
-        workspace_root: Optional[Path | str] = None,
-        socket_path: Optional[Path | str] = None,
-        token_path: Optional[Path | str] = None,
-        token: Optional[str] = None,
-    ):
+    def __init__(self, workspace_root=None, socket_path=None, token_path=None, token=None):
         self.workspace_root = Path(workspace_root or Path.cwd()).resolve()
         self.transport = IPCTransport(self.workspace_root)
         self.socket_path = Path(socket_path) if socket_path else self.transport.socket_path
         self.token_path = Path(token_path) if token_path else (self.transport.kitt_dir / "daemon.token")
         self.token_override = token
-        self.reader: Optional[asyncio.StreamReader] = None
-        self.writer: Optional[asyncio.StreamWriter] = None
+        self.reader = None
+        self.writer = None
         self._connected = False
-        self._reader_task: Optional[asyncio.Task] = None
+        self._reader_task = None
         self._pending_requests: Dict[str, asyncio.Future] = {}
         self._event_callback: Optional[Callable[[DaemonEvent], None]] = None
+        self.resync_required = False
 
     async def connect(self) -> bool:
-        """Connect to daemon, authenticate, and start single multiplexed reader loop."""
         endpoint = self.transport.read_endpoint_metadata()
         if not endpoint and not self.socket_path.exists():
             return False
-
-        token = self.token_override or (self.token_path.read_text(encoding="utf-8").strip() if self.token_path.exists() else "")
+        try:
+            token = self.token_override or self.transport.read_secret(self.token_path)
+        except Exception:
+            return False
         if not token:
             return False
-
         try:
             if endpoint and endpoint.transport_type == "tcp" and endpoint.port:
                 self.reader, self.writer = await asyncio.open_connection(endpoint.address, endpoint.port)
             elif sys.platform != "win32":
-                target_sock = Path(endpoint.address) if endpoint else self.socket_path
-                self.reader, self.writer = await asyncio.open_unix_connection(str(target_sock))
+                target = Path(endpoint.address) if endpoint else self.socket_path
+                self.reader, self.writer = await asyncio.open_unix_connection(str(target))
             else:
-                self.reader, self.writer = await asyncio.open_connection("127.0.0.1", endpoint.port if endpoint else 0)
-
-            # Start background multiplexed reader loop
+                if not endpoint or not endpoint.port:
+                    return False
+                self.reader, self.writer = await asyncio.open_connection("127.0.0.1", endpoint.port)
             self._connected = True
             self._reader_task = asyncio.create_task(self._reader_loop())
-
-            # Send auth request over multiplexed channel
             resp = await self._send_request({"action": "auth", "token": token})
             if resp.get("status") == "ok":
                 return True
-            await self.close()
-            return False
         except Exception:
-            await self.close()
-            return False
+            pass
+        await self.close()
+        return False
 
     async def _reader_loop(self) -> None:
-        """Single reader loop for all multiplexed requests and streamed events."""
         try:
             while self._connected and self.reader:
                 line = await self.reader.readline()
@@ -78,107 +65,113 @@ class DaemonClient:
                     msg = decode_line(line)
                 except Exception:
                     continue
-
-                msg_type = msg.get("type")
-                if msg_type == "RESPONSE" or "request_id" in msg:
-                    req_id = msg.get("request_id")
-                    if req_id and req_id in self._pending_requests:
-                        fut = self._pending_requests[req_id]
-                        if not fut.done():
-                            fut.set_result(msg)
-                elif msg_type == "EVENT" and "event" in msg:
+                if msg.get("type") == "RESYNC_REQUIRED":
+                    self.resync_required = True
+                    continue
+                if msg.get("type") == "EVENT" and "event" in msg:
                     evt = DaemonEvent.from_dict(msg["event"])
                     if self._event_callback:
                         self._event_callback(evt)
+                    continue
+                req_id = msg.get("request_id")
+                if req_id and req_id in self._pending_requests:
+                    fut = self._pending_requests[req_id]
+                    if not fut.done():
+                        fut.set_result(msg)
         except asyncio.CancelledError:
-            pass
-        except Exception:
             pass
         finally:
             self._connected = False
-            # Cancel all pending futures
-            for fut in self._pending_requests.values():
+            for fut in tuple(self._pending_requests.values()):
                 if not fut.done():
                     fut.cancel()
-            self._pending_requests.clear()
-
-    async def is_running(self) -> bool:
-        """Check if daemon is reachable."""
-        try:
-            if not self._connected:
-                ok = await self.connect()
-                if not ok:
-                    return False
-            resp = await self._send_request({"action": "ping"})
-            return resp.get("status") == "ok"
-        except Exception:
-            return False
 
     async def _send_request(self, req: Dict[str, Any], timeout: float = 15.0) -> Dict[str, Any]:
-        if not self.writer or not self.reader or not self._connected:
+        if not self.writer or not self._connected:
             raise ConnectionError("Not connected to daemon")
-
         req_id = req.get("request_id") or f"req_{uuid.uuid4().hex}"
-        req_copy = dict(req)
-        req_copy["request_id"] = req_id
-        req_copy["type"] = "REQUEST"
-
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        payload = dict(req, request_id=req_id, type="REQUEST")
+        fut = asyncio.get_running_loop().create_future()
         self._pending_requests[req_id] = fut
-
         try:
-            self.writer.write(encode_message(req_copy))
+            self.writer.write(encode_message(payload))
             await self.writer.drain()
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             self._pending_requests.pop(req_id, None)
 
-    async def send_request(self, action: str, params: Optional[Dict[str, Any]] = None, timeout: float = 15.0) -> Dict[str, Any]:
+    async def send_request(self, action: str, params=None, timeout: float = 15.0):
         payload = {"action": action}
         if params:
             payload.update(params)
         return await self._send_request(payload, timeout=timeout)
 
-    async def list_sessions(self, workspace: Optional[str] = None) -> Dict[str, Any]:
+    async def is_running(self) -> bool:
+        if not self._connected and not await self.connect():
+            return False
+        try:
+            return (await self._send_request({"action": "ping"})).get("status") == "ok"
+        except Exception:
+            return False
+
+    async def list_sessions(self, workspace=None):
         return await self._send_request({"action": "list_sessions", "workspace": workspace})
 
-    async def attach(
-        self,
-        session_id: str,
-        last_sequence: int = 0,
-        event_callback: Optional[Callable[[DaemonEvent], None]] = None,
-        on_event: Optional[Callable[[DaemonEvent], None]] = None,
-        workspace: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    async def create_session(self, title: str = "New Session", workspace: Optional[str] = None) -> Dict[str, Any]:
+        return await self._send_request({"action": "create_session", "title": title, "workspace": workspace})
+
+    async def attach(self, session_id, last_sequence=0, event_callback=None, on_event=None, workspace=None):
         self._event_callback = on_event or event_callback
-        resp = await self._send_request({
-            "action": "attach",
-            "session_id": session_id,
-            "last_sequence": last_sequence,
-            "workspace": workspace,
+        res = await self._send_request({
+            "action": "attach", "session_id": session_id,
+            "last_sequence": last_sequence, "workspace": workspace,
         })
-        raw_events = resp.get("events", [])
-        resp["events"] = [DaemonEvent.from_dict(e) if isinstance(e, dict) else e for e in raw_events]
-        return resp
+        res["events"] = [
+            DaemonEvent.from_dict(e) if isinstance(e, dict) else e
+            for e in res.get("events", [])
+        ]
+        return res
 
-    async def detach(self) -> Dict[str, Any]:
-        resp = await self._send_request({"action": "detach"})
+    async def detach(self):
+        res = await self._send_request({"action": "detach"})
         self._event_callback = None
-        return resp
+        return res
 
-    async def send_input(self, session_id: str, text: str, workspace: Optional[str] = None) -> bool:
-        resp = await self._send_request({
+    async def submit_turn(self, session_id, text, mode="auto", explicit_files=None,
+                          no_history=False, workspace=None):
+        return await self._send_request({
             "action": "send_input",
             "session_id": session_id,
             "text": text,
+            "mode": mode,
+            "explicit_files": list(explicit_files or ()),
+            "no_history": bool(no_history),
             "workspace": workspace,
         })
-        return resp.get("status") == "ok"
 
-    async def stop_daemon(self) -> Dict[str, Any]:
+    async def send_input(self, session_id, text, workspace=None):
+        return (await self.submit_turn(session_id, text, workspace=workspace)).get("status") == "ok"
+
+    async def continue_turn(self, session_id, grant, workspace=None):
+        payload = {
+            "approval_id": grant.approval_id,
+            "turn_id": grant.turn_id,
+            "conversation_id": grant.conversation_id,
+            "workspace_id": grant.workspace_id,
+            "action_hash": grant.action_hash,
+            "granted_at": grant.granted_at,
+            "expires_at": grant.expires_at,
+            "nonce": grant.nonce,
+        }
+        return await self._send_request({
+            "action": "continue_turn", "session_id": session_id,
+            "grant": payload, "workspace": workspace,
+        })
+
+    async def stop_daemon(self):
         return await self._send_request({"action": "stop"})
 
-    async def close(self) -> None:
+    async def close(self):
         self._connected = False
         if self._reader_task and not self._reader_task.done():
             self._reader_task.cancel()
@@ -188,3 +181,5 @@ class DaemonClient:
                 await self.writer.wait_closed()
             except Exception:
                 pass
+        self.reader = None
+        self.writer = None

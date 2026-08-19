@@ -69,6 +69,7 @@ class CommandRegistry:
             ("child_inspect", "Inspect Child", "Agents", "Inspect child agent state and artifacts: /child-inspect <id>", ["/child-inspect", "/inspect-child"]),
             ("child_message", "Message Child", "Agents", "Send structured message to child agent: /child-msg <id> <message>", ["/child-msg", "/child-message"]),
             ("child_retain", "Retain Child", "Agents", "Retain child agent for reuse: /child-retain <id>", ["/child-retain", "/retain-child"]),
+            ("child_cancel", "Cancel Child", "Agents", "Physically cancel a running child: /child-cancel <id>", ["/child-cancel", "/cancel-child"]),
             ("tasks", "Agent Task Monitor", "Agents", "Show active subagent tasks & progress", ["/tasks", "/task", "/agents", "/agent"]),
             ("goal_pause", "Pause Goal", "Goals", "Pause active autonomous goal: /goal-pause <id>", ["/goal-pause"]),
             ("goal_resume", "Resume Goal", "Goals", "Resume paused goal: /goal-resume <id>", ["/goal-resume"]),

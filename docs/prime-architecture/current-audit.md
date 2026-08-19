@@ -1,46 +1,22 @@
-# Prime Architecture Corrective Audit Report
+# Prime Architecture — Remediation State
 
-## 1. Audit Findings Matrix
+Audited source baseline: `dc2522a006a20f08a547f47b1282399e9cf7f2c3`.
 
-| Finding ID | Component | Existing Implementation | Reusable Core | Missing Capability / Risk | Severity | Affected Files | Status |
-|---|---|---|---|---|---|---|---|
-| **CRIT-001** | Safe Runtime Broker | `SafeRuntime` dispatch method | `PolicyEngine`, `WorkspacePathPolicy` | Inner operations bypass fine-grained capability checks and policy enforcement | CRITICAL | `kitt/runtime/safe_runtime.py`, `kitt/security/capabilities.py` | REMEDIATED (VERIFIED) |
-| **CRIT-002** | Context & Tool Surface | `ContextPlanner` & `TurnProcessor` | `ContextPlan`, `RuntimeConfig` | Model prompt only receives legacy tool schemas; `kitt_runtime` surface selector not integrated | CRITICAL | `kitt/context_filter/context_planner.py`, `kitt/core/turn_processor.py`, `kitt/tools/surface_selector.py` | REMEDIATED (VERIFIED) |
-| **CRIT-003** | Safe Runtime Wiring | `SafeRuntimeHandler` / `ToolRegistry` | `KittRuntime`, `HistoryDatabase` | Dynamic `getattr` calls for mandatory dependencies (`db`, `memory`, `skills`) risk missing wiring | CRITICAL | `kitt/tools/handlers/safe_runtime.py`, `kitt/core/runtime.py` | REMEDIATED (VERIFIED) |
-| **CRIT-004** | Executable Skills Sandbox | `ExecutableSkillRunner` | `SafePythonExecutor` | In-process `importlib` execution allows arbitrary code and reflection before capability checks | CRITICAL | `kitt/skills/executable.py`, `kitt/tools/safe_python.py` | REMEDIATED (VERIFIED) |
-| **CRIT-005** | Daemon Persistence | `DaemonServer` | `asyncio`, socket server | Foreground loop dies when terminal closes; no detached daemon process | CRITICAL | `kitt/daemon/server.py`, `kitt/daemon/process.py`, `kitt/cli/commands.py` | REMEDIATED (VERIFIED) |
-| **CRIT-006** | Windows IPC Transport | `DaemonServer` / `DaemonClient` | `asyncio` streams | Windows loopback connects to port 0; missing endpoint persistence and transport abstraction | CRITICAL | `kitt/daemon/transport.py`, `kitt/daemon/server.py`, `kitt/daemon/client.py` | REMEDIATED (VERIFIED) |
-| **CRIT-007** | Daemon Multiplexing | `DaemonClient` | Protocol encoder/decoder | Concurrent `readline` between request sender and event listener causes race and hangs | CRITICAL | `kitt/daemon/protocol.py`, `kitt/daemon/client.py`, `kitt/daemon/server.py` | REMEDIATED (VERIFIED) |
-| **CRIT-008** | CLI Attach Signature | `kitt/cli/commands.py` | `DaemonClient.attach` | Parameter name mismatch (`on_event` vs `event_callback`) breaks CLI attach | CRITICAL | `kitt/cli/commands.py` | REMEDIATED (VERIFIED) |
-| **CRIT-009** | CLI Detach / Resume | `kitt/cli/commands.py` | `DaemonClient` | Detach is stub print; resume is identical to attach without session state switch | CRITICAL | `kitt/cli/commands.py`, `kitt/daemon/client.py` | REMEDIATED (VERIFIED) |
-| **CRIT-010** | TUI Daemon Client Bridge | `TerminalUI` | `TurnEventBridge` | TUI executes local runtime directly instead of attaching to daemon over IPC | CRITICAL | `kitt/ui/app.py`, `kitt/ui/daemon_bridge.py` | REMEDIATED (VERIFIED) |
-| **CRIT-011** | Goal Scheduler Lifecycle | `KittRuntime` | `GoalScheduler` | Scheduler is created without executor and never started in runtime lifecycle | CRITICAL | `kitt/core/runtime.py`, `kitt/goals/scheduler.py`, `kitt/daemon/server.py` | REMEDIATED (VERIFIED) |
-| **CRIT-012** | Goal Scheduler Policy & Lease | `GoalScheduler` | SQLite transactions | Direct callback execution bypasses policy pipeline; no atomic claim lease or exponential backoff | CRITICAL | `kitt/goals/scheduler.py`, `kitt/history/migrations.py` | REMEDIATED (VERIFIED) |
-| **HIGH-001** | Retained Specialists | `ChildAgentManager` | `ChildSession` | Retained agent does not maintain bounded specialist history/context between tasks | HIGH | `kitt/children/manager.py`, `kitt/children/models.py` | REMEDIATED (VERIFIED) |
-| **HIGH-002** | Child Capability Inheritance | `ChildAgentManager.spawn` | `compute_child_privileges` | `spawn` receives tools but does not enforce capability intersection | HIGH | `kitt/children/manager.py`, `kitt/security/capabilities.py` | REMEDIATED (VERIFIED) |
-| **HIGH-003** | Child Cancel Race | `ChildAgentManager.cancel` | Process management | Worker can overwrite `CANCELLED` state with `COMPLETED` on exit | HIGH | `kitt/children/manager.py` | REMEDIATED (VERIFIED) |
-| **HIGH-004** | Retained Task Persistence | `ChildAgentManager.assign_task` | `ChildRepository` | New task description and metadata not updated in database on reuse | HIGH | `kitt/children/manager.py`, `kitt/children/repository.py` | REMEDIATED (VERIFIED) |
-| **HIGH-005** | Correlated Ask/Reply | `ChildAgentManager.ask` | `ChildMessageRepository` | `ask()` returns fire-and-forget without correlation ID and response waiting | HIGH | `kitt/children/messaging.py`, `kitt/children/manager.py` | REMEDIATED (VERIFIED) |
-| **HIGH-006** | Message Scoping | `ChildAgentManager.send_message` | `ChildMessageRepository` | Cross-conversation and cross-workspace validation incomplete | HIGH | `kitt/children/manager.py`, `kitt/children/messaging.py` | REMEDIATED (VERIFIED) |
-| **HIGH-007** | Scoped Context Handles | `ContextHandleResolver` | `WorkspacePathPolicy` | Handles resolve by ID alone without ownership and workspace verification | HIGH | `kitt/runtime/handles.py` | REMEDIATED (VERIFIED) |
-| **HIGH-008** | Tool Result Metadata | `ToolResult.metadata` | Tool Handlers | Handlers return disparate metadata keys preventing reliable handle creation | HIGH | `kitt/tools/handlers/services.py`, `kitt/runtime/safe_runtime.py` | REMEDIATED (VERIFIED) |
-| **HIGH-009** | TUI Slash Command Dispatch | `CommandRegistry` / `TerminalUI` | `_execute_command` | Registered commands lack dedicated execution handlers in TUI | HIGH | `kitt/ui/app.py`, `kitt/ui/commands.py` | REMEDIATED (VERIFIED) |
-| **HIGH-010** | Agent Dashboard Actions | `AgentDashboardComponent` | `TerminalUI` | Interactive mouse/keyboard actions for retain, release, inspect, message | HIGH | `kitt/ui/components/agents_dashboard.py`, `kitt/ui/app.py` | REMEDIATED (VERIFIED) |
-| **HIGH-011** | Daemon Session Validation | `DaemonServer` | `HistoryRepository` | Attach/send_input does not validate workspace ownership of target session | HIGH | `kitt/daemon/server.py` | REMEDIATED (VERIFIED) |
-| **HIGH-012** | Daemon Session Isolation | `DaemonServer` | `TurnProcessor` | Concurrent sessions share mutable global active conversation | HIGH | `kitt/daemon/server.py` | REMEDIATED (VERIFIED) |
-| **HIGH-013** | Daemon Event Backpressure | `DaemonServer` | `asyncio.Queue` | Outbound event writes unbuffered and unbounded per client | HIGH | `kitt/daemon/server.py` | REMEDIATED (VERIFIED) |
-| **HIGH-014** | Daemon Token Hardening | `DaemonServer` | Filesystem permissions | Token file permissions, ownership and symlink escape checks | HIGH | `kitt/daemon/server.py` | REMEDIATED (VERIFIED) |
-| **HIGH-015** | Feature Flags & Config | `RuntimeConfig` | Environment aliases | Feature flags for runtime, daemon, scheduler, retained agents not exposed in typed config | HIGH | `kitt/core/runtime_config.py` | REMEDIATED (VERIFIED) |
-| **HIGH-016** | Observability Telemetry | `MetricsCollector` | `telemetry_events` | Missing runtime operations, scheduler runs, handle reuse and token savings metrics | HIGH | `kitt/metrics/collector.py`, `kitt/metrics/models.py` | REMEDIATED (VERIFIED) |
-| **HIGH-017** | Trace Context Propagation | Cross-cutting | `TraceContext` | Trace IDs not propagated across daemon events, approvals, scheduler and messages | HIGH | `kitt/core/trace.py`, cross-cutting | REMEDIATED (VERIFIED) |
-| **HIGH-018** | Calculated Token Metrics | `SafeRuntime` | `TokenEstimator` | Hardcoded `tokens_saved = 350` in `inspect_symbol` | HIGH | `kitt/runtime/safe_runtime.py` | REMEDIATED (VERIFIED) |
-| **HIGH-019** | Token Reduction Benchmark | `benchmarks/` | Benchmark framework | Missing empirical benchmark comparing safe runtime vs legacy tool calling | HIGH | `benchmarks/safe_runtime_benchmark.py`, `tests/test_prime_hardening_suite.py` | REMEDIATED (VERIFIED) |
-| **HIGH-020** | Scale Smoke Benchmark | `benchmarks/` | Repository indexer | Missing benchmark for 1k, 20k, 100k generated repositories | HIGH | `benchmarks/scale_benchmark.py`, `tests/test_scale_benchmark.py` | REMEDIATED (VERIFIED) |
-| **HIGH-023** | Database Migration Chain | `kitt/history/migrations.py` | SQLite migrations | Migration v11 needed for leasing, scheduling, trace and correlation fields | HIGH | `kitt/history/migrations.py` | REMEDIATED (VERIFIED) |
-| **HIGH-024** | Goal Scheduling Domain | `Goal` entity | `GoalService` | Domain entity lacks fields for budgets, lease, recurrence, and retry counts | HIGH | `kitt/goals/models.py`, `kitt/goals/service.py` | REMEDIATED (VERIFIED) |
-| **MED-001** | Skill Frontmatter Parser | `ExecutableSkillRunner` | YAML loader | Regex YAML parser brittle on complex YAML frontmatters | MEDIUM | `kitt/skills/executable.py` | REMEDIATED (VERIFIED) |
-| **MED-002** | Runtime Result Semantics | `SafeRuntimeResult` | Structured result | Skill/child must not treat `success=False` as empty string success | MEDIUM | `kitt/runtime/safe_runtime.py`, `kitt/skills/executable.py` | REMEDIATED (VERIFIED) |
-| **MED-003** | Daemon Error Logging | `DaemonServer` | `logging` | Broad `except Exception: pass` catches silences unexpected errors | MEDIUM | `kitt/daemon/server.py` | REMEDIATED (VERIFIED) |
-| **MED-004** | Daemon Event Replay Pagination | `DaemonServer` | `daemon_events` | 200 event hard limit without pagination or has_more cursor | MEDIUM | `kitt/daemon/server.py`, `kitt/daemon/client.py` | REMEDIATED (VERIFIED) |
-| **MED-005** | Scheduler Goal Check | `GoalScheduler` | SQL rowcount | `schedule_goal` returns True even if goal ID does not exist | MEDIUM | `kitt/goals/scheduler.py` | REMEDIATED (VERIFIED) |
-| **MED-006** | Runtime State Quotas | `RuntimeStateStore` | Bounded checks | Missing max JSON depth and structured quota metrics | MEDIUM | `kitt/runtime/state.py` | REMEDIATED (VERIFIED) |
+The remediation package addresses the previously observed integration gaps in:
+
+- SafeRuntime capability propagation and fail-closed semantics;
+- concrete-operation approval binding/resume;
+- ToolSurfaceSelector integration with the actual ExecutionRequest;
+- daemon real-turn execution, explicit sessions, replay/backpressure and TUI bridge;
+- service-level scoping and bounded context handles;
+- executable-skill subprocess isolation and secret-minimized environment;
+- retained child runtime/cancellation/context reuse/messaging;
+- scheduler runtime executor, leases, budgets and recovery semantics;
+- real TUI command handlers and feature flags;
+- MCP custom-tool policy boundary and environment inheritance;
+- trace/Prime metrics scaffolding;
+- empirical schema-token and scale benchmarks;
+- Python CI on Linux/Windows;
+- migration v12 for new persisted security/scheduler/child fields.
+
+**No completion claim is made here.** Final status must come from the evidence log and acceptance matrix after the patch is applied and executed.

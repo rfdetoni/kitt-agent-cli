@@ -44,8 +44,10 @@ class PolicyEngine:
         args = args or {}
 
         if tool_name in self._allowed_custom_tools:
-            return 'ALLOW'
-
+            # MCP/plugin tools never become model-ALLOW merely by registration.
+            # SafeRuntime may invoke them only after its own capability/policy/
+            # approval broker has authorized the exact call.
+            return 'ALLOW' if origin == 'SAFE_RUNTIME_BROKER' else 'ASK'
         if origin == 'MODEL':
             if tool_name in {
                 'kitt_runtime', 'list_files', 'search', 'read_file', 'repository_map', 'git_status',

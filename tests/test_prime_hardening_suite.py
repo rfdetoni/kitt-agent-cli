@@ -191,6 +191,8 @@ def execute(context, arguments):
 
     def test_05_safe_runtime_tool_surface_token_reduction(self):
         """Verify Safe Runtime tool surface reduction vs legacy tool contracts (Fase 2 & HIGH-019)."""
+        from kitt.context_filter.prompt_budget import TokenCounter
+        from kitt.tools.registry import ToolRegistry
         selector = ToolSurfaceSelector(config=RuntimeConfig(tool_runtime_mode="safe_runtime"))
         plan = ContextPlan(
             enabled_tools=["read_file", "search", "write_file", "apply_patch", "python_compute", "run_command"],
@@ -198,12 +200,11 @@ def execute(context, arguments):
         selected = selector.select_tools(plan, model_capabilities={"tool_calls": True})
         self.assertEqual(selected, ["kitt_runtime"])
 
-        # Token savings verification
-        legacy_tokens = ToolSurfaceSelector.estimate_legacy_tokens(plan.enabled_tools)
-        safe_tokens = ToolSurfaceSelector.estimate_safe_runtime_tokens()
-        self.assertGreater(legacy_tokens, safe_tokens)
-        savings_pct = ((legacy_tokens - safe_tokens) / legacy_tokens) * 100.0
-        self.assertGreater(savings_pct, 60.0)
+        # Real token measurements from serialized registry definitions
+        reg = ToolRegistry(root_dir=str(self.root))
+        res = ToolSurfaceSelector.compare_surfaces(reg, plan.enabled_tools, TokenCounter)
+        self.assertGreater(res["legacy_tokens"], res["safe_runtime_tokens"])
+        self.assertGreater(res["saved_pct"], 60.0)
 
     def test_06_goal_scheduler_atomic_lease_and_budgets(self):
         """Verify GoalScheduler atomic lease claim and budget enforcement (CRIT-011, CRIT-012, HIGH-024)."""
@@ -265,10 +266,13 @@ def execute(context, arguments):
             sess_res = await client.list_sessions(workspace=str(self.root))
             self.assertEqual(sess_res.get("status"), "ok")
 
-            # Attach session
+            # Create and attach session
+            created = await client.create_session("daemon_test_session", workspace=str(self.root))
+            self.assertEqual(created.get("status"), "ok")
+            session_id = created["session_id"]
             events = []
             attach_res = await client.attach(
-                "daemon_test_session",
+                session_id,
                 event_callback=lambda e: events.append(e),
                 workspace=str(self.root),
             )

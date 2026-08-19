@@ -618,6 +618,23 @@ MIGRATIONS.append(Migration(
     )
 ))
 
+
+MIGRATIONS.append(Migration(
+    version=12,
+    name="prime_architecture_security_and_scheduler_v12",
+    statements=(
+        "ALTER TABLE pending_actions ADD COLUMN security_context_json TEXT DEFAULT '{}';",
+        "ALTER TABLE child_sessions ADD COLUMN runtime_conversation_id TEXT;",
+        "ALTER TABLE goals ADD COLUMN lease_owner_id TEXT;",
+        "ALTER TABLE goals ADD COLUMN lease_heartbeat_at REAL;",
+        "ALTER TABLE goals ADD COLUMN cost_used REAL DEFAULT 0.0;",
+        "ALTER TABLE goals ADD COLUMN children_used INTEGER DEFAULT 0;",
+        "ALTER TABLE goals ADD COLUMN capabilities_json TEXT DEFAULT '[]';",
+        "CREATE INDEX IF NOT EXISTS idx_goals_lease_owner ON goals(lease_owner_id, lease_expires_at);",
+        "CREATE INDEX IF NOT EXISTS idx_child_runtime_conversation ON child_sessions(runtime_conversation_id);",
+    )
+))
+
 class MigrationRunner:
     def __init__(self, migrations: list[Migration] = None):
         if migrations is None:

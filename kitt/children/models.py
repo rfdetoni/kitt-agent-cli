@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+
 @dataclass(frozen=True)
 class ChildSession:
     id: str
@@ -25,3 +26,4 @@ class ChildSession:
     task_started_at: Optional[float] = None
     capabilities: List[str] = field(default_factory=list)
     context_summary: str = ""
+    runtime_conversation_id: Optional[str] = None

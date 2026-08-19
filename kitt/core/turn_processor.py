@@ -46,6 +46,8 @@ from kitt.core.turn_events import (
 )
 from kitt.core.pending_action import PendingAction
 from kitt.core.runtime_config import RuntimeConfig
+from kitt.security.context import ExecutionSecurityContext
+from kitt.security.capabilities import capabilities_for_tools, READ_ONLY_CAPABILITIES, CAP_REPO_WRITE
 from kitt.metrics.models import TurnMetrics
 from kitt.metrics.cost_estimator import estimate_cost
 from kitt.prompts import (
@@ -695,8 +697,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                              exposed_tools: Optional[List[str]] = None) -> tuple:
         mandatory_constraints = [c.text for c in task.constraints if c.mandatory]
         use_agent_prompt = bool(plan.enabled_tools) or agent_addressed
+        tools_for_contract = exposed_tools if exposed_tools is not None else plan.enabled_tools
         if plan.enabled_tools:
-            tools_for_contract = exposed_tools if exposed_tools is not None else plan.enabled_tools
             tool_contract = self._tool_instructions(tools_for_contract)
             base_sys = (
                 f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
@@ -774,14 +776,33 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         request = ExecutionRequest(
             system_prompt=sys_prompt,
             messages=[{"role": "user", "content": principal_task_prompt}],
-            enabled_tools=plan.enabled_tools,
+            enabled_tools=tools_for_contract,
             max_output_tokens=exe_profile.max_output_tokens,
             estimated_input_tokens=allocated["total_input_tokens"]
         )
         return sys_prompt, base_sys, allocated, request
 
+
+    def _security_context_for_turn(self, cmd: TurnCommand, planned_tools) -> ExecutionSecurityContext:
+        if cmd.security_context is not None:
+            ctx = cmd.security_context
+            if isinstance(ctx, dict):
+                ctx = ExecutionSecurityContext.from_dict(ctx)
+            ctx.assert_scope(self.workspace_id, cmd.conversation_id)
+            return ctx.with_turn(cmd.turn_id)
+        caps = capabilities_for_tools(planned_tools)
+        if cmd.mode in {"plan", "ask"}:
+            caps &= set(READ_ONLY_CAPABILITIES)
+        return ExecutionSecurityContext.create_user_context(
+            workspace_id=self.workspace_id,
+            conversation_id=cmd.conversation_id,
+            turn_id=cmd.turn_id,
+            capabilities=caps,
+        )
+
     def _execute_tool_loop(self, cmd: TurnCommand, request: ExecutionRequest, exe_profile: ModelProfile,
-                           exe_client: LLMClient, workspace_id: str) -> Iterator:
+                           exe_client: LLMClient, workspace_id: str,
+                           security_context: ExecutionSecurityContext) -> Iterator:
         execution_messages = list(request.messages)
         full_response = ""
         max_python_calls = 2
@@ -904,14 +925,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 conversation_id=cmd.conversation_id,
                 workspace_id=workspace_id,
                 enabled_tools=request.enabled_tools,
+                security_context=security_context,
             )
             if tool_result.requires_approval:
                 hist_svc = self.history_service
                 pa_ws = workspace_id
-                action_hash = self.registry.policy.generate_action_hash(tool_name, tool_args)
+                approval_action = str(tool_result.metadata.get("approval_action") or tool_name)
+                approval_payload = tool_result.metadata.get("approval_payload")
+                if not isinstance(approval_payload, dict):
+                    approval_payload = tool_args
+                action_hash = self.registry.policy.generate_action_hash(approval_action, approval_payload)
                 approval_id = f"req_{cmd.turn_id}_{hashlib.sha256(action_hash.encode()).hexdigest()[:8]}"
                 self.registry.approval_manager.register_request(
-                    cmd.turn_id, cmd.conversation_id, pa_ws, action_hash, approval_id, tool_name=tool_name)
+                    cmd.turn_id, cmd.conversation_id, pa_ws, action_hash, approval_id, tool_name=approval_action)
                 now = time.time()
                 affected = []
                 before = {}
@@ -923,12 +949,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                             before[rel] = hashlib.sha256(target.read_bytes()).hexdigest()
                 pa = PendingAction(f"pa_{cmd.turn_id}", approval_id, cmd.turn_id,
                                    cmd.conversation_id, pa_ws, tool_name, tool_args, action_hash,
-                                   self._args_digest(tool_args), affected, before, now, now + self.config.approval_ttl_seconds, "pending")
+                                   self._args_digest(tool_args), affected, before, now, now + self.config.approval_ttl_seconds, "pending",
+                                   security_context=security_context.to_dict())
                 self.pending_actions[cmd.turn_id] = pa
                 if hist_svc:
                     hist_svc.repo.save_pending_action(pa)
-                yield ApprovalRequired(turn_id=cmd.turn_id, tool_name=tool_name, args=tool_args,
-                    action_hash=action_hash, approval_request_id=approval_id, workspace_id=pa_ws), None, None
+                yield ApprovalRequired(
+                    turn_id=cmd.turn_id, conversation_id=cmd.conversation_id,
+                    tool_name=approval_action, args=approval_payload,
+                    action_hash=action_hash, approval_request_id=approval_id, workspace_id=pa_ws
+                ), None, None
                 return
             if not tool_result.success and tool_result.error and "Execution denied by PolicyEngine" in tool_result.error:
                 yield TurnBlocked(reason=tool_result.error), None, None
@@ -992,7 +1022,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     def _finalize_turn(self, cmd: TurnCommand, full_response: str, execution_messages: list,
                        request: ExecutionRequest, exe_profile: ModelProfile, ctx_profile: ModelProfile,
                        allocated: dict, base_sys: str, context_map_str: str, explicit_str: str,
-                       workspace_id: str, turn_started_at: float) -> Iterator:
+                       workspace_id: str, turn_started_at: float,
+                       security_context: ExecutionSecurityContext) -> Iterator:
         blocks = self.diff_parser.parse(full_response)
         if not blocks:
             clean_resp = self._without_thinking(full_response).strip()
@@ -1020,6 +1051,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     ]
 
         edit_result: Optional[EditResult] = None
+        if blocks and not security_context.has_capability(CAP_REPO_WRITE):
+            yield TurnBlocked(reason="Write capability is not granted for this turn (fail-closed).")
+            return
         if blocks:
             args = {"patch": full_response}
             action_hash = self.registry.policy.generate_action_hash("apply_patch", args)
@@ -1052,7 +1086,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     before_hashes=before_hashes,
                     created_at=now,
                     expires_at=now + self.config.approval_ttl_seconds,
-                    state="pending"
+                    state="pending",
+                    security_context=security_context.to_dict(),
                 )
 
                 if self.history_service:
@@ -1238,6 +1273,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 plan,
                 model_capabilities=getattr(exe_client, "capabilities", None),
             )
+            security_context = self._security_context_for_turn(cmd, plan.enabled_tools)
 
             sys_prompt, base_sys, allocated, request = self._build_system_prompt(
                 cmd, task, plan, exe_profile, context_map_str, explicit_str, agents_str,
@@ -1261,7 +1297,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
             full_response = ""
             execution_messages = []
-            for ev, resp, msgs in self._execute_tool_loop(cmd, request, exe_profile, exe_client, workspace_id):
+            for ev, resp, msgs in self._execute_tool_loop(
+                cmd, request, exe_profile, exe_client, workspace_id, security_context
+            ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)
                     yield TurnCancelled(reason="Turn cancelled during tool loop")
@@ -1285,7 +1323,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             for ev in self._finalize_turn(
                 cmd, full_response, execution_messages, request, exe_profile,
                 ctx_profile, allocated, base_sys, context_map_str, explicit_str,
-                workspace_id, turn_started_at
+                workspace_id, turn_started_at, security_context
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)
@@ -1344,13 +1382,26 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         if hist_svc and not hist_svc.repo.consume_pending_action(pa.id):
             yield TurnFailed(error="Pending action was already consumed or cancelled.")
             return
+        if not pa.security_context:
+            yield TurnFailed(error="Pending action has no persisted security context; refusing fail-open resume.")
+            return
+        sec_ctx = ExecutionSecurityContext.from_dict(pa.security_context)
+        sec_ctx.assert_scope(pa.workspace_id, pa.conversation_id)
         res = self.registry.execute_tool(
             pa.tool_name, pa.normalized_args, turn_id=turn_id,
             conversation_id=pa.conversation_id, workspace_id=pa.workspace_id,
             grant=grant, expected_approval_id=pa.approval_request_id,
+            security_context=sec_ctx.with_turn(turn_id),
         )
 
         if res.success:
+            if sec_ctx.principal_type == "GOAL" and self.registry.goal_service:
+                try:
+                    self.registry.goal_service.update_state(
+                        sec_ctx.principal_id, "ACTIVE", conversation_id=pa.conversation_id
+                    )
+                except Exception:
+                    pass
             self.working_set.touch_paths(
                 pa.conversation_id,
                 self._paths_from_tool(pa.tool_name, pa.normalized_args, res),

@@ -244,15 +244,15 @@ def execute(ctx, args):
         scheduler = GoalScheduler(
             db=self.runtime.database,
             goal_service=self.runtime.goals,
-            runtime_step_executor=lambda cid, obj: "step completed",
+            runtime_step_executor=lambda goal: {"status": "SUCCEEDED"},
         )
 
-        scheduler.schedule_goal(goal.id, heartbeat_enabled=True, next_run_delay_seconds=0.0)
+        scheduler.schedule_goal(goal.id, recurrence="60", heartbeat_enabled=True, next_run_delay_seconds=0.0)
 
         # 1st run succeeds
         results = scheduler.check_and_execute_due()
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["status"], "STEP_EXECUTED")
+        self.assertEqual(results[0]["status"], "SUCCEEDED")
 
         # Update tokens_used on active goal to exceed token budget (e.g. from background attribution)
         with self.runtime.database.get_connection() as conn:
@@ -269,6 +269,7 @@ def execute(ctx, args):
 
     # --- 8. Legacy Tool Compatibility & Safe Runtime tool ---
     def test_legacy_tools_and_safe_runtime_dispatch(self):
+        from kitt.security.context import ExecutionSecurityContext
         defs = self.runtime.registry.get_tool_definitions()
         tool_names = {t["name"] for t in defs}
         self.assertIn("kitt_runtime", tool_names)
@@ -280,12 +281,19 @@ def execute(ctx, args):
         conv = self.runtime.history.get_or_create_active()
         conv_id = conv["id"]
         (self.root / "hello.py").write_text("print('hello safe runtime')")
+        sec_ctx = ExecutionSecurityContext.create_user_context(
+            workspace_id=self.runtime.workspace_id,
+            conversation_id=conv_id,
+            turn_id="turn_safe",
+            capabilities={"repo.read"},
+        )
         res = self.runtime.registry.execute_tool(
             "kitt_runtime",
             {"operation": "repo.read", "arguments": {"path": "hello.py"}},
             turn_id="turn_safe",
             conversation_id=conv_id,
             workspace_id=self.runtime.workspace_id,
+            security_context=sec_ctx,
         )
         self.assertTrue(res.success)
         self.assertIn("hello safe runtime", res.output)
@@ -327,7 +335,8 @@ class TestDaemonServerClient(unittest.IsolatedAsyncioTestCase):
 
         # Seed events in server
         rt = self.server._get_or_create_runtime(str(self.root))
-        session_id = "daemon_session_1"
+        conv = rt.history.new_conversation("daemon_session_1")
+        session_id = conv["id"]
         self.server.record_event(rt.database, session_id, "SessionCreated", {"info": "init"})
         self.server.record_event(rt.database, session_id, "TurnStep", {"step": 1})
 

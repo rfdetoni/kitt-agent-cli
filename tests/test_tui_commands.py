@@ -169,7 +169,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             "/clear-memory", "/dream", "/skills", "/setup-skills", "/skill-install", "/skill-remove", "/repomap",
             "/diff", "/undo", "/ask", "/plan", "/code", "/router", "/context-stats", "/stats", "/status",
             "/compact", "/child", "/tasks", "/cancel", "/reasoning", "/approvals", "/autonomy", "/workspace", "/clear", "/help",
-            "/child-inspect test_child", "/child-msg test_child hello", "/child-retain test_child",
+            "/child-inspect test_child", "/child-msg test_child hello", "/child-retain test_child", "/child-cancel test_child",
             "/goal-pause test_goal", "/goal-resume test_goal", "/attach test_session", "/detach",
             "/runtime-state", "/artifact test_art",
             "/add-provider meu-ollama ollama http://localhost:11434",

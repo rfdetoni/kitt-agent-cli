@@ -63,11 +63,13 @@ def hello(): return 'hello K.I.T.T.'
         def event_cb(name, payload):
             events_received.append((name, payload))
 
+        from kitt.core.runtime_config import RuntimeConfig
         processor = TurnProcessor(
             root_dir=self.tmp_dir.name,
             context_client=fake_context_llm,
             execution_client=fake_execution_llm,
-            event_callback=event_cb
+            event_callback=event_cb,
+            config=RuntimeConfig(tool_runtime_mode="legacy"),
         )
 
         from kitt.core.turn_command import TurnCommand

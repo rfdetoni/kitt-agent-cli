@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+
 @dataclass(frozen=True)
 class QualityGate:
     id: str
@@ -11,6 +12,7 @@ class QualityGate:
     timeout_seconds: int = 120
     last_exit_code: Optional[int] = None
     last_output_artifact_id: Optional[str] = None
+
 
 @dataclass(frozen=True)
 class Goal:
@@ -38,9 +40,14 @@ class Goal:
     owner_session_id: Optional[str] = None
     lease_id: Optional[str] = None
     lease_expires_at: Optional[float] = None
+    lease_owner_id: Optional[str] = None
+    lease_heartbeat_at: Optional[float] = None
     max_cost: float = 0.0
+    cost_used: float = 0.0
     max_failures: int = 5
     max_retries: int = 3
     max_children: int = 5
     failures_used: int = 0
     retries_used: int = 0
+    children_used: int = 0
+    capabilities: List[str] = field(default_factory=list)

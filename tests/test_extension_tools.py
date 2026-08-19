@@ -26,7 +26,7 @@ class TestExtensionTools(unittest.TestCase):
         self.assertTrue(any(t["name"] == "custom_greet" for t in defs))
 
         # 2. Execute tool
-        result = reg.execute_tool("custom_greet", {"name": "Alice"})
+        result = reg.execute_tool("custom_greet", {"name": "Alice"}, origin="SAFE_RUNTIME_BROKER")
         self.assertTrue(result.success)
         self.assertEqual(result.output, "Hello, Alice!")
 
@@ -35,7 +35,7 @@ class TestExtensionTools(unittest.TestCase):
         self.assertEqual(removed, 1)
 
         # 4. Verify tool is no longer available
-        res_after = reg.execute_tool("custom_greet", {"name": "Alice"})
+        res_after = reg.execute_tool("custom_greet", {"name": "Alice"}, origin="SAFE_RUNTIME_BROKER")
         self.assertFalse(res_after.success)
 
 

@@ -1,160 +1,119 @@
 from __future__ import annotations
 
 import ast
-import datetime
 import json
 import math
 import re
 import sys
 from typing import Any, Dict, List, Optional
 
-
-FORBIDDEN_MODULES = {
-    "os", "sys", "subprocess", "socket", "shutil", "importlib", "builtins",
-    "posix", "nt", "ctypes", "threading", "multiprocessing", "signal",
-    "inspect", "pickle", "urllib", "http", "requests", "aiohttp", "pathlib",
-    "code", "codeop", "pty", "commands",
+ALLOWED_MODULES = {"json", "math", "re"}
+FORBIDDEN_ATTRIBUTES = {
+    "__subclasses__", "__bases__", "__globals__", "__code__", "__closure__",
+    "__mro__", "__import__", "__builtins__", "__dict__", "__class__",
 }
 
 
-def _safe_import(name: str, globals: Any = None, locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
-    mod_root = name.split(".")[0]
-    if mod_root in FORBIDDEN_MODULES:
-        raise PermissionError(f"Import of forbidden module '{mod_root}' is blocked in executable skill")
+def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    root = name.split(".")[0]
+    if root not in ALLOWED_MODULES:
+        raise PermissionError(f"Import '{root}' is not allowed in executable skill")
     return __import__(name, globals, locals, fromlist, level)
 
 
 SAFE_BUILTINS = {
     "__import__": _safe_import,
-    "abs": abs,
-    "all": all,
-    "any": any,
-    "bin": bin,
-    "bool": bool,
-    "bytes": bytes,
-    "chr": chr,
-    "dict": dict,
-    "divmod": divmod,
-    "enumerate": enumerate,
-    "filter": filter,
-    "float": float,
-    "format": format,
-    "frozenset": frozenset,
-    "hash": hash,
-    "hex": hex,
-    "int": int,
-    "isinstance": isinstance,
-    "issubclass": issubclass,
-    "iter": iter,
-    "len": len,
-    "list": list,
-    "map": map,
-    "max": max,
-    "min": min,
-    "next": next,
-    "oct": oct,
-    "ord": ord,
-    "pow": pow,
-    "print": lambda *args, **kwargs: None,  # Suppress direct stdout pollution
-    "range": range,
-    "repr": repr,
-    "reversed": reversed,
-    "round": round,
-    "set": set,
-    "slice": slice,
-    "sorted": sorted,
-    "str": str,
-    "sum": sum,
-    "tuple": tuple,
-    "type": type,
-    "zip": zip,
-    "None": None,
-    "True": True,
-    "False": False,
-    "Exception": Exception,
-    "ValueError": ValueError,
-    "TypeError": TypeError,
-    "KeyError": KeyError,
-    "IndexError": IndexError,
-    "RuntimeError": RuntimeError,
-    "AttributeError": AttributeError,
-    "PermissionError": PermissionError,
+    "abs": abs, "all": all, "any": any, "bool": bool, "bytes": bytes,
+    "chr": chr, "dict": dict, "divmod": divmod, "enumerate": enumerate,
+    "filter": filter, "float": float, "format": format, "frozenset": frozenset,
+    "hash": hash, "hex": hex, "int": int, "isinstance": isinstance,
+    "iter": iter, "len": len, "list": list, "map": map, "max": max, "min": min,
+    "next": next, "oct": oct, "ord": ord, "pow": pow, "range": range,
+    "repr": repr, "reversed": reversed, "round": round, "set": set,
+    "slice": slice, "sorted": sorted, "str": str, "sum": sum, "tuple": tuple,
+    "zip": zip, "Exception": Exception, "ValueError": ValueError,
+    "TypeError": TypeError, "KeyError": KeyError, "IndexError": IndexError,
+    "RuntimeError": RuntimeError, "PermissionError": PermissionError,
+    "None": None, "True": True, "False": False,
 }
 
 
-class SubprocessSkillContextProxy:
-    """RPC proxy running inside isolated skill worker, delegating capabilities to parent process."""
+def _validate_source(source: str) -> None:
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            for name in names:
+                root = name.split(".")[0]
+                if root not in ALLOWED_MODULES:
+                    raise PermissionError(f"Import '{root}' is not allowed")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in {"eval", "exec", "open", "compile", "__import__", "globals", "locals", "vars", "getattr", "setattr", "delattr"}:
+                raise PermissionError(f"Call '{node.func.id}' is not allowed")
+        elif isinstance(node, ast.Attribute) and (node.attr.startswith("_") or node.attr in FORBIDDEN_ATTRIBUTES):
+            raise PermissionError(f"Private/dangerous attribute '{node.attr}' is not allowed")
 
+
+def _emit(payload: dict) -> None:
+    raw = json.dumps(payload, ensure_ascii=False)
+    if len(raw.encode("utf-8")) > 1_000_000:
+        raw = json.dumps({"type": "RESULT", "success": False, "error": "Skill output exceeds 1 MB limit"})
+    sys.stdout.write(raw + "\n")
+    sys.stdout.flush()
+
+
+class SubprocessSkillContextProxy:
     def __init__(self, declared_caps: List[str]):
-        self.declared_caps = set(declared_caps)
+        self.declared_caps = frozenset(declared_caps)
 
     def _rpc(self, method: str, params: Dict[str, Any]) -> Any:
-        req = {"type": "RPC_CALL", "method": method, "params": params}
-        sys.stdout.write(json.dumps(req, ensure_ascii=False) + "\n")
+        sys.stdout.write(json.dumps({"type": "RPC_CALL", "method": method, "params": params}) + "\n")
         sys.stdout.flush()
-
-        res_line = sys.stdin.readline()
-        if not res_line:
-            raise RuntimeError("Parent process closed IPC channel")
-
-        res = json.loads(res_line)
-        if not res.get("success", False):
-            raise RuntimeError(res.get("error", "Unknown RPC error"))
+        line = sys.stdin.readline()
+        if not line:
+            raise RuntimeError("Capability broker closed")
+        res = json.loads(line)
+        if not res.get("success"):
+            if res.get("requires_approval"):
+                raise PermissionError("Operation requires external approval")
+            raise RuntimeError(res.get("error", "RPC failed"))
         return res.get("data")
 
-    def read_file(self, path: str, start_line: Optional[int] = None, end_line: Optional[int] = None) -> str:
+    def read_file(self, path, start_line=1, end_line=100):
         return self._rpc("repo.read", {"path": path, "start_line": start_line, "end_line": end_line})
 
-    def write_file(self, path: str, content: str) -> bool:
-        return self._rpc("repo.write", {"path": path, "content": content})
+    def search_repo(self, pattern, regex=False):
+        return self._rpc("repo.search", {"pattern": pattern, "regex": regex})
 
-    def search_repo(self, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
-        return self._rpc("repo.search", {"query": query, "max_results": max_results})
+    def apply_patch(self, patch):
+        return self._rpc("patch.apply", {"patch": patch})
 
-    def run_process(self, command: str, timeout_seconds: int = 30) -> Dict[str, Any]:
-        return self._rpc("process.run", {"command": command, "timeout_seconds": timeout_seconds})
+    def run_process(self, command):
+        return self._rpc("process.run", {"command": command})
 
-    def spawn_child(self, name: str, task: str, allowed_paths: Optional[List[str]] = None) -> Any:
+    def spawn_child(self, name, task, allowed_paths=None):
         return self._rpc("children.spawn", {"name": name, "task": task, "allowed_paths": allowed_paths or []})
 
 
-def main() -> None:
+def main():
     try:
-        init_line = sys.stdin.readline()
-        if not init_line:
-            return
+        init = json.loads(sys.stdin.readline())
+        source = init.get("source", "")
+        args = init.get("arguments", {})
+        caps = init.get("capabilities", [])
 
-        payload = json.loads(init_line)
-        source = payload.get("source", "")
-        arguments = payload.get("arguments", {})
-        capabilities = payload.get("capabilities", [])
-
-        compiled = compile(source, filename="<skill_sandbox>", mode="exec")
-        sandbox_globals = {
-            "__builtins__": SAFE_BUILTINS,
-            "json": json,
-            "math": math,
-            "re": re,
-            "datetime": datetime,
-        }
-        sandbox_locals: Dict[str, Any] = {}
-
-        exec(compiled, sandbox_globals, sandbox_locals)
-
-        handler = sandbox_locals.get("execute") or sandbox_locals.get("main")
+        _validate_source(source)
+        compiled = compile(source, "<skill_sandbox>", "exec")
+        g = {"__builtins__": SAFE_BUILTINS, "json": json, "math": math, "re": re}
+        loc: Dict[str, Any] = {}
+        exec(compiled, g, loc)
+        handler = loc.get("execute") or loc.get("main")
         if not callable(handler):
-            sys.stdout.write(json.dumps({"type": "RESULT", "success": False, "error": "No execute/main function found"}) + "\n")
-            sys.stdout.flush()
-            return
-
-        ctx = SubprocessSkillContextProxy(capabilities)
-        res = handler(ctx, arguments)
-
-        sys.stdout.write(json.dumps({"type": "RESULT", "success": True, "data": res}, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
-    except Exception as exc:
-        sys.stdout.write(json.dumps({"type": "RESULT", "success": False, "error": str(exc)}, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+            raise RuntimeError("No execute/main function found")
+        result = handler(SubprocessSkillContextProxy(caps), args)
+        _emit({"type": "RESULT", "success": True, "data": result})
+    except BaseException as exc:
+        _emit({"type": "RESULT", "success": False, "error": str(exc)})
 
 
 if __name__ == "__main__":

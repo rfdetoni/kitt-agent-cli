@@ -196,6 +196,7 @@ class TestSafePythonTurnIntegration(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_model_can_compute_then_continue_without_exposing_envelope(self):
+        from kitt.core.runtime_config import RuntimeConfig
         tool_call = (
             '<kitt-python-compute>\n'
             '{"code":"_result = statistics.mean(inputs[\\"values\\"])",'
@@ -207,6 +208,7 @@ class TestSafePythonTurnIntegration(unittest.TestCase):
             root_dir=self.temp_dir.name,
             context_client=self.context_client,
             execution_client=execution_client,
+            config=RuntimeConfig(tool_runtime_mode="legacy"),
         )
 
         events = list(processor.run_turn(TurnCommand(conversation_id="conv", prompt="Calcule a média.")))
@@ -225,6 +227,7 @@ class TestSafePythonTurnIntegration(unittest.TestCase):
         self.assertIn("untrusted data", execution_client.calls[1]["messages"][-1]["content"])
 
     def test_malformed_tool_envelope_retries_without_exposing_it(self):
+        from kitt.core.runtime_config import RuntimeConfig
         execution_client = FakeLLMClient([
             '<kitt-python-compute>{not-json}</kitt-python-compute>',
             "Resposta recuperada.",
@@ -233,6 +236,7 @@ class TestSafePythonTurnIntegration(unittest.TestCase):
             root_dir=self.temp_dir.name,
             context_client=self.context_client,
             execution_client=execution_client,
+            config=RuntimeConfig(tool_runtime_mode="legacy"),
         )
         events = list(processor.run_turn(TurnCommand(conversation_id="conv", prompt="Calcule.")))
         completed = [event for event in events if isinstance(event, TurnCompleted)]
@@ -242,6 +246,7 @@ class TestSafePythonTurnIntegration(unittest.TestCase):
         self.assertFalse(any(isinstance(event, ToolStarted) for event in events))
 
     def test_invalid_patch_retries_before_requesting_approval(self):
+        from kitt.core.runtime_config import RuntimeConfig
         execution_client = FakeLLMClient([
             '<kitt-tool>{"name":"apply_patch","arguments":{"patch":"<html/>"}}</kitt-tool>',
             "Resposta recuperada.",
@@ -251,6 +256,7 @@ class TestSafePythonTurnIntegration(unittest.TestCase):
             context_client=self.context_client,
             execution_client=execution_client,
             enable_context_summary=True,
+            config=RuntimeConfig(tool_runtime_mode="legacy"),
         )
         events = list(processor.run_turn(TurnCommand(conversation_id="conv", prompt="Crie uma pagina html.")))
         self.assertFalse(any(isinstance(event, (TurnFailed, ApprovalRequired)) for event in events))

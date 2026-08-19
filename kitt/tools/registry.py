@@ -235,8 +235,25 @@ class ToolRegistry:
     def execute_tool(self, tool_name: str, args: dict = None, turn_id: str = "default_turn",
                      conversation_id: str = "default_conv", workspace_id: str = "default_ws",
                      enabled_tools: Optional[list] = None, grant: Optional[ApprovalGrant] = None,
-                     expected_approval_id: Optional[str] = None, origin: str = 'MODEL') -> ToolResult:
+                     expected_approval_id: Optional[str] = None, origin: str = 'MODEL',
+                     security_context=None) -> ToolResult:
         args = args or {}
+
+        if security_context is not None:
+            try:
+                security_context.assert_scope(workspace_id, conversation_id)
+            except PermissionError as exc:
+                return ToolResult(success=False, output="", error=str(exc))
+            from kitt.security.capabilities import TOOL_TO_CAPABILITY, CAP_MCP_CALL
+            required_cap = TOOL_TO_CAPABILITY.get(tool_name)
+            custom = self._custom_tools.get(tool_name)
+            if custom and str(custom.get("owner") or "").startswith("mcp:"):
+                required_cap = CAP_MCP_CALL
+            if required_cap and not security_context.has_capability(required_cap):
+                return ToolResult(
+                    success=False, output="",
+                    error=f"Capability '{required_cap}' required for tool '{tool_name}' (fail-closed)."
+                )
 
         if enabled_tools is not None and tool_name not in enabled_tools:
             return ToolResult(
@@ -273,6 +290,9 @@ class ToolRegistry:
             conversation_id=conversation_id,
             workspace_id=workspace_id,
             origin=origin,
+            security_context=security_context,
+            approval_grant=grant,
+            expected_approval_id=expected_approval_id,
         )
         handler = self._handlers.get(tool_name)
         if not handler:

@@ -527,7 +527,12 @@ class KittUIApp:
             message = arg or "Auto-commit by K.I.T.T."
             await self._execute_direct_tool("run_command", {"command": f"git commit -am {shlex.quote(message)}"})
         else:
-            self._show_result(f"/{found.aliases[0][1:]} executed.")
+            from kitt.ui.prime_commands import handle_prime_command
+            handled = await handle_prime_command(self, found.id, arg)
+            if not handled:
+                self._show_result(
+                    f"Command {found.aliases[0]} is registered but unavailable in this build."
+                )
         if self.application:
             if not self.state.active_overlay:
                 try:

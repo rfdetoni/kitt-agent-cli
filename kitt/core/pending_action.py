@@ -1,7 +1,6 @@
-import uuid
-import time
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import Any
+
 
 @dataclass(frozen=True)
 class PendingAction:
@@ -19,3 +18,4 @@ class PendingAction:
     created_at: float
     expires_at: float
     state: str
+    security_context: dict[str, Any] = field(default_factory=dict)

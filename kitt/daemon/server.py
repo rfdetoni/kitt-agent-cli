@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
+import dataclasses
 import json
 import logging
 import os
@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from kitt.core.runtime import KittRuntime
+from kitt.core.turn_command import TurnCommand
 from kitt.daemon.protocol import DaemonEvent, decode_line, encode_message
 from kitt.daemon.transport import IPCTransport
 from kitt.history.database import HistoryDatabase
+from kitt.tools.approval import ApprovalGrant
 
 logger = logging.getLogger("kitt.daemon.server")
 
@@ -26,73 +28,62 @@ def get_default_socket_path() -> Path:
         run_dir.mkdir(parents=True, exist_ok=True)
         try:
             os.chmod(run_dir, 0o700)
-        except Exception:
+        except OSError:
             pass
         return run_dir / "daemon.sock"
-    else:
-        return Path.home() / ".kitt" / "daemon.sock"
+    return Path.home() / ".kitt" / "daemon.sock"
 
 
 def get_default_token_path() -> Path:
-    token_dir = Path.home() / ".kitt"
-    token_dir.mkdir(parents=True, exist_ok=True)
-    return token_dir / "daemon.token"
+    p = Path.home() / ".kitt"
+    p.mkdir(parents=True, exist_ok=True)
+    return p / "daemon.token"
+
+
+def _jsonable(value):
+    if dataclasses.is_dataclass(value):
+        return {k: _jsonable(v) for k, v in dataclasses.asdict(value).items()}
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 class DaemonServer:
-    """Persistent local daemon running KITT sessions independently of TUI attachments."""
-
-    def __init__(
-        self,
-        workspace_root: Optional[str | Path] = None,
-        socket_path: Optional[str | Path] = None,
-        token_path: Optional[str | Path] = None,
-        context_client: Optional[Any] = None,
-        execution_client: Optional[Any] = None,
-    ):
+    def __init__(self, workspace_root=None, socket_path=None, token_path=None,
+                 context_client=None, execution_client=None):
         self.workspace_root = Path(workspace_root or os.getcwd()).resolve()
         self.transport = IPCTransport(self.workspace_root)
         self.socket_path = Path(socket_path) if socket_path else self.transport.socket_path
-        self.token_path = Path(token_path) if token_path else (self.transport.kitt_dir / "daemon.token")
+        self.token_path = Path(token_path) if token_path else self.transport.token_file
         self.context_client = context_client
         self.execution_client = execution_client
         self.token = ""
-        self._server: Optional[asyncio.Server] = None
+        self._server = None
         self._running = False
         self._subscribers: Dict[str, Set[asyncio.Queue]] = {}
-        self._client_queues: Dict[asyncio.StreamWriter, asyncio.Queue] = {}
-        self._session_locks: Dict[str, asyncio.Lock] = {}
-        self._runtimes: Dict[str, KittRuntime] = {}
-        self._lock = asyncio.Lock()
+        self._client_queues = {}
+        self._session_locks = {}
+        self._runtimes = {}
+        self._instance_lock_fd = None
 
     def _ensure_token(self) -> str:
-        """Read and validate existing token with strict permissions, or generate new 0600 token."""
-        if self.token_path.exists():
-            st = self.token_path.stat()
-            # Security check: mode must not be world or group readable
-            if sys.platform != "win32":
-                if (st.st_mode & 0o077) != 0:
-                    try:
-                        self.token_path.unlink()
-                    except Exception:
-                        pass
-                else:
-                    self.token = self.token_path.read_text(encoding="utf-8").strip()
-                    return self.token
-
-        self.token = secrets.token_hex(32)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        mode = stat.S_IRUSR | stat.S_IWUSR  # 0600
-        fd = os.open(str(self.token_path), flags, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(self.token)
         try:
-            os.chmod(self.token_path, 0o600)
-        except Exception:
-            pass
+            existing = self.transport.read_secret(self.token_path)
+            if existing:
+                self.token = existing
+                return existing
+        except PermissionError:
+            # Unsafe existing token is never reused.
+            self.token_path.unlink(missing_ok=True)
+        self.token = secrets.token_hex(32)
+        self.transport.secure_write(self.token_path, self.token, exclusive=True)
         return self.token
 
-    def _get_or_create_runtime(self, workspace_path: Optional[str] = None) -> KittRuntime:
+    def _get_or_create_runtime(self, workspace_path=None):
         root = str(Path(workspace_path or self.workspace_root).resolve())
         if root not in self._runtimes:
             rt = KittRuntime.build(root)
@@ -101,257 +92,181 @@ class DaemonServer:
             if self.execution_client is not None:
                 rt.processor.execution_client = self.execution_client
             self._runtimes[root] = rt
-            if hasattr(rt, "goal_scheduler") and rt.goal_scheduler:
+            if rt.config.scheduler_enabled and rt.goal_scheduler:
                 rt.goal_scheduler.start(interval_seconds=1.0)
         return self._runtimes[root]
 
-    async def start(self) -> None:
-        """Start the IPC daemon server with platform transport."""
-        self._ensure_token()
-        transport_type, address, port = self.transport.get_server_endpoint()
-
-        if transport_type == "unix":
-            if self.socket_path.exists():
-                try:
-                    self.socket_path.unlink()
-                except Exception:
-                    pass
-            self._server = await asyncio.start_unix_server(
-                self._handle_client,
-                path=str(self.socket_path),
-            )
-            try:
+    async def start(self):
+        self._instance_lock_fd = self.transport.acquire_instance_lock()
+        try:
+            self._ensure_token()
+            transport_type, address, port = self.transport.get_server_endpoint()
+            if transport_type == "unix":
+                # Lock ownership is established before removing stale endpoint.
+                self.socket_path.unlink(missing_ok=True)
+                self._server = await asyncio.start_unix_server(
+                    self._handle_client, path=str(self.socket_path)
+                )
                 os.chmod(self.socket_path, 0o600)
-            except Exception:
-                pass
-            self.transport.write_endpoint_metadata("unix", str(self.socket_path), None)
-        else:
-            self._server = await asyncio.start_server(
-                self._handle_client,
-                host=address,
-                port=port or 0,
-            )
-            sockets = self._server.sockets
-            actual_port = sockets[0].getsockname()[1] if sockets else 0
-            self.transport.write_endpoint_metadata("tcp", address, actual_port)
+                self.transport.write_endpoint_metadata("unix", str(self.socket_path), None)
+            else:
+                self._server = await asyncio.start_server(
+                    self._handle_client, host=address, port=port or 0
+                )
+                actual = self._server.sockets[0].getsockname()[1]
+                self.transport.write_endpoint_metadata("tcp", address, actual)
+            self.transport.write_pid(os.getpid())
+            self._running = True
+            self._get_or_create_runtime(str(self.workspace_root))
+        except Exception:
+            self.transport.release_instance_lock(self._instance_lock_fd)
+            self._instance_lock_fd = None
+            raise
 
-        self.transport.write_pid(os.getpid())
-        self._running = True
-
-        # Pre-initialize workspace runtime and scheduler
-        self._get_or_create_runtime(str(self.workspace_root))
-
-    async def stop(self) -> None:
-        """Gracefully stop the daemon and schedulers."""
+    async def stop(self):
         self._running = False
         if self._server:
             self._server.close()
             await self._server.wait_closed()
-
-        self.transport.cleanup()
-
-        for rt in self._runtimes.values():
+        for rt in list(self._runtimes.values()):
             try:
-                if hasattr(rt, "goal_scheduler") and rt.goal_scheduler:
+                if rt.goal_scheduler:
                     rt.goal_scheduler.stop()
                 rt.close()
             except Exception:
-                pass
+                logger.exception("Runtime shutdown failure")
         self._runtimes.clear()
+        self.transport.cleanup()
+        self.transport.release_instance_lock(self._instance_lock_fd)
+        self._instance_lock_fd = None
 
-    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle_client(self, reader, writer):
         authenticated = False
-        attached_session: Optional[str] = None
-        client_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
-        self._client_queues[writer] = client_queue
-
-        writer_task = asyncio.create_task(self._client_writer_loop(writer, client_queue))
-
+        attached_session = None
+        q = asyncio.Queue(maxsize=500)
+        self._client_queues[writer] = q
+        writer_task = asyncio.create_task(self._client_writer_loop(writer, q))
         try:
             while self._running:
                 line = await reader.readline()
                 if not line:
                     break
-
                 try:
                     msg = decode_line(line)
                 except Exception as exc:
-                    await client_queue.put(encode_message({"type": "RESPONSE", "status": "error", "error": f"Invalid JSON: {exc}"}))
+                    await q.put(encode_message({"type": "RESPONSE", "status": "error", "error": f"Invalid JSON: {exc}"}))
                     continue
-
                 req_id = msg.get("request_id", "")
                 action = msg.get("action", "")
 
-                # 1. Authentication
                 if not authenticated:
-                    if action == "auth":
-                        client_token = msg.get("token", "")
-                        if secrets.compare_digest(client_token, self.token):
-                            authenticated = True
-                            await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "auth"}))
-                        else:
-                            await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": "Unauthorized"}))
-                            break
-                    else:
-                        await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": "Authentication required"}))
+                    if action != "auth":
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": "Authentication required"}))
                         break
+                    if not secrets.compare_digest(str(msg.get("token", "")), self.token):
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": "Unauthorized"}))
+                        break
+                    authenticated = True
+                    await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "auth"}))
                     continue
 
-                # 2. Authenticated Actions
                 if action == "ping":
-                    await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "ping", "time": time.time()}))
-                elif action == "list_sessions":
-                    rt = self._get_or_create_runtime(msg.get("workspace"))
+                    await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "ping"}))
+                    continue
+
+                rt = self._get_or_create_runtime(msg.get("workspace"))
+
+                if action == "list_sessions":
                     convs = rt.history.list_history(limit=50)
-                    active_conv = rt.history.get_active_read_only()
-                    active_id = active_conv["id"] if active_conv else ""
-                    await client_queue.put(encode_message({
-                        "type": "RESPONSE",
-                        "request_id": req_id,
-                        "status": "ok",
-                        "action": "list_sessions",
-                        "active_session_id": active_id,
-                        "sessions": [
-                            {
-                                "id": c.get("id", ""),
-                                "title": c.get("title", ""),
-                                "status": c.get("status", ""),
-                                "updated_at": c.get("updated_at", 0),
-                                "created_at": c.get("created_at", 0),
-                            }
-                            for c in convs
-                        ],
-                    }))
-                elif action == "attach":
-                    session_id = msg.get("session_id", "")
-                    last_seq = msg.get("last_sequence", 0)
-                    rt = self._get_or_create_runtime(msg.get("workspace"))
-
-                    # Validate session existence and workspace scoping
-                    conv = rt.history.repo.get_conversation(session_id)
-                    if conv and conv.get("workspace_id") and conv["workspace_id"] != rt.workspace_id:
-                        await client_queue.put(encode_message({
-                            "type": "RESPONSE",
-                            "request_id": req_id,
-                            "status": "error",
-                            "error": f"Session '{session_id}' does not belong to workspace",
-                        }))
-                        continue
-
-                    if not conv:
-                        try:
-                            rt.history.repo.create_conversation(id=session_id, workspace_id=rt.workspace_id, title=f"Session {session_id[:8]}")
-                        except Exception:
-                            pass
-
-                    attached_session = session_id
-                    if session_id not in self._subscribers:
-                        self._subscribers[session_id] = set()
-                    self._subscribers[session_id].add(client_queue)
-
-                    # Replay past events with pagination
-                    past_events, has_more, next_seq = self._get_events_since(rt.database, session_id, last_seq)
-
-                    await client_queue.put(encode_message({
-                        "type": "RESPONSE",
-                        "request_id": req_id,
-                        "status": "ok",
-                        "action": "attach",
-                        "session_id": session_id,
-                        "events": [e.to_dict() for e in past_events],
-                        "has_more": has_more,
-                        "next_sequence": next_seq,
-                    }))
-                elif action == "detach":
-                    if attached_session and attached_session in self._subscribers:
-                        self._subscribers[attached_session].discard(client_queue)
-                    attached_session = None
-                    await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "detach"}))
-                elif action == "send_input":
-                    session_id = msg.get("session_id", "")
-                    text = msg.get("text", "")
-                    rt = self._get_or_create_runtime(msg.get("workspace"))
-
-                    # Validate session
-                    conv = rt.history.repo.get_conversation(session_id)
-                    if conv and conv.get("workspace_id") and conv["workspace_id"] != rt.workspace_id:
-                        await client_queue.put(encode_message({
-                            "type": "RESPONSE",
-                            "request_id": req_id,
-                            "status": "error",
-                            "error": f"Session '{session_id}' does not belong to workspace",
-                        }))
-                        continue
-
-                    if not conv:
-                        try:
-                            rt.history.repo.create_conversation(id=session_id, workspace_id=rt.workspace_id, title=f"Session {session_id[:8]}")
-                        except Exception:
-                            pass
-
-                    # Record event and submit turn in session-isolated task
-                    asyncio.create_task(self._execute_turn(rt, session_id, text))
-                    await client_queue.put(encode_message({
-                        "type": "RESPONSE",
-                        "request_id": req_id,
-                        "status": "ok",
-                        "action": "send_input",
-                        "session_id": session_id,
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                        "sessions": [{"id": c.get("id"), "title": c.get("title"), "status": c.get("status")} for c in convs],
                     }))
                 elif action == "create_session":
-                    title = msg.get("title", "New Session")
-                    rt = self._get_or_create_runtime(msg.get("workspace"))
-                    try:
-                        conv = rt.history.new_conversation(title)
-                        session_id = conv["id"]
-                    except Exception as exc:
-                        await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": str(exc)}))
+                    conv = rt.history.new_conversation(msg.get("title", "New Session"))
+                    await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "session_id": conv["id"]}))
+                elif action == "attach":
+                    sid = str(msg.get("session_id", ""))
+                    conv = rt.history.repo.get_conversation(sid)
+                    if not conv:
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": f"Unknown session '{sid}'"}))
                         continue
-
-                    await client_queue.put(encode_message({
-                        "type": "RESPONSE",
-                        "request_id": req_id,
-                        "status": "ok",
-                        "action": "create_session",
-                        "session_id": session_id,
-                        "title": title,
+                    if conv.get("workspace_id") != rt.workspace_id:
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": "Cross-workspace session attach blocked"}))
+                        continue
+                    if attached_session and attached_session in self._subscribers:
+                        self._subscribers[attached_session].discard(q)
+                    attached_session = sid
+                    self._subscribers.setdefault(sid, set()).add(q)
+                    events, more, next_seq = self._get_events_since(
+                        rt.database, sid, int(msg.get("last_sequence", 0))
+                    )
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                        "action": "attach", "session_id": sid,
+                        "events": [e.to_dict() for e in events],
+                        "has_more": more, "next_sequence": next_seq,
                     }))
+                elif action == "detach":
+                    if attached_session in self._subscribers:
+                        self._subscribers[attached_session].discard(q)
+                    attached_session = None
+                    await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok"}))
+                elif action == "send_input":
+                    sid = str(msg.get("session_id", ""))
+                    conv = rt.history.repo.get_conversation(sid)
+                    if not conv:
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": f"Unknown session '{sid}'"}))
+                        continue
+                    if conv.get("workspace_id") != rt.workspace_id:
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": "Cross-workspace turn blocked"}))
+                        continue
+                    cmd = TurnCommand(
+                        conversation_id=sid,
+                        prompt=str(msg.get("text", "")),
+                        mode=str(msg.get("mode", "auto")),
+                        explicit_files=set(msg.get("explicit_files") or ()),
+                        no_history=bool(msg.get("no_history", False)),
+                    )
+                    asyncio.create_task(self._execute_turn(rt, cmd))
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                        "action": "send_input", "session_id": sid, "turn_id": cmd.turn_id,
+                    }))
+                elif action == "continue_turn":
+                    sid = str(msg.get("session_id", ""))
+                    conv = rt.history.repo.get_conversation(sid)
+                    if not conv or conv.get("workspace_id") != rt.workspace_id:
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": "Invalid session"}))
+                        continue
+                    try:
+                        g = msg["grant"]
+                        grant = ApprovalGrant(
+                            approval_id=g["approval_id"], turn_id=g["turn_id"],
+                            conversation_id=g["conversation_id"], workspace_id=g["workspace_id"],
+                            action_hash=g["action_hash"], granted_at=float(g["granted_at"]),
+                            expires_at=float(g["expires_at"]), nonce=g["nonce"],
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": f"Invalid grant: {exc}"}))
+                        continue
+                    asyncio.create_task(self._continue_turn(rt, sid, grant))
+                    await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok"}))
                 elif action == "cancel_turn":
-                    session_id = msg.get("session_id", "")
-                    turn_id = msg.get("turn_id", "")
-                    rt = self._get_or_create_runtime(msg.get("workspace"))
-                    if hasattr(rt.processor, "cancelled_turns"):
-                        if turn_id:
-                            rt.processor.cancelled_turns.add(turn_id)
-                        else:
-                            # Cancel latest turn if known
-                            pass
-                    self.record_event(rt.database, session_id, "TurnCancelled", {"turn_id": turn_id, "reason": "User cancelled via daemon IPC"})
-                    await client_queue.put(encode_message({
-                        "type": "RESPONSE",
-                        "request_id": req_id,
-                        "status": "ok",
-                        "action": "cancel_turn",
-                        "session_id": session_id,
-                    }))
+                    sid = str(msg.get("session_id", ""))
+                    turn_id = str(msg.get("turn_id", ""))
+                    for event in rt.processor.cancel_turn(turn_id, "Cancelled via daemon IPC"):
+                        self._record_turn_event(rt.database, sid, event)
+                    await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok"}))
                 elif action == "stop":
-                    await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "stop"}))
+                    await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok"}))
                     asyncio.create_task(self.stop())
                     break
                 else:
-                    await client_queue.put(encode_message({
-                        "type": "RESPONSE",
-                        "request_id": req_id,
-                        "status": "error",
-                        "error": f"Unknown action '{action}'",
-                    }))
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            logger.error(f"Daemon client connection error: {exc}")
+                    await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": f"Unknown action '{action}'"}))
         finally:
-            if attached_session and attached_session in self._subscribers:
-                self._subscribers[attached_session].discard(client_queue)
+            if attached_session in self._subscribers:
+                self._subscribers[attached_session].discard(q)
             self._client_queues.pop(writer, None)
             writer_task.cancel()
             try:
@@ -360,8 +275,7 @@ class DaemonServer:
             except Exception:
                 pass
 
-    async def _client_writer_loop(self, writer: asyncio.StreamWriter, q: asyncio.Queue) -> None:
-        """Drains outbound event queue with backpressure protection."""
+    async def _client_writer_loop(self, writer, q):
         try:
             while self._running:
                 data = await q.get()
@@ -371,95 +285,91 @@ class DaemonServer:
         except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
             pass
 
-    def _get_events_since(
-        self, db: HistoryDatabase, session_id: str, last_seq: int, limit: int = 200
-    ) -> Tuple[List[DaemonEvent], bool, int]:
+    def _get_events_since(self, db, session_id, last_seq, limit=200):
         with db.get_connection() as conn:
             rows = conn.execute(
-                """
-                SELECT id, session_id, event_type, payload_json, created_at
-                FROM daemon_events
-                WHERE session_id = ? AND id > ?
-                ORDER BY id ASC LIMIT ?
-                """,
+                """SELECT id,session_id,event_type,payload_json,created_at
+                   FROM daemon_events WHERE session_id=? AND id>?
+                   ORDER BY id ASC LIMIT ?""",
                 (session_id, last_seq, limit + 1),
             ).fetchall()
-            has_more = len(rows) > limit
-            trimmed_rows = rows[:limit]
-            events = []
-            next_seq = last_seq
-            for r in trimmed_rows:
-                payload = json.loads(r["payload_json"]) if r["payload_json"] else {}
-                evt = DaemonEvent(
-                    sequence_id=r["id"],
-                    session_id=r["session_id"],
-                    event_type=r["event_type"],
-                    payload=payload,
-                    created_at=r["created_at"],
-                )
-                events.append(evt)
-                next_seq = max(next_seq, r["id"])
-            return events, has_more, next_seq
-
-    def record_event(
-        self, db: HistoryDatabase, session_id: str, event_type: str, payload: Dict[str, Any]
-    ) -> DaemonEvent:
-        now = time.time()
-        payload_json = json.dumps(payload, ensure_ascii=False)
-        with db.get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                INSERT INTO daemon_events (session_id, event_type, payload_json, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (session_id, event_type, payload_json, now),
+        more = len(rows) > limit
+        events, next_seq = [], last_seq
+        for r in rows[:limit]:
+            evt = DaemonEvent(
+                sequence_id=r["id"], session_id=r["session_id"],
+                event_type=r["event_type"],
+                payload=json.loads(r["payload_json"] or "{}"),
+                created_at=r["created_at"],
             )
-            seq_id = cur.lastrowid
-            conn.commit()
+            events.append(evt)
+            next_seq = max(next_seq, r["id"])
+        return events, more, next_seq
 
-        evt = DaemonEvent(
-            sequence_id=seq_id,
-            session_id=session_id,
-            event_type=event_type,
-            payload=payload,
-            created_at=now,
-        )
+    def record_event(self, db, session_id, event_type, payload):
+        now = time.time()
+        payload = _jsonable(payload)
+        with db.get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO daemon_events(session_id,event_type,payload_json,created_at) VALUES(?,?,?,?)",
+                (session_id, event_type, json.dumps(payload, ensure_ascii=False), now),
+            )
+            seq = cur.lastrowid
+        evt = DaemonEvent(seq, session_id, event_type, payload, now)
         self._broadcast_event(evt)
         return evt
 
-    def _broadcast_event(self, event: DaemonEvent) -> None:
-        subscribers = self._subscribers.get(event.session_id, set())
-        msg_bytes = encode_message({"type": "EVENT", "session_id": event.session_id, "event": event.to_dict()})
+    def _record_turn_event(self, db, session_id, event):
+        payload = dataclasses.asdict(event) if dataclasses.is_dataclass(event) else getattr(event, "__dict__", {})
+        return self.record_event(db, session_id, type(event).__name__, payload)
 
-        for q in list(subscribers):
+    def _broadcast_event(self, event):
+        msg = encode_message({"type": "EVENT", "session_id": event.session_id, "event": event.to_dict()})
+        for q in list(self._subscribers.get(event.session_id, set())):
             try:
-                q.put_nowait(msg_bytes)
+                q.put_nowait(msg)
             except asyncio.QueueFull:
-                logger.warning(f"Subscriber queue full for session {event.session_id}; dropping event {event.sequence_id}")
+                # Never drop persisted events silently and never evict request
+                # responses from the same queue. Disconnect the slow client;
+                # its next attach replays all missing events by sequence id.
+                for writer, client_q in list(self._client_queues.items()):
+                    if client_q is q:
+                        try:
+                            writer.close()
+                        except Exception:
+                            pass
+                        break
+                logger.warning(
+                    "Disconnected slow client for session %s at sequence %s; replay required",
+                    event.session_id, event.sequence_id,
+                )
 
-    async def _execute_turn(self, rt: KittRuntime, session_id: str, text: str, mode: str = "auto") -> None:
-        from kitt.core.turn_command import TurnCommand
-        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+    async def _execute_turn(self, rt, cmd):
+        lock = self._session_locks.setdefault(cmd.conversation_id, asyncio.Lock())
         async with lock:
-            cmd = TurnCommand(
-                conversation_id=session_id,
-                prompt=text,
-                mode=mode,
-            )
+            if not cmd.no_history:
+                try:
+                    rt.history.repo.save_message(cmd.conversation_id, cmd.turn_id, "user", cmd.prompt)
+                except Exception:
+                    logger.exception("Failed persisting daemon user message")
             try:
                 async for event in rt.processor.arun_turn(cmd):
-                    event_name = type(event).__name__
-                    payload = {}
-                    if hasattr(event, "to_dict"):
-                        payload = event.to_dict()
-                    elif hasattr(event, "__dict__"):
-                        payload = {k: v for k, v in event.__dict__.items() if not k.startswith("_")}
-                    self.record_event(rt.database, session_id, event_name, payload)
+                    self._record_turn_event(rt.database, cmd.conversation_id, event)
+                    if type(event).__name__ == "TurnCompleted" and not cmd.no_history:
+                        response = getattr(event, "response", "")
+                        if response:
+                            try:
+                                rt.history.repo.save_message(cmd.conversation_id, cmd.turn_id, "assistant", response)
+                            except Exception:
+                                logger.exception("Failed persisting daemon assistant response")
             except Exception as exc:
-                self.record_event(
-                    rt.database,
-                    session_id,
-                    "TurnFailed",
-                    {"error": str(exc)},
-                )
+                self.record_event(rt.database, cmd.conversation_id, "TurnFailed", {"error": str(exc)})
+
+    async def _continue_turn(self, rt, session_id, grant):
+        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            try:
+                for event in rt.processor.continue_turn(grant.turn_id, grant):
+                    self._record_turn_event(rt.database, session_id, event)
+            except Exception as exc:
+                self.record_event(rt.database, session_id, "TurnFailed", {"error": str(exc)})

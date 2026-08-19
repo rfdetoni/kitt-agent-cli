@@ -46,10 +46,10 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     "children.send": RuntimeOperationSpec("children.send", CAP_CHILD_MESSAGE, sensitive=False),
     "children.inspect": RuntimeOperationSpec("children.inspect", CAP_CHILD_SPAWN, sensitive=False),
     "goal.inspect": RuntimeOperationSpec("goal.inspect", CAP_GOAL_MANAGE, sensitive=False),
-    "goal.update": RuntimeOperationSpec("goal.update", CAP_GOAL_MANAGE, sensitive=True),
+    "goal.update": RuntimeOperationSpec("goal.update", CAP_GOAL_MANAGE, "goal_update", sensitive=True),
     "memory.query": RuntimeOperationSpec("memory.query", CAP_MEMORY_READ, sensitive=False),
     "skill.call": RuntimeOperationSpec("skill.call", CAP_REPO_READ, sensitive=False),
-    "mcp.call": RuntimeOperationSpec("mcp.call", CAP_MCP_CALL, sensitive=True),
+    "mcp.call": RuntimeOperationSpec("mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True),
     "state.get": RuntimeOperationSpec("state.get", CAP_REPO_READ, sensitive=False),
     "state.set": RuntimeOperationSpec("state.set", CAP_REPO_WRITE, sensitive=False),
     "state.list": RuntimeOperationSpec("state.list", CAP_REPO_READ, sensitive=False),
@@ -122,6 +122,8 @@ class SafeRuntime:
         origin: str = "MODEL",
         effective_capabilities: Optional[Set[str]] = None,
         security_context: Optional[Any] = None,
+        approval_grant: Optional[Any] = None,
+        expected_approval_id: Optional[str] = None,
     ) -> SafeRuntimeResult:
         """Execute a typed, policy-governed runtime operation with fail-closed capabilities."""
         start = time.perf_counter()
@@ -137,6 +139,15 @@ class SafeRuntime:
             )
 
         spec = OPERATION_SPECS[op]
+
+        if security_context is not None:
+            try:
+                security_context.assert_scope(self.workspace_id, self.conversation_id)
+            except PermissionError as exc:
+                return SafeRuntimeResult(
+                    success=False, operation=op, error=str(exc),
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                )
 
         # Fail-closed capability enforcement
         caps: Set[str] = set()
@@ -156,7 +167,11 @@ class SafeRuntime:
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
 
-        # Policy & Autonomy enforcement
+        # Policy & Autonomy enforcement. Concrete ToolRegistry-backed operations
+        # consume approval at the concrete tool layer; direct runtime operations
+        # consume it here. This keeps approvals single-use and exact-action bound.
+        delegated_grant = None
+        delegated_approval_id = None
         if self.registry and hasattr(self.registry, "policy") and self.registry.policy:
             policy = self.registry.policy
             if getattr(getattr(policy, "autonomy", None), "preset", None) == "read_only" and spec.sensitive:
@@ -166,7 +181,7 @@ class SafeRuntime:
                     error=f"Operation '{op}' is blocked in read_only autonomy mode",
                     duration_ms=(time.perf_counter() - start) * 1000,
                 )
-            if spec.policy_tool_action and origin == "MODEL":
+            if spec.policy_tool_action:
                 perm = policy.evaluate_tool(spec.policy_tool_action, args, origin=origin)
                 if perm == "DENY":
                     return SafeRuntimeResult(
@@ -176,16 +191,33 @@ class SafeRuntime:
                         duration_ms=(time.perf_counter() - start) * 1000,
                     )
                 if perm == "ASK":
-                    return SafeRuntimeResult(
-                        success=False,
-                        operation=op,
-                        error=f"Operation '{op}' requires approval from user.",
-                        requires_approval=True,
-                        approval_action=spec.policy_tool_action or op,
-                        approval_payload=args,
-                        required_capability=spec.required_capability,
-                        duration_ms=(time.perf_counter() - start) * 1000,
-                    )
+                    concrete_registry_ops = {"artifacts.store", "patch.apply", "process.run", "children.spawn"}
+                    if approval_grant is None:
+                        return SafeRuntimeResult(
+                            success=False, operation=op,
+                            error=f"Operation '{op}' requires approval from user.",
+                            requires_approval=True,
+                            approval_action=spec.policy_tool_action or op,
+                            approval_payload=args,
+                            required_capability=spec.required_capability,
+                            duration_ms=(time.perf_counter() - start) * 1000,
+                        )
+                    if op in concrete_registry_ops:
+                        delegated_grant = approval_grant
+                        delegated_approval_id = expected_approval_id
+                    else:
+                        action_hash = policy.generate_action_hash(spec.policy_tool_action or op, args)
+                        valid = policy.approval_manager and policy.approval_manager.validate_and_consume(
+                            approval_grant, action_hash, turn_id,
+                            self.conversation_id, self.workspace_id,
+                            expected_approval_id=expected_approval_id,
+                        )
+                        if not valid:
+                            return SafeRuntimeResult(
+                                success=False, operation=op,
+                                error="Approval grant is invalid, expired, mismatched, or already consumed.",
+                                duration_ms=(time.perf_counter() - start) * 1000,
+                            )
 
         try:
             if op == "repo.read":
@@ -195,15 +227,15 @@ class SafeRuntime:
             elif op == "repo.inspect_symbol":
                 res = self._op_repo_inspect_symbol(args, turn_id, origin)
             elif op == "artifacts.store":
-                res = self._op_artifacts_store(args, turn_id, origin)
+                res = self._op_artifacts_store(args, turn_id, origin, delegated_grant, delegated_approval_id)
             elif op == "artifacts.read":
                 res = self._op_artifacts_read(args, turn_id, origin)
             elif op == "patch.apply":
-                res = self._op_patch_apply(args, turn_id, origin)
+                res = self._op_patch_apply(args, turn_id, origin, delegated_grant, delegated_approval_id)
             elif op == "process.run":
-                res = self._op_process_run(args, turn_id, origin)
+                res = self._op_process_run(args, turn_id, origin, delegated_grant, delegated_approval_id)
             elif op == "children.spawn":
-                res = self._op_children_spawn(args, turn_id, origin)
+                res = self._op_children_spawn(args, turn_id, origin, delegated_grant, delegated_approval_id, security_context)
             elif op == "children.send":
                 res = self._op_children_send(args, turn_id, origin)
             elif op == "children.inspect":
@@ -215,9 +247,9 @@ class SafeRuntime:
             elif op == "memory.query":
                 res = self._op_memory_query(args, turn_id, origin)
             elif op == "skill.call":
-                res = self._op_skill_call(args, turn_id, origin)
+                res = self._op_skill_call(args, turn_id, origin, security_context)
             elif op == "mcp.call":
-                res = self._op_mcp_call(args, turn_id, origin)
+                res = self._op_mcp_call(args, turn_id, origin, security_context)
             elif op == "state.get":
                 res = self._op_state_get(args)
             elif op == "state.set":
@@ -314,12 +346,12 @@ class SafeRuntime:
             tokens_saved=dynamic_saved,
         )
 
-    def _op_artifacts_store(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
+    def _op_artifacts_store(self, args: dict, turn_id: str, origin: str, grant=None, expected_approval_id=None) -> SafeRuntimeResult:
         if self.registry:
             tool_res = self.registry.execute_tool(
                 "artifact_store", args, turn_id=turn_id,
                 conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin
+                origin=origin, grant=grant, expected_approval_id=expected_approval_id
             )
             art_id = tool_res.metadata.get("artifact_id", "") if hasattr(tool_res, "metadata") else ""
             handles = [f"artifact:{art_id}"] if art_id else []
@@ -349,12 +381,12 @@ class SafeRuntime:
             )
         return SafeRuntimeResult(success=False, operation="artifacts.read", error="No tool registry attached")
 
-    def _op_patch_apply(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
+    def _op_patch_apply(self, args: dict, turn_id: str, origin: str, grant=None, expected_approval_id=None) -> SafeRuntimeResult:
         if self.registry:
             tool_res = self.registry.execute_tool(
                 "apply_patch", args, turn_id=turn_id,
                 conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin
+                origin=origin, grant=grant, expected_approval_id=expected_approval_id
             )
             return SafeRuntimeResult(
                 success=tool_res.success,
@@ -364,12 +396,12 @@ class SafeRuntime:
             )
         return SafeRuntimeResult(success=False, operation="patch.apply", error="No tool registry attached")
 
-    def _op_process_run(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
+    def _op_process_run(self, args: dict, turn_id: str, origin: str, grant=None, expected_approval_id=None) -> SafeRuntimeResult:
         if self.registry:
             tool_res = self.registry.execute_tool(
                 "run_command", args, turn_id=turn_id,
                 conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin
+                origin=origin, grant=grant, expected_approval_id=expected_approval_id
             )
             return SafeRuntimeResult(
                 success=tool_res.success,
@@ -379,12 +411,13 @@ class SafeRuntime:
             )
         return SafeRuntimeResult(success=False, operation="process.run", error="No tool registry attached")
 
-    def _op_children_spawn(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
+    def _op_children_spawn(self, args: dict, turn_id: str, origin: str, grant=None, expected_approval_id=None, security_context=None) -> SafeRuntimeResult:
         if self.registry:
             tool_res = self.registry.execute_tool(
                 "child_spawn", args, turn_id=turn_id,
                 conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin
+                origin=origin, grant=grant, expected_approval_id=expected_approval_id,
+                security_context=security_context
             )
             child_id = tool_res.metadata.get("child_id", "") if hasattr(tool_res, "metadata") else ""
             return SafeRuntimeResult(
@@ -424,7 +457,7 @@ class SafeRuntime:
         if not child_id:
             return SafeRuntimeResult(success=False, operation="children.inspect", error="child_id required")
         if self.children:
-            child = self.children.inspect(child_id)
+            child = self.children.inspect(child_id, conversation_id=self.conversation_id, workspace_id=self.workspace_id)
             if not child:
                 return SafeRuntimeResult(success=False, operation="children.inspect", error=f"Child {child_id} not found")
             return SafeRuntimeResult(
@@ -447,7 +480,7 @@ class SafeRuntime:
         if not goal_id:
             return SafeRuntimeResult(success=False, operation="goal.inspect", error="goal_id required")
         if self.goals:
-            goal = self.goals.get(goal_id)
+            goal = self.goals.get_scoped(goal_id, self.conversation_id)
             if not goal:
                 return SafeRuntimeResult(success=False, operation="goal.inspect", error=f"Goal {goal_id} not found")
             return SafeRuntimeResult(
@@ -471,7 +504,7 @@ class SafeRuntime:
         if not goal_id or not state:
             return SafeRuntimeResult(success=False, operation="goal.update", error="goal_id and state required")
         if self.goals:
-            res = self.goals.update_state(goal_id, state, last_error=args.get("last_error"))
+            res = self.goals.update_state(goal_id, state, last_error=args.get("last_error"), conversation_id=self.conversation_id)
             return SafeRuntimeResult(
                 success=bool(res),
                 operation="goal.update",
@@ -491,13 +524,13 @@ class SafeRuntime:
             )
         return SafeRuntimeResult(success=False, operation="memory.query", error="Memory service not attached")
 
-    def _op_skill_call(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
+    def _op_skill_call(self, args: dict, turn_id: str, origin: str, security_context=None) -> SafeRuntimeResult:
         skill_name = args.get("name") or args.get("skill_name")
         skill_args = args.get("arguments", {})
         if not skill_name:
             return SafeRuntimeResult(success=False, operation="skill.call", error="Skill name required")
         if self.skills and hasattr(self.skills, "execute_skill"):
-            res = self.skills.execute_skill(skill_name, skill_args, runtime=self)
+            res = self.skills.execute_skill(skill_name, skill_args, runtime=self, security_context=security_context)
             return SafeRuntimeResult(
                 success=getattr(res, "success", True),
                 operation="skill.call",
@@ -506,7 +539,7 @@ class SafeRuntime:
             )
         return SafeRuntimeResult(success=False, operation="skill.call", error=f"Executable skill '{skill_name}' not available")
 
-    def _op_mcp_call(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
+    def _op_mcp_call(self, args: dict, turn_id: str, origin: str, security_context=None) -> SafeRuntimeResult:
         tool_name = args.get("tool_name", "")
         tool_args = args.get("arguments", {})
         if not tool_name:
@@ -515,7 +548,7 @@ class SafeRuntime:
             tool_res = self.registry.execute_tool(
                 tool_name, tool_args, turn_id=turn_id,
                 conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin
+                origin="SAFE_RUNTIME_BROKER", security_context=security_context
             )
             return SafeRuntimeResult(
                 success=tool_res.success,

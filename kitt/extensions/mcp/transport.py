@@ -1,11 +1,10 @@
-"""MCP Transports: Stdio subprocess transport and InProcess mock transport."""
+"""MCP transports with bounded environment inheritance and structured lifecycle."""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import os
-import subprocess
 from typing import Any, Callable, Dict, Optional, Protocol
 
 from kitt.extensions.errors import MCPTransportError
@@ -14,45 +13,36 @@ logger = logging.getLogger("kitt.extensions.mcp.transport")
 
 
 class MCPTransport(Protocol):
-    """Protocol for bi-directional JSON-RPC communication."""
-
-    async def connect(self) -> None:
-        ...
-
-    async def send(self, message: Dict[str, Any]) -> None:
-        ...
-
-    async def receive(self) -> Dict[str, Any]:
-        ...
-
-    async def close(self) -> None:
-        ...
+    async def connect(self) -> None: ...
+    async def send(self, message: Dict[str, Any]) -> None: ...
+    async def receive(self) -> Dict[str, Any]: ...
+    async def close(self) -> None: ...
 
 
 class StdioTransport:
-    """Subprocess stdio transport with structured process lifecycle and cleanup."""
-
-    def __init__(
-        self,
-        command: str,
-        args: Optional[list[str]] = None,
-        env: Optional[Dict[str, str]] = None,
-        cwd: Optional[str] = None,
-    ):
+    def __init__(self, command: str, args: Optional[list[str]] = None,
+                 env: Optional[Dict[str, str]] = None, cwd: Optional[str] = None):
         self.command = command
         self.args = args or []
         self.env = env or {}
         self.cwd = cwd
         self._process: Optional[asyncio.subprocess.Process] = None
 
-    async def connect(self) -> None:
-        full_env = dict(os.environ)
-        full_env.update(self.env)
-        cmd_list = [self.command] + self.args
+    @staticmethod
+    def _base_env() -> Dict[str, str]:
+        # Secrets are never inherited implicitly. MCP-specific credentials must
+        # be declared explicitly in the server config env block.
+        keep = {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "LC_ALL", "HOME", "USERPROFILE"}
+        return {k: v for k, v in os.environ.items() if k in keep}
 
+    async def connect(self) -> None:
+        if not self.command:
+            raise MCPTransportError("MCP stdio command is required")
+        full_env = self._base_env()
+        full_env.update({str(k): str(v) for k, v in self.env.items()})
         try:
             self._process = await asyncio.create_subprocess_exec(
-                *cmd_list,
+                self.command, *self.args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -64,46 +54,39 @@ class StdioTransport:
 
     async def send(self, message: Dict[str, Any]) -> None:
         if not self._process or not self._process.stdin:
-            raise MCPTransportError("Stdio transport is not connected.")
-
-        try:
-            payload = json.dumps(message) + "\n"
-            self._process.stdin.write(payload.encode("utf-8"))
-            await self._process.stdin.drain()
-        except Exception as exc:
-            raise MCPTransportError(f"Failed to write to stdio transport: {exc}") from exc
+            raise MCPTransportError("Stdio transport is not connected")
+        payload = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
+        if len(payload) > 2 * 1024 * 1024:
+            raise MCPTransportError("MCP request exceeds 2 MB transport limit")
+        self._process.stdin.write(payload)
+        await self._process.stdin.drain()
 
     async def receive(self) -> Dict[str, Any]:
         if not self._process or not self._process.stdout:
-            raise MCPTransportError("Stdio transport is not connected.")
-
+            raise MCPTransportError("Stdio transport is not connected")
         line = await self._process.stdout.readline()
         if not line:
-            # Check stderr for diagnostic error
-            err_msg = ""
+            err = ""
             if self._process.stderr:
                 try:
-                    err_bytes = await asyncio.wait_for(self._process.stderr.read(1024), timeout=0.1)
-                    err_msg = err_bytes.decode("utf-8", errors="replace")
+                    err = (await asyncio.wait_for(self._process.stderr.read(4096), timeout=0.1)).decode("utf-8", "replace")
                 except Exception:
                     pass
-            raise MCPTransportError(f"Stdio transport EOF from server. {err_msg}".strip())
-
+            raise MCPTransportError(f"Stdio transport EOF. {err}".strip())
+        if len(line) > 2 * 1024 * 1024:
+            raise MCPTransportError("MCP response exceeds 2 MB transport limit")
         try:
-            return json.loads(line.decode("utf-8"))
+            payload = json.loads(line.decode("utf-8"))
         except Exception as exc:
-            raise MCPTransportError(f"Malformed JSON-RPC line from stdio transport: {exc}") from exc
+            raise MCPTransportError(f"Malformed MCP JSON-RPC line: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise MCPTransportError("MCP JSON-RPC response must be an object")
+        return payload
 
     async def close(self) -> None:
-        if not self._process:
+        proc, self._process = self._process, None
+        if not proc or proc.returncode is not None:
             return
-
-        proc = self._process
-        self._process = None
-
-        if proc.returncode is not None:
-            return
-
         try:
             if proc.stdin:
                 proc.stdin.close()
@@ -114,12 +97,10 @@ class StdioTransport:
                 proc.kill()
                 await proc.wait()
         except Exception as exc:
-            logger.warning("Error during stdio transport shutdown: %s", exc)
+            logger.warning("Error during MCP transport shutdown: %s", exc)
 
 
 class InProcessTransport:
-    """In-process mock transport for standalone testing without child processes."""
-
     def __init__(self, handler_fn: Callable[[Dict[str, Any]], Dict[str, Any]]):
         self.handler_fn = handler_fn
         self._incoming: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -130,14 +111,14 @@ class InProcessTransport:
 
     async def send(self, message: Dict[str, Any]) -> None:
         if self._is_closed:
-            raise MCPTransportError("InProcess transport is closed.")
+            raise MCPTransportError("InProcess transport is closed")
         resp = self.handler_fn(message)
         if resp is not None:
             await self._incoming.put(resp)
 
     async def receive(self) -> Dict[str, Any]:
         if self._is_closed:
-            raise MCPTransportError("InProcess transport is closed.")
+            raise MCPTransportError("InProcess transport is closed")
         return await self._incoming.get()
 
     async def close(self) -> None:

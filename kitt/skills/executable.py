@@ -51,12 +51,7 @@ class ExecutableSkillMetadata:
 
 
 # Security: AST verification of untrusted skill code
-FORBIDDEN_MODULES = {
-    "os", "sys", "subprocess", "socket", "shutil", "importlib", "builtins",
-    "posix", "nt", "ctypes", "threading", "multiprocessing", "signal",
-    "inspect", "pickle", "urllib", "http", "requests", "aiohttp", "pathlib",
-    "code", "codeop", "pty", "commands",
-}
+ALLOWED_MODULES = {"json", "math", "re"}
 
 FORBIDDEN_CALLS = {
     "eval", "exec", "open", "compile", "__import__", "globals", "locals",
@@ -78,13 +73,13 @@ def validate_skill_ast(source: str) -> None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 mod = alias.name.split(".")[0]
-                if mod in FORBIDDEN_MODULES:
-                    raise PermissionError(f"Import of forbidden module '{mod}' blocked in executable skill")
+                if mod not in ALLOWED_MODULES:
+                    raise PermissionError(f"Blocked import: module '{mod}' is not allowed in executable skill")
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 mod = node.module.split(".")[0]
-                if mod in FORBIDDEN_MODULES:
-                    raise PermissionError(f"Import from forbidden module '{mod}' blocked in executable skill")
+                if mod not in ALLOWED_MODULES:
+                    raise PermissionError(f"Blocked import: module '{mod}' is not allowed in executable skill")
 
         # 2. Block prohibited function calls
         elif isinstance(node, ast.Call):
@@ -93,14 +88,14 @@ def validate_skill_ast(source: str) -> None:
 
         # 3. Block dangerous attributes / reflection
         elif isinstance(node, ast.Attribute):
-            if node.attr in FORBIDDEN_ATTRIBUTES:
-                raise PermissionError(f"Access to dangerous attribute '{node.attr}' blocked in executable skill")
+            if node.attr.startswith("_") or node.attr in FORBIDDEN_ATTRIBUTES:
+                raise PermissionError(f"Access to private/dangerous attribute '{node.attr}' blocked in executable skill")
 
 
 def _safe_import(name: str, globals: Any = None, locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
     mod_root = name.split(".")[0]
-    if mod_root in FORBIDDEN_MODULES:
-        raise PermissionError(f"Import of forbidden module '{mod_root}' is blocked in executable skill")
+    if mod_root not in ALLOWED_MODULES:
+        raise PermissionError(f"Blocked import: module '{mod_root}' is not allowed in executable skill")
     return __import__(name, globals, locals, fromlist, level)
 
 
@@ -289,6 +284,7 @@ class ExecutableSkillRunner:
         arguments: Dict[str, Any],
         call_stack: Optional[Set[str]] = None,
         parent_capabilities: Optional[Set[str]] = None,
+        security_context: Optional[Any] = None,
     ) -> SkillResult:
         start = time.perf_counter()
         skill_dir = self._find_skill_dir(skill_name)
@@ -312,6 +308,21 @@ class ExecutableSkillRunner:
             effective_caps = set(meta.capabilities) & parent_capabilities
             meta.capabilities = list(effective_caps)
 
+        if security_context is None:
+            from kitt.security.context import ExecutionSecurityContext
+            runtime_workspace = getattr(self.runtime, "workspace_id", "")
+            runtime_conversation = getattr(self.runtime, "conversation_id", "")
+            history = getattr(self.runtime, "history", None)
+            if history is not None:
+                conv = history.get_or_create_active()
+                runtime_conversation = conv["id"]
+                runtime_workspace = history.workspace_id
+            security_context = ExecutionSecurityContext.create_user_context(
+                workspace_id=runtime_workspace or "local",
+                conversation_id=runtime_conversation or "skill_exec",
+                capabilities=meta.capabilities,
+            )
+
         py_file = skill_dir / "skill.py"
         try:
             source = py_file.read_text(encoding="utf-8", errors="replace")
@@ -324,6 +335,7 @@ class ExecutableSkillRunner:
                 arguments=arguments,
                 capabilities=meta.capabilities,
                 call_stack=call_stack,
+                security_context=security_context,
             )
         except Exception as exc:
             dur = (time.perf_counter() - start) * 1000
