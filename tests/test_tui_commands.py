@@ -85,6 +85,9 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         self.ui.model_setup_model.model_index = self.ui.model_setup_model.models.index("two")
         await self.ui._apply_selected_model()
         self.assertEqual(self.runtime.processor.router.resolve_profile_for_task("code-generation")[1].model, "two")
+        # Overlay remains open to allow setting other roles sequentially
+        self.assertEqual(self.ui.state.active_overlay, "model_setup")
+        self.ui.close_overlay()
         self.assertIsNone(self.ui.state.active_overlay)
 
     async def test_setup_models_discovers_and_saves_remote_ollama(self):
@@ -166,6 +169,14 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             "/clear-memory", "/dream", "/skills", "/setup-skills", "/skill-install", "/skill-remove", "/repomap",
             "/diff", "/undo", "/ask", "/plan", "/code", "/router", "/context-stats", "/stats", "/status",
             "/compact", "/child", "/tasks", "/cancel", "/reasoning", "/approvals", "/autonomy", "/workspace", "/clear", "/help",
+            "/child-inspect test_child", "/child-msg test_child hello", "/child-retain test_child",
+            "/goal-pause test_goal", "/goal-resume test_goal", "/attach test_session", "/detach",
+            "/runtime-state", "/artifact test_art",
+            "/add-provider meu-ollama ollama http://localhost:11434",
+            "/edit-provider meu-ollama http://localhost:11435",
+            "/delete-provider meu-ollama",
+            "/mode plan",
+            "/mouse",
         ]
         tested = set()
         with patch("kitt.router.model_selector.ModelConfigurator.fetch_ollama_models", return_value=["local-test"]):

@@ -12,9 +12,10 @@
 *.prompt
 *.chat
 *.transcript.jsonl
-agent.log
 export_codebase.py
 kitt_codebase_export.txt
+codebase.llm.txt
+*.llm.txt
 
 # Node & Python
 node_modules/

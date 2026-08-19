@@ -70,7 +70,7 @@ class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
         popup_text = self.ui._provider_popup_text()
         self.assertIn("FAVORITOS", popup_text)
         self.assertIn("★", popup_text)
-        self.assertIn("Adicionar Novo Provedor", popup_text)
+        self.assertIn("ADICIONAR PROVEDOR", popup_text.upper())
 
         # Move selection and toggle favorite
         self.ui.model_setup_model.move_popup_selection(1)
@@ -160,8 +160,8 @@ class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
         self.ui.auth_login_buffer.text = "sk-ant-test-api-key-12345"
         self.ui._accept_auth_login(self.ui.auth_login_buffer)
 
-        # Overlay should close and credential should be saved
-        self.assertIsNone(self.ui.state.active_overlay)
+        # auth_login closes and restores parent model_setup overlay
+        self.assertEqual(self.ui.state.active_overlay, "model_setup")
         resolved_key = auth_service.resolve(None, "anthropic")
         self.assertEqual(resolved_key, "sk-ant-test-api-key-12345")
 

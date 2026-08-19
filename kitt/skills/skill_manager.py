@@ -231,6 +231,11 @@ class SkillManager:
 
         return removed
 
+    def execute_skill(self, skill_name: str, arguments: dict, runtime=None):
+        from kitt.skills.executable import ExecutableSkillRunner
+        runner = ExecutableSkillRunner(runtime)
+        return runner.execute(skill_name, arguments)
+
     def get_skills_summary_prompt(self) -> str:
         skills = self.list_skills()
         active = set(self.get_active_skills())

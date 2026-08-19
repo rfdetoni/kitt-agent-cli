@@ -513,6 +513,81 @@ MIGRATIONS.append(Migration(
     )
 ))
 
+MIGRATIONS.append(Migration(
+    version=10,
+    name="prime_agent_persistence_v10",
+    statements=(
+        """
+        CREATE TABLE IF NOT EXISTS runtime_states (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            state_key TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            bytes_count INTEGER NOT NULL,
+            ttl_seconds REAL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            expires_at REAL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+            FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+            UNIQUE(workspace_id, conversation_id, state_key)
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_runtime_states_conv_key
+        ON runtime_states(conversation_id, state_key);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_runtime_states_expires
+        ON runtime_states(expires_at);
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS child_messages (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            parent_id TEXT NOT NULL,
+            child_id TEXT NOT NULL,
+            sender_id TEXT NOT NULL,
+            recipient_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'SENT',
+            timestamp REAL NOT NULL,
+            FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_child_messages_conv
+        ON child_messages(conversation_id, timestamp);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_child_messages_recipient
+        ON child_messages(recipient_id, status);
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS daemon_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_daemon_events_session_id
+        ON daemon_events(session_id, id);
+        """,
+        "ALTER TABLE goals ADD COLUMN scheduled_at REAL;",
+        "ALTER TABLE goals ADD COLUMN next_run_at REAL;",
+        "ALTER TABLE goals ADD COLUMN recurrence TEXT;",
+        "ALTER TABLE goals ADD COLUMN heartbeat_enabled INTEGER DEFAULT 0;",
+        "ALTER TABLE goals ADD COLUMN resume_policy TEXT DEFAULT 'manual';",
+        "ALTER TABLE goals ADD COLUMN retry_policy TEXT DEFAULT '{\"max_retries\": 3, \"retry_count\": 0}';",
+        "ALTER TABLE goals ADD COLUMN owner_session_id TEXT;",
+    )
+))
+
 class MigrationRunner:
     def __init__(self, migrations: list[Migration] = None):
         if migrations is None:

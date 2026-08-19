@@ -1,10 +1,11 @@
 from kitt.ui.theme import DEFAULT_THEME
 from kitt.ui.state import UIState
 
+
 class HomeComponent:
     def render(self, state: UIState, width: int = 80) -> str:
         t = DEFAULT_THEME
-        scanner = t.scanner_frame(0, width=16)
+        scanner = t.scanner_frame(state.scanner_step if hasattr(state, "scanner_step") else 0, width=16)
         logo = [
             t.format_primary("  ██╗  ██╗  ██╗.████████╗.████████╗  "),
             t.format_primary("  ██║ ██╔╝  ██║╚══██╔══╝╚══██╔══╝  "),
@@ -12,11 +13,12 @@ class HomeComponent:
             t.format_primary("  ██╔═██╗   ██║   ██║      ██║     "),
             t.format_primary("  ██║  ██╗  ██║   ██║      ██║     "),
             f"       Scanner: [{t.format_primary(scanner)}]",
-            t.format_muted("     K.I.T.T. Autonomous Agent — OpenCode Architecture"),
+            t.format_muted("     K.I.T.T. Autonomous AI Coding Agent — Terminal State-of-the-Art"),
             "",
             t.format_muted(f" Workspace: {state.workspace_path}"),
-            t.format_muted(f" Models   : {state.small_model} (Context/Filter) | {state.large_model} (Execution)"),
+            t.format_muted(f" Modelos  : {state.large_model} (Principal) │ {state.small_model} (Contexto)"),
             "",
-            " Shortcuts: [Ctrl+P] Palette | [/help] Commands | [/doctor] Health | [/quit] Exit",
+            " [Ctrl+P] Paleta de Ações │ [/model] Modelos │ [/session] Sessões │ [/help] Ajuda │ [/doctor] Diagnóstico",
         ]
         return "\n".join(logo)
+

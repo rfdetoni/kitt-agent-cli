@@ -43,6 +43,24 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_parser.add_argument("mcp_action", nargs="?", default="list", choices=["list", "inspect", "connect", "disconnect", "tools", "resources"], help="MCP action")
     mcp_parser.add_argument("server_name", nargs="?", default=None, help="Target MCP server name")
 
+    # 'daemon' subcommand
+    daemon_parser = subparsers.add_parser("daemon", help="Manage persistent background KITT Daemon")
+    daemon_parser.add_argument("daemon_action", nargs="?", default="status", choices=["start", "stop", "status"], help="Daemon action")
+
+    # 'sessions' subcommand
+    subparsers.add_parser("sessions", help="List active and saved KITT sessions")
+
+    # 'attach' subcommand
+    attach_parser = subparsers.add_parser("attach", help="Attach to a running KITT session in daemon")
+    attach_parser.add_argument("session", help="Session ID or prefix to attach")
+
+    # 'detach' subcommand
+    subparsers.add_parser("detach", help="Detach from current daemon session")
+
+    # 'resume' subcommand
+    resume_parser = subparsers.add_parser("resume", help="Resume an existing KITT session")
+    resume_parser.add_argument("session", help="Session ID to resume")
+
     # Default flags
     parser.add_argument("-p", "--print", dest="prompt", help="Print one response and exit")
     parser.add_argument("--root", default=".", help="Workspace root")
@@ -95,6 +113,27 @@ def main(argv=None) -> int:
     if args.subcommand == "mcp":
         from kitt.cli.commands import handle_mcp_command
         return handle_mcp_command(action=args.mcp_action, server=args.server_name, root_dir=getattr(args, "root", "."))
+
+    if args.subcommand == "daemon":
+        from kitt.cli.commands import handle_daemon_command
+        return handle_daemon_command(action=args.daemon_action, root_dir=getattr(args, "root", "."))
+
+    if args.subcommand == "sessions":
+        from kitt.cli.commands import handle_sessions_command
+        return handle_sessions_command(root_dir=getattr(args, "root", "."))
+
+    if args.subcommand == "attach":
+        from kitt.cli.commands import handle_attach_command
+        return handle_attach_command(session_id=args.session, root_dir=getattr(args, "root", "."))
+
+    if args.subcommand == "detach":
+        from kitt.cli.commands import handle_daemon_command
+        print("\033[90mDetached from session.\033[0m")
+        return 0
+
+    if args.subcommand == "resume":
+        from kitt.cli.commands import handle_resume_command
+        return handle_resume_command(session_id=args.session, root_dir=getattr(args, "root", "."))
 
     try:
         return asyncio.run(async_main(args))

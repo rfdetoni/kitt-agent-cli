@@ -109,6 +109,7 @@ class UIState:
     unseen_output: bool = False
     scanner_step: int = 0
     planning_mode: bool = False
+    turn_mode: Literal["code", "plan", "ask"] = "code"
     width: int = 80
     height: int = 24
     turn_started_at: float = field(default_factory=time.time)

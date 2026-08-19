@@ -29,6 +29,7 @@ from kitt.tools.handlers.services import (
     QueueInputHandler, GoalCreateHandler, GoalAddGateHandler,
     ChildSpawnHandler, HarnessRememberHandler
 )
+from kitt.tools.handlers.safe_runtime import SafeRuntimeHandler
 
 @dataclass
 class ToolResult:
@@ -61,7 +62,10 @@ class ToolRegistry:
         self.child_manager = None
         self.child_tools = None
         self._custom_tools: Dict[str, Dict[str, Any]] = {}
+        self._safe_runtime_instance = None
+        self.runtime_mode = "auto"
         self._handlers: Dict[str, ToolHandler] = {
+            "kitt_runtime": SafeRuntimeHandler(),
             "list_files": ListFilesHandler(),
             "read_file": ReadFileHandler(),
             "write_file": WriteFileHandler(),
@@ -149,6 +153,10 @@ class ToolRegistry:
 
     def get_tool_definitions(self, enabled_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         all_tools = [
+            {
+                "name": "kitt_runtime",
+                "description": "Execute safe, compact, policy-governed KITT runtime operations (repo.*, artifacts.*, patch.*, process.*, children.*, goal.*, state.*, handles.*).",
+            },
             {"name": "list_files", "description": "List files in directory"},
             {"name": "search", "description": "Search regex pattern across repository"},
             {"name": "read_file", "description": "Read file lines with start_line and end_line bounds"},
@@ -177,6 +185,10 @@ class ToolRegistry:
             ,{"name": "harness_remember", "description": "Persist a learned guideline entry into the harness repository"}
         ]
         arg_schemas = {
+            "kitt_runtime": {
+                "operation": "string (e.g. repo.read, repo.search, repo.inspect_symbol, patch.apply, process.run, children.spawn, children.send, children.inspect, goal.inspect, goal.update, state.get, state.set, handles.resolve)",
+                "arguments": "JSON object with operation-specific parameters",
+            },
             "list_files": {"path": "relative dir, default ."},
             "search": {"pattern": "literal text or regex", "regex": "bool, default false"},
             "read_file": {

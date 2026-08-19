@@ -49,13 +49,16 @@ def build_root_container(ui):
     live_agents = ConditionalContainer(Window(ui.live_agents_control, height=1, wrap_lines=False, style="class:primary"), filter=Condition(lambda: bool(ui.state.active_tasks)))
     prompt_window = Window(ui.prompt_control, height=Dimension(min=3, max=8), wrap_lines=True)
     ui.prompt_window = prompt_window
-    prompt = Frame(prompt_window, title="Prompt  Alt+Enter newline")
+    prompt = Frame(
+        prompt_window,
+        title=lambda: f"Prompt [{ui.state.turn_mode.upper()}]  │  F4: Alternar Modo  │  F12: Modelos  │  Alt+Enter: Nova Linha"
+    )
     session = HSplit([header, body, approval_inline, live_agents, prompt, Window(ui.status_control, height=1, wrap_lines=False, style="class:status")])
 
     home = HSplit([
         Window(height=Dimension(weight=1)),
         Window(ui.home_control, height=13, align=WindowAlign.CENTER),
-        Box(Frame(prompt_window, title="Ask K.I.T.T."), padding_left=4, padding_right=4),
+        Box(Frame(prompt_window, title=lambda: f"K.I.T.T. [{ui.state.turn_mode.upper()}]  │  F4: Modo  │  F12: Modelos"), padding_left=4, padding_right=4),
         Window(ui.hints_control, height=2, align=WindowAlign.CENTER),
         Window(height=Dimension(weight=1)),
         Window(ui.status_control, height=1, wrap_lines=False, style="class:status"),

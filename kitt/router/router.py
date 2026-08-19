@@ -34,6 +34,9 @@ class TaskRouter:
         self.root_dir = root_dir
         self.config = self._load_config(root_dir)
 
+    def load_config(self, root_dir: str) -> RouterConfig:
+        return self._load_config(root_dir)
+
     def _load_config(self, root_dir: str) -> RouterConfig:
         defaults = RouterConfig(
             profiles={name: replace(profile) for name, profile in DEFAULT_ROUTER_CONFIG.profiles.items()},
@@ -71,9 +74,11 @@ class TaskRouter:
                 profiles[k] = ModelProfile(**v)
 
             routing = data.get("routing", {})
+            custom_providers = data.get("custom_providers", [])
             loaded_config = RouterConfig(
                 profiles={**defaults.profiles, **profiles},
                 routing={**defaults.routing, **routing},
+                custom_providers=custom_providers,
             )
 
             if needs_migration:
@@ -118,6 +123,7 @@ class TaskRouter:
         data = {
             "profiles": profiles_data,
             "routing": self.config.routing,
+            "custom_providers": getattr(self.config, "custom_providers", []),
         }
         atomic_write_secure(config_path, json.dumps(data, indent=2))
 

@@ -676,8 +676,8 @@
         <!-- Interactive Terminal Showcase -->
         <section id="cli">
             <div class="section-header">
-                <h2>Interface CLI & Terminal UI</h2>
-                <div class="section-badge">REPL & PROMPT_TOOLKIT</div>
+                <h2>Interface TUI & Terminal de Alta Performance</h2>
+                <div class="section-badge">PROMPT_TOOLKIT • ESTADO DA ARTE</div>
             </div>
 
             <div class="terminal">
@@ -687,33 +687,57 @@
                         <div class="terminal-dot y"></div>
                         <div class="terminal-dot g"></div>
                     </div>
-                    <div class="terminal-title">kitt-repl — bash & prompt_toolkit</div>
+                    <div class="terminal-title">kitt-tui — Fullscreen Responsive HUD (Mouse & Scroll Integrados)</div>
                     <div class="terminal-tabs">
-                        <button class="tab-btn active" onclick="setTerminalTab('status')">/dream --status</button>
-                        <button class="tab-btn" onclick="setTerminalTab('preview')">/dream (preview)</button>
-                        <button class="tab-btn" onclick="setTerminalTab('commit')">/dream --commit</button>
-                        <button class="tab-btn" onclick="setTerminalTab('help')">/dream --help</button>
+                        <button class="tab-btn active" onclick="setTerminalTab('tui_live')">TUI Live Turn</button>
+                        <button class="tab-btn" onclick="setTerminalTab('model_setup')">Model Setup Overlay</button>
+                        <button class="tab-btn" onclick="setTerminalTab('permission')">Card de Aprovação</button>
+                        <button class="tab-btn" onclick="setTerminalTab('dream')">Dreaming Mode</button>
+                        <button class="tab-btn" onclick="setTerminalTab('status')">Telemetry Status</button>
                     </div>
                 </div>
                 <div class="terminal-body" id="terminal-content">
-<span class="cli-prompt">kitt></span> <span class="cli-cmd">/dream --status</span>
+<span class="cli-dim">┌─── K.I.T.T. TURBO TUI ──────────────────────────────────────────────────────────┐</span>
+<span class="cli-dim">│</span> <span class="cli-cyan">K.I.T.T.</span> <span class="cli-dim">│</span> <span class="cli-green">● ONLINE</span> <span class="cli-dim">│</span> Workspace: <span class="cli-cyan">kitt-agent-cli</span> <span class="cli-dim">│</span> Model: <span class="cli-amber">ollama/qwen2.5-coder:14b</span>   <span class="cli-dim">│</span>
+<span class="cli-dim">├─── TRANSCRIÇÃO DA SESSÃO ──────────────────────────┬─── ATTACHED CONTEXT ─────┤</span>
+<span class="cli-dim">│</span>                                                    <span class="cli-dim">│</span> Context Window : <span class="cli-green">4096 / 8192</span> <span class="cli-dim">│</span>
+<span class="cli-dim">│</span> <span class="cli-prompt">YOU</span>                                                <span class="cli-dim">│</span> Active Files   : <span class="cli-cyan">1 arquivo</span>   <span class="cli-dim">│</span>
+<span class="cli-dim">│</span> <span class="cli-cmd">atualize o arquivo @apresentacao.html com a nova TUI</span> <span class="cli-dim">│</span> • <span class="cli-cyan">apresentacao.html</span>      <span class="cli-dim">│</span>
+<span class="cli-dim">│</span>                                                    <span class="cli-dim">│</span>                          <span class="cli-dim">│</span>
+<span class="cli-dim">│</span> <span class="cli-cyan">▸ Pensando (1.4s...)</span> 🧠 <span class="cli-dim">Reasoning: 60%</span>             <span class="cli-dim">│</span> <span class="cli-amber">SUBAGENTS ATIVOS (0)</span>     <span class="cli-dim">│</span>
+<span class="cli-dim">│</span>                                                    <span class="cli-dim">│</span> (nenhum subagente)       <span class="cli-dim">│</span>
+<span class="cli-dim">│</span> <span class="cli-green">TOOL</span> <span class="cli-cmd">apply_patch(apresentacao.html)</span>                <span class="cli-dim">│</span>                          <span class="cli-dim">│</span>
+<span class="cli-dim">│</span> <span class="cli-dim">   1 bloco SEARCH/REPLACE aplicado com sucesso!</span>    <span class="cli-dim">│</span> <span class="cli-dim">F10: Toggle Mouse Mode</span>   <span class="cli-dim">│</span>
+<span class="cli-dim">│</span>                                                    <span class="cli-dim">│</span> <span class="cli-dim">PgUp/PgDn: Scroll Chat</span>   <span class="cli-dim">│</span>
+<span class="cli-dim">│</span> <span class="cli-cyan">K.I.T.T.</span>                                           <span class="cli-dim">│</span>                          <span class="cli-dim">│</span>
+<span class="cli-dim">│</span> Apresentação atualizada com suporte interativo!   <span class="cli-dim">│</span>                          <span class="cli-dim">│</span>
+<span class="cli-dim">├─── PROMPT (Alt+Enter para nova linha) ─────────────┴──────────────────────────┤</span>
+<span class="cli-dim">│</span> <span class="cli-cyan">kitt></span> <span class="cli-dim">Digite /help para comandos ou digite sua instrução...</span>                  <span class="cli-dim">│</span>
+<span class="cli-dim">└───</span> <span class="cli-green">● SYSTEM ONLINE</span> <span class="cli-dim">│</span> <span class="cli-cyan">Ctrl+P</span> Comandos <span class="cli-dim">│</span> <span class="cli-cyan">Ctrl+M / F10</span> Mouse <span class="cli-dim">│</span> <span class="cli-amber">Autonomia: BALANCED</span> <span class="cli-dim">┘</span>
+                </div>
+            </div>
 
-<span class="cli-cyan">=== Dreaming Mode Status ===</span>
-  Dreaming enabled     : <span class="cli-cyan">Yes</span>
-  Auto dreaming enabled: <span class="cli-cyan">Yes</span>
-  Auto commit          : <span class="cli-cyan">No</span>
-  Dream model role     : <span class="cli-amber">context</span>
-  Dream model          : <span class="cli-amber">ollama/qwen2.5-coder:1.5b</span>
-  Fallback             : <span class="cli-green">deterministic</span>
-  Currently running    : <span class="cli-amber">No</span>
-  Last committed dream : 1.2h ago (2026-08-18 06:40)
-  Eligible for auto    : <span class="cli-green">Yes</span>
-
-<span class="cli-cyan">=== Memory Store ===</span>
-  Active memories      : <span class="cli-green">14</span>
-  Candidate memories   : <span class="cli-amber">2</span>
-  Superseded memories  : <span class="cli-dim">6</span>
-  Archived memories    : <span class="cli-dim">18</span>
+            <div class="feature-grid">
+                <div class="card">
+                    <div class="card-icon">🖱️</div>
+                    <div class="card-title">Mouse & Scroll Fluido</div>
+                    <div class="card-desc">
+                        Suporte a scroll com roda do mouse na área de resposta e atalho <code>F10</code> / <code>Ctrl+M</code> / <code>/mouse</code> para alternar instantaneamente entre modo TUI interativo e seleção nativa de texto no terminal.
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🌐</div>
+                    <div class="card-title">Descoberta Remota / LAN</div>
+                    <div class="card-desc">
+                        Descoberta automática de LLMs em servidores locais ou remotos (ex: <code>192.168.100.51:11434</code>), suporte a templates Ollama, OpenAI-compatível, Anthropic e Gemini via <code>/add-provider</code>.
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🛡️</div>
+                    <div class="card-title">Fallback de Tool Calls</div>
+                    <div class="card-desc">
+                        Mecanismo híbrido que extrai tool calls rigorosas em JSON (<code>&lt;kitt-tool&gt;</code>), diffs cirúrgicos SEARCH/REPLACE e blocos de código com rotulação de arquivos para máxima confiabilidade.
+                    </div>
                 </div>
             </div>
         </section>
@@ -783,10 +807,11 @@
         }
 
         const terminalTabs = {
-            'status': `<span class="cli-prompt">kitt></span> <span class="cli-cmd">/dream --status</span>\n\n<span class="cli-cyan">=== Dreaming Mode Status ===</span>\n  Dreaming enabled     : <span class="cli-cyan">Yes</span>\n  Auto dreaming enabled: <span class="cli-cyan">Yes</span>\n  Auto commit          : <span class="cli-cyan">No</span>\n  Dream model role     : <span class="cli-amber">context</span>\n  Dream model          : <span class="cli-amber">ollama/qwen2.5-coder:1.5b</span>\n  Fallback             : <span class="cli-green">deterministic</span>\n  Currently running    : <span class="cli-amber">No</span>\n  Last committed dream : 1.2h ago (2026-08-18 06:40)\n  Eligible for auto    : <span class="cli-green">Yes</span>\n\n<span class="cli-cyan">=== Memory Store ===</span>\n  Active memories      : <span class="cli-green">14</span>\n  Candidate memories   : <span class="cli-amber">2</span>\n  Superseded memories  : <span class="cli-dim">6</span>\n  Archived memories    : <span class="cli-dim">18</span>`,
-            'preview': `<span class="cli-prompt">kitt></span> <span class="cli-cmd">/dream</span>\n[Dreaming] Analyzing and previewing memory consolidation (dry-run)...\n\n<span class="cli-cyan">K.I.T.T. Dreaming Mode — Preview</span>\n  Model role           : <span class="cli-amber">context</span>\n  Model                : <span class="cli-amber">ollama/qwen2.5-coder:1.5b</span>\n  Sessions scanned     : 8\n  Entries scanned      : 63\n  Signals found        : 14\n\n  Proposed:\n    Add                : <span class="cli-green">3</span>\n    Merge              : <span class="cli-green">2</span>\n    Supersede          : <span class="cli-amber">1</span>\n    Archive            : <span class="cli-dim">4</span>\n    Ignore             : <span class="cli-dim">4</span>\n\n  Persistent changes   : <span class="cli-amber">NO</span>\n\n  <span class="cli-dim">Use /dream --commit to apply this consolidation.</span>`,
-            'commit': `<span class="cli-prompt">kitt></span> <span class="cli-cmd">/dream --commit</span>\n[Dreaming] Consolidating and persisting memory...\n\n<span class="cli-green">K.I.T.T. Dreaming Mode — Consolidation Complete</span>\n\n  Model role           : <span class="cli-amber">context</span>\n  Model                : <span class="cli-amber">ollama/qwen2.5-coder:1.5b</span>\n  Sessions scanned     : 8\n  Entries scanned      : 63\n  Signals found        : 14\n\n  Memories added       : <span class="cli-green">3</span>\n  Memories merged      : <span class="cli-green">2</span>\n  Memories superseded  : <span class="cli-amber">1</span>\n  Memories archived    : <span class="cli-dim">4</span>\n\n  MEMORY.md            : <span class="cli-cyan">rebuilt</span>\n  Database             : <span class="cli-green">committed</span>\n  Duration             : 184 ms`,
-            'help': `<span class="cli-prompt">kitt></span> <span class="cli-cmd">/dream --help</span>\n\n<span class="cli-cyan">Dreaming Mode</span>\n\n  <span class="cli-cmd">/dream</span>\n      Analyze and preview memory consolidation without writing changes.\n\n  <span class="cli-cmd">/dream --dry-run</span>\n      Same as /dream. No persistent changes.\n\n  <span class="cli-cmd">/dream --commit</span>\n      Consolidate and persist memory.\n\n  <span class="cli-cmd">/dream --status</span>\n      Show Dreaming Mode status.\n\n  <span class="cli-cmd">/dream --cancel</span>\n      Cancel the current Dreaming Mode cycle.\n\n  <span class="cli-cmd">/dream --help</span>\n      Show this help.`
+            'tui_live': `<span class="cli-dim">┌─── K.I.T.T. TURBO TUI ──────────────────────────────────────────────────────────┐</span>\n<span class="cli-dim">│</span> <span class="cli-cyan">K.I.T.T.</span> <span class="cli-dim">│</span> <span class="cli-green">● ONLINE</span> <span class="cli-dim">│</span> Workspace: <span class="cli-cyan">kitt-agent-cli</span> <span class="cli-dim">│</span> Model: <span class="cli-amber">ollama/qwen2.5-coder:14b</span>   <span class="cli-dim">│</span>\n<span class="cli-dim">├─── TRANSCRIÇÃO DA SESSÃO ──────────────────────────┬─── ATTACHED CONTEXT ─────┤</span>\n<span class="cli-dim">│</span>                                                    <span class="cli-dim">│</span> Context Window : <span class="cli-green">4096 / 8192</span> <span class="cli-dim">│</span>\n<span class="cli-dim">│</span> <span class="cli-prompt">YOU</span>                                                <span class="cli-dim">│</span> Active Files   : <span class="cli-cyan">1 arquivo</span>   <span class="cli-dim">│</span>\n<span class="cli-dim">│</span> <span class="cli-cmd">atualize o arquivo @apresentacao.html com a nova TUI</span> <span class="cli-dim">│</span> • <span class="cli-cyan">apresentacao.html</span>      <span class="cli-dim">│</span>\n<span class="cli-dim">│</span>                                                    <span class="cli-dim">│</span>                          <span class="cli-dim">│</span>\n<span class="cli-dim">│</span> <span class="cli-cyan">▸ Pensando (1.4s...)</span> 🧠 <span class="cli-dim">Reasoning: 60%</span>             <span class="cli-dim">│</span> <span class="cli-amber">SUBAGENTS ATIVOS (0)</span>     <span class="cli-dim">│</span>\n<span class="cli-dim">│</span>                                                    <span class="cli-dim">│</span> (nenhum subagente)       <span class="cli-dim">│</span>\n<span class="cli-dim">│</span> <span class="cli-green">TOOL</span> <span class="cli-cmd">apply_patch(apresentacao.html)</span>                <span class="cli-dim">│</span>                          <span class="cli-dim">│</span>\n<span class="cli-dim">│</span> <span class="cli-dim">   1 bloco SEARCH/REPLACE aplicado com sucesso!</span>    <span class="cli-dim">│</span> <span class="cli-dim">F10: Toggle Mouse Mode</span>   <span class="cli-dim">│</span>\n<span class="cli-dim">│</span>                                                    <span class="cli-dim">│</span> <span class="cli-dim">PgUp/PgDn: Scroll Chat</span>   <span class="cli-dim">│</span>\n<span class="cli-dim">│</span> <span class="cli-cyan">K.I.T.T.</span>                                           <span class="cli-dim">│</span>                          <span class="cli-dim">│</span>\n<span class="cli-dim">│</span> Apresentação atualizada com suporte interativo!   <span class="cli-dim">│</span>                          <span class="cli-dim">│</span>\n<span class="cli-dim">├─── PROMPT (Alt+Enter para nova linha) ─────────────┴──────────────────────────┤</span>\n<span class="cli-dim">│</span> <span class="cli-cyan">kitt></span> <span class="cli-dim">Digite /help para comandos ou digite sua instrução...</span>                  <span class="cli-dim">│</span>\n<span class="cli-dim">└───</span> <span class="cli-green">● SYSTEM ONLINE</span> <span class="cli-dim">│</span> <span class="cli-cyan">Ctrl+P</span> Comandos <span class="cli-dim">│</span> <span class="cli-cyan">Ctrl+M / F10</span> Mouse <span class="cli-dim">│</span> <span class="cli-amber">Autonomia: BALANCED</span> <span class="cli-dim">┘</span>`,
+            'model_setup': `<span class="cli-cyan">=== K.I.T.T. Model Setup (Ctrl+Alt++) ===</span>\n\n<span class="cli-dim">[Tab] Alternar Campo  │ [←/→] Papel: </span><span class="cli-green">[principal]</span> <span class="cli-dim">│ [P] Provedor: </span><span class="cli-amber">[ollama (LAN)]</span>\n<span class="cli-dim">Endpoint URL : </span><span class="cli-cyan">http://192.168.100.51:11434</span>  <span class="cli-green">[● 4 modelos descobertos]</span>\n\n  <span class="cli-green">► qwen2.5-coder:14b</span>   <span class="cli-dim">│ 32k ctx │ 🛠 tools │ 🧠 think │ [ATIVO: principal]</span>\n    qwen2.5-coder:1.5b  <span class="cli-dim">│ 8k ctx  │ 🛠 tools │          │ [ATIVO: context]</span>\n    deepseek-r1:8b      <span class="cli-dim">│ 64k ctx │          │ 🧠 think │</span>\n    llama3.2:3b         <span class="cli-dim">│ 8k ctx  │ 🛠 tools │          │</span>\n\n<span class="cli-dim">[Enter] Atribuir a 'principal' (mantém popup aberto para configurar 'context')</span>`,
+            'permission': `<span class="cli-amber">┌─── APROVAÇÃO DE SEGURANÇA ────────────────────────────────────────────────────┐</span>\n<span class="cli-amber">│</span> Ação Solicitada : <span class="cli-cyan">apply_patch (apresentacao.html)</span>                             <span class="cli-amber">│</span>\n<span class="cli-amber">│</span> Risco           : <span class="cli-amber">MED (Modificação de arquivo existente no workspace)</span>       <span class="cli-amber">│</span>\n<span class="cli-amber">│</span> Diff Previsto   : <span class="cli-green">+34 linhas</span> / <span class="cli-red">-8 linhas</span>                                    <span class="cli-amber">│</span>\n<span class="cli-amber">│</span>                                                                               <span class="cli-amber">│</span>\n<span class="cli-amber">│</span> <span class="cli-green">[Y] Permitir Ação</span>   <span class="cli-red">[N] Rejeitar</span>   <span class="cli-cyan">[A] Permitir Tudo na Sessão</span>   <span class="cli-dim">[V] Ver Diff</span>   <span class="cli-amber">│</span>\n<span class="cli-amber">└───────────────────────────────────────────────────────────────────────────────┘</span>`,
+            'dream': `<span class="cli-prompt">kitt></span> <span class="cli-cmd">/dream --status</span>\n\n<span class="cli-cyan">=== Dreaming Mode Status ===</span>\n  Dreaming enabled     : <span class="cli-cyan">Yes</span>\n  Auto dreaming enabled: <span class="cli-cyan">Yes</span>\n  Dream model          : <span class="cli-amber">ollama/qwen2.5-coder:1.5b</span>\n  Active memories      : <span class="cli-green">14</span>\n  Candidate memories   : <span class="cli-amber">2</span>\n  MEMORY.md            : <span class="cli-cyan">sincronizado</span>`,
+            'status': `<span class="cli-prompt">kitt></span> <span class="cli-cmd">/status</span>\n\n<span class="cli-cyan">=== K.I.T.T. Runtime Status ===</span>\n  Kernel Version       : <span class="cli-green">v1.2.0 (Python 3.14)</span>\n  Unit Tests           : <span class="cli-green">406/406 PASSING</span>\n  Principal LLM        : <span class="cli-cyan">qwen2.5-coder:14b (192.168.100.51:11434)</span>\n  Context LLM          : <span class="cli-cyan">qwen2.5-coder:1.5b (localhost:11434)</span>\n  Mouse Mode           : <span class="cli-green">TUI & Native Terminal Toggle (F10)</span>\n  Autonomy Mode        : <span class="cli-amber">BALANCED</span>`
         };
 
         function setTerminalTab(tab) {

@@ -38,13 +38,28 @@ class TestScrollableSelect(unittest.TestCase):
         selected_called = []
         self.select.on_select = lambda opt: selected_called.append(opt.value)
         
-        # Viewport bounds for index 0 with viewport_size 3 is [0, 3]
-        self.select.on_mouse_move(visual_row_offset=1)
+        # Rendered lines:
+        # Row 0: [OPENAI] (category header -> None)
+        # Row 1: GPT-4o (index 0)
+        # Row 2: [ANTHROPIC] (category header -> None)
+        # Row 3: Claude 3.7 Sonnet (index 1)
+        # Row 4: [DEEPSEEK] (category header -> None)
+        # Row 5: DeepSeek V3 (index 2)
+        # Row 6: ▼ ... (scroll indicator -> None)
+        lines = self.select.render_lines()
+        self.assertEqual(len(lines), 7)
+        
+        # Hover over category header does not select
+        self.select.on_mouse_move(visual_row_offset=0)
+        self.assertEqual(self.select.selected_index, 0)
+
+        # Hover over visual row 3 (Claude 3.7 Sonnet) selects index 1
+        self.select.on_mouse_move(visual_row_offset=3)
         self.assertEqual(self.select.input_mode, "mouse")
         self.assertEqual(self.select.selected_index, 1)
 
-        # Mouse click
-        clicked = self.select.on_mouse_click(visual_row_offset=2)
+        # Mouse click on visual row 5 confirms DeepSeek V3
+        clicked = self.select.on_mouse_click(visual_row_offset=5)
         self.assertEqual(clicked.title, "DeepSeek V3")
         self.assertEqual(selected_called, ["deepseek/deepseek-v3"])
 
@@ -57,3 +72,4 @@ class TestScrollableSelect(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

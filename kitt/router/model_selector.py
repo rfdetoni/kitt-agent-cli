@@ -28,11 +28,14 @@ def discover_models_typed(
     """Performs typed model discovery from provider endpoint without inventing fake models."""
     reg = registry or ProviderRegistry()
     pid = (provider or "").strip().lower()
+    norm_url = base_url.strip() if base_url else ""
+    if norm_url and not norm_url.startswith(("http://", "https://")):
+        norm_url = f"http://{norm_url}"
 
     if api_key:
         reg.auth_service.login(pid, api_key, method="session")
 
-    return reg.discover_runtime_models(pid, base_url=base_url or None, timeout=timeout)
+    return reg.discover_runtime_models(pid, base_url=norm_url or None, timeout=timeout)
 
 
 def fetch_provider_models(
@@ -62,7 +65,10 @@ class ModelConfigurator:
         self.registry = registry or ProviderRegistry()
 
     def fetch_ollama_models(self, base_url: str = "http://localhost:11434") -> List[str]:
-        return fetch_provider_models("ollama", base_url=base_url, registry=self.registry)
+        norm_url = (base_url or "http://localhost:11434").strip()
+        if not norm_url.startswith(("http://", "https://")):
+            norm_url = f"http://{norm_url}"
+        return fetch_provider_models("ollama", base_url=norm_url, registry=self.registry)
 
     def assign_roles(
         self,

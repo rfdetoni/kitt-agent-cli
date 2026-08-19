@@ -99,6 +99,13 @@ class ProviderRegistry:
         p = self.get_provider(provider_id)
         if p and p.protocol:
             return self.get_adapter_for_protocol(p.protocol)
+        pid = (provider_id or "").strip().lower()
+        if "ollama" in pid:
+            return self._adapters_by_protocol["ollama-chat"]
+        if "anthropic" in pid or "claude" in pid:
+            return self._adapters_by_protocol["anthropic-messages"]
+        if "gemini" in pid or "google" in pid:
+            return self._adapters_by_protocol["gemini-generate-content"]
         return self._adapters_by_protocol["openai-chat-completions"]
 
     def discover_runtime_models(

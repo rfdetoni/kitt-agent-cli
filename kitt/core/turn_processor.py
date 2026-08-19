@@ -281,6 +281,7 @@ RULES:
 2. Exact Path Adherence: When the user references a file (e.g. `@apresentacao.html` or `apresentacao.html`) or when files are provided in context, you MUST use the EXACT relative file path specified. NEVER invent new directory structures (such as `src/`, `src/html/`, `html/`, `app/`) and NEVER duplicate the file under a new directory.
 3. If you need to plan or reason, put your reasoning inside <think>...</think> before calling the tool.
 4. Once the requested task is fulfilled, STOP calling tools and answer directly with a concise summary.
+5. ACTION MANDATE: If the user asks to edit, update, modify, fix, or create a file, you MUST emit a tool call (`write_file` or `apply_patch`). NEVER output the updated file content as plain chat text or markdown without a tool call; call the tool directly so K.I.T.T. writes the changes to disk.
 """
         if "write_file" in enabled_tools:
             instructions += """
@@ -826,6 +827,32 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     ])
                     continue
                 if general_call is None:
+                    # Fallback 1: check if user asked to edit a specific file and model returned a markdown code block
+                    candidate_files = list(cmd.explicit_files) if cmd.explicit_files else []
+                    if not candidate_files:
+                        candidate_files = re.findall(r'\b([a-zA-Z0-9_\-./\\]+\.(?:html|htm|py|js|ts|jsx|tsx|css|json|md|txt|sh|bash|toml|yaml|yml|rs|go|sql))\b', cmd.prompt)
+                    if candidate_files and ("write_file" in request.enabled_tools or "apply_patch" in request.enabled_tools):
+                        cb_match = re.search(r'```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)```', full_response)
+                        if cb_match:
+                            content = cb_match.group(1)
+                            target_path = candidate_files[0]
+                            if "<<<<<<< SEARCH" in content and "=======" in content and ">>>>>>> REPLACE" in content:
+                                general_call = ("apply_patch", {"patch": f"{target_path}\n{content}"})
+                            else:
+                                general_call = ("write_file", {"path": target_path, "content": content})
+
+                if general_call is None:
+                    # Fallback 2: If user explicitly forced code mode (/code) on a specific file but model gave pure prose, nudge once
+                    candidate_files = list(cmd.explicit_files) if cmd.explicit_files else []
+                    if not candidate_files:
+                        candidate_files = re.findall(r'\b([a-zA-Z0-9_\-./\\]+\.(?:html|htm|py|js|ts|jsx|tsx|css|json|md|txt|sh|bash|toml|yaml|yml|rs|go|sql))\b', cmd.prompt)
+                    if tool_calls == 0 and malformed_calls == 0 and candidate_files and cmd.mode == "code" and ("write_file" in request.enabled_tools or "apply_patch" in request.enabled_tools):
+                        malformed_calls += 1
+                        execution_messages.extend([
+                            {"role": "assistant", "content": full_response},
+                            {"role": "user", "content": f"You did not call any tools to modify {candidate_files[0]}. You MUST emit a <kitt-tool> write_file or apply_patch tool call now so K.I.T.T. can apply the changes to the file."},
+                        ])
+                        continue
                     break
             if tool_calls >= self.config.max_tool_calls_per_turn:
                 yield TurnFailed(error="Host tool call limit exceeded for this turn."), None, None

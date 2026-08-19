@@ -32,7 +32,9 @@ class OllamaAdapter:
     """Adapter for Ollama local daemon (/api/chat, /api/tags, /api/generate)."""
 
     def stream(self, request: LLMRequest) -> Iterator[str]:
-        base_url = (request.base_url or DEFAULT_OLLAMA_URL).rstrip("/")
+        base_url = (request.base_url or DEFAULT_OLLAMA_URL).strip().rstrip("/")
+        if base_url and not base_url.startswith(("http://", "https://")):
+            base_url = f"http://{base_url}"
         url = f"{base_url}/api/chat"
 
         payload = {
@@ -93,7 +95,9 @@ class OllamaAdapter:
     def list_models(
         self, base_url: Optional[str] = None, api_key: Optional[str] = None, timeout: float = 5.0
     ) -> ModelDiscoveryResult:
-        base = (base_url or DEFAULT_OLLAMA_URL).rstrip("/")
+        base = (base_url or DEFAULT_OLLAMA_URL).strip().rstrip("/")
+        if base and not base.startswith(("http://", "https://")):
+            base = f"http://{base}"
         url = f"{base}/api/tags"
         req = urllib.request.Request(url, headers={"User-Agent": "Kitt-Agent-CLI"})
 

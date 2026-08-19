@@ -138,8 +138,11 @@ class LLMClient:
         api_key = self.auth_service.resolve(self.profile.credential_ref, provider_id=backend) or self.profile.api_key
 
         # 2. Resolve protocol adapter
+        base_url = (self.profile.base_url or "").lower()
         if self.profile.protocol:
             adapter = self.registry.get_adapter_for_protocol(self.profile.protocol)
+        elif ":11434" in base_url or "ollama" in backend or "ollama" in base_url:
+            adapter = self.registry.get_adapter_for_protocol("ollama-chat")
         elif backend:
             adapter = self.registry.get_adapter_for_provider(backend)
         else:

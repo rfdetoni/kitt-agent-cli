@@ -86,7 +86,9 @@ class OpenAIChatAdapter:
     def list_models(
         self, base_url: Optional[str] = None, api_key: Optional[str] = None, timeout: float = 5.0
     ) -> ModelDiscoveryResult:
-        base = (base_url or DEFAULT_OPENAI_URL).rstrip("/")
+        base = (base_url or DEFAULT_OPENAI_URL).strip().rstrip("/")
+        if base and not base.startswith(("http://", "https://")):
+            base = f"http://{base}"
         url = f"{base}/v1/models" if not base.endswith("/v1") else f"{base}/models"
         headers = {"User-Agent": "Kitt-Agent-CLI"}
         if api_key:

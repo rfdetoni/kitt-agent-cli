@@ -161,7 +161,6 @@ class OverlayManager:
 
         # Duplicate suppression
         if not spec.allow_duplicates and any(f.spec.name == name and not f.suspended for f in self.frames):
-            # Already active at top, re-focus
             if control and self.app.application:
                 try:
                     self.app.application.layout.focus(control)
@@ -171,13 +170,36 @@ class OverlayManager:
 
         curr_focus = self.app.application.layout.current_control if self.app.application else None
         parent_id = None
-        if self.frames:
-            parent_frame = self.top_frame()
-            if parent_frame:
+        parent_frame = self.top_frame()
+
+        if parent_frame:
+            # 1. Check parent-child authorization
+            is_authorized_child = (
+                (parent_name is not None and parent_name == parent_frame.spec.name)
+                or (parent_frame.spec.name == "model_setup" and name in ("provider_popup", "add_provider", "provider_endpoint", "auth_login"))
+                or (parent_frame.spec.name == "palette" and name in ("help", "model_setup", "session_picker", "timeline", "diff", "agents"))
+            )
+
+            if is_authorized_child:
                 parent_id = parent_frame.instance_id
-                # If opening higher priority overlay (e.g. permission over model_setup), suspend lower priority parent
-                if spec.priority > parent_frame.spec.priority:
+                parent_frame.suspended = True
+            else:
+                # 2. Independent overlay preemption rules
+                # Security and Authentication overlays CANNOT be preempted by lower priority overlays
+                if parent_frame.spec.priority >= OverlayPriority.AUTHENTICATION and spec.priority < parent_frame.spec.priority:
+                    # Unauthorized lower-priority overlay cannot open over security/auth
+                    return
+
+                # If incoming overlay is higher or equal priority, preempt and suspend current
+                if spec.priority >= parent_frame.spec.priority:
                     parent_frame.suspended = True
+                    parent_id = parent_frame.instance_id
+                else:
+                    # Lower priority independent overlay attempting to open over transactional/higher overlay
+                    if parent_frame.spec.priority >= OverlayPriority.TRANSACTIONAL:
+                        return
+                    parent_frame.suspended = True
+                    parent_id = parent_frame.instance_id
 
         frame = OverlayFrame(
             instance_id=str(uuid.uuid4())[:8],
@@ -234,9 +256,13 @@ class OverlayManager:
 
         # Unsuspend parent or next highest priority frame
         if self.frames:
-            # Find and resume parent or top frame
-            next_top = self.frames[-1]
-            next_top.suspended = False
+            if top.parent_instance_id:
+                # Unsuspend specific parent
+                parent = next((f for f in self.frames if f.instance_id == top.parent_instance_id), None)
+                if parent:
+                    parent.suspended = False
+            # Ensure top frame is unsuspended
+            self.frames[-1].suspended = False
 
         self._sync_state()
 

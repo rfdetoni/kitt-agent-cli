@@ -246,3 +246,131 @@ def handle_mcp_command(
 
     print(f"\033[31mUnknown MCP action '{action}'. Choices: list, tools, resources.\033[0m")
     return 1
+
+
+def handle_daemon_command(action: str = "status", root_dir: str = ".") -> int:
+    import asyncio
+    from kitt.daemon.client import DaemonClient
+    from kitt.daemon.server import DaemonServer
+
+    client = DaemonClient()
+    action = (action or "status").strip().lower()
+
+    if action == "start":
+        async def _start():
+            if await client.is_running():
+                print("\033[33mKITT Daemon is already running.\033[0m")
+                return 0
+            server = DaemonServer(workspace_root=root_dir)
+            await server.start()
+            print("\033[32m✓ KITT Daemon started successfully.\033[0m")
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                await server.stop()
+                print("\n\033[90mKITT Daemon stopped.\033[0m")
+            return 0
+
+        return asyncio.run(_start())
+
+    elif action == "stop":
+        async def _stop():
+            if not await client.connect():
+                print("\033[90mKITT Daemon is not running.\033[0m")
+                return 0
+            await client.stop_daemon()
+            await client.close()
+            print("\033[32m✓ KITT Daemon stopped.\033[0m")
+            return 0
+
+        return asyncio.run(_stop())
+
+    elif action == "status":
+        async def _status():
+            running = await client.is_running()
+            if running:
+                print("\033[32m● KITT Daemon: RUNNING\033[0m")
+                print(f"  Socket: {client.socket_path}")
+            else:
+                print("\033[90m○ KITT Daemon: STOPPED\033[0m")
+            await client.close()
+            return 0
+
+        return asyncio.run(_status())
+
+    print(f"\033[31mUnknown daemon action '{action}'. Choices: start, stop, status.\033[0m")
+    return 1
+
+
+def handle_sessions_command(root_dir: str = ".") -> int:
+    import asyncio
+    from kitt.daemon.client import DaemonClient
+
+    async def _sessions():
+        client = DaemonClient()
+        if not await client.connect():
+            # Fallback to local database
+            from kitt.core.runtime import KittRuntime
+            from kitt.core.runtime_config import RuntimeConfig
+            rt = KittRuntime.build(root_dir, config=RuntimeConfig())
+            convs = rt.history.list_conversations(limit=20)
+            active = rt.history.get_active_read_only()
+            active_id = active["id"] if active else ""
+            print("\n\033[1;36m=== KITT Sessions (Local) ===\033[0m")
+            for c in convs:
+                tag = "\033[32m[ACTIVE]\033[0m" if c.id == active_id else ""
+                print(f"  • \033[1m{c.id[:12]}\033[0m {tag} {c.title}")
+            rt.close()
+            return 0
+
+        resp = await client.list_sessions(workspace=root_dir)
+        sessions = resp.get("sessions", [])
+        active_id = resp.get("active_session_id", "")
+        print("\n\033[1;36m=== KITT Daemon Sessions ===\033[0m")
+        for s in sessions:
+            tag = "\033[32m[ACTIVE]\033[0m" if s["id"] == active_id else ""
+            print(f"  • \033[1m{s['id'][:12]}\033[0m {tag} {s['title']} ({s['status']})")
+        await client.close()
+        return 0
+
+    return asyncio.run(_sessions())
+
+
+def handle_attach_command(session_id: str, root_dir: str = ".") -> int:
+    import asyncio
+    from kitt.daemon.client import DaemonClient
+
+    async def _attach():
+        client = DaemonClient()
+        if not await client.connect():
+            print("\033[31mError: KITT Daemon is not running. Start it with 'kitt daemon start'\033[0m")
+            return 1
+
+        def on_event(evt):
+            print(f"[{evt.event_type}] {evt.payload}")
+
+        res = await client.attach(session_id, on_event=on_event, workspace=root_dir)
+        if res.get("status") == "ok":
+            print(f"\033[32m✓ Attached to session {session_id}. Replaying past events:\033[0m")
+            for e in res.get("events", []):
+                print(f"  [{e.get('event_type')}] {e.get('payload')}")
+            print("\033[90mListening for events... Press Ctrl+C to detach.\033[0m")
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                await client.detach()
+                print("\n\033[90mDetached from session.\033[0m")
+        else:
+            print(f"\033[31mFailed to attach: {res.get('error')}\033[0m")
+        await client.close()
+        return 0
+
+    return asyncio.run(_attach())
+
+
+def handle_resume_command(session_id: str, root_dir: str = ".") -> int:
+    # Resuming switches active session and initiates turn
+    return handle_attach_command(session_id, root_dir=root_dir)
+

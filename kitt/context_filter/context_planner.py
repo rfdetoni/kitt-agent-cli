@@ -7,7 +7,7 @@ class ContextPlanner:
     def build_plan(self, task: SemanticTask, original_prompt: str = "") -> ContextPlan:
         tools = ["read_file", "search", "repository_map", "python_compute"]
 
-        if task.intent in {'IMPLEMENT', 'DEBUG', 'REFACTOR', 'DOCUMENT', 'TEST'}:
+        if task.intent in {'IMPLEMENT', 'DEBUG', 'REFACTOR', 'DOCUMENT', 'TEST', 'UNKNOWN'} or task.paths:
             tools.extend(["write_file", "apply_patch", "run_command"])
 
         search_queries = list(dict.fromkeys(task.paths + task.symbols + task.actions + ([task.goal] if task.goal else [])))

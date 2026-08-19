@@ -182,6 +182,28 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
             body = raw_body[:end_pos].strip() if end_pos != -1 else raw_body.strip()
 
     if not body:
+        # Strategy 3b: Code block with explicit file attribute: ```html:apresentacao.html or ```html filename="apresentacao.html"
+        cb_tagged = re.search(r'```[a-zA-Z0-9_-]+[:\s]+(?:path|filename|file)?=?["\']?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)["\']?\s*\n([\s\S]*?)```', cleaned_text)
+        if cb_tagged:
+            path = cb_tagged.group(1).strip()
+            content = cb_tagged.group(2)
+            if "<<<<<<< SEARCH" in content and "=======" in content and ">>>>>>> REPLACE" in content:
+                return "apply_patch", {"patch": f"{path}\n{content}"}
+            return "write_file", {"path": path, "content": content}
+
+        # Strategy 3c: Header/label/mention of file immediately before code block (e.g., File: `apresentacao.html` or Atualizei o arquivo apresentacao.html:)
+        labeled_cb = re.search(
+            r'([a-zA-Z0-9_\-./\\]+\.(?:html|htm|py|js|ts|jsx|tsx|css|json|md|txt|sh|bash|toml|yaml|yml|rs|go|sql|c|cpp|h|hpp))\b[^\n]*\n+```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)```',
+            cleaned_text,
+            re.IGNORECASE
+        )
+        if labeled_cb:
+            path = labeled_cb.group(1).strip().strip("`'\"*:()[]{}")
+            content = labeled_cb.group(2)
+            if "<<<<<<< SEARCH" in content and "=======" in content and ">>>>>>> REPLACE" in content:
+                return "apply_patch", {"patch": f"{path}\n{content}"}
+            return "write_file", {"path": path, "content": content}
+
         return None
 
     body = _strip_markdown_fences(body)

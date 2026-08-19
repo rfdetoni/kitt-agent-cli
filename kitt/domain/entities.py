@@ -189,6 +189,7 @@ class ModelProfile:
 class RouterConfig:
     profiles: Dict[str, ModelProfile] = field(default_factory=dict)
     routing: Dict[str, str] = field(default_factory=dict)
+    custom_providers: list[dict] = field(default_factory=list)
 
 @dataclass
 class TaskStep:

@@ -48,7 +48,7 @@ class PolicyEngine:
 
         if origin == 'MODEL':
             if tool_name in {
-                'list_files', 'search', 'read_file', 'repository_map', 'git_status',
+                'kitt_runtime', 'list_files', 'search', 'read_file', 'repository_map', 'git_status',
                 'git_diff', 'python_compute', 'artifact_list', 'artifact_read'
             }:
                 return 'ALLOW'

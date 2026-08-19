@@ -21,7 +21,10 @@ from kitt.ui.overlay_models import DiffViewerModel, ModelSetupModel, OverlayFram
 from kitt.ui.reducer import reduce_ui_event
 from kitt.ui.state import UIState, safe_text
 from kitt.ui.theme import DEFAULT_THEME
-from kitt.ui.model_commands import handle_model_command, handle_setup_models_command, parse_model_command
+from kitt.ui.model_commands import (
+    handle_model_command, handle_setup_models_command, handle_add_provider_command,
+    handle_edit_provider_command, handle_delete_provider_command, parse_model_command
+)
 from kitt.ui.session_commands import (
     handle_resume_command, handle_fork_command, handle_export_command,
     handle_compact_command, handle_stats_command, handle_status_command
@@ -45,6 +48,13 @@ class KittUIApp:
         self.no_animation = no_animation
         root = Path(runtime.canonical_root)
         self.state = UIState(workspace_name=root.name or str(root), workspace_path=str(root))
+        self.session_picker_model = SessionPickerModel(runtime)
+        self.timeline_model = TimelineModel(runtime)
+        self.diff_model = DiffViewerModel(str(root))
+        self.model_setup_model = ModelSetupModel()
+        self.mouse_support_enabled: bool = True
+        self.editing_provider_name: Optional[str] = None
+
         self._init_models_from_runtime()
         self.commands = CommandRegistry()
         self.explicit_files: set[str] = set()
@@ -56,11 +66,6 @@ class KittUIApp:
         self.palette_index = 0
         self.focus_stack: list[OverlayFrame] = []
         self.overlay_manager = OverlayManager(self)
-
-        self.session_picker_model = SessionPickerModel(runtime)
-        self.timeline_model = TimelineModel(runtime)
-        self.diff_model = DiffViewerModel(str(root))
-        self.model_setup_model = ModelSetupModel()
 
         self._build_controls()
 
@@ -77,6 +82,23 @@ class KittUIApp:
                 _, execute = router.resolve_profile_for_task("code-generation")
                 self.state.small_model = context.model
                 self.state.large_model = execute.model
+                saved_custom = getattr(router.config, "custom_providers", [])
+                if saved_custom and hasattr(self, "model_setup_model"):
+                    for cp in saved_custom:
+                        self.model_setup_model.add_custom_provider(
+                            name=cp.get("name", ""),
+                            base_url=cp.get("base_url", ""),
+                            backend=cp.get("backend", "openai"),
+                            protocol=cp.get("protocol", "openai-chat-completions"),
+                            api_key=cp.get("api_key", ""),
+                        )
+                        if hasattr(self.runtime.processor, "registry"):
+                            self.runtime.processor.registry.register_custom_provider(
+                                provider_id=cp.get("name", ""),
+                                name=cp.get("name", ""),
+                                protocol=cp.get("protocol", "openai-chat-completions"),
+                                base_url=cp.get("base_url", ""),
+                            )
         except Exception:
             pass
 
@@ -159,9 +181,10 @@ class KittUIApp:
         self.provider_endpoint_buffer = Buffer(multiline=False, accept_handler=self._accept_provider_endpoint)
         self.provider_endpoint_control = BufferControl(buffer=self.provider_endpoint_buffer, focusable=True)
         self.home_control = FormattedTextControl(self._home_text)
-        self.hints_control = FormattedTextControl(lambda: "Ctrl+P commands   Ctrl+X L sessions   Alt+Enter newline")
+        self.hints_control = FormattedTextControl(lambda: f"F4: Modo [{self.state.turn_mode.upper()}]   F12: Modelos   Ctrl+P: Comandos   Alt+Enter: Nova Linha")
         self.header_control = FormattedTextControl(self._header_text)
         self.transcript_control = FormattedTextControl(self._transcript_text, get_cursor_position=self._transcript_cursor_position, focusable=True)
+        self.transcript_control.mouse_handler = self._transcript_mouse_handler
         self.sidebar_control = FormattedTextControl(self._sidebar_text)
         self.status_control = FormattedTextControl(self._status_text)
         self.permission_control = FormattedTextControl(self._permission_text, focusable=True)
@@ -175,7 +198,9 @@ class KittUIApp:
         self.model_setup_search_control = BufferControl(buffer=self.model_setup_search_buffer, focusable=True)
         self.model_setup_header_control = FormattedTextControl(self._model_setup_header_text)
         self.model_setup_control = FormattedTextControl(self._model_setup_text, focusable=True)
+        self.model_setup_control.mouse_handler = self._model_setup_mouse_handler
         self.provider_popup_control = FormattedTextControl(self._provider_popup_text, focusable=True)
+        self.provider_popup_control.mouse_handler = self._provider_popup_mouse_handler
         self.add_provider_name_buffer = Buffer(multiline=False)
         self.add_provider_name_control = BufferControl(buffer=self.add_provider_name_buffer, focusable=True)
         self.add_provider_url_buffer = Buffer(multiline=False, accept_handler=self._accept_add_provider)
@@ -195,6 +220,7 @@ class KittUIApp:
     def build_application(self):
         from prompt_toolkit.application import Application
         from prompt_toolkit.cursor_shapes import CursorShape
+        from prompt_toolkit.filters import Condition
         from prompt_toolkit.layout import Layout
         root = build_root_container(self)
         self.application = Application(
@@ -203,7 +229,7 @@ class KittUIApp:
             style=DEFAULT_THEME.prompt_toolkit_style(),
             full_screen=True,
             cursor=CursorShape.BLINKING_BEAM,
-            mouse_support=True,
+            mouse_support=Condition(lambda: getattr(self, "mouse_support_enabled", True)),
             refresh_interval=None,
             min_redraw_interval=1 / 30,
             input=self.input,
@@ -228,11 +254,11 @@ class KittUIApp:
 
     def _accept_provider_endpoint(self, buffer) -> bool:
         endpoint = buffer.text.strip()
-        if endpoint.startswith(("http://", "https://")):
+        if endpoint and not endpoint.startswith(("http://", "https://")):
+            endpoint = f"http://{endpoint}"
+        if endpoint:
             buffer.reset()
             asyncio.get_running_loop().create_task(self._submit_provider_endpoint(endpoint))
-        elif endpoint:
-            self.state.add_toast("Endpoint must start with http:// or https://", persistent=True)
         return True
 
     async def submit(self, text: str) -> None:
@@ -251,7 +277,12 @@ class KittUIApp:
         if self.state.is_thinking or (self.bridge and self.bridge.is_active):
             return
         conversation = self.runtime.history.get_or_create_active()
-        mode = "plan" if self.state.planning_mode else "auto"
+        mode = "plan" if (self.state.planning_mode or self.state.turn_mode == "plan") else ("ask" if self.state.turn_mode == "ask" else "auto")
+        if self.state.turn_mode == "plan" and not text.startswith("[PLAN"):
+            text = f"[PLAN ONLY - NO CODE EDITS]: {text}"
+        elif self.state.turn_mode == "ask" and not text.startswith("[QUESTION"):
+            text = f"[QUESTION ONLY - NO CODE EDITS]: {text}"
+
         inline_files = set(re.findall(r'@([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)', text))
         if inline_files:
             self.explicit_files.update(inline_files)
@@ -298,6 +329,17 @@ class KittUIApp:
             await handle_setup_skills_command(self, arg)
         elif found.id == "setup_models":
             await handle_setup_models_command(self, arg)
+        elif found.id == "add_provider":
+            await handle_add_provider_command(self, arg)
+        elif found.id == "edit_provider":
+            await handle_edit_provider_command(self, arg)
+        elif found.id == "delete_provider":
+            await handle_delete_provider_command(self, arg)
+        elif found.id in {"mode", "toggle_mode"}:
+            if arg:
+                self.toggle_turn_mode(arg.strip())
+            else:
+                self.toggle_turn_mode()
         elif found.id == "new":
             self._new_conversation()
         elif found.id == "history":
@@ -474,6 +516,8 @@ class KittUIApp:
                 self._show_result(str(self.runtime.canonical_root))
             else:
                 await self._switch_workspace(arg)
+        elif found.id == "mouse":
+            self.toggle_mouse_support()
         elif found.id == "run":
             if arg:
                 await self._execute_direct_tool("run_command", {"command": arg})
@@ -570,6 +614,11 @@ class KittUIApp:
         }
         if provider in defaults:
             return defaults[provider]
+        p_lower = (provider or "").strip().lower()
+        if "ollama" in p_lower:
+            return (os.environ.get("OLLAMA_HOST", "http://localhost:11434"), "")
+        if "lmstudio" in p_lower:
+            return (os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"), "")
         try:
             from kitt.llm.catalog import ProviderCatalogService
             cat = ProviderCatalogService()
@@ -579,8 +628,8 @@ class KittUIApp:
                 return (cat_p.base_url, env_val)
         except Exception:
             pass
-        env_key = os.environ.get(f"{provider.upper().replace('-', '_')}_API_KEY", "")
-        env_host = os.environ.get(f"{provider.upper().replace('-', '_')}_HOST", "http://localhost:8000/v1")
+        env_key = os.environ.get(f"{provider.upper().replace('-', '_').replace(' ', '_')}_API_KEY", "")
+        env_host = os.environ.get(f"{provider.upper().replace('-', '_').replace(' ', '_')}_HOST", "http://localhost:11434" if "ollama" in p_lower else "http://localhost:8000/v1")
         return (env_host, env_key)
 
     async def _set_model_role(self, role: str, model: str, provider: str | None = None, base_url: str | None = None) -> None:
@@ -593,12 +642,21 @@ class KittUIApp:
             raise RuntimeError("No provider profile available")
         provider = provider or fallback.backend
         default_url, default_key = self._provider_defaults(provider)
+        if hasattr(self, "model_setup_model"):
+            custom_entry = next((cp for cp in self.model_setup_model.custom_providers if cp["name"] == provider), None)
+            if custom_entry and custom_entry.get("base_url"):
+                default_url = custom_entry["base_url"]
+        target_url = base_url or (fallback.base_url if fallback.backend == provider else default_url)
+        if target_url and not target_url.startswith(("http://", "https://")):
+            target_url = f"http://{target_url}"
+        protocol = "ollama-chat" if (":11434" in (target_url or "") or "ollama" in (provider or "").lower()) else fallback.protocol
         router.config.profiles[profile_name] = replace(
             fallback, model=model, backend=provider,
-            base_url=base_url or (fallback.base_url if fallback.backend == provider else default_url),
+            base_url=target_url,
+            protocol=protocol,
             api_key=fallback.api_key if fallback.backend == provider else default_key,
             max_output_tokens=max(fallback.max_output_tokens, 2048) if role == "principal" else max(fallback.max_output_tokens, 1024),
-            supports_json=provider in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama"},
+            supports_json=provider in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama"} or "ollama" in (provider or "").lower(),
         )
         for task in tasks:
             router.config.routing[task] = profile_name
@@ -611,23 +669,43 @@ class KittUIApp:
         from kitt.router.model_selector import ModelConfigurator, fetch_provider_models
         _, api_key = self._provider_defaults(provider)
 
-        # 1. Local live discovery for Ollama and local OpenAI-compatible endpoints (LM Studio, vLLM, etc.)
-        if provider == "ollama":
+        norm_url = (base_url or "").strip().rstrip("/")
+        if norm_url and not norm_url.startswith(("http://", "https://")):
+            norm_url = f"http://{norm_url}"
+
+        # 1. Live discovery for Ollama (local, remote LAN/WAN IP, or :11434 port)
+        is_ollama = (
+            provider == "ollama"
+            or "11434" in norm_url
+            or "ollama" in provider.lower()
+            or "ollama" in norm_url.lower()
+        )
+        if is_ollama and norm_url:
             try:
-                models = await self._run_blocking(ModelConfigurator(self.state.workspace_path).fetch_ollama_models, base_url)
-                if models:
-                    return list(dict.fromkeys(models))
-            except Exception:
-                pass
-        elif base_url and ("localhost" in base_url or "127.0.0.1" in base_url or provider in ("lmstudio", "custom")):
-            try:
-                models = await self._run_blocking(fetch_provider_models, provider, base_url, api_key, 1.5)
+                models = await self._run_blocking(ModelConfigurator(self.state.workspace_path).fetch_ollama_models, norm_url)
                 if models:
                     return list(dict.fromkeys(models))
             except Exception:
                 pass
 
-        # 2. Dynamic Models.dev catalog lookup (no hardcoded dicts)
+        # 2. Live discovery for OpenAI-compatible endpoints (LM Studio, vLLM, LocalAI, custom servers, etc.)
+        if norm_url:
+            try:
+                models = await self._run_blocking(fetch_provider_models, provider, norm_url, api_key, 2.5)
+                if models and models != [f"{provider}-default"]:
+                    return list(dict.fromkeys(models))
+            except Exception:
+                pass
+
+            # Also try querying OpenAI /v1/models endpoint adapter as fallback for custom servers
+            try:
+                models = await self._run_blocking(fetch_provider_models, "openai", norm_url, api_key, 2.5)
+                if models and models != ["openai-default"]:
+                    return list(dict.fromkeys(models))
+            except Exception:
+                pass
+
+        # 3. Dynamic Models.dev catalog lookup
         try:
             cat = ProviderCatalogService()
             cat_models = [m.id for m in cat.models(provider)]
@@ -641,13 +719,16 @@ class KittUIApp:
     async def _prepare_model_setup(self, base_url: str | None = None, provider: str | None = None) -> None:
         self.state.status_text = "DISCOVERING MODELS"
         profile = self._profile_for_role(self.model_setup_model.selected_role)
-        self.model_setup_model.base_url_override = base_url.rstrip("/") if base_url else None
+        norm_override = base_url.strip().rstrip("/") if base_url else None
+        if norm_override and not norm_override.startswith(("http://", "https://")):
+            norm_override = f"http://{norm_override}"
+        self.model_setup_model.base_url_override = norm_override
         
         if provider:
             if provider in self.model_setup_model.providers:
                 self.model_setup_model.provider_index = self.model_setup_model.providers.index(provider)
-        elif base_url:
-            if "ollama" in self.model_setup_model.providers:
+        elif norm_override:
+            if "ollama" in self.model_setup_model.providers and ":11434" in norm_override:
                 self.model_setup_model.provider_index = self.model_setup_model.providers.index("ollama")
         else:
             # First time load: sync with current role's profile backend
@@ -656,7 +737,15 @@ class KittUIApp:
         
         active_provider = self.model_setup_model.selected_provider
         default_url, _ = self._provider_defaults(active_provider)
+
+        # Check custom providers for registered base_url
+        custom_entry = next((cp for cp in self.model_setup_model.custom_providers if cp["name"] == active_provider), None)
+        if custom_entry and custom_entry.get("base_url"):
+            default_url = custom_entry["base_url"]
+
         endpoint = self.model_setup_model.base_url_override or (profile.base_url if profile and profile.backend == active_provider else default_url)
+        if endpoint and not endpoint.startswith(("http://", "https://")):
+            endpoint = f"http://{endpoint}"
         
         models = await self._models_for_provider(active_provider, endpoint)
         self.model_setup_model.models = list(dict.fromkeys(models)) if models else ["default-model"]
@@ -676,11 +765,55 @@ class KittUIApp:
         if self.application:
             self.application.invalidate()
 
-    async def _open_model_setup_overlay(self, base_url: str | None = None) -> None:
-        await self._prepare_model_setup(base_url)
+    async def _open_model_setup_overlay(self, base_url: str | None = None, provider: str | None = None) -> None:
+        await self._prepare_model_setup(base_url, provider=provider)
         self.model_setup_search_buffer.text = ""
         self.model_setup_model.search_query = ""
         self.open_overlay("model_setup", self.model_setup_search_control)
+
+    def _transcript_mouse_handler(self, mouse_event) -> Any:
+        from prompt_toolkit.mouse_events import MouseEventType
+        if mouse_event.event_type == MouseEventType.SCROLL_UP:
+            self.state.follow_tail = False
+            if hasattr(self, "transcript_window"):
+                self.transcript_window.vertical_scroll = max(0, self.transcript_window.vertical_scroll - 3)
+            if self.application:
+                self.application.invalidate()
+            return None
+        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+            if hasattr(self, "transcript_window"):
+                self.transcript_window.vertical_scroll += 3
+            if self.application:
+                self.application.invalidate()
+            return None
+        return NotImplemented
+
+    def toggle_mouse_support(self) -> bool:
+        self.mouse_support_enabled = not getattr(self, "mouse_support_enabled", True)
+        msg = "Mouse TUI ativado (Scroll Interativo)" if self.mouse_support_enabled else "Mouse Terminal Nativo (Seleção/Cópia de Texto Habilitada)"
+        self.state.add_toast(msg)
+        if self.application:
+            self.application.invalidate()
+        return self.mouse_support_enabled
+
+    def toggle_turn_mode(self, target_mode: str | None = None) -> str:
+        modes = ["code", "plan", "ask"]
+        if target_mode and target_mode.lower() in modes:
+            self.state.turn_mode = target_mode.lower()
+        else:
+            curr_idx = modes.index(self.state.turn_mode) if self.state.turn_mode in modes else 0
+            self.state.turn_mode = modes[(curr_idx + 1) % len(modes)]
+
+        self.state.planning_mode = (self.state.turn_mode == "plan")
+        mode_descs = {
+            "code": "Modo [CODE] ativo: edição e execução de ferramentas habilitadas",
+            "plan": "Modo [PLAN] ativo: análise e planejamento (sem escrita de código)",
+            "ask": "Modo [ASK] ativo: pergunta e dúvidas (sem chamadas de ferramentas)",
+        }
+        self.state.add_toast(mode_descs.get(self.state.turn_mode, f"Modo: {self.state.turn_mode.upper()}"), persistent=False)
+        if self.application:
+            self.application.invalidate()
+        return self.state.turn_mode
 
     def _model_setup_mouse_handler(self, mouse_event) -> Any:
         from prompt_toolkit.mouse_events import MouseEventType
@@ -727,13 +860,28 @@ class KittUIApp:
             entry = self.model_setup_model.get_selected_popup_entry()
             if entry:
                 if entry["kind"] == "action":
-                    self.close_overlay()
-                    self._open_add_provider_overlay()
+                    self._select_popup_action(entry)
                 elif entry["kind"] == "provider":
                     self.close_overlay()
                     asyncio.create_task(self._select_provider_from_popup(entry["name"]))
             return None
         return NotImplemented
+
+    def _select_popup_action(self, entry: dict) -> None:
+        self.close_overlay()
+        aname = entry.get("name", "")
+        if aname == "add_provider_ollama":
+            self._open_add_provider_overlay("ollama")
+        elif aname == "add_provider_openai":
+            self._open_add_provider_overlay("openai")
+        elif aname.startswith("edit_provider_"):
+            target = entry.get("target_provider", aname.replace("edit_provider_", ""))
+            self._open_edit_provider_overlay(target)
+        elif aname.startswith("delete_provider_"):
+            target = entry.get("target_provider", aname.replace("delete_provider_", ""))
+            asyncio.create_task(self._delete_custom_provider(target))
+        else:
+            self._open_add_provider_overlay()
 
     def _open_provider_popup_overlay(self) -> None:
         self.open_overlay("provider_popup", self.provider_popup_control)
@@ -743,7 +891,7 @@ class KittUIApp:
         entries = setup.get_popup_entries()
         total = len(entries)
         lines = [
-            f"Menu de Provedores ({total} opções)  (Espaço/F: Favorito ★ | A/+: Novo | Enter: Selecionar | Esc: Fechar)\n"
+            f"Menu de Provedores ({total} opções)  (Espaço/F: Favorito ★ | A/+: Novo | E: Editar | D: Excluir | Enter: Selecionar | Esc: Fechar)\n"
         ]
         window_size = 25
         start = min(max(0, setup.provider_popup_index - (window_size // 2)), max(0, total - window_size))
@@ -752,6 +900,9 @@ class KittUIApp:
         if start > 0:
             lines.append(f"  ▲ ... ({start} opções acima)\n")
 
+        from kitt.llm.auth import ProviderAuthService
+        auth_service = ProviderAuthService()
+
         for idx in range(start, end):
             entry = entries[idx]
             if entry["kind"] == "header":
@@ -759,8 +910,15 @@ class KittUIApp:
             elif entry["kind"] == "provider":
                 cursor = ">" if idx == setup.provider_popup_index else " "
                 star = "★" if entry["is_favorite"] else "☆"
-                is_current = " [ativo]" if entry["name"] == setup.selected_provider else ""
-                lines.append(f" {cursor} {star} {entry['name']:15}{is_current}")
+                pname = entry["name"]
+                is_current = " [ativo]" if pname == setup.selected_provider else ""
+                if self._is_local_or_no_auth_provider(pname):
+                    status_glyph = "◌ local / sem auth"
+                elif bool(auth_service.resolve(None, pname)):
+                    status_glyph = "● conectado"
+                else:
+                    status_glyph = "○ não autenticado"
+                lines.append(f" {cursor} {star} {pname:<16} │ {status_glyph:<18}{is_current}")
             elif entry["kind"] == "action":
                 cursor = ">" if idx == setup.provider_popup_index else " "
                 lines.append(f" {cursor} {entry['title']}")
@@ -769,14 +927,73 @@ class KittUIApp:
             lines.append(f"\n  ▼ ... ({total - end} opções abaixo)")
         return "\n".join(lines)
 
-    def _open_add_provider_overlay(self) -> None:
+    async def _persist_custom_providers(self) -> None:
+        try:
+            router = getattr(self.runtime.processor, "router", None)
+            if router and hasattr(router, "config") and router.config:
+                router.config.custom_providers = list(self.model_setup_model.custom_providers)
+                if hasattr(self.runtime.processor, "registry"):
+                    for cp in self.model_setup_model.custom_providers:
+                        self.runtime.processor.registry.register_custom_provider(
+                            provider_id=cp.get("name", ""),
+                            name=cp.get("name", ""),
+                            protocol=cp.get("protocol", "openai-chat-completions"),
+                            base_url=cp.get("base_url", ""),
+                        )
+                await self._run_blocking(router.save_config, self.state.workspace_path)
+        except Exception as err:
+            self.state.add_toast(f"Aviso: falha ao persistir provedores: {err}")
+
+    def _open_add_provider_overlay(self, preset: str | None = None) -> None:
+        self.editing_provider_name = None
+        if preset:
+            self.model_setup_model.set_pattern_by_id(preset)
+        pat = self.model_setup_model.selected_pattern
         self.add_provider_name_buffer.text = ""
-        self.add_provider_url_buffer.text = "http://"
+        self.add_provider_url_buffer.text = pat.get("default_url", "http://")
         self.open_overlay("add_provider", self.add_provider_name_control)
 
-    @staticmethod
-    def _add_provider_help_text() -> str:
-        return "Cadastrar Novo Provedor Customizado\n[Tab] Alternar entre Nome e URL  |  [Enter] Salvar  |  [Esc] Cancelar\n"
+    def _open_edit_provider_overlay(self, name: str) -> None:
+        self.editing_provider_name = name
+        cp = self.model_setup_model.get_custom_provider(name)
+        if not cp:
+            self.state.add_toast(f"Provedor customizado '{name}' não encontrado para edição.", persistent=True)
+            return
+
+        proto = cp.get("protocol", "openai-chat-completions")
+        bkend = cp.get("backend", "openai")
+        if "ollama" in proto or "ollama" in bkend:
+            self.model_setup_model.set_pattern_by_id("ollama")
+        elif "anthropic" in proto or "anthropic" in bkend:
+            self.model_setup_model.set_pattern_by_id("anthropic")
+        elif "gemini" in proto or "gemini" in bkend:
+            self.model_setup_model.set_pattern_by_id("gemini")
+        else:
+            self.model_setup_model.set_pattern_by_id("openai")
+
+        self.add_provider_name_buffer.text = cp.get("name", name)
+        self.add_provider_url_buffer.text = cp.get("base_url", "http://")
+        self.open_overlay("add_provider", self.add_provider_url_control)
+
+    async def _delete_custom_provider(self, name: str) -> None:
+        deleted = self.model_setup_model.delete_custom_provider(name)
+        if deleted:
+            await self._persist_custom_providers()
+            self.state.add_toast(f"✓ Provedor '{name}' removido e configuração atualizada!", persistent=False)
+            await self._prepare_model_setup()
+        else:
+            self.state.add_toast(f"Provedor '{name}' não encontrado para exclusão.", persistent=True)
+        if self.application:
+            self.application.invalidate()
+
+    def _add_provider_help_text(self) -> str:
+        pat = self.model_setup_model.selected_pattern
+        header = f"Editar Provedor Customizado '{self.editing_provider_name}'" if self.editing_provider_name else "Cadastrar Novo Provedor Customizado"
+        return (
+            f"{header}\n"
+            f"Padrão / Protocolo: ◄ {pat['label']} ►  ([P] ou [Ctrl+←/→] para alterar padrão)\n"
+            f"[Tab] Alternar Nome/URL  |  [Enter] Salvar e Descobrir  |  [Esc] Cancelar\n"
+        )
 
     def _accept_add_provider(self, buffer) -> bool:
         name = self.add_provider_name_buffer.text.strip().lower()
@@ -785,16 +1002,34 @@ class KittUIApp:
             self.state.add_toast("Nome do provedor não pode ser vazio.", persistent=True)
             return False
         if not url.startswith(("http://", "https://")):
-            self.state.add_toast("URL deve começar com http:// ou https://", persistent=True)
-            return False
-        self.model_setup_model.add_custom_provider(name, url)
+            url = f"http://{url}"
+        pat = self.model_setup_model.selected_pattern
+
+        if self.editing_provider_name:
+            self.model_setup_model.edit_custom_provider(
+                name=self.editing_provider_name,
+                new_name=name,
+                base_url=url,
+                backend=pat.get("default_backend", "openai"),
+                protocol=pat.get("protocol", "openai-chat-completions"),
+            )
+        else:
+            self.model_setup_model.add_custom_provider(
+                name=name,
+                base_url=url,
+                backend=pat.get("default_backend", "openai"),
+                protocol=pat.get("protocol", "openai-chat-completions"),
+            )
         self.close_overlay()
         asyncio.get_running_loop().create_task(self._finish_add_provider(name, url))
         return True
 
     async def _finish_add_provider(self, name: str, url: str) -> None:
-        await self._prepare_model_setup(url)
-        self.state.add_toast(f"Provedor '{name}' adicionado com sucesso!", persistent=False)
+        await self._persist_custom_providers()
+        await self._prepare_model_setup(base_url=url, provider=name)
+        action_msg = "atualizado" if self.editing_provider_name else "adicionado"
+        self.state.add_toast(f"✓ Provedor '{name}' {action_msg} e persistido com sucesso!", persistent=False)
+        self.editing_provider_name = None
         if self.application:
             self.application.invalidate()
 
@@ -915,10 +1150,10 @@ class KittUIApp:
         asyncio.create_task(self._apply_selected_model())
         return True
 
-    def _open_auth_login_overlay(self, provider: str) -> None:
+    def _open_auth_login_overlay(self, provider: str, parent_name: str | None = None) -> None:
         self.target_auth_provider = provider.strip().lower()
         self.auth_login_buffer.text = ""
-        self.open_overlay("auth_login", self.auth_login_control)
+        self.open_overlay("auth_login", self.auth_login_control, parent_name=parent_name)
 
     def _accept_auth_login(self, buffer) -> bool:
         key = buffer.text.strip()
@@ -956,6 +1191,17 @@ class KittUIApp:
                 if self.application:
                     self.application.invalidate()
                 return True
+            elif self._is_local_or_no_auth_provider(prov):
+                auth_service.login(prov, "", method="none")
+                self.state.add_toast(f"✓ Provedor '{prov}' configurado sem token.", persistent=False)
+                self.close_overlay()
+                if self.pending_model_selection:
+                    role, model, provider, base_url = self.pending_model_selection
+                    self.pending_model_selection = None
+                    asyncio.create_task(self._apply_pending_model(role, model, provider, base_url))
+                if self.application:
+                    self.application.invalidate()
+                return True
             else:
                 self.state.add_toast(f"Autenticação de {prov} cancelada.", persistent=False)
                 self.pending_model_selection = None
@@ -978,9 +1224,9 @@ class KittUIApp:
     async def _apply_pending_model(self, role: str, model: str, provider: str, base_url: str | None) -> None:
         try:
             await self._set_model_role(role, model, provider, base_url)
-            self._show_result(f"{role.title()} saved: {provider}/{model}")
+            self.state.add_toast(f"✓ Cargo '{role.title()}' definido: {provider}/{model} (Esc para fechar)", duration=3.5)
         except Exception as exc:
-            self.state.add_toast(f"Model update failed: {exc}", persistent=True)
+            self.state.add_toast(f"Falha ao atribuir modelo: {exc}", persistent=True)
         if self.application:
             self.application.invalidate()
 
@@ -1009,10 +1255,29 @@ class KittUIApp:
                 return f" ✖ [FALHA NO PROCESSO] {len(err)} tarefa(s) com erro | {len(done)} concluída(s)"
             return f" ✔ [PROCESSO CONCLUÍDO] {len(done)} tarefa(s)/agente(s) finalizados com sucesso!"
 
+    def _is_local_or_no_auth_provider(self, provider: str, url: str = "") -> bool:
+        p = (provider or "").strip().lower()
+        u = (url or "").strip().lower()
+        if p in ("ollama", "lmstudio", "custom") or "ollama" in p or "lmstudio" in p:
+            return True
+        if hasattr(self, "model_setup_model") and any(cp["name"] == p for cp in self.model_setup_model.custom_providers):
+            return True
+        lan_markers = (
+            ":11434", ":1234", ":8000", ":8080", ":5000",
+            "localhost", "127.0.0.1", "192.168.", "10.",
+            "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
+            "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+            "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+            ".local", ".lan", ".internal"
+        )
+        if any(marker in u for marker in lan_markers):
+            return True
+        return False
+
     async def _apply_selected_model(self) -> None:
         model = self.model_setup_model.selected_model
         if not model:
-            self.state.add_toast("No model selected", persistent=True)
+            self.state.add_toast("Nenhum modelo selecionado", persistent=True)
             return
         role = self.model_setup_model.selected_role
         provider = self.model_setup_model.selected_provider
@@ -1022,24 +1287,24 @@ class KittUIApp:
         from kitt.llm.auth import ProviderAuthService
         auth_service = ProviderAuthService()
         auth_state = auth_service.state(provider)
-        is_auth = (auth_state.auth_type == "none") or bool(auth_service.resolve(auth_state.credential_ref, provider))
-        if provider in ("ollama", "lmstudio"):
-            is_auth = True
+        is_auth = (
+            (auth_state.auth_type == "none")
+            or bool(auth_service.resolve(auth_state.credential_ref, provider))
+            or self._is_local_or_no_auth_provider(provider, base_url)
+        )
 
         if not is_auth:
             self.pending_model_selection = (role, model, provider, base_url)
-            self.close_overlay()
-            self._open_auth_login_overlay(provider)
+            self._open_auth_login_overlay(provider, parent_name="model_setup")
             if self.application:
                 self.application.invalidate()
             return
 
         try:
             await self._set_model_role(role, model, provider, base_url)
-            self.close_overlay()
-            self._show_result(f"{role.title()} saved: {provider}/{model}")
+            self.state.add_toast(f"✓ Cargo '{role.title()}' definido: {provider}/{model} (Esc para fechar)", duration=3.5)
         except Exception as exc:
-            self.state.add_toast(f"Model update failed: {exc}", persistent=True)
+            self.state.add_toast(f"Falha ao atualizar modelo: {exc}", persistent=True)
         if self.application:
             self.application.invalidate()
 
@@ -1202,8 +1467,8 @@ class KittUIApp:
         if self.application:
             self.application.invalidate()
 
-    def open_overlay(self, name: str, control=None) -> None:
-        self.overlay_manager.open(name, control)
+    def open_overlay(self, name: str, control=None, parent_name: str | None = None) -> None:
+        self.overlay_manager.open(name, control, parent_name=parent_name)
 
     def close_overlay(self) -> None:
         self.overlay_manager.close()
@@ -1260,9 +1525,21 @@ class KittUIApp:
         def submit_prompt(event):
             event.current_buffer.validate_and_handle()
 
+        @kb.add("enter", filter=editor_focused & ~can_submit)
+        def submit_blocked_feedback(event):
+            if self.state.is_thinking or (self.bridge and self.bridge.is_active):
+                self.state.add_toast("Execução em andamento. Pressione Ctrl+C para cancelar antes de enviar novo comando.", duration=3.0)
+                if self.application:
+                    self.application.invalidate()
+
         @kb.add("escape", "enter", filter=editor_focused)
         def insert_newline(event):
             event.current_buffer.insert_text("\n")
+
+        @kb.add("f1")
+        @kb.add("?", filter=~editor_focused)
+        def _(event):
+            self.open_overlay("help", self.help_control)
 
         @kb.add("c-p", filter=~palette)
         def _(event): self.open_overlay("palette", self.palette_search_control)
@@ -1395,7 +1672,7 @@ class KittUIApp:
         @kb.add("L", filter=model_setup)
         def _(event):
             prov = self.model_setup_model.selected_provider
-            self._open_auth_login_overlay(prov)
+            self._open_auth_login_overlay(prov, parent_name="model_setup")
 
         @kb.add("a", filter=model_setup)
         @kb.add("A", filter=model_setup)
@@ -1454,12 +1731,35 @@ class KittUIApp:
         def _(event):
             self._open_add_provider_overlay()
 
+        @kb.add("e", filter=provider_popup)
+        @kb.add("E", filter=provider_popup)
+        def _(event):
+            entry = self.model_setup_model.get_selected_popup_entry()
+            if entry:
+                if entry["kind"] == "provider" and self.model_setup_model.get_custom_provider(entry["name"]):
+                    self.close_overlay()
+                    self._open_edit_provider_overlay(entry["name"])
+                elif entry["kind"] == "action" and entry.get("name", "").startswith("edit_provider_"):
+                    self._select_popup_action(entry)
+
+        @kb.add("d", filter=provider_popup)
+        @kb.add("D", filter=provider_popup)
+        @kb.add("delete", filter=provider_popup)
+        def _(event):
+            entry = self.model_setup_model.get_selected_popup_entry()
+            if entry:
+                if entry["kind"] == "provider" and self.model_setup_model.get_custom_provider(entry["name"]):
+                    self.close_overlay()
+                    asyncio.create_task(self._delete_custom_provider(entry["name"]))
+                elif entry["kind"] == "action" and entry.get("name", "").startswith("delete_provider_"):
+                    self._select_popup_action(entry)
+
         @kb.add("enter", filter=provider_popup)
         def _(event):
             entry = self.model_setup_model.get_selected_popup_entry()
             if entry:
-                if entry["kind"] == "action" and entry["name"] == "add_provider":
-                    self._open_add_provider_overlay()
+                if entry["kind"] == "action":
+                    self._select_popup_action(entry)
                 elif entry["kind"] == "provider":
                     p_name = entry["name"]
                     provs = self.model_setup_model.providers
@@ -1469,6 +1769,19 @@ class KittUIApp:
                     asyncio.create_task(self._prepare_model_setup())
 
         # Add Custom Provider Overlay keybindings
+        @kb.add("p", filter=add_provider)
+        @kb.add("P", filter=add_provider)
+        @kb.add("c-left", filter=add_provider)
+        @kb.add("c-right", filter=add_provider)
+        def _(event):
+            delta = -1 if "left" in str(event.key_sequence[0].key) else 1
+            pat = self.model_setup_model.cycle_pattern(delta)
+            curr = self.add_provider_url_buffer.text.strip()
+            known_defaults = [p.get("default_url", "") for p in self.model_setup_model.selected_pattern.__class__.__dict__.values() if isinstance(p, dict)]
+            if not curr or curr in ("http://", "http://localhost:11434", "http://localhost:8000/v1", "https://api.anthropic.com", "https://generativelanguage.googleapis.com"):
+                self.add_provider_url_buffer.text = pat.get("default_url", "http://")
+            event.app.invalidate()
+
         @kb.add("tab", filter=add_provider)
         def _(event):
             if event.app.layout.current_control is self.add_provider_name_control:
@@ -1530,6 +1843,7 @@ class KittUIApp:
                 self.transcript_window.vertical_scroll = 0
             if self.application: self.application.invalidate()
 
+        @kb.add("end", filter=editor_focused & Condition(lambda: not self.prompt_buffer.text))
         @kb.add("c-end")
         def _(event):
             self.state.follow_tail = True
@@ -1537,6 +1851,32 @@ class KittUIApp:
             if hasattr(self, "transcript_window"):
                 self.transcript_window.vertical_scroll = 10**9
             if self.application: self.application.invalidate()
+
+        @kb.add("up", filter=editor_focused & Condition(lambda: not self.prompt_buffer.text and self.state.active_overlay is None))
+        def _(event):
+            self.state.follow_tail = False
+            if hasattr(self, "transcript_window"):
+                self.transcript_window.vertical_scroll = max(0, self.transcript_window.vertical_scroll - 3)
+            if self.application: self.application.invalidate()
+
+        @kb.add("down", filter=editor_focused & Condition(lambda: not self.prompt_buffer.text and self.state.active_overlay is None))
+        def _(event):
+            if hasattr(self, "transcript_window"):
+                self.transcript_window.vertical_scroll += 3
+            if self.application: self.application.invalidate()
+
+        @kb.add("f10")
+        def _(event):
+            self.toggle_mouse_support()
+
+        @kb.add("f12")
+        def _(event):
+            asyncio.create_task(self._open_model_setup_overlay())
+
+        @kb.add("f4")
+        @kb.add("c-t")
+        def _(event):
+            self.toggle_turn_mode()
 
         @kb.add("c-c")
         def _(event):
@@ -1885,31 +2225,23 @@ class KittUIApp:
         )
 
     def _palette_text(self):
-        rows = self.commands.search(self.palette_buffer.text)
-        if not rows:
-            return "No commands"
-        total = len(rows)
-        window_size = 10
-        start = min(max(0, self.palette_index - (window_size // 2)), max(0, total - window_size))
-        end = min(total, start + window_size)
-        visible = rows[start:end]
-
-        lines = []
-        if start > 0:
-            lines.append(f"  ▲ ... ({start} comandos acima)")
-        for i, c in enumerate(visible):
-            prefix = "> " if start + i == self.palette_index else "  "
-            lines.append(f"{prefix}[{start+i+1}/{total}] {c.aliases[0]}  {c.title} [{c.category}]\n    {c.description}")
-        if end < total:
-            lines.append(f"  ▼ ... ({total - end} comandos abaixo)")
-        return "\n".join(lines)
+        from kitt.ui.components.command_palette import CommandPaletteComponent
+        return CommandPaletteComponent(self.commands).render(
+            query=self.palette_buffer.text,
+            selected_index=self.palette_index,
+            width=max(40, self.state.width - 16),
+            window_size=10,
+        )
 
     def _session_picker_text(self):
         sessions = self.session_picker_model.sessions
         if not sessions:
-            return "Search sessions\n\nNo conversations found."
+            q = self.session_picker_model.query.strip()
+            if q:
+                return f"  Nenhuma conversa encontrada para '{q}'.\n  Limpe a busca ou tente outro termo."
+            return "  Nenhuma conversa anterior encontrada.\n  Inicie uma nova conversa para salvar o histórico."
         total = len(sessions)
-        lines = [f"Search sessions ({total} conversations) (Enter to resume)\n"]
+        lines = [f"Buscar Conversas ({total} salvas)  (Enter: Retomar  |  Esc: Voltar)\n"]
         window_size = 12
         start = min(max(0, self.session_picker_model.selected_index - (window_size // 2)), max(0, total - window_size))
         end = min(total, start + window_size)
@@ -1920,7 +2252,7 @@ class KittUIApp:
         for idx in range(start, end):
             s = sessions[idx]
             prefix = "> " if idx == self.session_picker_model.selected_index else "  "
-            lines.append(f"{prefix}[{idx+1}/{total}] {s.get('id', '')[:8]}  {s.get('title', 'Untitled')}")
+            lines.append(f"{prefix}[{idx+1}/{total}] {s.get('id', '')[:8]}  {s.get('title', 'Sem título')}")
 
         if end < total:
             lines.append(f"  ▼ ... ({total - end} conversas mais antigas)")
@@ -1929,9 +2261,9 @@ class KittUIApp:
     def _timeline_text(self):
         turns = self.timeline_model.turns
         if not turns:
-            return "Conversation timeline\n\nNo turns in active conversation."
+            return "  Nenhum turno registrado na conversa ativa."
         total = len(turns)
-        lines = [f"Turn Timeline ({total} turns)\n"]
+        lines = [f"Linha do Tempo ({total} turnos)  (Esc: Voltar)\n"]
         window_size = 12
         start = min(max(0, self.timeline_model.selected_index - (window_size // 2)), max(0, total - window_size))
         end = min(total, start + window_size)
@@ -1942,7 +2274,7 @@ class KittUIApp:
         for idx in range(start, end):
             t = turns[idx]
             prefix = "> " if idx == self.timeline_model.selected_index else "  "
-            lines.append(f"{prefix}[{idx+1}/{total}] Turn {t.get('ordinal', idx+1)} ({t.get('id', '')[:8]})")
+            lines.append(f"{prefix}[{idx+1}/{total}] Turno {t.get('ordinal', idx+1)} ({t.get('id', '')[:8]})")
 
         if end < total:
             lines.append(f"  ▼ ... ({total - end} turnos seguintes)")
@@ -1958,7 +2290,7 @@ class KittUIApp:
     def _model_setup_header_text(self) -> str:
         setup = self.model_setup_model
         lines = [
-            " [Tab] Alternar Cargo  |  [P / Espaço] Menu Provedores (★)  |  [L] Login/Auth  |  [Enter] Salvar  |  [Esc] Fechar",
+            " [Tab] Alternar Cargo  |  [P / Espaço] Menu Provedores (★)  |  [L] Login/Auth  |  [Enter] Selecionar  |  [Esc] Fechar",
             " Atribuições de Modelos por Cargo:"
         ]
         for role in setup.roles:
@@ -1974,12 +2306,29 @@ class KittUIApp:
         from kitt.llm.auth import ProviderAuthService
         auth_service = ProviderAuthService()
         is_auth = bool(auth_service.resolve(None, setup.selected_provider))
-        auth_badge = "[✓ Autenticado]" if is_auth or setup.selected_provider in ("ollama", "lmstudio") else "[⚠ Não autenticado - L: Login]"
-        lines.append(f" Provedor Atual: {star} {setup.selected_provider} @ {endpoint} {auth_badge}")
+        if self._is_local_or_no_auth_provider(setup.selected_provider, endpoint):
+            auth_badge = "[◌ Local / Sem Token Necessário]"
+        elif is_auth:
+            auth_badge = "[● Conectado / Autenticado]"
+        else:
+            auth_badge = "[○ Não autenticado — L: Conectar]"
+
+        src_badge = f"(Origem: {setup.source})" if hasattr(setup, "source") and setup.source else ""
+        lines.append(f" Provedor Selecionado: {star} {setup.selected_provider} @ {endpoint} {auth_badge} {src_badge}")
         return "\n".join(lines)
 
     def _model_setup_text(self):
         setup = self.model_setup_model
+        if getattr(setup, "loading", False):
+            return "  ◌ Carregando lista de modelos do provedor..."
+
+        if getattr(setup, "error_message", None):
+            return (
+                f"  ⚠ Não foi possível consultar modelos do provedor '{setup.selected_provider}'.\n"
+                f"  Motivo: {setup.error_message}\n\n"
+                "  [Enter] Tentar novamente  |  [E] Editar endpoint  |  [Esc] Voltar"
+            )
+
         filtered = setup.get_filtered_models()
         total_models = len(filtered)
         all_models = len(setup.models)
@@ -1988,7 +2337,10 @@ class KittUIApp:
         lines = [f"Modelos Disponíveis{filter_tag}:"]
         
         if not filtered:
-            lines.append(f"\n  Nenhum modelo encontrado para o filtro '{setup.search_query}'.")
+            if setup.search_query.strip():
+                lines.append(f"\n  Nenhum modelo encontrado para o filtro '{setup.search_query}'.\n  Limpe o filtro de busca.")
+            else:
+                lines.append(f"\n  Nenhum modelo reportado pelo provedor '{setup.selected_provider}'.\n  [E] Configurar endpoint  |  [Esc] Voltar")
             return "\n".join(lines)
 
         window_size = 14

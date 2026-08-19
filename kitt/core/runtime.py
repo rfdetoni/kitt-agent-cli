@@ -14,6 +14,7 @@ from kitt.core.event_bus import EventBus
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_processor import TurnProcessor
 from kitt.goals.service import GoalService
+from kitt.goals.scheduler import GoalScheduler
 from kitt.harness.repository import HarnessRepository
 from kitt.harness.service import HarnessService
 from kitt.history.database import HistoryDatabase
@@ -73,6 +74,7 @@ class KittRuntime:
     memory_repo: Optional[MemoryRepository] = None
     dream_service: Optional[DreamingService] = None
     dream_scheduler: Optional[DreamScheduler] = None
+    goal_scheduler: Optional[GoalScheduler] = None
     extensions: Optional[ExtensionManager] = None
 
     def __post_init__(self):
@@ -195,6 +197,11 @@ class KittRuntime:
             workspace_id_getter=lambda: identity.id,
         )
 
+        goal_scheduler = GoalScheduler(
+            db=db,
+            goal_service=goals,
+        )
+
         from kitt.extensions.manager import ExtensionManager
         extensions = ExtensionManager(
             workspace_root=canon_root,
@@ -214,6 +221,7 @@ class KittRuntime:
             memory_repo=memory_repo,
             dream_service=dream_service,
             dream_scheduler=dream_scheduler,
+            goal_scheduler=goal_scheduler,
             extensions=extensions,
         )
 
@@ -251,6 +259,7 @@ class KittRuntime:
             for name, close in (
                 ("extensions", getattr(self.extensions, "close", lambda: None)),
                 ("dream_scheduler", getattr(self.dream_scheduler, "close", lambda: None)),
+                ("goal_scheduler", getattr(self.goal_scheduler, "stop", lambda: None)),
                 ("processor", self.processor.close), ("children", self.children.close),
                 ("metrics", self.metrics.close), ("artifacts", self.artifacts.close),
                 ("events", self.events.close), ("database", self.database.close),

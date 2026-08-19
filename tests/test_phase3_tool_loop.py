@@ -97,6 +97,20 @@ class TestPhase3ToolLoop(unittest.TestCase):
         # 9. Non-tool text returns None
         self.assertIsNone(parse_tool_call("Apenas uma resposta em texto sem ferramentas."))
 
+        # 10. Tagged code block (e.g. ```html:apresentacao.html)
+        sample10 = 'Aqui está a atualização:\n```html:apresentacao.html\n<!DOCTYPE html><html><body>Tagged</body></html>\n```'
+        name, args = parse_tool_call(sample10)
+        self.assertEqual(name, "write_file")
+        self.assertEqual(args["path"], "apresentacao.html")
+        self.assertIn("Tagged", args["content"])
+
+        # 11. Labeled code block (e.g. File: `apresentacao.html`)
+        sample11 = 'Atualizei o arquivo:\nArquivo: `apresentacao.html`\n```html\n<!DOCTYPE html><html><body>Labeled</body></html>\n```'
+        name, args = parse_tool_call(sample11)
+        self.assertEqual(name, "write_file")
+        self.assertEqual(args["path"], "apresentacao.html")
+        self.assertIn("Labeled", args["content"])
+
 
 if __name__ == '__main__':
     unittest.main()

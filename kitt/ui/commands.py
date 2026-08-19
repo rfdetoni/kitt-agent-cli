@@ -53,8 +53,12 @@ class CommandRegistry:
             ("ask", "Ask", "Turn", "Ask without code edits", ["/ask"]),
             ("plan", "Plan Mode", "Turn", "Toggle planning mode or generate execution plan", ["/plan"]),
             ("code", "Code", "Turn", "Force code-editing mode", ["/code"]),
+            ("mode", "Turn Mode", "Turn", "Toggle or set mode: /mode [code|plan|ask] (F4 / Ctrl+T)", ["/mode", "/toggle-mode"]),
             ("model", "Model", "Models", "Set one role or all roles: /model <role|all> [provider] <model>", ["/model", "/models"]),
             ("setup_models", "Setup Models", "Models", "Configure models; optional remote Ollama URL", ["/setup-models"]),
+            ("add_provider", "Add Provider", "Models", "Register custom provider template: /add-provider <name> [ollama|openai|anthropic|gemini] <url>", ["/add-provider", "/add-server"]),
+            ("edit_provider", "Edit Provider", "Models", "Edit custom provider: /edit-provider <name> [new_url] [pattern] [token]", ["/edit-provider"]),
+            ("delete_provider", "Delete Provider", "Models", "Delete custom provider: /delete-provider <name>", ["/delete-provider", "/remove-provider"]),
             ("reasoning", "Reasoning Effort", "Models", "Adjust thinking depth: /reasoning <0-100> (Ctrl+Left/Right)", ["/reasoning", "/think", "/effort"]),
             ("router", "Router", "Models", "Show task routing configuration", ["/router"]),
             ("context_stats", "Context Stats", "Analytics", "Show context budget telemetry", ["/context-stats"]),
@@ -62,11 +66,21 @@ class CommandRegistry:
             ("status", "Runtime Status", "System", "Show runtime snapshot", ["/status"]),
             ("compact", "Compact History", "Session", "Compact bounded conversation history", ["/compact"]),
             ("child", "Child Agent", "Agents", "Spawn isolated child task", ["/child"]),
+            ("child_inspect", "Inspect Child", "Agents", "Inspect child agent state and artifacts: /child-inspect <id>", ["/child-inspect", "/inspect-child"]),
+            ("child_message", "Message Child", "Agents", "Send structured message to child agent: /child-msg <id> <message>", ["/child-msg", "/child-message"]),
+            ("child_retain", "Retain Child", "Agents", "Retain child agent for reuse: /child-retain <id>", ["/child-retain", "/retain-child"]),
             ("tasks", "Agent Task Monitor", "Agents", "Show active subagent tasks & progress", ["/tasks", "/task", "/agents", "/agent"]),
+            ("goal_pause", "Pause Goal", "Goals", "Pause active autonomous goal: /goal-pause <id>", ["/goal-pause"]),
+            ("goal_resume", "Resume Goal", "Goals", "Resume paused goal: /goal-resume <id>", ["/goal-resume"]),
+            ("attach", "Attach Session", "Daemon", "Attach to background daemon session: /attach <id>", ["/attach"]),
+            ("detach", "Detach Session", "Daemon", "Detach from current daemon session: /detach", ["/detach"]),
+            ("runtime_state", "Runtime State", "System", "Inspect persistent session runtime state: /runtime-state [list|get]", ["/runtime-state", "/state"]),
+            ("artifact", "Open Artifact", "Context", "Read or inspect persisted artifact: /artifact <id>", ["/artifact", "/art"]),
             ("cancel", "Cancel Turn", "Turn", "Cancel active turn or background operations", ["/cancel", "/stop"]),
             ("approvals", "Approvals", "Security", "Show approval audit trail", ["/approvals"]),
             ("autonomy", "Autonomy Profile", "Security", "Set autonomy level: /autonomy <read_only|supervised|balanced|autonomous>", ["/autonomy"]),
             ("workspace", "Workspace", "System", "Show or switch workspace", ["/workspace"]),
+            ("mouse", "Toggle Mouse Mode", "System", "Toggle between TUI mouse and Terminal native selection (F10 / Ctrl+M)", ["/mouse"]),
             ("clear", "Clear Context", "Session", "Start clean conversation context", ["/clear"]),
             ("help", "Help", "System", "Show all slash commands", ["/help", "/"]),
             ("quit", "Exit K.I.T.T.", "System", "Exit application", ["/quit", "/exit"]),
@@ -78,15 +92,43 @@ class CommandRegistry:
         q = query.lower().strip()
         if not q or q == "/":
             return list(self.commands.values())
-        matches = [
-            command for command in self.commands.values()
-            if q in command.id.lower()
-            or q in command.title.lower()
-            or q in command.description.lower()
-            or any(q in alias.lower() for alias in command.aliases)
-        ]
-        return sorted(matches, key=lambda command: 0 if q == command.id.lower() or q in command.aliases else 1)
+        if q.startswith("/"):
+            q_term = q[1:].strip()
+        else:
+            q_term = q
+
+        tokens = q_term.split() if q_term else [q]
+        scored: List[tuple[int, CommandSpec]] = []
+
+        for command in self.commands.values():
+            cmd_id = command.id.lower()
+            title = command.title.lower()
+            desc = command.description.lower()
+            cat = command.category.lower()
+            aliases = [a.lower() for a in command.aliases]
+            all_text = f"{cmd_id} {title} {desc} {cat} {' '.join(aliases)}"
+
+            if all(tok in all_text for tok in tokens):
+                score = 0
+                if any(q == a or q_term == a.lstrip("/") for a in aliases):
+                    score += 100
+                elif cmd_id == q_term:
+                    score += 90
+                elif any(a.startswith(q) or a.lstrip("/").startswith(q_term) for a in aliases):
+                    score += 60
+                elif cmd_id.startswith(q_term):
+                    score += 50
+                elif any(tok in title for tok in tokens):
+                    score += 30
+                elif any(tok in cat for tok in tokens):
+                    score += 20
+                else:
+                    score += 10
+                scored.append((score, command))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [item[1] for item in scored]
 
     def find(self, name: str) -> CommandSpec | None:
-        name = name.lower()
-        return next((command for command in self.commands.values() if name in command.aliases or name == command.id), None)
+        name = name.lower().strip()
+        return next((command for command in self.commands.values() if name in command.aliases or name == command.id or name == f"/{command.id}"), None)
