@@ -76,6 +76,21 @@ class GoalScheduler:
             conn.commit()
             return cur.rowcount > 0
 
+    def claim_lease(self, goal_id: str, worker_id: str = "worker", lease_duration_seconds: float = 30.0) -> bool:
+        now = time.time()
+        lease_expires_at = now + max(1.0, lease_duration_seconds)
+        with self.db.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE goals SET lease_id = ?, lease_expires_at = ?
+                WHERE id = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+                """,
+                (worker_id, lease_expires_at, goal_id, now),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
     def check_and_execute_due(self) -> List[Dict[str, Any]]:
         """Find due active goals, acquire atomic lease, enforce budgets, and trigger step execution."""
         now = time.time()
