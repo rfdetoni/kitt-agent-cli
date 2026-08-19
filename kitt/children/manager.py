@@ -66,6 +66,8 @@ class ChildAgentManager:
         if len(existing_children) >= 10:
             raise ValueError("Total child spawn limit per conversation reached (max 10)")
         enabled_tools = enabled_tools or allowed_tools or ["read_file", "search", "repository_map", "python_compute"]
+        # Enforce capability inheritance
+        effective_caps = list(compute_child_privileges(enabled_tools, ALL_CAPABILITIES, ALL_CAPABILITIES))
         if depth > self.max_depth:
             raise ValueError("Child depth limit exceeded")
         running = sum(c.state in {"CREATED", "RUNNING", "QUEUED"} for c in existing_children)
@@ -74,7 +76,7 @@ class ChildAgentManager:
         self._last_spawn_time[parent_conversation_id] = now
         paths = validate_child_paths(self.root, allowed_paths or [])
         child = self.repo.create(parent_conversation_id, parent_turn_id, name, task, depth, model_profile,
-                                 paths, enabled_tools, token_budget, timeout_seconds)
+                                 paths, effective_caps, token_budget, timeout_seconds)
         self.repo.update(child.id, state="QUEUED")
         self._on_event("ChildAgentSpawned", {"child_id": child.id, "name": name, "task": task})
         self._pool.submit(self._run_child, child.id, task, ws_id, parent_conversation_id,
@@ -84,13 +86,18 @@ class ChildAgentManager:
     def _run_child(self, child_id: str, task: str, workspace_id: str,
                    conversation_id: str, turn_id: str, timeout_seconds: float,
                    worker: Optional[Callable[[str], str]]):
-        """Execute the child worker, persisting a truthful terminal state."""
+        """Execute the child worker, persisting a truthful terminal state without overwriting CANCELLED."""
         self._on_event("ChildAgentProgress", {"child_id": child_id, "status": "RUNNING", "summary": task[:80], "progress": 10})
         try:
             if worker is not None:
                 result = worker(task)
             else:
                 result = self._execute_worker(child_id, task, timeout_seconds)
+
+            curr = self.repo.get(child_id)
+            if curr and curr.state == "CANCELLED":
+                return
+
             artifact = self.artifacts.put(
                 workspace_id, result,
                 "CHILD_RESULT",
@@ -103,10 +110,16 @@ class ChildAgentManager:
                              completed_at=time.time())
             self._on_event("ChildAgentFinished", {"child_id": child_id, "status": "COMPLETED", "error": None})
         except TimeoutError:
+            curr = self.repo.get(child_id)
+            if curr and curr.state == "CANCELLED":
+                return
             self.repo.update(child_id, state="TIMED_OUT", error="timeout",
                              completed_at=time.time())
             self._on_event("ChildAgentFinished", {"child_id": child_id, "status": "TIMED_OUT", "error": "timeout"})
         except Exception as exc:
+            curr = self.repo.get(child_id)
+            if curr and curr.state == "CANCELLED":
+                return
             self.repo.update(child_id, state="FAILED", error=str(exc),
                              completed_at=time.time())
             self._on_event("ChildAgentFinished", {"child_id": child_id, "status": "FAILED", "error": str(exc)})
@@ -208,7 +221,7 @@ class ChildAgentManager:
             raise ValueError(f"Cannot assign task to child in state '{child.state}'")
 
         ws_id = workspace_id or self.workspace_id
-        self.repo.update(child_id, state="QUEUED", error=None, started_at=time.time(), completed_at=None)
+        self.repo.update(child_id, state="QUEUED", task=task, error=None, started_at=time.time(), completed_at=None)
         self._on_event("ChildAgentTaskAssigned", {"child_id": child_id, "task": task})
         self._pool.submit(
             self._run_child,
@@ -231,8 +244,16 @@ class ChildAgentManager:
         recipient_id: str,
         payload: dict,
         kind: str = "DIRECT",
+        correlation_id: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ) -> ChildMessage:
         """Send a message between parent and child, or between peer agents if permitted."""
+        target_child = self.repo.get(child_id)
+        if target_child:
+            if target_child.parent_conversation_id != conversation_id:
+                raise PermissionError("Cross-conversation child message blocked")
+
         if sender_id != parent_id and recipient_id != parent_id:
             if not self.allow_peer_agent_messages:
                 raise PermissionError("Peer agent messages are disabled by configuration")
@@ -251,12 +272,16 @@ class ChildAgentManager:
             recipient_id=recipient_id,
             payload=payload,
             kind=kind,
+            correlation_id=correlation_id,
+            reply_to=reply_to,
+            trace_id=trace_id,
         )
         self._on_event("ChildAgentMessageSent", {
             "message_id": msg.id,
             "sender_id": sender_id,
             "recipient_id": recipient_id,
             "kind": kind,
+            "correlation_id": correlation_id,
         })
         return msg
 
@@ -264,11 +289,12 @@ class ChildAgentManager:
         return self.messaging.list_messages(conversation_id, child_id=child_id, limit=limit)
 
     def ask(self, child_id: str, question: str, timeout: float = 30.0) -> dict:
-        """Synchronously send a question and wait for result."""
+        """Synchronously send a question and wait for correlated result."""
         child = self.repo.get(child_id)
         if not child:
             raise ValueError(f"Child {child_id} not found")
-        self.send_message(
+        corr_id = f"corr_{uuid.uuid4().hex}"
+        msg = self.send_message(
             conversation_id=child.parent_conversation_id,
             parent_id=child.parent_conversation_id,
             child_id=child_id,
@@ -276,9 +302,45 @@ class ChildAgentManager:
             recipient_id=child_id,
             payload={"question": question},
             kind="ASK",
+            correlation_id=corr_id,
         )
-        # Check if child is retained/running
-        return {"status": "SENT", "child_id": child_id, "question": question}
+        deadline = time.monotonic() + max(0.1, timeout)
+        while time.monotonic() < deadline:
+            replies = self.messaging.list_replies(corr_id)
+            if replies:
+                return {
+                    "status": "ANSWERED",
+                    "child_id": child_id,
+                    "question": question,
+                    "reply": replies[0].payload,
+                    "message_id": replies[0].id,
+                    "correlation_id": corr_id,
+                }
+            time.sleep(0.05)
+        return {
+            "status": "SENT",
+            "child_id": child_id,
+            "question": question,
+            "correlation_id": corr_id,
+            "message_id": msg.id,
+        }
+
+    def reply(self, child_id: str, original_message: ChildMessage, payload: dict) -> ChildMessage:
+        """Send a correlated reply from child to parent."""
+        child = self.repo.get(child_id)
+        if not child:
+            raise ValueError(f"Child {child_id} not found")
+        return self.send_message(
+            conversation_id=child.parent_conversation_id,
+            parent_id=child.parent_conversation_id,
+            child_id=child_id,
+            sender_id=child_id,
+            recipient_id=original_message.sender_id,
+            payload=payload,
+            kind="REPLY",
+            correlation_id=original_message.correlation_id,
+            reply_to=original_message.id,
+        )
 
     def broadcast(self, parent_conversation_id: str, payload: dict) -> List[ChildMessage]:
         """Broadcast a message to all active/retained children of a conversation."""

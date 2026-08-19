@@ -39,14 +39,51 @@ DEFAULT_CHILD_CAPABILITIES: FrozenSet[str] = frozenset({
     CAP_ARTIFACT_READ,
 })
 
+TOOL_TO_CAPABILITY = {
+    "read_file": CAP_REPO_READ,
+    "inspect_symbol": CAP_REPO_READ,
+    "list_files": CAP_REPO_READ,
+    "repository_map": CAP_REPO_READ,
+    "git_status": CAP_REPO_READ,
+    "git_diff": CAP_REPO_READ,
+    "search": CAP_REPO_SEARCH,
+    "write_file": CAP_REPO_WRITE,
+    "apply_patch": CAP_REPO_WRITE,
+    "run_command": CAP_PROCESS_RUN,
+    "python_compute": CAP_PROCESS_RUN,
+    "artifacts_store": CAP_ARTIFACT_WRITE,
+    "artifacts_read": CAP_ARTIFACT_READ,
+    "artifacts_list": CAP_ARTIFACT_READ,
+    "child_spawn": CAP_CHILD_SPAWN,
+    "child_ask": CAP_CHILD_MESSAGE,
+    "child_send": CAP_CHILD_MESSAGE,
+    "goal_create": CAP_GOAL_MANAGE,
+    "goal_add_gate": CAP_GOAL_MANAGE,
+    "memory_recall": CAP_MEMORY_READ,
+    "memory_save": CAP_MEMORY_WRITE,
+    "mcp_call": CAP_MCP_CALL,
+}
 
-def validate_capabilities(requested: Iterable[str]) -> Set[str]:
-    """Validate requested capabilities against the known set."""
-    req_set = set(requested)
-    invalid = req_set - ALL_CAPABILITIES
+
+def canonicalize_capabilities(requested: Iterable[str]) -> Set[str]:
+    """Convert tool names and capability strings into valid canonical capability IDs."""
+    canon: Set[str] = set()
+    invalid: Set[str] = set()
+    for item in requested:
+        if item in ALL_CAPABILITIES:
+            canon.add(item)
+        elif item in TOOL_TO_CAPABILITY:
+            canon.add(TOOL_TO_CAPABILITY[item])
+        else:
+            invalid.add(item)
     if invalid:
         raise ValueError(f"Unknown capabilities requested: {sorted(invalid)}")
-    return req_set
+    return canon
+
+
+def validate_capabilities(requested: Iterable[str]) -> Set[str]:
+    """Validate requested capabilities against the known set, canonicalizing legacy tool names."""
+    return canonicalize_capabilities(requested)
 
 
 def compute_child_privileges(
@@ -59,6 +96,6 @@ def compute_child_privileges(
     Rule: child permissions <= parent permissions, never escalated.
     """
     req_set = validate_capabilities(requested)
-    parent_set = set(parent_capabilities)
-    policy_set = set(policy_allowed) if policy_allowed is not None else ALL_CAPABILITIES
+    parent_set = validate_capabilities(parent_capabilities)
+    policy_set = validate_capabilities(policy_allowed) if policy_allowed is not None else ALL_CAPABILITIES
     return req_set & parent_set & policy_set

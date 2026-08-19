@@ -31,6 +31,7 @@ from kitt.tools.safe_python import (
     parse_python_compute_call,
 )
 from kitt.tools.protocol import TOOL_CALL_OPEN, parse_tool_call
+from kitt.tools.surface_selector import ToolSurfaceSelector
 from kitt.llm.client import LLMClient
 from kitt.core.session_state import SessionState
 from kitt.core.execution_request import ExecutionRequest
@@ -93,6 +94,7 @@ class TurnProcessor:
         self.build_detector = BuildDetector(root_dir=root_dir)
         self.log_reducer = LogReducer()
         self.registry = registry or ToolRegistry(root_dir=root_dir)
+        self.surface_selector = ToolSurfaceSelector(config=self.config)
         self.session_state = SessionState()
         self.pending_actions: Dict[str, PendingAction] = {}
         self.cancelled_turns: set[str] = set()
@@ -270,6 +272,21 @@ class TurnProcessor:
     def _tool_instructions(self, enabled_tools) -> str:
         if not enabled_tools:
             return "No host tools are enabled. Answer directly."
+
+        if "kitt_runtime" in enabled_tools and len(enabled_tools) == 1:
+            return f"""
+Available host tool: {self.registry.get_tool_definitions(["kitt_runtime"])}
+To call the safe runtime, respond with exactly:
+<kitt-tool>
+{{"name":"kitt_runtime","arguments":{{"operation":"repo.read","arguments":{{"path":"path.ext","start_line":1,"end_line":100}}}}}}
+</kitt-tool>
+Supported operations: repo.read, repo.search, repo.inspect_symbol, patch.apply, process.run, artifacts.store, artifacts.read, children.spawn, children.send, children.inspect, goal.inspect, goal.update, state.get, state.set, handles.resolve.
+RULES:
+1. Focus strictly on user request.
+2. Put reasoning inside <think>...</think> before tool call.
+3. Once fulfilled, STOP calling tools and answer directly.
+""".strip()
+
         instructions = f"""
 Available host tools: {self.registry.get_tool_definitions(enabled_tools)}
 For a host tool, respond with exactly:

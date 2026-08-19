@@ -249,57 +249,47 @@ def handle_mcp_command(
 
 
 def handle_daemon_command(action: str = "status", root_dir: str = ".") -> int:
-    import asyncio
-    from kitt.daemon.client import DaemonClient
-    from kitt.daemon.server import DaemonServer
+    from kitt.daemon.process import (
+        start_daemon_detached,
+        run_daemon_foreground,
+        stop_daemon,
+        get_daemon_status,
+    )
 
-    client = DaemonClient()
     action = (action or "status").strip().lower()
 
     if action == "start":
-        async def _start():
-            if await client.is_running():
-                print("\033[33mKITT Daemon is already running.\033[0m")
-                return 0
-            server = DaemonServer(workspace_root=root_dir)
-            await server.start()
-            print("\033[32m✓ KITT Daemon started successfully.\033[0m")
-            try:
-                while True:
-                    await asyncio.sleep(1)
-            except (KeyboardInterrupt, asyncio.CancelledError):
-                await server.stop()
-                print("\n\033[90mKITT Daemon stopped.\033[0m")
+        res = start_daemon_detached(workspace=root_dir)
+        if res.get("status") == "ok":
+            print(f"\033[32m✓ {res.get('message')}\033[0m")
             return 0
+        else:
+            print(f"\033[31mError: {res.get('error')}\033[0m")
+            return 1
 
-        return asyncio.run(_start())
+    elif action == "run":
+        run_daemon_foreground(workspace=root_dir)
+        return 0
 
     elif action == "stop":
-        async def _stop():
-            if not await client.connect():
-                print("\033[90mKITT Daemon is not running.\033[0m")
-                return 0
-            await client.stop_daemon()
-            await client.close()
-            print("\033[32m✓ KITT Daemon stopped.\033[0m")
+        res = stop_daemon(workspace=root_dir)
+        if res.get("status") == "ok":
+            print(f"\033[32m✓ {res.get('message')}\033[0m")
             return 0
-
-        return asyncio.run(_stop())
+        else:
+            print(f"\033[90m{res.get('error')}\033[0m")
+            return 0
 
     elif action == "status":
-        async def _status():
-            running = await client.is_running()
-            if running:
-                print("\033[32m● KITT Daemon: RUNNING\033[0m")
-                print(f"  Socket: {client.socket_path}")
-            else:
-                print("\033[90m○ KITT Daemon: STOPPED\033[0m")
-            await client.close()
-            return 0
+        info = get_daemon_status(workspace=root_dir)
+        if info["running"]:
+            print(f"\033[32m● KITT Daemon: RUNNING (PID {info['pid']})\033[0m")
+            print(f"  Transport: {info['transport']} -> {info['address']}{':' + str(info['port']) if info['port'] else ''}")
+        else:
+            print("\033[90m○ KITT Daemon: STOPPED\033[0m")
+        return 0
 
-        return asyncio.run(_status())
-
-    print(f"\033[31mUnknown daemon action '{action}'. Choices: start, stop, status.\033[0m")
+    print(f"\033[31mUnknown daemon action '{action}'. Choices: start, run, stop, status.\033[0m")
     return 1
 
 
@@ -308,19 +298,19 @@ def handle_sessions_command(root_dir: str = ".") -> int:
     from kitt.daemon.client import DaemonClient
 
     async def _sessions():
-        client = DaemonClient()
+        client = DaemonClient(workspace_root=root_dir)
         if not await client.connect():
             # Fallback to local database
             from kitt.core.runtime import KittRuntime
             from kitt.core.runtime_config import RuntimeConfig
             rt = KittRuntime.build(root_dir, config=RuntimeConfig())
-            convs = rt.history.list_conversations(limit=20)
+            convs = rt.history.list_history(limit=20)
             active = rt.history.get_active_read_only()
             active_id = active["id"] if active else ""
             print("\n\033[1;36m=== KITT Sessions (Local) ===\033[0m")
             for c in convs:
-                tag = "\033[32m[ACTIVE]\033[0m" if c.id == active_id else ""
-                print(f"  • \033[1m{c.id[:12]}\033[0m {tag} {c.title}")
+                tag = "\033[32m[ACTIVE]\033[0m" if c.get("id") == active_id else ""
+                print(f"  • \033[1m{c.get('id', '')[:12]}\033[0m {tag} {c.get('title', '')}")
             rt.close()
             return 0
 
@@ -342,7 +332,7 @@ def handle_attach_command(session_id: str, root_dir: str = ".") -> int:
     from kitt.daemon.client import DaemonClient
 
     async def _attach():
-        client = DaemonClient()
+        client = DaemonClient(workspace_root=root_dir)
         if not await client.connect():
             print("\033[31mError: KITT Daemon is not running. Start it with 'kitt daemon start'\033[0m")
             return 1
@@ -350,7 +340,7 @@ def handle_attach_command(session_id: str, root_dir: str = ".") -> int:
         def on_event(evt):
             print(f"[{evt.event_type}] {evt.payload}")
 
-        res = await client.attach(session_id, on_event=on_event, workspace=root_dir)
+        res = await client.attach(session_id, event_callback=on_event, workspace=root_dir)
         if res.get("status") == "ok":
             print(f"\033[32m✓ Attached to session {session_id}. Replaying past events:\033[0m")
             for e in res.get("events", []):
@@ -370,7 +360,24 @@ def handle_attach_command(session_id: str, root_dir: str = ".") -> int:
     return asyncio.run(_attach())
 
 
+def handle_detach_command(root_dir: str = ".") -> int:
+    import asyncio
+    from kitt.daemon.client import DaemonClient
+
+    async def _detach():
+        client = DaemonClient(workspace_root=root_dir)
+        if await client.connect():
+            await client.detach()
+            await client.close()
+            print("\033[32m✓ Detached from active session.\033[0m")
+        else:
+            print("\033[90mNo active daemon connection.\033[0m")
+        return 0
+
+    return asyncio.run(_detach())
+
+
 def handle_resume_command(session_id: str, root_dir: str = ".") -> int:
-    # Resuming switches active session and initiates turn
+    # Resuming validates session, restores execution context, and attaches
     return handle_attach_command(session_id, root_dir=root_dir)
 

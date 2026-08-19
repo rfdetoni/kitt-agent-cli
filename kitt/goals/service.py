@@ -29,18 +29,49 @@ class GoalService:
         return gates
 
     def _goal(self, r, conn=None) -> Goal:
-        gid = r["id"]
+        d = dict(r)
+        gid = d["id"]
         gates = []
         if conn:
             gates = self._get_gates(conn, gid)
         else:
             with self.db.get_connection() as c:
                 gates = self._get_gates(c, gid)
+        try:
+            crit = json.loads(d.get("success_criteria_json") or "[]")
+        except Exception:
+            crit = []
         return Goal(
-            r["id"], r["conversation_id"], r["objective"], r["state"], r["token_budget"],
-            r["max_turns"], r["max_wall_seconds"], r["tokens_used"], r["turns_used"],
-            r["continuations_used"], json.loads(r["success_criteria_json"]), r["started_at"],
-            r["updated_at"], r["completed_at"], r["last_error"], gates
+            id=d["id"],
+            conversation_id=d["conversation_id"],
+            objective=d["objective"],
+            state=d["state"],
+            token_budget=d.get("token_budget"),
+            max_turns=d.get("max_turns", 12),
+            max_wall_seconds=d.get("max_wall_seconds", 1800),
+            tokens_used=d.get("tokens_used", 0),
+            turns_used=d.get("turns_used", 0),
+            continuations_used=d.get("continuations_used", 0),
+            success_criteria=crit,
+            started_at=d.get("started_at", 0),
+            updated_at=d.get("updated_at", 0),
+            completed_at=d.get("completed_at"),
+            last_error=d.get("last_error"),
+            gates=gates,
+            scheduled_at=d.get("scheduled_at"),
+            next_run_at=d.get("next_run_at"),
+            recurrence=d.get("recurrence"),
+            heartbeat_enabled=bool(d.get("heartbeat_enabled", 0)),
+            resume_policy=d.get("resume_policy", "manual"),
+            owner_session_id=d.get("owner_session_id"),
+            lease_id=d.get("lease_id"),
+            lease_expires_at=d.get("lease_expires_at"),
+            max_cost=d.get("max_cost", 0.0),
+            max_failures=d.get("max_failures", 5),
+            max_retries=d.get("max_retries", 3),
+            max_children=d.get("max_children", 5),
+            failures_used=d.get("failures_used", 0),
+            retries_used=d.get("retries_used", 0),
         )
 
     def create(self, conversation_id: str, objective: str, success_criteria: Optional[List[str]] = None,

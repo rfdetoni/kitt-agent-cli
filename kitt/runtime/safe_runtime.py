@@ -26,6 +26,37 @@ from kitt.security.capabilities import (
 )
 
 
+@dataclass(frozen=True)
+class RuntimeOperationSpec:
+    name: str
+    required_capability: str
+    policy_tool_action: Optional[str] = None
+    sensitive: bool = False
+
+
+OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
+    "repo.read": RuntimeOperationSpec("repo.read", CAP_REPO_READ, "read_file"),
+    "repo.search": RuntimeOperationSpec("repo.search", CAP_REPO_SEARCH, "search"),
+    "repo.inspect_symbol": RuntimeOperationSpec("repo.inspect_symbol", CAP_REPO_READ, "read_file"),
+    "artifacts.store": RuntimeOperationSpec("artifacts.store", CAP_ARTIFACT_WRITE, "artifact_store", sensitive=True),
+    "artifacts.read": RuntimeOperationSpec("artifacts.read", CAP_ARTIFACT_READ, "artifact_read"),
+    "patch.apply": RuntimeOperationSpec("patch.apply", CAP_REPO_WRITE, "apply_patch", sensitive=True),
+    "process.run": RuntimeOperationSpec("process.run", CAP_PROCESS_RUN, "run_command", sensitive=True),
+    "children.spawn": RuntimeOperationSpec("children.spawn", CAP_CHILD_SPAWN, "child_spawn", sensitive=True),
+    "children.send": RuntimeOperationSpec("children.send", CAP_CHILD_MESSAGE, sensitive=False),
+    "children.inspect": RuntimeOperationSpec("children.inspect", CAP_CHILD_SPAWN, sensitive=False),
+    "goal.inspect": RuntimeOperationSpec("goal.inspect", CAP_GOAL_MANAGE, sensitive=False),
+    "goal.update": RuntimeOperationSpec("goal.update", CAP_GOAL_MANAGE, sensitive=True),
+    "memory.query": RuntimeOperationSpec("memory.query", CAP_MEMORY_READ, sensitive=False),
+    "skill.call": RuntimeOperationSpec("skill.call", CAP_REPO_READ, sensitive=False),
+    "mcp.call": RuntimeOperationSpec("mcp.call", CAP_MCP_CALL, sensitive=True),
+    "state.get": RuntimeOperationSpec("state.get", CAP_REPO_READ, sensitive=False),
+    "state.set": RuntimeOperationSpec("state.set", CAP_REPO_WRITE, sensitive=False),
+    "state.list": RuntimeOperationSpec("state.list", CAP_REPO_READ, sensitive=False),
+    "handles.resolve": RuntimeOperationSpec("handles.resolve", CAP_REPO_READ, sensitive=False),
+}
+
+
 @dataclass
 class SafeRuntimeResult:
     success: bool
@@ -75,6 +106,8 @@ class SafeRuntime:
             artifact_store=self.artifacts,
             child_manager=self.children,
             goal_service=self.goals,
+            workspace_id=self.workspace_id,
+            conversation_id=self.conversation_id,
         )
 
     def execute(
@@ -83,11 +116,58 @@ class SafeRuntime:
         arguments: Optional[Dict[str, Any]] = None,
         turn_id: str = "runtime_turn",
         origin: str = "MODEL",
+        effective_capabilities: Optional[Set[str]] = None,
     ) -> SafeRuntimeResult:
         """Execute a typed, policy-governed runtime operation."""
         start = time.perf_counter()
         args = arguments or {}
         op = operation.strip() if operation else ""
+
+        if op not in OPERATION_SPECS:
+            return SafeRuntimeResult(
+                success=False,
+                operation=op,
+                error=f"Unknown runtime operation: '{op}'",
+                duration_ms=(time.perf_counter() - start) * 1000,
+            )
+
+        spec = OPERATION_SPECS[op]
+
+        # Capability enforcement
+        if effective_capabilities is not None and spec.required_capability not in effective_capabilities:
+            return SafeRuntimeResult(
+                success=False,
+                operation=op,
+                error=f"Capability '{spec.required_capability}' required for '{op}' is not granted",
+                duration_ms=(time.perf_counter() - start) * 1000,
+            )
+
+        # Policy & Autonomy enforcement
+        if self.registry and hasattr(self.registry, "policy") and self.registry.policy:
+            policy = self.registry.policy
+            if getattr(getattr(policy, "autonomy", None), "preset", None) == "read_only" and spec.sensitive:
+                return SafeRuntimeResult(
+                    success=False,
+                    operation=op,
+                    error=f"Operation '{op}' is blocked in read_only autonomy mode",
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                )
+            if spec.policy_tool_action and origin == "MODEL":
+                perm = policy.evaluate_tool(spec.policy_tool_action, args, origin=origin)
+                if perm == "DENY":
+                    return SafeRuntimeResult(
+                        success=False,
+                        operation=op,
+                        error=f"Execution denied by PolicyEngine for tool '{spec.policy_tool_action}'.",
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
+                if perm == "ASK":
+                    return SafeRuntimeResult(
+                        success=False,
+                        operation=op,
+                        error=f"Operation '{op}' requires approval from user.",
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
 
         try:
             if op == "repo.read":
@@ -204,12 +284,16 @@ class SafeRuntime:
                     "content": read_res.data,
                 })
 
+        # Dynamic token saving measurement based on roundtrips and content length
+        content_chars = sum(len(str(s.get("content", ""))) for s in snippets)
+        dynamic_saved = max(50, content_chars // 4)
+
         return SafeRuntimeResult(
             success=True,
             operation="repo.inspect_symbol",
             data={"symbol": symbol, "matches": symbols, "snippets": snippets},
             context_handles=[f"ctx:repo:{symbol}"],
-            tokens_saved=350,  # saved multiple roundtrips
+            tokens_saved=dynamic_saved,
         )
 
     def _op_artifacts_store(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:

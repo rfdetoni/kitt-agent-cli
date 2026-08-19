@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from kitt.goals.models import Goal
@@ -46,7 +47,8 @@ class GoalScheduler:
         retry_json = json.dumps(retry_policy or {"max_retries": 3, "retry_count": 0})
 
         with self.db.get_connection() as conn:
-            conn.execute(
+            cur = conn.cursor()
+            cur.execute(
                 """
                 UPDATE goals SET
                     scheduled_at = ?,
@@ -72,10 +74,10 @@ class GoalScheduler:
                 ),
             )
             conn.commit()
-            return True
+            return cur.rowcount > 0
 
     def check_and_execute_due(self) -> List[Dict[str, Any]]:
-        """Find due active goals, enforce budgets, and trigger execution."""
+        """Find due active goals, acquire atomic lease, enforce budgets, and trigger step execution."""
         now = time.time()
         due_goals = []
 
@@ -83,10 +85,12 @@ class GoalScheduler:
             rows = conn.execute(
                 """
                 SELECT * FROM goals
-                WHERE state = 'ACTIVE' AND heartbeat_enabled = 1 AND (next_run_at IS NULL OR next_run_at <= ?)
+                WHERE state = 'ACTIVE' AND heartbeat_enabled = 1
+                  AND (next_run_at IS NULL OR next_run_at <= ?)
+                  AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
                 ORDER BY updated_at ASC
                 """,
-                (now,),
+                (now, now),
             ).fetchall()
 
             for r in rows:
@@ -95,7 +99,24 @@ class GoalScheduler:
 
         results = []
         for goal in due_goals:
-            # 1. Budget enforcement
+            lease_id = f"lease_{uuid.uuid4().hex}"
+            lease_expires_at = now + 30.0
+
+            # Atomic lease claim
+            with self.db.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    UPDATE goals SET lease_id = ?, lease_expires_at = ?
+                    WHERE id = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+                    """,
+                    (lease_id, lease_expires_at, goal.id, now),
+                )
+                conn.commit()
+                if cur.rowcount == 0:
+                    continue  # Claimed by concurrent worker
+
+            # 1. Comprehensive Budget Enforcement
             elapsed = now - goal.started_at
             budget_exceeded = False
             reason = ""
@@ -109,11 +130,17 @@ class GoalScheduler:
             elif elapsed >= goal.max_wall_seconds:
                 budget_exceeded = True
                 reason = f"Wall time exceeded ({int(elapsed)}s >= {goal.max_wall_seconds}s)"
+            elif goal.failures_used >= goal.max_failures:
+                budget_exceeded = True
+                reason = f"Failure limit reached ({goal.failures_used} >= {goal.max_failures})"
+            elif goal.retries_used >= goal.max_retries:
+                budget_exceeded = True
+                reason = f"Retry limit reached ({goal.retries_used} >= {goal.max_retries})"
 
             if budget_exceeded:
                 with self.db.get_connection() as conn:
                     conn.execute(
-                        "UPDATE goals SET state = 'PAUSED_BUDGET_EXCEEDED', last_error = ?, updated_at = ? WHERE id = ?",
+                        "UPDATE goals SET state = 'PAUSED_BUDGET_EXCEEDED', last_error = ?, updated_at = ?, lease_expires_at = NULL WHERE id = ?",
                         (reason, now, goal.id),
                     )
                     conn.commit()
@@ -124,25 +151,49 @@ class GoalScheduler:
             if self.executor:
                 try:
                     step_res = self.executor(goal.conversation_id, goal.objective)
-                    # Update next run if recurring
-                    next_run = now + 60.0  # default 1 min heartbeat
+                    # Update next run if recurring, or default heartbeat
+                    recurrence_delay = 60.0
+                    if goal.recurrence and goal.recurrence.isdigit():
+                        recurrence_delay = float(goal.recurrence)
+                    next_run = now + recurrence_delay
+
                     with self.db.get_connection() as conn:
                         conn.execute(
-                            "UPDATE goals SET next_run_at = ?, updated_at = ? WHERE id = ?",
+                            "UPDATE goals SET next_run_at = ?, updated_at = ?, lease_expires_at = NULL WHERE id = ?",
                             (next_run, now, goal.id),
                         )
                         conn.commit()
                     results.append({"goal_id": goal.id, "status": "STEP_EXECUTED", "result": str(step_res)[:100]})
                 except Exception as exc:
-                    results.append({"goal_id": goal.id, "status": "STEP_FAILED", "error": str(exc)})
+                    retries = goal.retries_used + 1
+                    failures = goal.failures_used + 1
+                    backoff_delay = min(300.0, 5.0 * (2 ** min(retries, 5)))
+                    next_run = now + backoff_delay
+
+                    with self.db.get_connection() as conn:
+                        conn.execute(
+                            "UPDATE goals SET retries_used = ?, failures_used = ?, next_run_at = ?, last_error = ?, updated_at = ?, lease_expires_at = NULL WHERE id = ?",
+                            (retries, failures, next_run, str(exc), now, goal.id),
+                        )
+                        conn.commit()
+                    results.append({"goal_id": goal.id, "status": "STEP_FAILED", "error": str(exc), "retry_in": backoff_delay})
             else:
+                with self.db.get_connection() as conn:
+                    conn.execute("UPDATE goals SET lease_expires_at = NULL WHERE id = ?", (goal.id,))
+                    conn.commit()
                 results.append({"goal_id": goal.id, "status": "DUE_NO_EXECUTOR"})
 
         return results
 
-    async def start(self) -> None:
+    def start(self, interval_seconds: Optional[float] = None) -> None:
+        if interval_seconds:
+            self.poll_interval = interval_seconds
         self._running = True
-        self._task = asyncio.create_task(self._loop())
+        try:
+            loop = asyncio.get_running_loop()
+            self._task = loop.create_task(self._loop())
+        except RuntimeError:
+            pass
 
     async def _loop(self) -> None:
         while self._running:

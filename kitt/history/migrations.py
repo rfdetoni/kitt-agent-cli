@@ -588,6 +588,36 @@ MIGRATIONS.append(Migration(
     )
 ))
 
+MIGRATIONS.append(Migration(
+    version=11,
+    name="prime_agent_hardening_v11",
+    statements=(
+        "ALTER TABLE goals ADD COLUMN lease_id TEXT;",
+        "ALTER TABLE goals ADD COLUMN lease_expires_at REAL;",
+        "ALTER TABLE goals ADD COLUMN max_cost REAL DEFAULT 0.0;",
+        "ALTER TABLE goals ADD COLUMN max_failures INTEGER DEFAULT 5;",
+        "ALTER TABLE goals ADD COLUMN max_retries INTEGER DEFAULT 3;",
+        "ALTER TABLE goals ADD COLUMN max_children INTEGER DEFAULT 5;",
+        "ALTER TABLE goals ADD COLUMN failures_used INTEGER DEFAULT 0;",
+        "ALTER TABLE goals ADD COLUMN retries_used INTEGER DEFAULT 0;",
+        "ALTER TABLE child_sessions ADD COLUMN current_task_id TEXT;",
+        "ALTER TABLE child_sessions ADD COLUMN task_started_at REAL;",
+        "ALTER TABLE child_sessions ADD COLUMN capabilities_json TEXT DEFAULT '[]';",
+        "ALTER TABLE child_sessions ADD COLUMN context_summary TEXT DEFAULT '';",
+        "ALTER TABLE child_messages ADD COLUMN correlation_id TEXT;",
+        "ALTER TABLE child_messages ADD COLUMN reply_to TEXT;",
+        "ALTER TABLE child_messages ADD COLUMN trace_id TEXT;",
+        """
+        CREATE INDEX IF NOT EXISTS idx_goals_due_lease
+        ON goals(state, next_run_at, lease_expires_at);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_child_messages_correlation
+        ON child_messages(correlation_id);
+        """,
+    )
+))
+
 class MigrationRunner:
     def __init__(self, migrations: list[Migration] = None):
         if migrations is None:

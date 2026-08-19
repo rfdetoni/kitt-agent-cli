@@ -6,6 +6,11 @@ from typing import Dict, Any, Optional
 class TurnMetrics:
     turn_id: str
     conversation_id: str
+    workspace_id: str = ""
+    trace_id: Optional[str] = None
+    goal_id: Optional[str] = None
+    child_id: Optional[str] = None
+    operation_id: Optional[str] = None
     timestamp: float = field(default_factory=time.time)
     context_model: str = ""
     execution_model: str = ""

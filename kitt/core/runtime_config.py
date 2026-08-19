@@ -86,6 +86,14 @@ class RuntimeConfig:
     # Switch workspace
     switch_workspace_in_memory_only: bool = False
 
+    # Prime Architecture Feature Flags & Tool Runtime Mode
+    tool_runtime_mode: str = "auto"  # "legacy" | "safe_runtime" | "auto"
+    safe_runtime_enabled: bool = True
+    daemon_enabled: bool = True
+    retained_agents_enabled: bool = True
+    executable_skills_enabled: bool = True
+    scheduler_enabled: bool = True
+
     @property
     def ephemeral(self) -> bool:
         return not (self.history_enabled and self.persistence_enabled)

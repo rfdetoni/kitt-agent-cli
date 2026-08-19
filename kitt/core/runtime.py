@@ -134,9 +134,18 @@ class KittRuntime:
             workspace_id=identity.id,
             event_callback=lambda name, payload: events.publish(name, payload),
         )
-        registry.attach_services(artifacts, queue, goals, children, harness)
         memory_repo = MemoryRepository(db)
         memory = MemoryManager(canon_root, persistence_enabled=persistence_enabled, memory_repo=memory_repo, workspace_id=identity.id)
+        registry.attach_services(
+            artifacts=artifacts,
+            queue_service=queue,
+            goal_service=goals,
+            child_manager=children,
+            harness_service=harness,
+            memory_service=memory,
+            skill_manager=skills,
+            db=db,
+        )
         egress_policy = EgressPolicy(mode=getattr(config, "privacy_mode", "hybrid_redacted"))
         sensitive_scanner = SensitiveDataScanner()
         path_policy = PathPolicy(canon_root)

@@ -21,6 +21,9 @@ class ChildMessage:
     payload: Dict[str, Any]
     status: str
     timestamp: float
+    correlation_id: Optional[str] = None
+    reply_to: Optional[str] = None
+    trace_id: Optional[str] = None
 
 
 class ChildMessageRepository:
@@ -38,6 +41,9 @@ class ChildMessageRepository:
         recipient_id: str,
         payload: Dict[str, Any],
         kind: str = "DIRECT",
+        correlation_id: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ) -> ChildMessage:
         msg_id = f"msg_{uuid.uuid4().hex}"
         now = time.time()
@@ -46,10 +52,10 @@ class ChildMessageRepository:
         with self.db.get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO child_messages (id, conversation_id, parent_id, child_id, sender_id, recipient_id, kind, payload_json, status, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SENT', ?)
+                INSERT INTO child_messages (id, conversation_id, parent_id, child_id, sender_id, recipient_id, kind, payload_json, status, timestamp, correlation_id, reply_to, trace_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SENT', ?, ?, ?, ?)
                 """,
-                (msg_id, conversation_id, parent_id, child_id, sender_id, recipient_id, kind, payload_json, now),
+                (msg_id, conversation_id, parent_id, child_id, sender_id, recipient_id, kind, payload_json, now, correlation_id, reply_to, trace_id),
             )
             conn.commit()
 
@@ -64,6 +70,9 @@ class ChildMessageRepository:
             payload=payload,
             status="SENT",
             timestamp=now,
+            correlation_id=correlation_id,
+            reply_to=reply_to,
+            trace_id=trace_id,
         )
 
     def list_messages(
@@ -88,28 +97,13 @@ class ChildMessageRepository:
 
         with self.db.get_connection() as conn:
             rows = conn.execute(query, params).fetchall()
-            messages = []
-            for r in rows:
-                d = dict(r)
-                try:
-                    payload = json.loads(d.get("payload_json", "{}"))
-                except Exception:
-                    payload = {}
-                messages.append(
-                    ChildMessage(
-                        id=d["id"],
-                        conversation_id=d["conversation_id"],
-                        parent_id=d["parent_id"],
-                        child_id=d["child_id"],
-                        sender_id=d["sender_id"],
-                        recipient_id=d["recipient_id"],
-                        kind=d["kind"],
-                        payload=payload,
-                        status=d["status"],
-                        timestamp=d["timestamp"],
-                    )
-                )
-            return messages
+            return [self._row_to_msg(r) for r in rows]
+
+    def list_replies(self, correlation_id: str) -> List[ChildMessage]:
+        query = "SELECT * FROM child_messages WHERE correlation_id = ? AND kind = 'REPLY' ORDER BY timestamp ASC"
+        with self.db.get_connection() as conn:
+            rows = conn.execute(query, (correlation_id,)).fetchall()
+            return [self._row_to_msg(r) for r in rows]
 
     def mark_delivered(self, message_id: str) -> bool:
         with self.db.get_connection() as conn:
@@ -117,3 +111,25 @@ class ChildMessageRepository:
             cur.execute("UPDATE child_messages SET status = 'DELIVERED' WHERE id = ?", (message_id,))
             conn.commit()
             return cur.rowcount > 0
+
+    def _row_to_msg(self, r: Any) -> ChildMessage:
+        d = dict(r)
+        try:
+            payload = json.loads(d.get("payload_json", "{}"))
+        except Exception:
+            payload = {}
+        return ChildMessage(
+            id=d["id"],
+            conversation_id=d["conversation_id"],
+            parent_id=d["parent_id"],
+            child_id=d["child_id"],
+            sender_id=d["sender_id"],
+            recipient_id=d["recipient_id"],
+            kind=d["kind"],
+            payload=payload,
+            status=d["status"],
+            timestamp=d["timestamp"],
+            correlation_id=d.get("correlation_id"),
+            reply_to=d.get("reply_to"),
+            trace_id=d.get("trace_id"),
+        )

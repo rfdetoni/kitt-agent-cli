@@ -9,12 +9,15 @@ class ContextHandleResolver:
     """Resolves and validates compact context handles (ctx:..., artifact:..., child:..., goal:...)."""
 
     def __init__(self, root_dir: str | Path, repository_index=None, artifact_store=None,
-                 child_manager=None, goal_service=None):
+                 child_manager=None, goal_service=None, workspace_id: Optional[str] = None,
+                 conversation_id: Optional[str] = None):
         self.root = Path(root_dir).resolve()
         self.index = repository_index
         self.artifacts = artifact_store
         self.children = child_manager
         self.goals = goal_service
+        self.workspace_id = workspace_id
+        self.conversation_id = conversation_id
 
     def resolve(self, handle: str) -> Dict[str, Any]:
         """Resolve a handle string into structured content."""
@@ -92,6 +95,10 @@ class ContextHandleResolver:
         art = self.artifacts.get(artifact_id)
         if not art:
             raise KeyError(f"Artifact '{artifact_id}' not found")
+        if self.workspace_id and getattr(art, "workspace_id", None) and art.workspace_id != self.workspace_id:
+            raise PermissionError(f"Cross-workspace artifact access denied for '{artifact_id}'")
+        if self.conversation_id and getattr(art, "conversation_id", None) and art.conversation_id != self.conversation_id:
+            raise PermissionError(f"Cross-conversation artifact access denied for '{artifact_id}'")
         content = self.artifacts.read_text(artifact_id, limit=2000)
         return {
             "handle": f"artifact:{artifact_id}",
@@ -108,6 +115,10 @@ class ContextHandleResolver:
         child = self.children.inspect(child_id)
         if not child:
             raise KeyError(f"Child session '{child_id}' not found")
+        if self.workspace_id and getattr(child, "workspace_id", None) and child.workspace_id != self.workspace_id:
+            raise PermissionError(f"Cross-workspace child access denied for '{child_id}'")
+        if self.conversation_id and getattr(child, "parent_conversation_id", None) and child.parent_conversation_id != self.conversation_id:
+            raise PermissionError(f"Cross-conversation child access denied for '{child_id}'")
         return {
             "handle": f"child:{child_id}",
             "kind": "child",
@@ -124,6 +135,8 @@ class ContextHandleResolver:
         goal = self.goals.get(goal_id)
         if not goal:
             raise KeyError(f"Goal '{goal_id}' not found")
+        if self.conversation_id and getattr(goal, "conversation_id", None) and goal.conversation_id != self.conversation_id:
+            raise PermissionError(f"Cross-conversation goal access denied for '{goal_id}'")
         return {
             "handle": f"goal:{goal_id}",
             "kind": "goal",

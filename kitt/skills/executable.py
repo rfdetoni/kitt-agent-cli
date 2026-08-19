@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
+import ast
+import concurrent.futures
+import datetime
+import json
+import math
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +50,77 @@ class ExecutableSkillMetadata:
     is_executable: bool = False
 
 
+# Security: AST verification of untrusted skill code
+FORBIDDEN_MODULES = {
+    "os", "sys", "subprocess", "socket", "shutil", "importlib", "builtins",
+    "posix", "nt", "ctypes", "threading", "multiprocessing", "signal",
+    "inspect", "pickle", "urllib", "http", "requests", "aiohttp", "pathlib",
+    "code", "codeop", "pty", "commands",
+}
+
+FORBIDDEN_CALLS = {
+    "eval", "exec", "open", "compile", "__import__", "globals", "locals",
+    "vars", "breakpoint", "input", "exit", "quit", "getattr", "setattr", "delattr",
+}
+
+FORBIDDEN_ATTRIBUTES = {
+    "__subclasses__", "__bases__", "__globals__", "__code__", "__closure__",
+    "__mro__", "__import__", "__builtins__", "__dict__",
+}
+
+
+def validate_skill_ast(source: str) -> None:
+    """Statically validates that skill code does not use prohibited modules, calls, or reflection."""
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        # 1. Block prohibited imports
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                mod = alias.name.split(".")[0]
+                if mod in FORBIDDEN_MODULES:
+                    raise PermissionError(f"Import of forbidden module '{mod}' blocked in executable skill")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                mod = node.module.split(".")[0]
+                if mod in FORBIDDEN_MODULES:
+                    raise PermissionError(f"Import from forbidden module '{mod}' blocked in executable skill")
+
+        # 2. Block prohibited function calls
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
+                raise PermissionError(f"Call to prohibited function '{node.func.id}' blocked in executable skill")
+
+        # 3. Block dangerous attributes / reflection
+        elif isinstance(node, ast.Attribute):
+            if node.attr in FORBIDDEN_ATTRIBUTES:
+                raise PermissionError(f"Access to dangerous attribute '{node.attr}' blocked in executable skill")
+
+
+def _safe_import(name: str, globals: Any = None, locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
+    mod_root = name.split(".")[0]
+    if mod_root in FORBIDDEN_MODULES:
+        raise PermissionError(f"Import of forbidden module '{mod_root}' is blocked in executable skill")
+    return __import__(name, globals, locals, fromlist, level)
+
+
+SAFE_BUILTINS = {
+    "__import__": _safe_import,
+    "abs": abs, "all": all, "any": any, "ascii": ascii, "bin": bin, "bool": bool,
+    "bytearray": bytearray, "bytes": bytes, "chr": chr, "dict": dict, "divmod": divmod,
+    "enumerate": enumerate, "filter": filter, "float": float, "format": format,
+    "frozenset": frozenset, "hasattr": hasattr, "hash": hash, "hex": hex, "int": int,
+    "isinstance": isinstance, "issubclass": issubclass, "iter": iter, "len": len,
+    "list": list, "map": map, "max": max, "min": min, "next": next, "oct": oct,
+    "ord": ord, "pow": pow, "print": lambda *a, **k: None, "range": range, "repr": repr,
+    "reversed": reversed, "round": round, "set": set, "slice": slice, "sorted": sorted,
+    "str": str, "sum": sum, "tuple": tuple, "type": type, "zip": zip,
+    "Exception": Exception, "ValueError": ValueError, "KeyError": KeyError,
+    "TypeError": TypeError, "IndexError": IndexError, "RuntimeError": RuntimeError,
+    "PermissionError": PermissionError, "True": True, "False": False, "None": None,
+}
+
+
 class SkillExecutionContext:
     """Restricted capability facade passed into executable skills."""
 
@@ -67,47 +142,75 @@ class SkillExecutionContext:
             raise PermissionError(
                 f"Skill '{self.metadata.name}' attempted '{cap}' without declaring capability in frontmatter"
             )
+        if cap in self.metadata.requires_approval:
+            approval = getattr(self.runtime, "approval_manager", None) or getattr(getattr(self.runtime, "registry", None), "approval_manager", None)
+            if approval and hasattr(approval, "check_approval"):
+                if not approval.check_approval(cap):
+                    raise PermissionError(f"Skill '{self.metadata.name}' operation '{cap}' requires user approval")
 
     def search_repo(self, pattern: str, regex: bool = False) -> Any:
         self._require_capability(CAP_REPO_SEARCH)
-        return self.runtime.execute("repo.search", {"pattern": pattern, "regex": regex}).data
+        res = self.runtime.execute("repo.search", {"pattern": pattern, "regex": regex}, effective_capabilities=self.declared_caps)
+        if not res.success:
+            raise RuntimeError(f"repo.search failed: {res.error}")
+        return res.data
 
     def read_file(self, path: str, start_line: int = 1, end_line: int = 100) -> str:
         self._require_capability(CAP_REPO_READ)
-        res = self.runtime.execute("repo.read", {"path": path, "start_line": start_line, "end_line": end_line})
+        res = self.runtime.execute("repo.read", {"path": path, "start_line": start_line, "end_line": end_line}, effective_capabilities=self.declared_caps)
+        if not res.success:
+            raise RuntimeError(f"repo.read failed: {res.error}")
         return str(res.data or "")
 
     def inspect_symbol(self, symbol: str) -> Any:
         self._require_capability(CAP_REPO_READ)
-        return self.runtime.execute("repo.inspect_symbol", {"symbol": symbol}).data
+        res = self.runtime.execute("repo.inspect_symbol", {"symbol": symbol}, effective_capabilities=self.declared_caps)
+        if not res.success:
+            raise RuntimeError(f"repo.inspect_symbol failed: {res.error}")
+        return res.data
 
     def store_artifact(self, content: str, artifact_type: str = "SKILL_OUTPUT", summary: str = "") -> str:
         self._require_capability(CAP_ARTIFACT_WRITE)
         res = self.runtime.execute(
             "artifacts.store",
             {"content": content, "artifact_type": artifact_type, "summary": summary},
+            effective_capabilities=self.declared_caps,
         )
+        if not res.success:
+            raise RuntimeError(f"artifacts.store failed: {res.error}")
         return str(res.data or "")
 
     def read_artifact(self, artifact_id: str) -> str:
         self._require_capability(CAP_ARTIFACT_READ)
-        res = self.runtime.execute("artifacts.read", {"artifact_id": artifact_id})
+        res = self.runtime.execute("artifacts.read", {"artifact_id": artifact_id}, effective_capabilities=self.declared_caps)
+        if not res.success:
+            raise RuntimeError(f"artifacts.read failed: {res.error}")
         return str(res.data or "")
 
     def apply_patch(self, patch: str) -> Any:
         self._require_capability(CAP_REPO_WRITE)
-        return self.runtime.execute("patch.apply", {"patch": patch}).data
+        res = self.runtime.execute("patch.apply", {"patch": patch}, effective_capabilities=self.declared_caps)
+        if not res.success:
+            raise RuntimeError(f"patch.apply failed: {res.error}")
+        return res.data
 
     def run_command(self, command: str) -> Any:
         self._require_capability(CAP_PROCESS_RUN)
-        return self.runtime.execute("process.run", {"command": command}).data
+        res = self.runtime.execute("process.run", {"command": command}, effective_capabilities=self.declared_caps)
+        if not res.success:
+            raise RuntimeError(f"process.run failed: {res.error}")
+        return res.data
 
     def spawn_child(self, name: str, task: str, allowed_paths: Optional[List[str]] = None) -> Any:
         self._require_capability(CAP_CHILD_SPAWN)
-        return self.runtime.execute(
+        res = self.runtime.execute(
             "children.spawn",
             {"name": name, "task": task, "allowed_paths": allowed_paths or []},
-        ).data
+            effective_capabilities=self.declared_caps,
+        )
+        if not res.success:
+            raise RuntimeError(f"children.spawn failed: {res.error}")
+        return res.data
 
     def call_skill(self, skill_name: str, arguments: Dict[str, Any]) -> SkillResult:
         if len(self.call_stack) >= self.max_depth:
@@ -118,14 +221,7 @@ class SkillExecutionContext:
         new_stack = set(self.call_stack)
         new_stack.add(skill_name)
         runner = ExecutableSkillRunner(self.runtime)
-        return runner.execute(skill_name, arguments, call_stack=new_stack)
-
-
-class ExecutableSkill(Protocol):
-    metadata: ExecutableSkillMetadata
-
-    def execute(self, context: SkillExecutionContext, arguments: Dict[str, Any]) -> Any:
-        ...
+        return runner.execute(skill_name, arguments, call_stack=new_stack, parent_capabilities=self.declared_caps)
 
 
 class ExecutableSkillRunner:
@@ -140,7 +236,6 @@ class ExecutableSkillRunner:
         if not skill_md.exists():
             return None
 
-        import re
         content = skill_md.read_text(encoding="utf-8", errors="ignore")
         match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
         meta_dict: Dict[str, Any] = {}
@@ -172,7 +267,6 @@ class ExecutableSkillRunner:
         version = meta_dict.get("version", "1.0.0")
         author = meta_dict.get("author", "Unknown")
 
-        # Validate capabilities against known set
         if capabilities:
             validate_capabilities(capabilities)
 
@@ -194,6 +288,7 @@ class ExecutableSkillRunner:
         skill_name: str,
         arguments: Dict[str, Any],
         call_stack: Optional[Set[str]] = None,
+        parent_capabilities: Optional[Set[str]] = None,
     ) -> SkillResult:
         start = time.perf_counter()
         skill_dir = self._find_skill_dir(skill_name)
@@ -212,21 +307,43 @@ class ExecutableSkillRunner:
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
 
+        # Enforce capability inheritance if nested
+        if parent_capabilities is not None:
+            effective_caps = set(meta.capabilities) & parent_capabilities
+            meta.capabilities = list(effective_caps)
+
         py_file = skill_dir / "skill.py"
         try:
-            mod_name = f"kitt_skill_{skill_name}_{int(time.time()*1000)}"
-            spec = importlib.util.spec_from_file_location(mod_name, str(py_file))
-            if not spec or not spec.loader:
-                raise ImportError(f"Could not load spec for {py_file}")
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            source = py_file.read_text(encoding="utf-8", errors="replace")
 
-            handler = getattr(module, "execute", None) or getattr(module, "main", None)
+            # 1. AST Validation
+            validate_skill_ast(source)
+
+            # 2. Restricted compilation and sandboxed namespace
+            compiled = compile(source, filename=str(py_file), mode="exec")
+
+            sandbox_globals = {
+                "__builtins__": SAFE_BUILTINS,
+                "json": json,
+                "math": math,
+                "re": re,
+                "datetime": datetime,
+            }
+            sandbox_locals: Dict[str, Any] = {}
+
+            exec(compiled, sandbox_globals, sandbox_locals)
+
+            handler = sandbox_locals.get("execute") or sandbox_locals.get("main")
             if not callable(handler):
                 raise AttributeError(f"Skill '{skill_name}/skill.py' must define an 'execute(context, arguments)' function")
 
             ctx = SkillExecutionContext(meta, self.runtime, call_stack=call_stack)
-            res = handler(ctx, arguments)
+
+            # 3. Timeout enforcement
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(handler, ctx, arguments)
+                res = future.result(timeout=self.timeout)
+
             dur = (time.perf_counter() - start) * 1000
             return SkillResult(success=True, data=res, duration_ms=dur)
         except Exception as exc:
@@ -234,11 +351,12 @@ class ExecutableSkillRunner:
             return SkillResult(success=False, error=f"Skill '{skill_name}' failed: {exc}", duration_ms=dur)
 
     def _find_skill_dir(self, skill_name: str) -> Optional[Path]:
+        root_dir = getattr(self.runtime, "root", Path("."))
         candidates = [
-            Path(self.runtime.root) / ".kitt" / "skills" / skill_name,
+            Path(root_dir) / ".kitt" / "skills" / skill_name,
             Path.home() / ".kitt" / "skills" / skill_name,
-            Path(self.runtime.root) / "skills" / skill_name,
-            Path(self.runtime.root) / "plugins" / skill_name / "skills" / skill_name,
+            Path(root_dir) / "skills" / skill_name,
+            Path(root_dir) / "plugins" / skill_name / "skills" / skill_name,
         ]
         for c in candidates:
             if c.exists() and c.is_dir():

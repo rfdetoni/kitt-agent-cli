@@ -19,7 +19,7 @@ class ArtifactStoreHandler:
             ctx.conversation_id,
             ctx.turn_id,
         )
-        return ToolResult(True, artifact.id, metadata={"artifact": artifact})
+        return ToolResult(True, artifact.id, metadata={"artifact": artifact, "artifact_id": artifact.id})
 
 
 class ArtifactReadHandler:
@@ -68,7 +68,8 @@ class GoalCreateHandler:
             int(args.get("max_turns", 12)),
             int(args.get("max_wall_seconds", 1800)),
         )
-        return ToolResult(True, goal.id if hasattr(goal, "id") else str(goal))
+        goal_id = goal.id if hasattr(goal, "id") else str(goal)
+        return ToolResult(True, goal_id, metadata={"goal_id": goal_id})
 
 
 class GoalAddGateHandler:
@@ -102,7 +103,7 @@ class ChildSpawnHandler:
             token_budget=int(args.get("token_budget", 4000)),
             timeout_seconds=float(args.get("timeout_seconds", 60.0)),
         )
-        return ToolResult(True, f"Child task spawned with ID {child.id}.")
+        return ToolResult(True, f"Child task spawned with ID {child.id}.", metadata={"child_id": child.id, "child": child})
 
 
 class HarnessRememberHandler:

@@ -141,7 +141,7 @@ class ToolRegistry:
             elif index.index_generation() == 0:
                 index.build_or_update()
 
-    def attach_services(self, artifacts=None, queue_service=None, goal_service=None, child_manager=None, harness_service=None):
+    def attach_services(self, artifacts=None, queue_service=None, goal_service=None, child_manager=None, harness_service=None, memory_service=None, skill_manager=None, db=None):
         self.artifacts = artifacts
         self.artifact_tools = ArtifactTools(artifacts) if artifacts else None
         self.queue_service = queue_service
@@ -150,6 +150,9 @@ class ToolRegistry:
         self.child_manager = child_manager
         self.child_tools = ChildTools(child_manager) if child_manager else None
         self.harness_service = harness_service
+        self.memory_service = memory_service
+        self.skill_manager = skill_manager
+        self.db = db
 
     def get_tool_definitions(self, enabled_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         all_tools = [
