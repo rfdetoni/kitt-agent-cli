@@ -17,13 +17,16 @@ class DaemonClient:
 
     def __init__(
         self,
-        socket_path: Optional[Path] = None,
-        token_path: Optional[Path] = None,
         workspace_root: Optional[Path | str] = None,
+        socket_path: Optional[Path | str] = None,
+        token_path: Optional[Path | str] = None,
+        token: Optional[str] = None,
     ):
-        self.socket_path = socket_path or get_default_socket_path()
-        self.token_path = token_path or get_default_token_path()
-        self.transport = IPCTransport(workspace_root or Path.cwd())
+        self.workspace_root = Path(workspace_root or Path.cwd()).resolve()
+        self.transport = IPCTransport(self.workspace_root)
+        self.socket_path = Path(socket_path) if socket_path else self.transport.socket_path
+        self.token_path = Path(token_path) if token_path else (self.transport.kitt_dir / "daemon.token")
+        self.token_override = token
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
@@ -36,10 +39,10 @@ class DaemonClient:
         endpoint = self.transport.read_endpoint_metadata()
         if not endpoint and not self.socket_path.exists():
             return False
-        if not self.token_path.exists():
-            return False
 
-        token = self.token_path.read_text(encoding="utf-8").strip()
+        token = self.token_override or (self.token_path.read_text(encoding="utf-8").strip() if self.token_path.exists() else "")
+        if not token:
+            return False
 
         try:
             if endpoint and endpoint.transport_type == "tcp" and endpoint.port:
@@ -130,6 +133,12 @@ class DaemonClient:
         finally:
             self._pending_requests.pop(req_id, None)
 
+    async def send_request(self, action: str, params: Optional[Dict[str, Any]] = None, timeout: float = 15.0) -> Dict[str, Any]:
+        payload = {"action": action}
+        if params:
+            payload.update(params)
+        return await self._send_request(payload, timeout=timeout)
+
     async def list_sessions(self, workspace: Optional[str] = None) -> Dict[str, Any]:
         return await self._send_request({"action": "list_sessions", "workspace": workspace})
 
@@ -138,15 +147,18 @@ class DaemonClient:
         session_id: str,
         last_sequence: int = 0,
         event_callback: Optional[Callable[[DaemonEvent], None]] = None,
+        on_event: Optional[Callable[[DaemonEvent], None]] = None,
         workspace: Optional[str] = None,
     ) -> Dict[str, Any]:
-        self._event_callback = event_callback
+        self._event_callback = on_event or event_callback
         resp = await self._send_request({
             "action": "attach",
             "session_id": session_id,
             "last_sequence": last_sequence,
             "workspace": workspace,
         })
+        raw_events = resp.get("events", [])
+        resp["events"] = [DaemonEvent.from_dict(e) if isinstance(e, dict) else e for e in raw_events]
         return resp
 
     async def detach(self) -> Dict[str, Any]:
@@ -154,13 +166,14 @@ class DaemonClient:
         self._event_callback = None
         return resp
 
-    async def send_input(self, session_id: str, text: str, workspace: Optional[str] = None) -> Dict[str, Any]:
-        return await self._send_request({
+    async def send_input(self, session_id: str, text: str, workspace: Optional[str] = None) -> bool:
+        resp = await self._send_request({
             "action": "send_input",
             "session_id": session_id,
             "text": text,
             "workspace": workspace,
         })
+        return resp.get("status") == "ok"
 
     async def stop_daemon(self) -> Dict[str, Any]:
         return await self._send_request({"action": "stop"})

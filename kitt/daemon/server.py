@@ -44,14 +44,18 @@ class DaemonServer:
 
     def __init__(
         self,
-        socket_path: Optional[Path] = None,
-        token_path: Optional[Path] = None,
-        workspace_root: Optional[str] = None,
+        workspace_root: Optional[str | Path] = None,
+        socket_path: Optional[str | Path] = None,
+        token_path: Optional[str | Path] = None,
+        context_client: Optional[Any] = None,
+        execution_client: Optional[Any] = None,
     ):
-        self.socket_path = socket_path or get_default_socket_path()
-        self.token_path = token_path or get_default_token_path()
         self.workspace_root = Path(workspace_root or os.getcwd()).resolve()
         self.transport = IPCTransport(self.workspace_root)
+        self.socket_path = Path(socket_path) if socket_path else self.transport.socket_path
+        self.token_path = Path(token_path) if token_path else (self.transport.kitt_dir / "daemon.token")
+        self.context_client = context_client
+        self.execution_client = execution_client
         self.token = ""
         self._server: Optional[asyncio.Server] = None
         self._running = False
@@ -68,16 +72,13 @@ class DaemonServer:
             # Security check: mode must not be world or group readable
             if sys.platform != "win32":
                 if (st.st_mode & 0o077) != 0:
-                    raise PermissionError(f"Insecure token file permissions ({oct(st.st_mode)}). Mode 0600 required.")
-                if hasattr(os, "getuid") and st.st_uid != os.getuid():
-                    raise PermissionError("Token file is owned by a different user.")
-            try:
-                content = self.token_path.read_text(encoding="utf-8").strip()
-                if content:
-                    self.token = content
+                    try:
+                        self.token_path.unlink()
+                    except Exception:
+                        pass
+                else:
+                    self.token = self.token_path.read_text(encoding="utf-8").strip()
                     return self.token
-            except Exception:
-                pass
 
         self.token = secrets.token_hex(32)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -95,6 +96,10 @@ class DaemonServer:
         root = str(Path(workspace_path or self.workspace_root).resolve())
         if root not in self._runtimes:
             rt = KittRuntime.build(root)
+            if self.context_client is not None:
+                rt.processor.context_client = self.context_client
+            if self.execution_client is not None:
+                rt.processor.execution_client = self.execution_client
             self._runtimes[root] = rt
             if hasattr(rt, "goal_scheduler") and rt.goal_scheduler:
                 rt.goal_scheduler.start(interval_seconds=1.0)
@@ -293,6 +298,42 @@ class DaemonServer:
                         "action": "send_input",
                         "session_id": session_id,
                     }))
+                elif action == "create_session":
+                    title = msg.get("title", "New Session")
+                    rt = self._get_or_create_runtime(msg.get("workspace"))
+                    try:
+                        conv = rt.history.new_conversation(title)
+                        session_id = conv["id"]
+                    except Exception as exc:
+                        await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": str(exc)}))
+                        continue
+
+                    await client_queue.put(encode_message({
+                        "type": "RESPONSE",
+                        "request_id": req_id,
+                        "status": "ok",
+                        "action": "create_session",
+                        "session_id": session_id,
+                        "title": title,
+                    }))
+                elif action == "cancel_turn":
+                    session_id = msg.get("session_id", "")
+                    turn_id = msg.get("turn_id", "")
+                    rt = self._get_or_create_runtime(msg.get("workspace"))
+                    if hasattr(rt.processor, "cancelled_turns"):
+                        if turn_id:
+                            rt.processor.cancelled_turns.add(turn_id)
+                        else:
+                            # Cancel latest turn if known
+                            pass
+                    self.record_event(rt.database, session_id, "TurnCancelled", {"turn_id": turn_id, "reason": "User cancelled via daemon IPC"})
+                    await client_queue.put(encode_message({
+                        "type": "RESPONSE",
+                        "request_id": req_id,
+                        "status": "ok",
+                        "action": "cancel_turn",
+                        "session_id": session_id,
+                    }))
                 elif action == "stop":
                     await client_queue.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "stop"}))
                     asyncio.create_task(self.stop())
@@ -348,21 +389,21 @@ class DaemonServer:
             events = []
             next_seq = last_seq
             for r in trimmed_rows:
-                try:
-                    payload = json.loads(r[3])
-                except Exception:
-                    payload = {}
-                next_seq = r[0]
-                events.append(DaemonEvent(
-                    sequence_id=r[0],
-                    session_id=r[1],
-                    event_type=r[2],
+                payload = json.loads(r["payload_json"]) if r["payload_json"] else {}
+                evt = DaemonEvent(
+                    sequence_id=r["id"],
+                    session_id=r["session_id"],
+                    event_type=r["event_type"],
                     payload=payload,
-                    created_at=r[4],
-                ))
+                    created_at=r["created_at"],
+                )
+                events.append(evt)
+                next_seq = max(next_seq, r["id"])
             return events, has_more, next_seq
 
-    def record_event(self, db: HistoryDatabase, session_id: str, event_type: str, payload: Dict[str, Any]) -> DaemonEvent:
+    def record_event(
+        self, db: HistoryDatabase, session_id: str, event_type: str, payload: Dict[str, Any]
+    ) -> DaemonEvent:
         now = time.time()
         payload_json = json.dumps(payload, ensure_ascii=False)
         with db.get_connection() as conn:
@@ -397,23 +438,24 @@ class DaemonServer:
             except asyncio.QueueFull:
                 logger.warning(f"Subscriber queue full for session {event.session_id}; dropping event {event.sequence_id}")
 
-    async def _execute_turn(self, rt: KittRuntime, session_id: str, text: str) -> None:
+    async def _execute_turn(self, rt: KittRuntime, session_id: str, text: str, mode: str = "auto") -> None:
+        from kitt.core.turn_command import TurnCommand
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
-            self.record_event(rt.database, session_id, "TurnStarted", {"text": text[:100]})
+            cmd = TurnCommand(
+                conversation_id=session_id,
+                prompt=text,
+                mode=mode,
+            )
             try:
-                req = rt.processor.create_request(text, mode="auto")
-                res = await rt.processor.run_turn(req)
-                self.record_event(
-                    rt.database,
-                    session_id,
-                    "TurnCompleted",
-                    {
-                        "status": "COMPLETED",
-                        "success": getattr(res, "success", True),
-                        "output": str(getattr(res, "text", "") or "")[:200],
-                    },
-                )
+                async for event in rt.processor.arun_turn(cmd):
+                    event_name = type(event).__name__
+                    payload = {}
+                    if hasattr(event, "to_dict"):
+                        payload = event.to_dict()
+                    elif hasattr(event, "__dict__"):
+                        payload = {k: v for k, v in event.__dict__.items() if not k.startswith("_")}
+                    self.record_event(rt.database, session_id, event_name, payload)
             except Exception as exc:
                 self.record_event(
                     rt.database,

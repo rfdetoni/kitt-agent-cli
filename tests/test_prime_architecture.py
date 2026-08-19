@@ -85,12 +85,12 @@ class TestPrimeArchitecture(unittest.TestCase):
         )
 
         # Read allowed
-        res = safe_rt.execute("repo.read", {"path": "module.py", "start_line": 1, "end_line": 2})
+        res = safe_rt.execute("repo.read", {"path": "module.py", "start_line": 1, "end_line": 2}, effective_capabilities={"repo.read"})
         self.assertTrue(res.success)
         self.assertIn("target_fn", str(res.data))
 
         # Path traversal blocked
-        res_esc = safe_rt.execute("repo.read", {"path": "../../etc/passwd"})
+        res_esc = safe_rt.execute("repo.read", {"path": "../../etc/passwd"}, effective_capabilities={"repo.read"})
         self.assertFalse(res_esc.success)
 
     # --- 3. RuntimeState limits & TTL ---

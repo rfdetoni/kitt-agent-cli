@@ -35,7 +35,7 @@ class ExecutionSecurityContext:
         cls,
         workspace_id: str,
         conversation_id: str,
-        turn_id: str,
+        turn_id: str = "",
         capabilities: Optional[Iterable[str]] = None,
         trace_id: Optional[str] = None,
     ) -> ExecutionSecurityContext:

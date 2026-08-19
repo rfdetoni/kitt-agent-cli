@@ -18,6 +18,9 @@ class ToolSurfaceSelector:
         runtime_mode_override: Optional[str] = None,
     ) -> List[str]:
         """Determine the set of tool names to expose to the LLM for a given turn."""
+        if not plan.enabled_tools:
+            return []
+
         mode = runtime_mode_override or getattr(self.config, "tool_runtime_mode", "auto")
 
         if mode == "safe_runtime":
@@ -27,7 +30,7 @@ class ToolSurfaceSelector:
             return plan.enabled_tools
 
         # Auto mode: if safe_runtime is enabled and provider/model supports tool calling, use safe_runtime
-        if getattr(self.config, "safe_runtime_enabled", True):
+        if getattr(self.config, "safe_runtime_enabled", False):
             if model_capabilities is None or getattr(model_capabilities, "supports_tools", True):
                 return ["kitt_runtime"]
 

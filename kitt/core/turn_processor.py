@@ -691,11 +691,13 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     def _build_system_prompt(self, cmd: TurnCommand, task: SemanticTask, plan: ContextPlan,
                              exe_profile: ModelProfile, context_map_str: str, explicit_str: str,
                              agents_str: str, skills_str: str, agent_addressed: bool,
-                             workspace_id: str, budget: PromptBudget) -> tuple:
+                             workspace_id: str, budget: PromptBudget,
+                             exposed_tools: Optional[List[str]] = None) -> tuple:
         mandatory_constraints = [c.text for c in task.constraints if c.mandatory]
         use_agent_prompt = bool(plan.enabled_tools) or agent_addressed
         if plan.enabled_tools:
-            tool_contract = self._tool_instructions(plan.enabled_tools)
+            tools_for_contract = exposed_tools if exposed_tools is not None else plan.enabled_tools
+            tool_contract = self._tool_instructions(tools_for_contract)
             base_sys = (
                 f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
                 f"Tool Contract:\n{tool_contract}\n\n"
@@ -711,7 +713,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
         # Single canonical task prompt decision (IR_ONLY / IR_PLUS_ORIGINAL / ORIGINAL):
         if plan.enabled_tools:
-            if not plan.include_original_prompt and task.goal and task.intent != "UNKNOWN":
+            if getattr(task, "confidence", 1.0) < 0.70:
+                principal_task_prompt = cmd.prompt
+            elif not plan.include_original_prompt and task.goal and task.intent != "UNKNOWN":
                 principal_task_prompt = task.to_execution_prompt()
             elif task.goal and task.intent != "UNKNOWN" and task.confidence >= 0.70:
                 principal_task_prompt = f"{task.to_execution_prompt()}\n\nOriginal Request:\n{cmd.prompt}"
@@ -1230,14 +1234,14 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
 
             exe_client = self.execution_client or LLMClient(exe_profile)
-            plan.enabled_tools = self.surface_selector.select_tools(
+            exposed_tools = self.surface_selector.select_tools(
                 plan,
                 model_capabilities=getattr(exe_client, "capabilities", None),
             )
 
             sys_prompt, base_sys, allocated, request = self._build_system_prompt(
                 cmd, task, plan, exe_profile, context_map_str, explicit_str, agents_str,
-                skills_str, agent_addressed, workspace_id, budget
+                skills_str, agent_addressed, workspace_id, budget, exposed_tools=exposed_tools
             )
             self._emit("BudgetApplied", {"allocated": allocated})
             yield BudgetApplied(
