@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Literal
+
 
 @dataclass(frozen=True)
 class WorkspaceIdentity:
@@ -8,30 +11,37 @@ class WorkspaceIdentity:
     canonical_root: Path
     canonical_path_hash: str
 
+
 TaskType = Literal[
-    'context-gather',
-    'summarize',
-    'code-generation',
-    'code-edit',
-    'validate-diff'
+    "context-gather",
+    "summarize",
+    "code-generation",
+    "code-edit",
+    "validate-diff",
 ]
 
 TaskIntent = Literal[
-    'ASK',
-    'PLAN',
-    'IMPLEMENT',
-    'DEBUG',
-    'TEST',
-    'REVIEW',
-    'DOCUMENT',
-    'REFACTOR',
-    'UNKNOWN'
+    "ASK",
+    "PLAN",
+    "IMPLEMENT",
+    "DEBUG",
+    "TEST",
+    "REVIEW",
+    "DOCUMENT",
+    "REFACTOR",
+    "UNKNOWN",
 ]
 
-RiskLevel = Literal['LOW', 'MEDIUM', 'HIGH']
-Permission = Literal['ALLOW', 'ASK', 'DENY']
-ConstraintKind = Literal['NEGATIVE', 'MANDATORY', 'LIMIT', 'SCOPE']
-SourceKind = Literal['USER_LITERAL', 'DETERMINISTIC', 'LLM_NORMALIZED', 'REPOSITORY_EVIDENCE', 'TOOL_RESULT']
+RiskLevel = Literal["LOW", "MEDIUM", "HIGH"]
+Permission = Literal["ALLOW", "ASK", "DENY"]
+ConstraintKind = Literal["NEGATIVE", "MANDATORY", "LIMIT", "SCOPE"]
+SourceKind = Literal[
+    "USER_LITERAL",
+    "DETERMINISTIC",
+    "LLM_NORMALIZED",
+    "REPOSITORY_EVIDENCE",
+    "TOOL_RESULT",
+]
 
 
 @dataclass
@@ -45,7 +55,14 @@ class SemanticConfidence:
 
     @classmethod
     def from_overall(cls, val: float) -> SemanticConfidence:
-        return cls(intent=val, goal=val, targets=val, constraints=val, actions=val, overall=val)
+        return cls(
+            intent=val,
+            goal=val,
+            targets=val,
+            constraints=val,
+            actions=val,
+            overall=val,
+        )
 
 
 @dataclass
@@ -55,13 +72,13 @@ class Constraint:
     source_start: int
     source_end: int
     mandatory: bool = True
-    source: SourceKind = 'USER_LITERAL'
+    source: SourceKind = "USER_LITERAL"
 
 
 @dataclass
 class SemanticTask:
     original_prompt: str
-    intent: TaskIntent = 'UNKNOWN'
+    intent: TaskIntent = "UNKNOWN"
     secondary_intents: List[TaskIntent] = field(default_factory=list)
     goal: str = ""
     actions: List[str] = field(default_factory=list)
@@ -70,37 +87,39 @@ class SemanticTask:
     technologies: List[str] = field(default_factory=list)
     constraints: List[Constraint] = field(default_factory=list)
     validation_hints: List[str] = field(default_factory=list)
-    risk: RiskLevel = 'LOW'
+    risk: RiskLevel = "LOW"
     confidence: float = 1.0
     semantic_confidence: SemanticConfidence = field(default_factory=SemanticConfidence)
 
     def fingerprint(self) -> str:
         import hashlib
         import json
+
         payload = {
             "intent": self.intent,
             "goal": self.goal.strip().lower(),
             "paths": sorted(self.paths),
             "symbols": sorted(self.symbols),
-            "constraints": sorted([c.text.strip().lower() for c in self.constraints]),
+            "constraints": sorted(c.text.strip().lower() for c in self.constraints),
         }
-        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        raw = json.dumps(payload, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()[:16]
 
     def to_execution_prompt(self) -> str:
         parts = [f"Intent: {self.intent}"]
         if self.goal:
             parts.append(f"Goal:\n{self.goal}")
         if self.actions:
-            acts = "\n".join(f"- {a}" for a in self.actions)
-            parts.append(f"Actions:\n{acts}")
+            parts.append("Actions:\n" + "\n".join(f"- {action}" for action in self.actions))
         targets = list(dict.fromkeys(self.paths + self.symbols))
         if targets:
-            tgts = "\n".join(f"- {t}" for t in targets)
-            parts.append(f"Targets:\n{tgts}")
+            parts.append("Targets:\n" + "\n".join(f"- {target}" for target in targets))
         if self.validation_hints:
-            val = "\n".join(f"- {v}" for v in self.validation_hints)
-            parts.append(f"Validation:\n{val}")
+            parts.append(
+                "Validation:\n" + "\n".join(f"- {hint}" for hint in self.validation_hints)
+            )
         return "\n\n".join(parts)
+
 
 @dataclass
 class ContextPlan:
@@ -113,9 +132,10 @@ class ContextPlan:
     include_original_prompt: bool = True
     confidence: float = 1.0
 
+
 @dataclass
 class Tag:
-    kind: str  # 'def' or 'ref'
+    kind: str
     name: str
     line: int
     signature: str
@@ -123,10 +143,12 @@ class Tag:
     end_line: Optional[int] = None
     qualified_name: Optional[str] = None
 
+
 @dataclass
 class FileTags:
     path: str
     tags: List[Tag]
+
 
 @dataclass
 class ContextBlock:
@@ -134,10 +156,12 @@ class ContextBlock:
     content: str
     token_count: int = 0
 
+
 @dataclass
 class TaskFocus:
     focus_files: List[str] = field(default_factory=list)
     focus_symbols: List[str] = field(default_factory=list)
+
 
 @dataclass
 class EditBlock:
@@ -147,11 +171,13 @@ class EditBlock:
     is_new_file: bool = False
     is_deletion: bool = False
 
+
 @dataclass
 class FileSnapshot:
     relative_path: str
     existed: bool
     content: Optional[str] = None
+
 
 @dataclass
 class ChangeSet:
@@ -159,6 +185,7 @@ class ChangeSet:
     timestamp: float
     description: str
     snapshots: List[FileSnapshot] = field(default_factory=list)
+
 
 @dataclass
 class EditResult:
@@ -169,9 +196,10 @@ class EditResult:
     errors: List[str] = field(default_factory=list)
     changeset: Optional[ChangeSet] = None
 
+
 @dataclass
 class ModelProfile:
-    backend: str  # 'ollama', 'openai', 'anthropic', 'gemini', etc.
+    backend: str
     model: str
     base_url: str = "http://localhost:11434"
     api_key: str = ""
@@ -185,11 +213,13 @@ class ModelProfile:
     keep_alive: Optional[str] = None
     request_timeout_seconds: int = 300
 
+
 @dataclass
 class RouterConfig:
     profiles: Dict[str, ModelProfile] = field(default_factory=dict)
     routing: Dict[str, str] = field(default_factory=dict)
     custom_providers: list[dict] = field(default_factory=list)
+
 
 @dataclass
 class TaskStep:

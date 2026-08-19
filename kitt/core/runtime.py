@@ -8,43 +8,44 @@ from kitt.artifacts.store import ArtifactStore
 from kitt.children.manager import ChildAgentManager
 from kitt.children.repository import ChildRepository
 from kitt.compaction.service import CompactionService
-from kitt.context_engine.engine import ContextEngine
 from kitt.context.working_set import ConversationWorkingSetStore
+from kitt.context_engine.engine import ContextEngine
+from kitt.core.autonomy_store import AutonomyStore
 from kitt.core.event_bus import EventBus
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_processor import TurnProcessor
-from kitt.goals.service import GoalService
+from kitt.dreaming.repository import MemoryRepository
+from kitt.dreaming.scheduler import DreamScheduler
+from kitt.dreaming.service import DreamingService
 from kitt.goals.scheduler import GoalScheduler
+from kitt.goals.service import GoalService
 from kitt.harness.repository import HarnessRepository
 from kitt.harness.service import HarnessService
 from kitt.history.database import HistoryDatabase
 from kitt.history.repository import HistoryRepository, resolve_workspace_identity
 from kitt.history.service import HistoryService
 from kitt.history.session_tree import SessionTreeRepository
+from kitt.index.repository import RepositoryIndex
+from kitt.llm.client import LLMClient
 from kitt.memory.memory_manager import MemoryManager
 from kitt.metrics.collector import MetricsCollector
 from kitt.queueing.repository import InputQueueRepository
 from kitt.queueing.service import InputQueueService
+from kitt.router.router import TaskRouter
+from kitt.security.egress import EgressPolicy
+from kitt.security.network_policy import NetworkPolicy
+from kitt.security.path_policy import PathPolicy
+from kitt.security.sensitive_data import SensitiveDataScanner
 from kitt.skills.skill_manager import SkillManager
 from kitt.tools.approval import ApprovalManager
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.registry import ToolRegistry
-from kitt.index.repository import RepositoryIndex
-from kitt.core.autonomy_store import AutonomyStore
-from kitt.security.egress import EgressPolicy
-from kitt.security.sensitive_data import SensitiveDataScanner
-from kitt.security.path_policy import PathPolicy
-from kitt.security.network_policy import NetworkPolicy
-from kitt.dreaming.repository import MemoryRepository
-from kitt.dreaming.service import DreamingService
-from kitt.dreaming.scheduler import DreamScheduler
-from kitt.router.router import TaskRouter
-from kitt.llm.client import LLMClient
 
 
 @dataclass
 class KittRuntime:
-    """Primary composition container orchestrating all K.I.T.T. runtime services and lifecycle."""
+    """Primary composition root for K.I.T.T. runtime services and lifecycle."""
+
     config: RuntimeConfig
     database: HistoryDatabase
     history: HistoryService
@@ -82,67 +83,113 @@ class KittRuntime:
         self._close_lock = threading.RLock()
 
     @classmethod
-    def build(cls, root_dir: str, config: Optional[RuntimeConfig] = None) -> "KittRuntime":
+    def build(
+        cls, root_dir: str, config: Optional[RuntimeConfig] = None
+    ) -> KittRuntime:
         from kitt.core.workspace_identity import canonical_workspace_path
+
         config = config or RuntimeConfig.from_env()
-        canon_root = canonical_workspace_path(root_dir)
+        canonical_root = canonical_workspace_path(root_dir)
         ephemeral = config.ephemeral
         in_memory = not config.history_enabled
         persistence_enabled = not ephemeral
-        db = HistoryDatabase(canon_root, in_memory=in_memory)
+        database = HistoryDatabase(canonical_root, in_memory=in_memory)
 
-        tree = SessionTreeRepository(db)
-        history_repo = HistoryRepository(db)
-        identity = resolve_workspace_identity(db, canon_root)
-        history = HistoryService(canon_root, db=db, repo=history_repo, tree=tree,
-                                 enabled=config.history_enabled, identity=identity,
-                                 persistence_enabled=persistence_enabled)
-        autonomy_store = AutonomyStore(canon_root, persistence_enabled=persistence_enabled)
-        approval = ApprovalManager(db=db, ttl_seconds=config.approval_ttl_seconds)
-        policy = PolicyEngine(canon_root, autonomy=autonomy_store.get(), approval_manager=approval)
+        session_tree = SessionTreeRepository(database)
+        history_repo = HistoryRepository(database)
+        identity = resolve_workspace_identity(database, canonical_root)
+        history = HistoryService(
+            canonical_root,
+            db=database,
+            repo=history_repo,
+            tree=session_tree,
+            enabled=config.history_enabled,
+            identity=identity,
+            persistence_enabled=persistence_enabled,
+        )
+
+        autonomy_store = AutonomyStore(
+            canonical_root, persistence_enabled=persistence_enabled
+        )
+        approval = ApprovalManager(
+            db=database, ttl_seconds=config.approval_ttl_seconds
+        )
+        policy = PolicyEngine(
+            canonical_root,
+            autonomy=autonomy_store.get(),
+            approval_manager=approval,
+        )
 
         repository_index = RepositoryIndex(
-            canon_root,
+            canonical_root,
             in_memory=in_memory,
             max_files=config.max_index_files,
             max_file_bytes=config.max_index_file_bytes,
             max_total_bytes=config.max_index_bytes,
         )
-        context_engine = ContextEngine(repository_index=repository_index, persistence_enabled=persistence_enabled)
-        working_set = ConversationWorkingSetStore(canon_root, persistence_enabled=persistence_enabled)
-        registry = ToolRegistry(canon_root, context_engine=context_engine)
+        context_engine = ContextEngine(
+            repository_index=repository_index,
+            persistence_enabled=persistence_enabled,
+        )
+        working_set = ConversationWorkingSetStore(
+            canonical_root, persistence_enabled=persistence_enabled
+        )
+
+        registry = ToolRegistry(canonical_root, context_engine=context_engine)
         registry.policy = policy
         registry.approval_manager = approval
         registry.runtime_config = config
-        skills = SkillManager(canon_root, persistence_enabled=persistence_enabled)
+
+        skills = SkillManager(
+            canonical_root, persistence_enabled=persistence_enabled
+        )
         skills.executable_enabled = config.executable_skills_enabled
+
         artifacts = ArtifactStore(
-            canon_root, db,
+            canonical_root,
+            database,
             inline_limit=config.artifact_inline_limit,
             max_artifact_bytes=config.max_artifact_bytes,
             page_bytes=config.artifact_page_bytes,
             ephemeral=ephemeral,
         )
         metrics = MetricsCollector(history.repo)
-        harness = HarnessService(HarnessRepository(db))
-        goals = GoalService(db)
-        queue = InputQueueService(InputQueueRepository(db))
-        compaction = CompactionService(db, tree, keep_recent=config.compaction_keep_recent)
+        harness = HarnessService(HarnessRepository(database))
+        goals = GoalService(database)
+        queue = InputQueueService(InputQueueRepository(database))
+        compaction = CompactionService(
+            database,
+            session_tree,
+            keep_recent=config.compaction_keep_recent,
+        )
         events = EventBus()
+
         from kitt.metrics.prime import PrimeMetrics
-        prime_metrics = PrimeMetrics(canon_root)
+
+        prime_metrics = PrimeMetrics(canonical_root)
         events.subscribe("MetricsRecorded", lambda name, payload: metrics.record(payload))
         events.subscribe("*", prime_metrics.observe)
         registry.event_bus = events
+
         children = ChildAgentManager(
-            canon_root, ChildRepository(db), artifacts,
-            max_children=config.max_children, max_depth=config.max_child_depth,
+            canonical_root,
+            ChildRepository(database),
+            artifacts,
+            max_children=config.max_children,
+            max_depth=config.max_child_depth,
             workspace_id=identity.id,
+            max_worker_seconds=config.child_timeout_seconds,
             event_callback=lambda name, payload: events.publish(name, payload),
             enabled=config.retained_agents_enabled,
         )
-        memory_repo = MemoryRepository(db)
-        memory = MemoryManager(canon_root, persistence_enabled=persistence_enabled, memory_repo=memory_repo, workspace_id=identity.id)
+
+        memory_repo = MemoryRepository(database)
+        memory = MemoryManager(
+            canonical_root,
+            persistence_enabled=persistence_enabled,
+            memory_repo=memory_repo,
+            workspace_id=identity.id,
+        )
         registry.attach_services(
             artifacts=artifacts,
             queue_service=queue,
@@ -151,30 +198,32 @@ class KittRuntime:
             harness_service=harness,
             memory_service=memory,
             skill_manager=skills,
-            db=db,
+            db=database,
         )
-        egress_policy = EgressPolicy(mode=getattr(config, "privacy_mode", "hybrid_redacted"))
+
+        egress_policy = EgressPolicy(
+            mode=getattr(config, "privacy_mode", "hybrid_redacted")
+        )
         sensitive_scanner = SensitiveDataScanner()
-        path_policy = PathPolicy(canon_root)
+        path_policy = PathPolicy(canonical_root)
         network_policy = NetworkPolicy()
 
-        task_router = TaskRouter(root_dir=canon_root)
-        _, ctx_profile = task_router.resolve_profile_for_task("context-gather")
-        dream_llm = LLMClient(ctx_profile)
-
+        task_router = TaskRouter(root_dir=canonical_root)
+        _, context_profile = task_router.resolve_profile_for_task("context-gather")
+        dream_llm = LLMClient(context_profile)
         dream_service = DreamingService(
-            db=db,
+            db=database,
             memory_repo=memory_repo,
             history_repo=history_repo,
-            session_tree=tree,
-            root_dir=canon_root,
+            session_tree=session_tree,
+            root_dir=canonical_root,
             llm_client=dream_llm,
             egress_policy=egress_policy,
             event_callback=lambda name, payload: events.publish(name, payload),
         )
 
         processor = TurnProcessor(
-            canon_root,
+            canonical_root,
             history_service=history,
             registry=registry,
             metrics_collector=metrics,
@@ -193,47 +242,68 @@ class KittRuntime:
         processor.sensitive_scanner = sensitive_scanner
         processor.path_policy = path_policy
         processor.network_policy = network_policy
-
+        processor.child_manager = children
         registry.path_policy = path_policy
+        registry.attach_processor(processor)
 
-        def _is_idle() -> bool:
-            active_conv = history.get_active_read_only()
-            conv_id = active_conv["id"] if active_conv else ""
+        def is_idle() -> bool:
+            active_conversation = history.get_active_read_only()
+            conversation_id = active_conversation["id"] if active_conversation else ""
             pending = len(processor.pending_actions)
-            queued = len(queue.repo.pending(conv_id)) if conv_id else 0
-            has_pending_approval = bool(approval.list_pending())
-            return pending == 0 and queued == 0 and not has_pending_approval
+            queued = len(queue.repo.pending(conversation_id)) if conversation_id else 0
+            pending_approval = bool(approval.list_pending())
+            return pending == 0 and queued == 0 and not pending_approval
 
         dream_scheduler = DreamScheduler(
             dream_service=dream_service,
             memory_repo=memory_repo,
-            db=db,
+            db=database,
             config=config,
-            idle_checker=_is_idle,
+            idle_checker=is_idle,
             workspace_id_getter=lambda: identity.id,
         )
 
         runtime_holder = {}
         from kitt.goals.executor import GoalStepExecutor
+
         goal_scheduler = GoalScheduler(
-            db=db,
+            db=database,
             goal_service=goals,
             runtime_step_executor=GoalStepExecutor(lambda: runtime_holder["runtime"]),
             event_callback=lambda name, payload: events.publish(name, payload),
         )
 
         from kitt.extensions.manager import ExtensionManager
+
         extensions = ExtensionManager(
-            workspace_root=canon_root,
+            workspace_root=canonical_root,
             event_bus=events,
             tool_registry=registry,
         )
 
         runtime = cls(
-            config, db, history, artifacts, metrics, policy, approval, repository_index,
-            context_engine, working_set, registry, skills,
-            harness, goals, queue, children, compaction, tree, events, processor,
-            memory, autonomy_store,
+            config,
+            database,
+            history,
+            artifacts,
+            metrics,
+            policy,
+            approval,
+            repository_index,
+            context_engine,
+            working_set,
+            registry,
+            skills,
+            harness,
+            goals,
+            queue,
+            children,
+            compaction,
+            session_tree,
+            events,
+            processor,
+            memory,
+            autonomy_store,
             egress_policy,
             sensitive_scanner,
             path_policy,
@@ -259,17 +329,17 @@ class KittRuntime:
     def snapshot(self):
         from kitt.core.runtime_snapshot import RuntimeSnapshot
 
-        active_conv = self.history.get_active_read_only()
-        conv_id = active_conv["id"] if active_conv else ""
+        active_conversation = self.history.get_active_read_only()
+        conversation_id = active_conversation["id"] if active_conversation else ""
         pending = len(self.processor.pending_actions)
-        queued = len(self.queue.repo.pending(conv_id)) if conv_id else 0
-        active_goal = self.goals.active(conv_id) if conv_id else None
+        queued = len(self.queue.repo.pending(conversation_id)) if conversation_id else 0
+        active_goal = self.goals.active(conversation_id) if conversation_id else None
         return RuntimeSnapshot(
             workspace_id=self.workspace_id,
-            active_conversation_id=conv_id,
+            active_conversation_id=conversation_id,
             pending_actions=pending,
             queued_inputs=queued,
-            active_goal_id=active_goal.id if active_goal else ""
+            active_goal_id=active_goal.id if active_goal else "",
         )
 
     def close(self):
@@ -281,12 +351,24 @@ class KittRuntime:
             errors = []
             for name, close in (
                 ("extensions", getattr(self.extensions, "close", lambda: None)),
-                ("dream_scheduler", getattr(self.dream_scheduler, "close", lambda: None)),
-                ("goal_scheduler", getattr(self.goal_scheduler, "stop", lambda: None)),
-                ("processor", self.processor.close), ("children", self.children.close),
-                ("metrics", self.metrics.close), ("artifacts", self.artifacts.close),
-                ("events", self.events.close), ("database", self.database.close),
-                ("repository_index", getattr(self.repository_index, "close", lambda: None)),
+                (
+                    "dream_scheduler",
+                    getattr(self.dream_scheduler, "close", lambda: None),
+                ),
+                (
+                    "goal_scheduler",
+                    getattr(self.goal_scheduler, "stop", lambda: None),
+                ),
+                ("processor", self.processor.close),
+                ("children", self.children.close),
+                ("metrics", self.metrics.close),
+                ("artifacts", self.artifacts.close),
+                ("events", self.events.close),
+                ("database", self.database.close),
+                (
+                    "repository_index",
+                    getattr(self.repository_index, "close", lambda: None),
+                ),
             ):
                 try:
                     close()
@@ -295,12 +377,8 @@ class KittRuntime:
             if errors:
                 raise RuntimeError("Runtime shutdown errors: " + "; ".join(errors))
 
-    def switch_workspace(self, new_root: str) -> "KittRuntime":
-        """Build a new runtime for ``new_root`` and close this one on success.
-
-        The new runtime is fully constructed before the old one is closed, so a
-        build failure keeps the current runtime operational.
-        """
+    def switch_workspace(self, new_root: str) -> KittRuntime:
+        """Build the new runtime before closing the current runtime."""
         new_runtime = KittRuntime.build(new_root, config=self.config)
         self.close()
         return new_runtime

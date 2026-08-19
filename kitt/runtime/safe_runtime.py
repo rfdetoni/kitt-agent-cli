@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import os
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from kitt.runtime.handles import ContextHandleResolver
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.capabilities import (
-    ALL_CAPABILITIES,
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
     CAP_CHILD_MESSAGE,
@@ -18,7 +15,6 @@ from kitt.security.capabilities import (
     CAP_GOAL_MANAGE,
     CAP_MCP_CALL,
     CAP_MEMORY_READ,
-    CAP_MEMORY_WRITE,
     CAP_PROCESS_RUN,
     CAP_REPO_READ,
     CAP_REPO_SEARCH,
@@ -32,28 +28,71 @@ class RuntimeOperationSpec:
     required_capability: str
     policy_tool_action: Optional[str] = None
     sensitive: bool = False
+    resume_tool_name: Optional[str] = None
 
 
 OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     "repo.read": RuntimeOperationSpec("repo.read", CAP_REPO_READ, "read_file"),
     "repo.search": RuntimeOperationSpec("repo.search", CAP_REPO_SEARCH, "search"),
-    "repo.inspect_symbol": RuntimeOperationSpec("repo.inspect_symbol", CAP_REPO_READ, "read_file"),
-    "artifacts.store": RuntimeOperationSpec("artifacts.store", CAP_ARTIFACT_WRITE, "artifact_store", sensitive=True),
-    "artifacts.read": RuntimeOperationSpec("artifacts.read", CAP_ARTIFACT_READ, "artifact_read"),
-    "patch.apply": RuntimeOperationSpec("patch.apply", CAP_REPO_WRITE, "apply_patch", sensitive=True),
-    "process.run": RuntimeOperationSpec("process.run", CAP_PROCESS_RUN, "run_command", sensitive=True),
-    "children.spawn": RuntimeOperationSpec("children.spawn", CAP_CHILD_SPAWN, "child_spawn", sensitive=True),
-    "children.send": RuntimeOperationSpec("children.send", CAP_CHILD_MESSAGE, sensitive=False),
-    "children.inspect": RuntimeOperationSpec("children.inspect", CAP_CHILD_SPAWN, sensitive=False),
-    "goal.inspect": RuntimeOperationSpec("goal.inspect", CAP_GOAL_MANAGE, sensitive=False),
-    "goal.update": RuntimeOperationSpec("goal.update", CAP_GOAL_MANAGE, "goal_update", sensitive=True),
-    "memory.query": RuntimeOperationSpec("memory.query", CAP_MEMORY_READ, sensitive=False),
+    "repo.inspect_symbol": RuntimeOperationSpec(
+        "repo.inspect_symbol", CAP_REPO_READ, "read_file"
+    ),
+    "artifacts.store": RuntimeOperationSpec(
+        "artifacts.store",
+        CAP_ARTIFACT_WRITE,
+        "artifact_store",
+        sensitive=True,
+        resume_tool_name="artifact_store",
+    ),
+    "artifacts.read": RuntimeOperationSpec(
+        "artifacts.read", CAP_ARTIFACT_READ, "artifact_read"
+    ),
+    "patch.apply": RuntimeOperationSpec(
+        "patch.apply",
+        CAP_REPO_WRITE,
+        "apply_patch",
+        sensitive=True,
+        resume_tool_name="apply_patch",
+    ),
+    "process.run": RuntimeOperationSpec(
+        "process.run",
+        CAP_PROCESS_RUN,
+        "run_command",
+        sensitive=True,
+        resume_tool_name="run_command",
+    ),
+    "children.spawn": RuntimeOperationSpec(
+        "children.spawn",
+        CAP_CHILD_SPAWN,
+        "child_spawn",
+        sensitive=True,
+        resume_tool_name="child_spawn",
+    ),
+    "children.send": RuntimeOperationSpec(
+        "children.send", CAP_CHILD_MESSAGE, sensitive=False
+    ),
+    "children.inspect": RuntimeOperationSpec(
+        "children.inspect", CAP_CHILD_SPAWN, sensitive=False
+    ),
+    "goal.inspect": RuntimeOperationSpec(
+        "goal.inspect", CAP_GOAL_MANAGE, sensitive=False
+    ),
+    "goal.update": RuntimeOperationSpec(
+        "goal.update", CAP_GOAL_MANAGE, "goal_update", sensitive=True
+    ),
+    "memory.query": RuntimeOperationSpec(
+        "memory.query", CAP_MEMORY_READ, sensitive=False
+    ),
     "skill.call": RuntimeOperationSpec("skill.call", CAP_REPO_READ, sensitive=False),
-    "mcp.call": RuntimeOperationSpec("mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True),
+    "mcp.call": RuntimeOperationSpec(
+        "mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True
+    ),
     "state.get": RuntimeOperationSpec("state.get", CAP_REPO_READ, sensitive=False),
     "state.set": RuntimeOperationSpec("state.set", CAP_REPO_WRITE, sensitive=False),
     "state.list": RuntimeOperationSpec("state.list", CAP_REPO_READ, sensitive=False),
-    "handles.resolve": RuntimeOperationSpec("handles.resolve", CAP_REPO_READ, sensitive=False),
+    "handles.resolve": RuntimeOperationSpec(
+        "handles.resolve", CAP_REPO_READ, sensitive=False
+    ),
 }
 
 
@@ -70,10 +109,12 @@ class SafeRuntimeResult:
     approval_action: Optional[str] = None
     approval_payload: Optional[Dict[str, Any]] = None
     required_capability: Optional[str] = None
+    resume_tool_name: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class SafeRuntime:
-    """Persistent, programmable safe runtime for compact, deterministic operations."""
+    """Compact policy-governed runtime that preserves the principal context."""
 
     def __init__(
         self,
@@ -125,468 +166,450 @@ class SafeRuntime:
         approval_grant: Optional[Any] = None,
         expected_approval_id: Optional[str] = None,
     ) -> SafeRuntimeResult:
-        """Execute a typed, policy-governed runtime operation with fail-closed capabilities."""
         start = time.perf_counter()
         args = arguments or {}
         op = operation.strip() if operation else ""
-
-        if op not in OPERATION_SPECS:
-            return SafeRuntimeResult(
-                success=False,
-                operation=op,
-                error=f"Unknown runtime operation: '{op}'",
-                duration_ms=(time.perf_counter() - start) * 1000,
+        spec = OPERATION_SPECS.get(op)
+        if spec is None:
+            return self._result(
+                start,
+                SafeRuntimeResult(False, op, error=f"Unknown runtime operation: '{op}'"),
             )
-
-        spec = OPERATION_SPECS[op]
 
         if security_context is not None:
             try:
                 security_context.assert_scope(self.workspace_id, self.conversation_id)
             except PermissionError as exc:
-                return SafeRuntimeResult(
-                    success=False, operation=op, error=str(exc),
-                    duration_ms=(time.perf_counter() - start) * 1000,
+                return self._result(
+                    start, SafeRuntimeResult(False, op, error=str(exc))
                 )
 
-        # Fail-closed capability enforcement
-        caps: Set[str] = set()
         if security_context is not None and hasattr(security_context, "capabilities"):
-            caps = set(security_context.capabilities)
+            capabilities = set(security_context.capabilities)
         elif effective_capabilities is not None:
-            caps = set(effective_capabilities)
+            capabilities = set(effective_capabilities)
         else:
-            # Missing capabilities fail closed to zero capabilities
-            caps = set()
+            capabilities = set()
 
-        if spec.required_capability not in caps:
-            return SafeRuntimeResult(
-                success=False,
-                operation=op,
-                error=f"Capability '{spec.required_capability}' required for '{op}' is not granted (fail-closed)",
-                duration_ms=(time.perf_counter() - start) * 1000,
+        if spec.required_capability not in capabilities:
+            return self._result(
+                start,
+                SafeRuntimeResult(
+                    False,
+                    op,
+                    error=(
+                        f"Capability '{spec.required_capability}' required for '{op}' "
+                        "is not granted (fail-closed)"
+                    ),
+                ),
             )
 
-        # Policy & Autonomy enforcement. Concrete ToolRegistry-backed operations
-        # consume approval at the concrete tool layer; direct runtime operations
-        # consume it here. This keeps approvals single-use and exact-action bound.
         delegated_grant = None
         delegated_approval_id = None
-        if self.registry and hasattr(self.registry, "policy") and self.registry.policy:
+        if self.registry and getattr(self.registry, "policy", None):
             policy = self.registry.policy
-            if getattr(getattr(policy, "autonomy", None), "preset", None) == "read_only" and spec.sensitive:
-                return SafeRuntimeResult(
-                    success=False,
-                    operation=op,
-                    error=f"Operation '{op}' is blocked in read_only autonomy mode",
-                    duration_ms=(time.perf_counter() - start) * 1000,
+            if (
+                getattr(getattr(policy, "autonomy", None), "level", None) == "read_only"
+                and spec.sensitive
+            ):
+                return self._result(
+                    start,
+                    SafeRuntimeResult(
+                        False,
+                        op,
+                        error=f"Operation '{op}' is blocked in read_only autonomy mode",
+                    ),
                 )
+
             if spec.policy_tool_action:
-                perm = policy.evaluate_tool(spec.policy_tool_action, args, origin=origin)
-                if perm == "DENY":
-                    return SafeRuntimeResult(
-                        success=False,
-                        operation=op,
-                        error=f"Execution denied by PolicyEngine for tool '{spec.policy_tool_action}'.",
-                        duration_ms=(time.perf_counter() - start) * 1000,
+                permission = policy.evaluate_tool(
+                    spec.policy_tool_action, args, origin=origin
+                )
+                if permission == "DENY":
+                    return self._result(
+                        start,
+                        SafeRuntimeResult(
+                            False,
+                            op,
+                            error=(
+                                "Execution denied by PolicyEngine for tool "
+                                f"'{spec.policy_tool_action}'."
+                            ),
+                        ),
                     )
-                if perm == "ASK":
-                    concrete_registry_ops = {"artifacts.store", "patch.apply", "process.run", "children.spawn"}
+                if permission == "ASK":
                     if approval_grant is None:
-                        return SafeRuntimeResult(
-                            success=False, operation=op,
-                            error=f"Operation '{op}' requires approval from user.",
-                            requires_approval=True,
-                            approval_action=spec.policy_tool_action or op,
-                            approval_payload=args,
-                            required_capability=spec.required_capability,
-                            duration_ms=(time.perf_counter() - start) * 1000,
+                        return self._result(
+                            start,
+                            SafeRuntimeResult(
+                                False,
+                                op,
+                                error=f"Operation '{op}' requires approval from user.",
+                                requires_approval=True,
+                                approval_action=spec.policy_tool_action,
+                                approval_payload=dict(args),
+                                required_capability=spec.required_capability,
+                                resume_tool_name=spec.resume_tool_name,
+                            ),
                         )
-                    if op in concrete_registry_ops:
+                    if spec.resume_tool_name:
                         delegated_grant = approval_grant
                         delegated_approval_id = expected_approval_id
                     else:
-                        action_hash = policy.generate_action_hash(spec.policy_tool_action or op, args)
-                        valid = policy.approval_manager and policy.approval_manager.validate_and_consume(
-                            approval_grant, action_hash, turn_id,
-                            self.conversation_id, self.workspace_id,
-                            expected_approval_id=expected_approval_id,
+                        action_hash = policy.generate_action_hash(
+                            spec.policy_tool_action, args
+                        )
+                        valid = (
+                            policy.approval_manager
+                            and policy.approval_manager.validate_and_consume(
+                                approval_grant,
+                                action_hash,
+                                turn_id,
+                                self.conversation_id,
+                                self.workspace_id,
+                                expected_approval_id=expected_approval_id,
+                            )
                         )
                         if not valid:
-                            return SafeRuntimeResult(
-                                success=False, operation=op,
-                                error="Approval grant is invalid, expired, mismatched, or already consumed.",
-                                duration_ms=(time.perf_counter() - start) * 1000,
+                            return self._result(
+                                start,
+                                SafeRuntimeResult(
+                                    False,
+                                    op,
+                                    error=(
+                                        "Approval grant is invalid, expired, mismatched, "
+                                        "or already consumed."
+                                    ),
+                                ),
                             )
 
         try:
-            if op == "repo.read":
-                res = self._op_repo_read(args, turn_id, origin)
-            elif op == "repo.search":
-                res = self._op_repo_search(args, turn_id, origin)
-            elif op == "repo.inspect_symbol":
-                res = self._op_repo_inspect_symbol(args, turn_id, origin)
-            elif op == "artifacts.store":
-                res = self._op_artifacts_store(args, turn_id, origin, delegated_grant, delegated_approval_id)
-            elif op == "artifacts.read":
-                res = self._op_artifacts_read(args, turn_id, origin)
-            elif op == "patch.apply":
-                res = self._op_patch_apply(args, turn_id, origin, delegated_grant, delegated_approval_id)
-            elif op == "process.run":
-                res = self._op_process_run(args, turn_id, origin, delegated_grant, delegated_approval_id)
-            elif op == "children.spawn":
-                res = self._op_children_spawn(args, turn_id, origin, delegated_grant, delegated_approval_id, security_context)
-            elif op == "children.send":
-                res = self._op_children_send(args, turn_id, origin)
-            elif op == "children.inspect":
-                res = self._op_children_inspect(args, turn_id, origin)
-            elif op == "goal.inspect":
-                res = self._op_goal_inspect(args, turn_id, origin)
-            elif op == "goal.update":
-                res = self._op_goal_update(args, turn_id, origin)
-            elif op == "memory.query":
-                res = self._op_memory_query(args, turn_id, origin)
-            elif op == "skill.call":
-                res = self._op_skill_call(args, turn_id, origin, security_context)
-            elif op == "mcp.call":
-                res = self._op_mcp_call(args, turn_id, origin, security_context)
-            elif op == "state.get":
-                res = self._op_state_get(args)
-            elif op == "state.set":
-                res = self._op_state_set(args)
-            elif op == "state.list":
-                res = self._op_state_list(args)
-            elif op == "handles.resolve":
-                res = self._op_handles_resolve(args)
-            else:
-                return SafeRuntimeResult(
-                    success=False,
-                    operation=op,
-                    error=f"Unknown runtime operation: '{op}'",
-                    duration_ms=(time.perf_counter() - start) * 1000,
-                )
-
-            res.duration_ms = (time.perf_counter() - start) * 1000
-            return res
+            result = self._dispatch(
+                op,
+                args,
+                turn_id,
+                origin,
+                security_context,
+                delegated_grant,
+                delegated_approval_id,
+            )
         except Exception as exc:
-            return SafeRuntimeResult(
-                success=False,
-                operation=op,
-                error=f"Runtime error in {op}: {exc}",
-                duration_ms=(time.perf_counter() - start) * 1000,
+            result = SafeRuntimeResult(
+                False, op, error=f"Runtime error in {op}: {exc}"
             )
+        return self._result(start, result)
 
-    # --- Operation handlers ---
+    @staticmethod
+    def _result(start: float, result: SafeRuntimeResult) -> SafeRuntimeResult:
+        result.duration_ms = (time.perf_counter() - start) * 1000
+        return result
 
-    def _op_repo_read(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        if self.registry:
-            tool_res = self.registry.execute_tool(
-                "read_file", args, turn_id=turn_id,
-                conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin
-            )
-            handle = f"ctx:file:{args.get('path', '')}:{args.get('start_line', 1)}-{args.get('end_line', 100)}"
-            return SafeRuntimeResult(
-                success=tool_res.success,
-                operation="repo.read",
-                data=tool_res.output,
-                error=tool_res.error,
-                context_handles=[handle] if tool_res.success else [],
-            )
-        return SafeRuntimeResult(success=False, operation="repo.read", error="No tool registry attached")
+    def _dispatch(
+        self,
+        op: str,
+        args: dict,
+        turn_id: str,
+        origin: str,
+        security_context,
+        grant,
+        expected_approval_id,
+    ) -> SafeRuntimeResult:
+        handlers = {
+            "repo.read": lambda: self._op_repo_read(args, turn_id, origin, security_context),
+            "repo.search": lambda: self._op_repo_search(args, turn_id, origin, security_context),
+            "repo.inspect_symbol": lambda: self._op_repo_inspect_symbol(args, turn_id, origin, security_context),
+            "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id),
+            "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context),
+            "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id),
+            "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id),
+            "children.spawn": lambda: self._op_registry_tool("children.spawn", "child_spawn", args, turn_id, origin, security_context, grant, expected_approval_id),
+            "children.send": lambda: self._op_children_send(args),
+            "children.inspect": lambda: self._op_children_inspect(args),
+            "goal.inspect": lambda: self._op_goal_inspect(args),
+            "goal.update": lambda: self._op_goal_update(args),
+            "memory.query": lambda: self._op_memory_query(args),
+            "skill.call": lambda: self._op_skill_call(args, security_context),
+            "mcp.call": lambda: self._op_mcp_call(args, turn_id, security_context),
+            "state.get": lambda: self._op_state_get(args),
+            "state.set": lambda: self._op_state_set(args),
+            "state.list": lambda: self._op_state_list(),
+            "handles.resolve": lambda: self._op_handles_resolve(args, security_context),
+        }
+        return handlers[op]()
 
-    def _op_repo_search(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        if self.registry:
-            tool_res = self.registry.execute_tool(
-                "search", args, turn_id=turn_id,
-                conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin
-            )
-            return SafeRuntimeResult(
-                success=tool_res.success,
-                operation="repo.search",
-                data=tool_res.output,
-                error=tool_res.error,
-            )
-        return SafeRuntimeResult(success=False, operation="repo.search", error="No tool registry attached")
-
-    def _op_repo_inspect_symbol(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        symbol = args.get("symbol", "").strip()
-        if not symbol:
-            return SafeRuntimeResult(success=False, operation="repo.inspect_symbol", error="Symbol argument required")
-
-        handle_info = self.handles.resolve(f"ctx:repo:{symbol}")
-        symbols = handle_info.get("symbols", [])
-        snippets = []
-
-        for sym in symbols[:3]:
-            rel_path = sym.get("path", "")
-            start = max(1, sym.get("start_line", 1) - 5)
-            end = sym.get("end_line", start + 30) + 5
-            read_args = {"path": rel_path, "start_line": start, "end_line": end}
-            read_res = self._op_repo_read(read_args, turn_id, origin)
-            if read_res.success:
-                snippets.append({
-                    "symbol": sym.get("name", symbol),
-                    "path": rel_path,
-                    "kind": sym.get("kind", ""),
-                    "lines": f"{start}-{end}",
-                    "content": read_res.data,
-                })
-
-        # Dynamic token saving measurement based on roundtrips and content length
-        content_chars = sum(len(str(s.get("content", ""))) for s in snippets)
-        dynamic_saved = max(50, content_chars // 4)
-
+    def _op_registry_tool(
+        self,
+        operation: str,
+        tool_name: str,
+        args: dict,
+        turn_id: str,
+        origin: str,
+        security_context,
+        grant=None,
+        expected_approval_id=None,
+    ) -> SafeRuntimeResult:
+        if not self.registry:
+            return SafeRuntimeResult(False, operation, error="No tool registry attached")
+        tool_result = self.registry.execute_tool(
+            tool_name,
+            args,
+            turn_id=turn_id,
+            conversation_id=self.conversation_id,
+            workspace_id=self.workspace_id,
+            origin=origin,
+            grant=grant,
+            expected_approval_id=expected_approval_id,
+            security_context=security_context,
+        )
+        metadata = dict(getattr(tool_result, "metadata", {}) or {})
+        handles: list[str] = []
+        if tool_name == "artifact_store" and metadata.get("artifact_id"):
+            handles.append(f"artifact:{metadata['artifact_id']}")
+        if tool_name == "child_spawn" and metadata.get("child_id"):
+            handles.append(f"child:{metadata['child_id']}")
         return SafeRuntimeResult(
-            success=True,
-            operation="repo.inspect_symbol",
-            data={"symbol": symbol, "matches": symbols, "snippets": snippets},
-            context_handles=[f"ctx:repo:{symbol}"],
-            tokens_saved=dynamic_saved,
+            success=tool_result.success,
+            operation=operation,
+            data=tool_result.output,
+            error=tool_result.error,
+            context_handles=handles,
+            metadata={"effective_tool_name": tool_name, **metadata},
         )
 
-    def _op_artifacts_store(self, args: dict, turn_id: str, origin: str, grant=None, expected_approval_id=None) -> SafeRuntimeResult:
-        if self.registry:
-            tool_res = self.registry.execute_tool(
-                "artifact_store", args, turn_id=turn_id,
-                conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin, grant=grant, expected_approval_id=expected_approval_id
-            )
-            art_id = tool_res.metadata.get("artifact_id", "") if hasattr(tool_res, "metadata") else ""
-            handles = [f"artifact:{art_id}"] if art_id else []
-            return SafeRuntimeResult(
-                success=tool_res.success,
-                operation="artifacts.store",
-                data=tool_res.output,
-                error=tool_res.error,
-                context_handles=handles,
-            )
-        return SafeRuntimeResult(success=False, operation="artifacts.store", error="No tool registry attached")
+    def _op_repo_read(self, args, turn_id, origin, security_context):
+        result = self._op_registry_tool(
+            "repo.read", "read_file", args, turn_id, origin, security_context
+        )
+        if result.success:
+            result.context_handles = [
+                f"ctx:file:{args.get('path', '')}:{args.get('start_line', 1)}-{args.get('end_line', 100)}"
+            ]
+        return result
 
-    def _op_artifacts_read(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        if self.registry:
-            tool_res = self.registry.execute_tool(
-                "artifact_read", args, turn_id=turn_id,
-                conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin
-            )
-            art_id = args.get("artifact_id", "")
-            return SafeRuntimeResult(
-                success=tool_res.success,
-                operation="artifacts.read",
-                data=tool_res.output,
-                error=tool_res.error,
-                context_handles=[f"artifact:{art_id}"] if art_id else [],
-            )
-        return SafeRuntimeResult(success=False, operation="artifacts.read", error="No tool registry attached")
+    def _op_repo_search(self, args, turn_id, origin, security_context):
+        return self._op_registry_tool(
+            "repo.search", "search", args, turn_id, origin, security_context
+        )
 
-    def _op_patch_apply(self, args: dict, turn_id: str, origin: str, grant=None, expected_approval_id=None) -> SafeRuntimeResult:
-        if self.registry:
-            tool_res = self.registry.execute_tool(
-                "apply_patch", args, turn_id=turn_id,
-                conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin, grant=grant, expected_approval_id=expected_approval_id
+    def _op_repo_inspect_symbol(self, args, turn_id, origin, security_context):
+        symbol = str(args.get("symbol", "")).strip()
+        if not symbol:
+            return SafeRuntimeResult(False, "repo.inspect_symbol", error="Symbol argument required")
+        handle_info = self.handles.resolve(
+            f"ctx:repo:{symbol}", security_context=security_context
+        )
+        symbols = handle_info.get("symbols", [])
+        snippets = []
+        for item in symbols[:3]:
+            path = item.get("path", "")
+            start = max(1, int(item.get("start_line", 1)) - 5)
+            end = int(item.get("end_line", start + 30)) + 5
+            read_result = self._op_repo_read(
+                {"path": path, "start_line": start, "end_line": end},
+                turn_id,
+                origin,
+                security_context,
             )
-            return SafeRuntimeResult(
-                success=tool_res.success,
-                operation="patch.apply",
-                data=tool_res.output,
-                error=tool_res.error,
-            )
-        return SafeRuntimeResult(success=False, operation="patch.apply", error="No tool registry attached")
+            if read_result.success:
+                snippets.append(
+                    {
+                        "symbol": item.get("name", symbol),
+                        "path": path,
+                        "kind": item.get("kind", ""),
+                        "lines": f"{start}-{end}",
+                        "content": read_result.data,
+                    }
+                )
+        content_chars = sum(len(str(item.get("content", ""))) for item in snippets)
+        return SafeRuntimeResult(
+            True,
+            "repo.inspect_symbol",
+            data={"symbol": symbol, "matches": symbols, "snippets": snippets},
+            context_handles=[f"ctx:repo:{symbol}"],
+            tokens_saved=max(50, content_chars // 4),
+        )
 
-    def _op_process_run(self, args: dict, turn_id: str, origin: str, grant=None, expected_approval_id=None) -> SafeRuntimeResult:
-        if self.registry:
-            tool_res = self.registry.execute_tool(
-                "run_command", args, turn_id=turn_id,
-                conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin, grant=grant, expected_approval_id=expected_approval_id
-            )
-            return SafeRuntimeResult(
-                success=tool_res.success,
-                operation="process.run",
-                data=tool_res.output,
-                error=tool_res.error,
-            )
-        return SafeRuntimeResult(success=False, operation="process.run", error="No tool registry attached")
-
-    def _op_children_spawn(self, args: dict, turn_id: str, origin: str, grant=None, expected_approval_id=None, security_context=None) -> SafeRuntimeResult:
-        if self.registry:
-            tool_res = self.registry.execute_tool(
-                "child_spawn", args, turn_id=turn_id,
-                conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin=origin, grant=grant, expected_approval_id=expected_approval_id,
-                security_context=security_context
-            )
-            child_id = tool_res.metadata.get("child_id", "") if hasattr(tool_res, "metadata") else ""
-            return SafeRuntimeResult(
-                success=tool_res.success,
-                operation="children.spawn",
-                data=tool_res.output,
-                error=tool_res.error,
-                context_handles=[f"child:{child_id}"] if child_id else [],
-            )
-        return SafeRuntimeResult(success=False, operation="children.spawn", error="No tool registry attached")
-
-    def _op_children_send(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        child_id = args.get("child_id", "")
+    def _op_children_send(self, args):
+        child_id = str(args.get("child_id", ""))
         message = args.get("message", "")
         if not child_id or not message:
-            return SafeRuntimeResult(success=False, operation="children.send", error="child_id and message required")
+            return SafeRuntimeResult(False, "children.send", error="child_id and message required")
+        if not self.children or not hasattr(self.children, "send_message"):
+            return SafeRuntimeResult(False, "children.send", error="Child messaging not available")
+        message_object = self.children.send_message(
+            conversation_id=self.conversation_id,
+            parent_id=self.conversation_id,
+            child_id=child_id,
+            sender_id=self.conversation_id,
+            recipient_id=child_id,
+            payload=message if isinstance(message, dict) else {"text": str(message)},
+        )
+        return SafeRuntimeResult(
+            True,
+            "children.send",
+            data={"message_id": getattr(message_object, "id", ""), "status": "SENT"},
+            context_handles=[f"child:{child_id}"],
+        )
 
-        if self.children and hasattr(self.children, "send_message"):
-            msg_obj = self.children.send_message(
-                conversation_id=self.conversation_id,
-                parent_id=self.conversation_id,
-                child_id=child_id,
-                sender_id=self.conversation_id,
-                recipient_id=child_id,
-                payload=message if isinstance(message, dict) else {"text": str(message)},
-            )
-            return SafeRuntimeResult(
-                success=True,
-                operation="children.send",
-                data={"message_id": getattr(msg_obj, "id", ""), "status": "SENT"},
-                context_handles=[f"child:{child_id}"],
-            )
-        return SafeRuntimeResult(success=False, operation="children.send", error="Child messaging not available")
-
-    def _op_children_inspect(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        child_id = args.get("child_id", "")
+    def _op_children_inspect(self, args):
+        child_id = str(args.get("child_id", ""))
         if not child_id:
-            return SafeRuntimeResult(success=False, operation="children.inspect", error="child_id required")
-        if self.children:
-            child = self.children.inspect(child_id, conversation_id=self.conversation_id, workspace_id=self.workspace_id)
-            if not child:
-                return SafeRuntimeResult(success=False, operation="children.inspect", error=f"Child {child_id} not found")
-            return SafeRuntimeResult(
-                success=True,
-                operation="children.inspect",
-                data={
-                    "id": getattr(child, "id", child_id),
-                    "name": getattr(child, "name", ""),
-                    "state": getattr(child, "state", ""),
-                    "task": getattr(child, "task", ""),
-                    "result_artifact_id": getattr(child, "result_artifact_id", None),
-                    "error": getattr(child, "error", None),
-                },
-                context_handles=[f"child:{child_id}"],
-            )
-        return SafeRuntimeResult(success=False, operation="children.inspect", error="Child manager not attached")
+            return SafeRuntimeResult(False, "children.inspect", error="child_id required")
+        if not self.children:
+            return SafeRuntimeResult(False, "children.inspect", error="Child manager not attached")
+        child = self.children.inspect(
+            child_id,
+            conversation_id=self.conversation_id,
+            workspace_id=self.workspace_id,
+        )
+        if not child:
+            return SafeRuntimeResult(False, "children.inspect", error=f"Child {child_id} not found")
+        return SafeRuntimeResult(
+            True,
+            "children.inspect",
+            data={
+                "id": child.id,
+                "name": child.name,
+                "state": child.state,
+                "task": child.task,
+                "result_artifact_id": child.result_artifact_id,
+                "error": child.error,
+            },
+            context_handles=[f"child:{child_id}"],
+        )
 
-    def _op_goal_inspect(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        goal_id = args.get("goal_id", "")
+    def _op_goal_inspect(self, args):
+        goal_id = str(args.get("goal_id", ""))
         if not goal_id:
-            return SafeRuntimeResult(success=False, operation="goal.inspect", error="goal_id required")
-        if self.goals:
-            goal = self.goals.get_scoped(goal_id, self.conversation_id)
-            if not goal:
-                return SafeRuntimeResult(success=False, operation="goal.inspect", error=f"Goal {goal_id} not found")
-            return SafeRuntimeResult(
-                success=True,
-                operation="goal.inspect",
-                data={
-                    "id": getattr(goal, "id", goal_id),
-                    "objective": getattr(goal, "objective", ""),
-                    "state": getattr(goal, "state", ""),
-                    "turns_used": getattr(goal, "turns_used", 0),
-                    "tokens_used": getattr(goal, "tokens_used", 0),
-                    "success_criteria": getattr(goal, "success_criteria", []),
-                },
-                context_handles=[f"goal:{goal_id}"],
-            )
-        return SafeRuntimeResult(success=False, operation="goal.inspect", error="Goal service not attached")
+            return SafeRuntimeResult(False, "goal.inspect", error="goal_id required")
+        if not self.goals:
+            return SafeRuntimeResult(False, "goal.inspect", error="Goal service not attached")
+        goal = self.goals.get_scoped(goal_id, self.conversation_id)
+        if not goal:
+            return SafeRuntimeResult(False, "goal.inspect", error=f"Goal {goal_id} not found")
+        return SafeRuntimeResult(
+            True,
+            "goal.inspect",
+            data={
+                "id": goal.id,
+                "objective": goal.objective,
+                "state": goal.state,
+                "turns_used": goal.turns_used,
+                "tokens_used": goal.tokens_used,
+                "success_criteria": goal.success_criteria,
+            },
+            context_handles=[f"goal:{goal_id}"],
+        )
 
-    def _op_goal_update(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        goal_id = args.get("goal_id", "")
-        state = args.get("state", "")
+    def _op_goal_update(self, args):
+        goal_id = str(args.get("goal_id", ""))
+        state = str(args.get("state", ""))
         if not goal_id or not state:
-            return SafeRuntimeResult(success=False, operation="goal.update", error="goal_id and state required")
-        if self.goals:
-            res = self.goals.update_state(goal_id, state, last_error=args.get("last_error"), conversation_id=self.conversation_id)
-            return SafeRuntimeResult(
-                success=bool(res),
-                operation="goal.update",
-                data={"goal_id": goal_id, "state": state},
-                context_handles=[f"goal:{goal_id}"],
-            )
-        return SafeRuntimeResult(success=False, operation="goal.update", error="Goal service not attached")
+            return SafeRuntimeResult(False, "goal.update", error="goal_id and state required")
+        if not self.goals:
+            return SafeRuntimeResult(False, "goal.update", error="Goal service not attached")
+        goal = self.goals.update_state(
+            goal_id,
+            state,
+            last_error=args.get("last_error"),
+            conversation_id=self.conversation_id,
+        )
+        return SafeRuntimeResult(
+            bool(goal),
+            "goal.update",
+            data={"goal_id": goal_id, "state": state},
+            context_handles=[f"goal:{goal_id}"],
+        )
 
-    def _op_memory_query(self, args: dict, turn_id: str, origin: str) -> SafeRuntimeResult:
-        query = args.get("query", "")
-        if self.memory:
-            items = self.memory.query(query, limit=args.get("limit", 5))
-            return SafeRuntimeResult(
-                success=True,
-                operation="memory.query",
-                data=items,
-            )
-        return SafeRuntimeResult(success=False, operation="memory.query", error="Memory service not attached")
+    def _op_memory_query(self, args):
+        if not self.memory:
+            return SafeRuntimeResult(False, "memory.query", error="Memory service not attached")
+        query = str(args.get("query", ""))
+        limit = max(1, min(int(args.get("limit", 5)), 50))
+        if hasattr(self.memory, "query"):
+            items = self.memory.query(query, limit=limit)
+        elif hasattr(self.memory, "get_relevant_memories"):
+            raw_items = self.memory.get_relevant_memories(query)[:limit]
+            items = [
+                {
+                    "text": getattr(item, "text", str(item)),
+                    "scope": getattr(item, "scope", ""),
+                    "priority": getattr(item, "priority", 0),
+                    "tags": list(getattr(item, "tags", []) or []),
+                }
+                for item in raw_items
+            ]
+        else:
+            return SafeRuntimeResult(False, "memory.query", error="Memory query API unavailable")
+        return SafeRuntimeResult(True, "memory.query", data=items)
 
-    def _op_skill_call(self, args: dict, turn_id: str, origin: str, security_context=None) -> SafeRuntimeResult:
+    def _op_skill_call(self, args, security_context):
         skill_name = args.get("name") or args.get("skill_name")
-        skill_args = args.get("arguments", {})
         if not skill_name:
-            return SafeRuntimeResult(success=False, operation="skill.call", error="Skill name required")
-        if self.skills and hasattr(self.skills, "execute_skill"):
-            res = self.skills.execute_skill(skill_name, skill_args, runtime=self, security_context=security_context)
-            return SafeRuntimeResult(
-                success=getattr(res, "success", True),
-                operation="skill.call",
-                data=getattr(res, "data", str(res)),
-                error=getattr(res, "error", None),
-            )
-        return SafeRuntimeResult(success=False, operation="skill.call", error=f"Executable skill '{skill_name}' not available")
+            return SafeRuntimeResult(False, "skill.call", error="Skill name required")
+        if not self.skills or not hasattr(self.skills, "execute_skill"):
+            return SafeRuntimeResult(False, "skill.call", error=f"Executable skill '{skill_name}' not available")
+        result = self.skills.execute_skill(
+            skill_name,
+            args.get("arguments", {}),
+            runtime=self,
+            security_context=security_context,
+        )
+        return SafeRuntimeResult(
+            getattr(result, "success", True),
+            "skill.call",
+            data=getattr(result, "data", str(result)),
+            error=getattr(result, "error", None),
+        )
 
-    def _op_mcp_call(self, args: dict, turn_id: str, origin: str, security_context=None) -> SafeRuntimeResult:
-        tool_name = args.get("tool_name", "")
-        tool_args = args.get("arguments", {})
+    def _op_mcp_call(self, args, turn_id, security_context):
+        tool_name = str(args.get("tool_name", ""))
         if not tool_name:
-            return SafeRuntimeResult(success=False, operation="mcp.call", error="MCP tool_name required")
-        if self.registry:
-            tool_res = self.registry.execute_tool(
-                tool_name, tool_args, turn_id=turn_id,
-                conversation_id=self.conversation_id, workspace_id=self.workspace_id,
-                origin="SAFE_RUNTIME_BROKER", security_context=security_context
-            )
-            return SafeRuntimeResult(
-                success=tool_res.success,
-                operation="mcp.call",
-                data=tool_res.output,
-                error=tool_res.error,
-            )
-        return SafeRuntimeResult(success=False, operation="mcp.call", error="Tool registry not attached")
+            return SafeRuntimeResult(False, "mcp.call", error="MCP tool_name required")
+        if not self.registry:
+            return SafeRuntimeResult(False, "mcp.call", error="Tool registry not attached")
+        result = self.registry.execute_tool(
+            tool_name,
+            args.get("arguments", {}),
+            turn_id=turn_id,
+            conversation_id=self.conversation_id,
+            workspace_id=self.workspace_id,
+            origin="SAFE_RUNTIME_BROKER",
+            security_context=security_context,
+        )
+        return SafeRuntimeResult(
+            result.success,
+            "mcp.call",
+            data=result.output,
+            error=result.error,
+            metadata=dict(getattr(result, "metadata", {}) or {}),
+        )
 
-    def _op_state_get(self, args: dict) -> SafeRuntimeResult:
-        key = args.get("key", "")
+    def _op_state_get(self, args):
+        key = str(args.get("key", ""))
         if not key:
-            return SafeRuntimeResult(success=False, operation="state.get", error="key required")
+            return SafeRuntimeResult(False, "state.get", error="key required")
         if not self.state:
-            return SafeRuntimeResult(success=False, operation="state.get", error="State store not initialized")
-        val = self.state.get(key)
-        return SafeRuntimeResult(success=True, operation="state.get", data=val)
+            return SafeRuntimeResult(False, "state.get", error="State store not initialized")
+        return SafeRuntimeResult(True, "state.get", data=self.state.get(key))
 
-    def _op_state_set(self, args: dict) -> SafeRuntimeResult:
-        key = args.get("key", "")
-        value = args.get("value")
-        ttl = args.get("ttl_seconds")
+    def _op_state_set(self, args):
+        key = str(args.get("key", ""))
         if not key:
-            return SafeRuntimeResult(success=False, operation="state.set", error="key required")
+            return SafeRuntimeResult(False, "state.set", error="key required")
         if not self.state:
-            return SafeRuntimeResult(success=False, operation="state.set", error="State store not initialized")
-        self.state.set(key, value, ttl_seconds=ttl)
-        return SafeRuntimeResult(success=True, operation="state.set", data={"key": key, "status": "stored"})
+            return SafeRuntimeResult(False, "state.set", error="State store not initialized")
+        self.state.set(key, args.get("value"), ttl_seconds=args.get("ttl_seconds"))
+        return SafeRuntimeResult(True, "state.set", data={"key": key, "status": "stored"})
 
-    def _op_state_list(self, args: dict) -> SafeRuntimeResult:
+    def _op_state_list(self):
         if not self.state:
-            return SafeRuntimeResult(success=False, operation="state.list", error="State store not initialized")
-        keys = self.state.list_keys()
-        return SafeRuntimeResult(success=True, operation="state.list", data=keys)
+            return SafeRuntimeResult(False, "state.list", error="State store not initialized")
+        return SafeRuntimeResult(True, "state.list", data=self.state.list_keys())
 
-    def _op_handles_resolve(self, args: dict) -> SafeRuntimeResult:
-        handle = args.get("handle", "")
+    def _op_handles_resolve(self, args, security_context):
+        handle = str(args.get("handle", ""))
         if not handle:
-            return SafeRuntimeResult(success=False, operation="handles.resolve", error="handle required")
-        resolved = self.handles.resolve(handle)
-        return SafeRuntimeResult(success=True, operation="handles.resolve", data=resolved)
+            return SafeRuntimeResult(False, "handles.resolve", error="handle required")
+        resolved = self.handles.resolve(handle, security_context=security_context)
+        return SafeRuntimeResult(True, "handles.resolve", data=resolved)

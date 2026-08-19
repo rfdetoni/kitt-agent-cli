@@ -2,19 +2,52 @@ from __future__ import annotations
 
 import json
 from typing import Any, List, Optional
+
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.domain.entities import ContextPlan
 
 
 class ToolSurfaceSelector:
-    """Select legacy vs compact runtime surface.
+    """Select the legacy or compact model-facing tool surface."""
 
-    Token measurements are intentionally computed from the real serialized
-    definitions rather than fixed constants.
-    """
+    SMALL_CONTEXT_LIMIT = 16_384
 
     def __init__(self, config: Optional[RuntimeConfig] = None):
         self.config = config or RuntimeConfig()
+
+    @staticmethod
+    def _supports_tool_protocol(model_capabilities: Optional[Any]) -> bool:
+        if model_capabilities is None:
+            return True
+        return bool(
+            getattr(
+                model_capabilities,
+                "supports_tools",
+                getattr(model_capabilities, "supports_native_tools", True),
+            )
+        )
+
+    @classmethod
+    def _prefer_safe_runtime(cls, model_capabilities: Optional[Any]) -> bool:
+        if model_capabilities is None:
+            # Preserve the compact, safer default when capability discovery is
+            # unavailable instead of silently widening the model tool surface.
+            return True
+
+        if not cls._supports_tool_protocol(model_capabilities):
+            return False
+
+        tier = str(getattr(model_capabilities, "tier", "")).lower()
+        context_limit = int(
+            getattr(model_capabilities, "input_context_limit", 0) or 0
+        )
+        is_local = bool(getattr(model_capabilities, "is_local", False))
+
+        if is_local or tier == "small":
+            return True
+        if context_limit and context_limit <= cls.SMALL_CONTEXT_LIMIT:
+            return True
+        return False
 
     def select_tools(
         self,
@@ -31,17 +64,14 @@ class ToolSurfaceSelector:
 
         if mode == "legacy" or not self.config.safe_runtime_enabled:
             return list(plan.enabled_tools)
-
         if mode == "safe_runtime":
             return ["kitt_runtime"]
 
-        supports_tools = True
-        if model_capabilities is not None:
-            supports_tools = bool(
-                getattr(model_capabilities, "supports_tools",
-                        getattr(model_capabilities, "supports_native_tools", True))
-            )
-        return ["kitt_runtime"] if supports_tools else list(plan.enabled_tools)
+        return (
+            ["kitt_runtime"]
+            if self._prefer_safe_runtime(model_capabilities)
+            else list(plan.enabled_tools)
+        )
 
     @staticmethod
     def measure_definition_tokens(registry, tools: List[str], token_counter) -> int:
@@ -54,9 +84,18 @@ class ToolSurfaceSelector:
         return token_counter.count_tokens(payload)
 
     @classmethod
-    def compare_surfaces(cls, registry, legacy_tools: List[str], token_counter) -> dict:
-        legacy = cls.measure_definition_tokens(registry, legacy_tools, token_counter)
-        compact = cls.measure_definition_tokens(registry, ["kitt_runtime"], token_counter)
+    def compare_surfaces(
+        cls,
+        registry,
+        legacy_tools: List[str],
+        token_counter,
+    ) -> dict:
+        legacy = cls.measure_definition_tokens(
+            registry, legacy_tools, token_counter
+        )
+        compact = cls.measure_definition_tokens(
+            registry, ["kitt_runtime"], token_counter
+        )
         saved = max(0, legacy - compact)
         return {
             "legacy_tokens": legacy,

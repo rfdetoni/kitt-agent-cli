@@ -1,35 +1,43 @@
-import shlex
-import re
-import hashlib
-import os
-import tempfile
-from pathlib import Path
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Set
-from kitt.tools.policy_engine import PolicyEngine
-from kitt.tools.path_policy import WorkspacePathPolicy
-from kitt.tools.approval import ApprovalGrant, ApprovalManager
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from kitt.context_engine.engine import ContextEngine
 from kitt.edit_format.applier import DiffApplier
 from kitt.edit_format.parser import SearchReplaceParser
-from kitt.tools.safe_python import SafePythonExecutor
-from kitt.tools.process_runner import ProcessRunner
-from kitt.context_engine.engine import ContextEngine
 from kitt.index.repository import RepositoryIndex
-from kitt.index.scanner import RepositoryScanner
-
+from kitt.tools.approval import ApprovalGrant, ApprovalManager
 from kitt.tools.artifact_tools import ArtifactTools
 from kitt.tools.child_tools import ChildTools
 from kitt.tools.goal_tools import GoalTools
 from kitt.tools.handlers import ToolContext, ToolHandler
 from kitt.tools.handlers.files import ListFilesHandler, ReadFileHandler, WriteFileHandler
-from kitt.tools.handlers.search import SearchHandler, RepositoryMapHandler
-from kitt.tools.handlers.system import PythonComputeHandler, ApplyPatchHandler, RunCommandHandler, GitStatusHandler, GitDiffHandler
-from kitt.tools.handlers.services import (
-    ArtifactStoreHandler, ArtifactReadHandler, ArtifactListHandler,
-    QueueInputHandler, GoalCreateHandler, GoalAddGateHandler,
-    ChildSpawnHandler, HarnessRememberHandler
-)
 from kitt.tools.handlers.safe_runtime import SafeRuntimeHandler
+from kitt.tools.handlers.search import RepositoryMapHandler, SearchHandler
+from kitt.tools.handlers.services import (
+    ArtifactListHandler,
+    ArtifactReadHandler,
+    ArtifactStoreHandler,
+    ChildSpawnHandler,
+    GoalAddGateHandler,
+    GoalCreateHandler,
+    HarnessRememberHandler,
+    QueueInputHandler,
+)
+from kitt.tools.handlers.system import (
+    ApplyPatchHandler,
+    GitDiffHandler,
+    GitStatusHandler,
+    PythonComputeHandler,
+    RunCommandHandler,
+)
+from kitt.tools.path_policy import WorkspacePathPolicy
+from kitt.tools.policy_engine import PolicyEngine
+from kitt.tools.process_runner import ProcessRunner
+from kitt.tools.safe_python import SafePythonExecutor
+
 
 @dataclass
 class ToolResult:
@@ -41,8 +49,9 @@ class ToolResult:
     requires_approval: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+
 class ToolRegistry:
-    """Registry managing executable tools, schemas, and path-contained policy enforcement."""
+    """Executable tool registry and the canonical security boundary for tools."""
 
     def __init__(self, root_dir: str = ".", context_engine: ContextEngine | None = None):
         self.root_path = Path(root_dir).resolve()
@@ -53,7 +62,10 @@ class ToolRegistry:
         self.approval_manager = ApprovalManager()
         self.safe_python = SafePythonExecutor()
         self.process_runner = ProcessRunner(root_dir)
-        self.context_engine = context_engine or ContextEngine(repository_index=RepositoryIndex(self.root_path))
+        self.context_engine = context_engine or ContextEngine(
+            repository_index=RepositoryIndex(self.root_path)
+        )
+
         self.artifacts = None
         self.artifact_tools = None
         self.queue_service = None
@@ -61,6 +73,13 @@ class ToolRegistry:
         self.goal_tools = None
         self.child_manager = None
         self.child_tools = None
+        self.harness_service = None
+        self.memory_service = None
+        self.skill_manager = None
+        self.db = None
+        self.event_bus = None
+        self._processor = None
+
         self._custom_tools: Dict[str, Dict[str, Any]] = {}
         self._safe_runtime_instance = None
         self.runtime_mode = "auto"
@@ -93,40 +112,60 @@ class ToolRegistry:
         description: str = "",
         schema: Optional[Dict[str, Any]] = None,
         owner_plugin_id: Optional[str] = None,
+        *,
+        scope_aware: bool = False,
     ) -> None:
-        """Registers a dynamic tool from a plugin or MCP server."""
+        """Register a dynamic plugin/MCP tool.
+
+        Dynamic tools are not considered path-scope aware by default. This is
+        intentionally fail-closed: a path-restricted child cannot escape its
+        boundary through an opaque plugin or MCP implementation.
+        """
+
         class _CustomHandler:
-            def __init__(self, fn):
-                self.fn = fn
+            def __init__(self, function):
+                self.function = function
 
             def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-                if hasattr(self.fn, "execute"):
-                    res = self.fn.execute(args)
+                if hasattr(self.function, "execute"):
+                    result = self.function.execute(args)
                 else:
-                    res = self.fn(args)
-                if isinstance(res, ToolResult):
-                    return res
-                return ToolResult(success=True, output=str(res))
+                    result = self.function(args)
+                if isinstance(result, ToolResult):
+                    return result
+                return ToolResult(success=True, output=str(result))
 
-        wrapped_handler = handler if (hasattr(handler, "execute") and callable(getattr(handler, "execute")) and not callable(handler)) else _CustomHandler(handler)
+        wrapped_handler = (
+            handler
+            if (
+                hasattr(handler, "execute")
+                and callable(getattr(handler, "execute"))
+                and not callable(handler)
+            )
+            else _CustomHandler(handler)
+        )
         self._handlers[tool_name] = wrapped_handler
         self._custom_tools[tool_name] = {
             "name": tool_name,
             "description": description or f"Custom tool {tool_name}",
             "args": schema or {},
             "owner": owner_plugin_id,
+            "scope_aware": bool(scope_aware),
         }
         if hasattr(self.policy, "allow_custom_tool"):
             self.policy.allow_custom_tool(tool_name)
 
     def unregister_by_owner(self, owner_plugin_id: str) -> int:
-        """Unregisters all tools owned by a plugin or MCP server."""
-        to_remove = [k for k, v in self._custom_tools.items() if v.get("owner") == owner_plugin_id]
-        for k in to_remove:
-            self._handlers.pop(k, None)
-            self._custom_tools.pop(k, None)
+        to_remove = [
+            name
+            for name, metadata in self._custom_tools.items()
+            if metadata.get("owner") == owner_plugin_id
+        ]
+        for name in to_remove:
+            self._handlers.pop(name, None)
+            self._custom_tools.pop(name, None)
             if hasattr(self.policy, "disallow_custom_tool"):
-                self.policy.disallow_custom_tool(k)
+                self.policy.disallow_custom_tool(name)
         return len(to_remove)
 
     @property
@@ -135,13 +174,24 @@ class ToolRegistry:
 
     def _refresh_index(self, paths: Optional[List[str]] = None) -> None:
         index = self.repository_index
-        if index is not None:
-            if paths and hasattr(index, "update_paths"):
-                index.update_paths(paths)
-            elif index.index_generation() == 0:
-                index.build_or_update()
+        if index is None:
+            return
+        if paths and hasattr(index, "update_paths"):
+            index.update_paths(paths)
+        elif index.index_generation() == 0:
+            index.build_or_update()
 
-    def attach_services(self, artifacts=None, queue_service=None, goal_service=None, child_manager=None, harness_service=None, memory_service=None, skill_manager=None, db=None):
+    def attach_services(
+        self,
+        artifacts=None,
+        queue_service=None,
+        goal_service=None,
+        child_manager=None,
+        harness_service=None,
+        memory_service=None,
+        skill_manager=None,
+        db=None,
+    ) -> None:
         self.artifacts = artifacts
         self.artifact_tools = ArtifactTools(artifacts) if artifacts else None
         self.queue_service = queue_service
@@ -154,11 +204,52 @@ class ToolRegistry:
         self.skill_manager = skill_manager
         self.db = db
 
-    def get_tool_definitions(self, enabled_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def attach_processor(self, processor) -> None:
+        """Attach application-level edit observers after TurnProcessor is built."""
+        self._processor = processor
+
+    def record_edit_result(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        edit_result,
+        kind: str,
+    ) -> None:
+        """Record edits performed behind composite tool surfaces exactly once."""
+        if not edit_result or not getattr(edit_result, "success", False):
+            return
+        changed = list(edit_result.applied_files + edit_result.created_files)
+        processor = self._processor
+        if processor is not None:
+            processor.session_state.last_changeset = edit_result.changeset
+            processor.working_set.touch_paths(
+                conversation_id,
+                changed,
+                turn_id,
+                weight=2.0,
+                kind=kind,
+            )
+            processor._emit(
+                "EditApplied",
+                {"applied": edit_result.applied_files, "created": edit_result.created_files},
+            )
+        elif self.event_bus is not None:
+            self.event_bus.publish(
+                "EditApplied",
+                {"applied": edit_result.applied_files, "created": edit_result.created_files},
+            )
+
+    def get_tool_definitions(
+        self, enabled_tools: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         all_tools = [
             {
                 "name": "kitt_runtime",
-                "description": "Execute safe, compact, policy-governed KITT runtime operations (repo.*, artifacts.*, patch.*, process.*, children.*, goal.*, state.*, handles.*).",
+                "description": (
+                    "Execute safe, compact, policy-governed KITT runtime operations "
+                    "(repo.*, artifacts.*, patch.*, process.*, children.*, goal.*, state.*, handles.*)."
+                ),
             },
             {"name": "list_files", "description": "List files in directory"},
             {"name": "search", "description": "Search regex pattern across repository"},
@@ -169,27 +260,26 @@ class ToolRegistry:
                 "description": (
                     "Run a side-effect-free subset of Python for calculations and JSON data transformation. "
                     "Accepts code, optional JSON inputs, and result_var. No imports, files, network, shell, "
-                    "reflection, functions, classes, threads, or external packages. Assign the final value "
-                    "to _result (or result_var)."
-                )
+                    "reflection, functions, classes, threads, or external packages."
+                ),
             },
-            {"name": "write_file", "description": "Create or overwrite content to a file at specified path (arguments: path, content)"},
+            {"name": "write_file", "description": "Create or overwrite content to a file"},
             {"name": "apply_patch", "description": "Apply SEARCH/REPLACE diff blocks"},
             {"name": "run_command", "description": "Run shell command within security policy"},
             {"name": "git_status", "description": "Show uncommitted git status"},
-            {"name": "git_diff", "description": "Show git diff"}
-            ,{"name": "artifact_store", "description": "Persist bounded large output outside model context"}
-            ,{"name": "artifact_read", "description": "Read a persisted artifact by id"}
-            ,{"name": "artifact_list", "description": "List artifacts for this conversation"}
-            ,{"name": "queue_input", "description": "Queue steering or follow-up input"}
-            ,{"name": "goal_create", "description": "Create a bounded autonomous goal"}
-            ,{"name": "goal_add_gate", "description": "Add a quality gate (command check) to an active goal"}
-            ,{"name": "child_spawn", "description": "Spawn an isolated child task with restricted scope and budget"}
-            ,{"name": "harness_remember", "description": "Persist a learned guideline entry into the harness repository"}
+            {"name": "git_diff", "description": "Show git diff"},
+            {"name": "artifact_store", "description": "Persist bounded large output outside model context"},
+            {"name": "artifact_read", "description": "Read a persisted artifact by id"},
+            {"name": "artifact_list", "description": "List artifacts for this conversation"},
+            {"name": "queue_input", "description": "Queue steering or follow-up input"},
+            {"name": "goal_create", "description": "Create a bounded autonomous goal"},
+            {"name": "goal_add_gate", "description": "Add a quality gate to an active goal"},
+            {"name": "child_spawn", "description": "Spawn an isolated child task with restricted scope and budget"},
+            {"name": "harness_remember", "description": "Persist a learned guideline entry"},
         ]
-        arg_schemas = {
+        schemas = {
             "kitt_runtime": {
-                "operation": "string (e.g. repo.read, repo.search, repo.inspect_symbol, patch.apply, process.run, children.spawn, children.send, children.inspect, goal.inspect, goal.update, state.get, state.set, handles.resolve)",
+                "operation": "string",
                 "arguments": "JSON object with operation-specific parameters",
             },
             "list_files": {"path": "relative dir, default ."},
@@ -209,8 +299,16 @@ class ToolRegistry:
                 "limit": "int <=500",
                 "max_tokens": "int <=4000",
             },
-            "python_compute": {"code": "safe Python subset", "inputs": "JSON object", "result_var": "name, default _result"},
-            "write_file": {"path": "relative file", "content": "full file text", "expected_content_hash": "optional sha256"},
+            "python_compute": {
+                "code": "safe Python subset",
+                "inputs": "JSON object",
+                "result_var": "name, default _result",
+            },
+            "write_file": {
+                "path": "relative file",
+                "content": "full file text",
+                "expected_content_hash": "optional sha256",
+            },
             "apply_patch": {"patch": "SEARCH/REPLACE blocks"},
             "run_command": {"command": "shell command allowed by policy"},
             "artifact_read": {"artifact_id": "id", "offset": "int", "limit": "int"},
@@ -220,71 +318,100 @@ class ToolRegistry:
             "harness_remember": {"text": "guideline text"},
         }
         for tool in all_tools:
-            if tool["name"] in arg_schemas:
-                tool["args"] = arg_schemas[tool["name"]]
+            schema = schemas.get(tool["name"])
+            if schema is not None:
+                tool["args"] = schema
         for custom_tool in self._custom_tools.values():
-            all_tools.append({
-                "name": custom_tool["name"],
-                "description": custom_tool["description"],
-                "args": custom_tool["args"],
-            })
+            all_tools.append(
+                {
+                    "name": custom_tool["name"],
+                    "description": custom_tool["description"],
+                    "args": custom_tool["args"],
+                }
+            )
         if enabled_tools is None:
             return all_tools
-        return [t for t in all_tools if t["name"] in enabled_tools]
+        enabled = set(enabled_tools)
+        return [tool for tool in all_tools if tool["name"] in enabled]
 
-    def execute_tool(self, tool_name: str, args: dict = None, turn_id: str = "default_turn",
-                     conversation_id: str = "default_conv", workspace_id: str = "default_ws",
-                     enabled_tools: Optional[list] = None, grant: Optional[ApprovalGrant] = None,
-                     expected_approval_id: Optional[str] = None, origin: str = 'MODEL',
-                     security_context=None) -> ToolResult:
+    def execute_tool(
+        self,
+        tool_name: str,
+        args: dict = None,
+        turn_id: str = "default_turn",
+        conversation_id: str = "default_conv",
+        workspace_id: str = "default_ws",
+        enabled_tools: Optional[list] = None,
+        grant: Optional[ApprovalGrant] = None,
+        expected_approval_id: Optional[str] = None,
+        origin: str = "MODEL",
+        security_context=None,
+    ) -> ToolResult:
         args = args or {}
 
         if security_context is not None:
             try:
                 security_context.assert_scope(workspace_id, conversation_id)
             except PermissionError as exc:
-                return ToolResult(success=False, output="", error=str(exc))
-            from kitt.security.capabilities import TOOL_TO_CAPABILITY, CAP_MCP_CALL
-            required_cap = TOOL_TO_CAPABILITY.get(tool_name)
+                return ToolResult(False, "", str(exc))
+
+            from kitt.security.capabilities import CAP_MCP_CALL, TOOL_TO_CAPABILITY
+
+            required_capability = TOOL_TO_CAPABILITY.get(tool_name)
             custom = self._custom_tools.get(tool_name)
             if custom and str(custom.get("owner") or "").startswith("mcp:"):
-                required_cap = CAP_MCP_CALL
-            if required_cap and not security_context.has_capability(required_cap):
+                required_capability = CAP_MCP_CALL
+            if required_capability and not security_context.has_capability(required_capability):
                 return ToolResult(
-                    success=False, output="",
-                    error=f"Capability '{required_cap}' required for tool '{tool_name}' (fail-closed)."
+                    False,
+                    "",
+                    f"Capability '{required_capability}' required for tool '{tool_name}' (fail-closed).",
+                )
+            if (
+                custom
+                and security_context.is_path_scoped
+                and not bool(custom.get("scope_aware"))
+            ):
+                return ToolResult(
+                    False,
+                    "",
+                    f"Custom tool '{tool_name}' is not declared path-scope aware.",
                 )
 
         if enabled_tools is not None and tool_name not in enabled_tools:
             return ToolResult(
-                success=False,
-                output="",
-                error=f"Tool '{tool_name}' is not enabled in ContextPlan."
+                False,
+                "",
+                f"Tool '{tool_name}' is not enabled in ContextPlan.",
             )
 
-        perm = self.policy.evaluate_tool(tool_name, args, origin=origin)
-        if perm == 'DENY':
+        permission = self.policy.evaluate_tool(tool_name, args, origin=origin)
+        if permission == "DENY":
             return ToolResult(
-                success=False,
-                output="",
-                error=f"Execution denied by PolicyEngine for tool '{tool_name}'."
+                False,
+                "",
+                f"Execution denied by PolicyEngine for tool '{tool_name}'.",
             )
 
-        if perm == 'ASK':
+        if permission == "ASK":
             expected_hash = self.policy.generate_action_hash(tool_name, args)
             valid = self.approval_manager.validate_and_consume(
-                grant, expected_hash, turn_id, conversation_id, workspace_id,
-                expected_approval_id=expected_approval_id
+                grant,
+                expected_hash,
+                turn_id,
+                conversation_id,
+                workspace_id,
+                expected_approval_id=expected_approval_id,
             )
             if not valid:
                 return ToolResult(
-                    success=False,
-                    output="",
-                    error=f"Tool '{tool_name}' requires explicit user confirmation (ASK policy).",
-                    requires_approval=True
+                    False,
+                    "",
+                    f"Tool '{tool_name}' requires explicit user confirmation (ASK policy).",
+                    requires_approval=True,
                 )
 
-        ctx = ToolContext(
+        context = ToolContext(
             registry=self,
             turn_id=turn_id,
             conversation_id=conversation_id,
@@ -296,11 +423,23 @@ class ToolRegistry:
         )
         handler = self._handlers.get(tool_name)
         if not handler:
-            return ToolResult(success=False, output="", error=f"Tool '{tool_name}' execution not implemented.")
+            return ToolResult(False, "", f"Tool '{tool_name}' execution not implemented.")
         try:
-            return handler.execute(args, ctx)
-        except Exception as e:
-            return ToolResult(success=False, output="", error=f"Tool error: {e}")
+            result = handler.execute(args, context)
+            if (
+                result.success
+                and grant is not None
+                and security_context is not None
+                and getattr(security_context, "principal_type", "") == "CHILD"
+                and self.child_manager is not None
+                and hasattr(self.child_manager, "on_approved_action_executed")
+            ):
+                self.child_manager.on_approved_action_executed(
+                    security_context.principal_id, turn_id, result.output
+                )
+            return result
+        except Exception as exc:
+            return ToolResult(False, "", f"Tool error: {exc}")
 
     @staticmethod
     def _format_repository_map(mode: str, rows: List[Dict[str, Any]]) -> str:
@@ -310,12 +449,17 @@ class ToolRegistry:
                 for row in rows
             )
         if mode == "module":
-            return "\n".join(f"{row['path']} | symbols={row['symbols']}" for row in rows)
+            return "\n".join(
+                f"{row['path']} | symbols={row['symbols']}" for row in rows
+            )
         if mode == "symbol":
             return "\n".join(
                 f"{row['path']}:{row['start_line']}-{row['end_line']} | {row['kind']} | {row['signature'] or row['name']}"
                 for row in rows
             )
         if mode == "impact":
-            return "\n".join(f"{row['source']} -> {row['target']} | {row['kind']} | weight={row['weight']}" for row in rows)
+            return "\n".join(
+                f"{row['source']} -> {row['target']} | {row['kind']} | weight={row['weight']}"
+                for row in rows
+            )
         return "\n".join(str(row) for row in rows)

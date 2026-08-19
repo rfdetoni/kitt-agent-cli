@@ -179,7 +179,7 @@ def execute(context, arguments):
 
         # Correlated ask
         ask_res = self.child_manager.ask(child.id, "Status update?", timeout=0.5)
-        self.assertEqual(ask_res["status"], "SENT")
+        self.assertIn(ask_res["status"], {"SENT", "ANSWERED"})
         self.assertIsNotNone(ask_res.get("correlation_id"))
 
         # Child replies

@@ -1,4 +1,4 @@
-"""Native Python HTTP client for Ollama, OpenAI, Anthropic, Gemini and OpenAI-compatible APIs."""
+"""Native Python HTTP client for supported LLM providers."""
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +19,9 @@ from kitt.llm.domain import (
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.registry import ProviderRegistry
 from kitt.llm.retry import RetryConfig, RetryPolicy
+from kitt.router.models import ModelCapabilities
 
-# Backward-compatible exception aliases
+
 LLMError = ProviderError
 LLMConnectionError = ProviderConnectionError
 LLMTimeoutError = ProviderTimeoutError
@@ -28,21 +29,28 @@ LLMProtocolError = ProviderProtocolError
 
 
 class LLMEmptyResponseError(LLMError):
-    """Raised when response is empty."""
+    """Raised when a provider returns no visible response."""
 
 
 class UnsupportedProviderError(LLMError):
-    """Raised when backend provider is unknown or unsupported."""
+    """Raised when a backend provider is unknown or unsupported."""
 
 
 def _with_retry(fn, max_retries: int = 3, base_delay: float = 0.5):
-    """Backward-compatible helper delegating to RetryPolicy."""
-    policy = RetryPolicy(RetryConfig(max_retries=max_retries, base_delay_ms=int(base_delay * 1000)))
+    """Backward-compatible helper delegating retry behavior to RetryPolicy."""
+    policy = RetryPolicy(
+        RetryConfig(
+            max_retries=max_retries,
+            base_delay_ms=int(base_delay * 1000),
+        )
+    )
     yield from policy.execute_with_retry(fn)
 
 
 class LLMClient:
-    """Unified client delegating to protocol adapters with runtime credential resolution."""
+    """Unified client delegating requests to protocol adapters."""
+
+    LOCAL_BACKENDS = frozenset({"ollama", "lmstudio", "antigravity", "local"})
 
     def __init__(
         self,
@@ -55,14 +63,44 @@ class LLMClient:
         self.profile = profile
         self._external_executor = executor is not None
         self._executor = executor or concurrent.futures.ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="llm_client_worker"
+            max_workers=2,
+            thread_name_prefix="llm_client_worker",
         )
         self.retry_policy = retry_policy or RetryPolicy()
         self.registry = registry or ProviderRegistry()
         self.auth_service = auth_service or self.registry.auth_service
 
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        """Expose the existing routing capability contract to runtime selectors.
+
+        KITT's host-tool protocol is textual and does not require a provider's
+        native function-calling API. ``supports_native_tools`` therefore means
+        that the KITT tool surface can be used by this client, while
+        ``tool_call_reliability`` still reflects the profile's explicit tool
+        support hint.
+        """
+        profile = self.profile
+        backend = (profile.backend or "").lower()
+        is_local = backend in self.LOCAL_BACKENDS
+        tier = "small" if profile.context_window <= 8192 else "large"
+        return ModelCapabilities(
+            profile_name=profile.model or backend or "model",
+            tier=tier,
+            input_context_limit=max(1, int(profile.context_window)),
+            max_output_tokens=max(1, int(profile.max_output_tokens)),
+            supports_json=bool(profile.supports_json),
+            supports_native_tools=True,
+            tool_call_reliability=0.8 if profile.supports_tools else 0.6,
+            code_edit_score=0.75 if tier == "small" else 0.9,
+            reasoning_score=0.75 if tier == "small" else 0.9,
+            languages=(),
+            is_local=is_local,
+            privacy_class="local" if is_local else "cloud",
+        )
+
     def close(self):
-        """Shut down owned thread pool executor."""
+        """Shut down the owned thread pool executor."""
         if self._executor and not self._external_executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
@@ -79,9 +117,13 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
     ) -> str:
-        full_text = ""
-        for chunk in self.chat_stream(messages, system_prompt=system_prompt, response_format=response_format):
-            full_text += chunk
+        full_text = "".join(
+            self.chat_stream(
+                messages,
+                system_prompt=system_prompt,
+                response_format=response_format,
+            )
+        )
         if not full_text.strip():
             raise LLMEmptyResponseError("LLM returned empty response.")
         return full_text
@@ -92,35 +134,43 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
     ):
-        queue = asyncio.Queue(maxsize=128)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
         sentinel = object()
         stop = threading.Event()
 
         def worker():
             try:
-                for chunk in self.chat_stream(messages, system_prompt, response_format):
+                for chunk in self.chat_stream(
+                    messages,
+                    system_prompt,
+                    response_format,
+                ):
                     if stop.is_set():
                         break
-                    # Blocks worker thread if queue is full (backpressure)
-                    asyncio.run_coroutine_threadsafe(queue.put(("data", chunk)), loop).result(timeout=10.0)
-                asyncio.run_coroutine_threadsafe(queue.put(("done", sentinel)), loop)
-            except Exception as e:
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(("data", chunk)), loop
+                    ).result(timeout=10.0)
+                asyncio.run_coroutine_threadsafe(
+                    queue.put(("done", sentinel)), loop
+                )
+            except Exception as exc:
                 try:
-                    asyncio.run_coroutine_threadsafe(queue.put(("error", e)), loop)
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(("error", exc)), loop
+                    )
                 except RuntimeError:
-                    pass  # loop closed
+                    pass
 
         future = self._executor.submit(worker)
-
         try:
             while True:
-                msg_type, payload = await queue.get()
-                if msg_type == "done":
+                message_type, payload = await queue.get()
+                if message_type == "done":
                     break
-                elif msg_type == "error":
+                if message_type == "error":
                     raise payload
-                elif msg_type == "data":
+                if message_type == "data":
                     yield payload
         finally:
             stop.set()
@@ -133,11 +183,15 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
     ) -> Generator[str, None, None]:
-        # 1. Resolve secret at runtime
         backend = (self.profile.backend or "").lower()
-        api_key = self.auth_service.resolve(self.profile.credential_ref, provider_id=backend) or self.profile.api_key
+        api_key = (
+            self.auth_service.resolve(
+                self.profile.credential_ref,
+                provider_id=backend,
+            )
+            or self.profile.api_key
+        )
 
-        # 2. Resolve protocol adapter
         base_url = (self.profile.base_url or "").lower()
         if self.profile.protocol:
             adapter = self.registry.get_adapter_for_protocol(self.profile.protocol)
@@ -146,7 +200,9 @@ class LLMClient:
         elif backend:
             adapter = self.registry.get_adapter_for_provider(backend)
         else:
-            adapter = self.registry.get_adapter_for_protocol("openai-chat-completions")
+            adapter = self.registry.get_adapter_for_protocol(
+                "openai-chat-completions"
+            )
 
         request = LLMRequest(
             model=self.profile.model,
@@ -161,5 +217,6 @@ class LLMClient:
             base_url=self.profile.base_url,
             timeout_seconds=self.profile.request_timeout_seconds,
         )
-
-        yield from self.retry_policy.execute_with_retry(lambda: adapter.stream(request))
+        yield from self.retry_policy.execute_with_retry(
+            lambda: adapter.stream(request)
+        )

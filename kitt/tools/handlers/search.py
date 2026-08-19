@@ -2,50 +2,90 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
-from kitt.tools.handlers import ToolContext
+from typing import Any, Dict
+
 from kitt.index.scanner import RepositoryScanner
+from kitt.tools.handlers import ToolContext
+
+
+def _path_allowed(ctx: ToolContext, path: str) -> bool:
+    security = ctx.security_context
+    return security is None or security.allows_path(path)
+
+
+def _filter_repository_map_rows(ctx: ToolContext, mode: str, rows: list[dict]) -> list[dict]:
+    security = ctx.security_context
+    if security is None or not security.is_path_scoped:
+        return rows
+
+    if mode == "workspace":
+        # Workspace summaries contain aggregate file counts outside the scoped
+        # principal's boundary. Returning them would leak repository structure.
+        return []
+    if mode in {"module", "symbol"}:
+        return [row for row in rows if _path_allowed(ctx, str(row.get("path", "")))]
+    if mode == "impact":
+        return [
+            row
+            for row in rows
+            if _path_allowed(ctx, str(row.get("source", "")))
+            and _path_allowed(ctx, str(row.get("target", "")))
+        ]
+    return []
 
 
 class SearchHandler:
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult
+
         pattern = str(args.get("pattern", ""))
         if not pattern or len(pattern) > 500:
             return ToolResult(False, "", "Invalid search pattern.")
+
         if not bool(args.get("regex", False)) and ctx.registry.repository_index is not None:
             ctx.registry._refresh_index()
             rows = ctx.registry.repository_index.search_text(pattern, limit=200)
             terms = ctx.registry.repository_index._query_terms(pattern)
-            matches = []
+            matches: list[str] = []
             for row in rows:
-                path = row.get("path")
-                content = row.get("content", "")
-                if not path:
+                path = str(row.get("path") or "")
+                if not path or not _path_allowed(ctx, path):
                     continue
-                for no, line in enumerate(content.splitlines(), 1):
+                content = row.get("content", "")
+                for line_number, line in enumerate(content.splitlines(), 1):
                     if any(term.lower() in line.lower() for term in terms):
-                        matches.append(f"{path}:{no}:{line[:300]}")
+                        matches.append(f"{path}:{line_number}:{line[:300]}")
                         break
                 if len(matches) >= 200:
                     break
-            return ToolResult(True, "\n".join(matches), truncated=len(matches) >= 200, metadata={"method": "index"})
+            return ToolResult(
+                True,
+                "\n".join(matches),
+                truncated=len(matches) >= 200,
+                metadata={"method": "index"},
+            )
+
         try:
-            rx = re.compile(pattern)
+            expression = re.compile(pattern)
         except re.error as exc:
             return ToolResult(False, "", f"Invalid regex: {exc}")
-        matches = []
+
+        matches: list[str] = []
         for path in RepositoryScanner(ctx.registry.root_path).scan_files():
             if len(matches) >= 200:
                 break
             try:
-                rel_path = path.relative_to(ctx.registry.root_path)
-                with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                    for no, line in enumerate(fh, 1):
-                        if no > 5000:
+                relative = str(path.relative_to(ctx.registry.root_path))
+                if not _path_allowed(ctx, relative):
+                    continue
+                with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                    for line_number, line in enumerate(handle, 1):
+                        if line_number > 5000:
                             break
-                        if rx.search(line):
-                            matches.append(f"{rel_path}:{no}:{line.rstrip()[:300]}")
+                        if expression.search(line):
+                            matches.append(
+                                f"{relative}:{line_number}:{line.rstrip()[:300]}"
+                            )
                             if len(matches) >= 200:
                                 break
             except OSError:
@@ -56,16 +96,26 @@ class SearchHandler:
 class RepositoryMapHandler:
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult
+
         if ctx.registry.repository_index is None:
             return ToolResult(False, "", "Repository index unavailable.")
+
         ctx.registry._refresh_index()
         mode = str(args.get("mode", "workspace") or "workspace")
+        if ctx.security_context is not None and ctx.security_context.is_path_scoped and mode == "workspace":
+            return ToolResult(
+                False,
+                "",
+                "Workspace-wide repository map is unavailable to a path-scoped principal.",
+            )
+
         rows = ctx.registry.repository_index.repository_map(
             mode=mode,
             query=str(args.get("query", "") or ""),
             path=str(args.get("path", "") or ""),
             limit=min(int(args.get("limit", 80)), 500),
         )
+        rows = _filter_repository_map_rows(ctx, mode, rows)
         output = ctx.registry._format_repository_map(mode, rows)
         max_tokens = min(int(args.get("max_tokens", 1200)), 4000)
         max_chars = max_tokens * 4

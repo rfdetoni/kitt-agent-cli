@@ -42,3 +42,4 @@ plan/
 .tmp-*
 temp_reference/
 .kitt-prime-backup/
+.kitt-remediation-backup/

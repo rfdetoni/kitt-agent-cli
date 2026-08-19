@@ -1,20 +1,83 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import FrozenSet, Iterable, Optional, Any
+from pathlib import PurePosixPath
+from typing import Any, FrozenSet, Iterable, Optional
 import uuid
 
 from kitt.security.capabilities import canonicalize_capabilities, compute_child_privileges
 
 
+def _normalize_relative_scope_path(value: str) -> str:
+    raw = str(value or ".").replace("\\", "/").strip()
+    if raw in {"", ".", "./"}:
+        return "."
+    path = PurePosixPath(raw)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"Invalid scoped path: {value!r}")
+    normalized = path.as_posix().lstrip("./")
+    return normalized or "."
+
+
+def _scope_contains(scope: str, path: str) -> bool:
+    if scope == ".":
+        return True
+    return path == scope or path.startswith(f"{scope}/")
+
+
+def _intersect_path_scopes(
+    parent_scope: Optional[Iterable[str]],
+    requested_scope: Optional[Iterable[str]],
+) -> Optional[FrozenSet[str]]:
+    parent = None if parent_scope is None else {
+        _normalize_relative_scope_path(path) for path in parent_scope
+    }
+    requested = None if requested_scope is None else {
+        _normalize_relative_scope_path(path) for path in requested_scope
+    }
+    if parent is not None and "." in parent:
+        parent = None
+    if requested is not None and "." in requested:
+        requested = None
+
+    if parent is None:
+        return None if requested is None else frozenset(requested)
+    if requested is None:
+        return frozenset(parent)
+
+    intersections: set[str] = set()
+    for parent_path in parent:
+        for requested_path in requested:
+            if _scope_contains(parent_path, requested_path):
+                intersections.add(requested_path)
+            elif _scope_contains(requested_path, parent_path):
+                intersections.add(parent_path)
+
+    if not intersections:
+        return frozenset()
+
+    # Keep only the broadest entries so equivalent nested scopes are not stored twice.
+    reduced = {
+        candidate
+        for candidate in intersections
+        if not any(
+            other != candidate and _scope_contains(other, candidate)
+            for other in intersections
+        )
+    }
+    return frozenset(reduced)
+
+
 @dataclass(frozen=True)
 class ExecutionSecurityContext:
-    """Immutable, scoped execution principal.
+    """Immutable execution principal with capability and optional path scope.
 
-    Security is fail-closed: a context created without capabilities has no
-    privileges. Callers must explicitly derive/grant the permissions required
-    by the current turn, goal, child or skill.
+    ``path_scope=None`` means the principal may access any path inside the
+    workspace, subject to capabilities and WorkspacePathPolicy. A concrete
+    ``path_scope`` is an additional restriction and can only be narrowed by
+    descendants.
     """
+
     workspace_id: str
     conversation_id: str
     turn_id: str
@@ -24,6 +87,7 @@ class ExecutionSecurityContext:
     capabilities: FrozenSet[str]
     trace_id: str
     parent_principal_id: Optional[str] = None
+    path_scope: Optional[FrozenSet[str]] = None
 
     def has_capability(self, capability: str) -> bool:
         return capability in self.capabilities
@@ -35,13 +99,35 @@ class ExecutionSecurityContext:
                 f"{self.principal_type}:{self.principal_id}"
             )
 
+    @property
+    def is_path_scoped(self) -> bool:
+        return self.path_scope is not None
+
+    def allows_path(self, relative_path: str) -> bool:
+        if self.path_scope is None:
+            return True
+        path = _normalize_relative_scope_path(relative_path)
+        return any(_scope_contains(scope, path) for scope in self.path_scope)
+
+    def is_ancestor_of_allowed_path(self, relative_path: str) -> bool:
+        if self.path_scope is None:
+            return True
+        path = _normalize_relative_scope_path(relative_path)
+        return any(_scope_contains(path, scope) for scope in self.path_scope)
+
+    def assert_path_allowed(self, relative_path: str) -> None:
+        if not self.allows_path(relative_path):
+            raise PermissionError(
+                f"Path '{relative_path}' is outside the principal path scope"
+            )
+
     def assert_scope(self, workspace_id: str, conversation_id: str) -> None:
         if self.workspace_id != workspace_id:
             raise PermissionError("Cross-workspace execution blocked")
         if self.conversation_id != conversation_id:
             raise PermissionError("Cross-conversation execution blocked")
 
-    def with_turn(self, turn_id: str) -> "ExecutionSecurityContext":
+    def with_turn(self, turn_id: str) -> ExecutionSecurityContext:
         return replace(self, turn_id=turn_id)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,13 +141,21 @@ class ExecutionSecurityContext:
             "capabilities": sorted(self.capabilities),
             "trace_id": self.trace_id,
             "parent_principal_id": self.parent_principal_id,
+            "path_scope": None if self.path_scope is None else sorted(self.path_scope),
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "ExecutionSecurityContext":
+    def from_dict(cls, payload: dict[str, Any]) -> ExecutionSecurityContext:
         if not isinstance(payload, dict):
             raise ValueError("Security context payload must be an object")
         caps = frozenset(canonicalize_capabilities(payload.get("capabilities", [])))
+        raw_scope = payload.get("path_scope")
+        normalized_scope = (
+            None
+            if raw_scope is None
+            else frozenset(_normalize_relative_scope_path(path) for path in raw_scope)
+        )
+        path_scope = None if normalized_scope and "." in normalized_scope else normalized_scope
         return cls(
             workspace_id=str(payload["workspace_id"]),
             conversation_id=str(payload["conversation_id"]),
@@ -72,6 +166,7 @@ class ExecutionSecurityContext:
             capabilities=caps,
             trace_id=str(payload.get("trace_id") or uuid.uuid4().hex),
             parent_principal_id=payload.get("parent_principal_id"),
+            path_scope=path_scope,
         )
 
     @classmethod
@@ -82,9 +177,16 @@ class ExecutionSecurityContext:
         turn_id: str = "",
         capabilities: Optional[Iterable[str]] = None,
         trace_id: Optional[str] = None,
-    ) -> "ExecutionSecurityContext":
-        # Deliberately fail closed. None means no privileges, not ALL.
+        path_scope: Optional[Iterable[str]] = None,
+    ) -> ExecutionSecurityContext:
         caps = frozenset(canonicalize_capabilities(capabilities or ()))
+        normalized_scope = (
+            None
+            if path_scope is None
+            else frozenset(_normalize_relative_scope_path(path) for path in path_scope)
+        )
+        if normalized_scope and "." in normalized_scope:
+            normalized_scope = None
         return cls(
             workspace_id=workspace_id,
             conversation_id=conversation_id,
@@ -94,6 +196,7 @@ class ExecutionSecurityContext:
             principal_id="user_root",
             capabilities=caps,
             trace_id=trace_id or uuid.uuid4().hex,
+            path_scope=normalized_scope,
         )
 
     def derive_child_context(
@@ -103,7 +206,8 @@ class ExecutionSecurityContext:
         turn_id: Optional[str] = None,
         workspace_policy_caps: Optional[Iterable[str]] = None,
         autonomy_policy_caps: Optional[Iterable[str]] = None,
-    ) -> "ExecutionSecurityContext":
+        allowed_paths: Optional[Iterable[str]] = None,
+    ) -> ExecutionSecurityContext:
         child_caps = compute_child_privileges(
             requested=requested_capabilities,
             parent_capabilities=self.capabilities,
@@ -111,6 +215,13 @@ class ExecutionSecurityContext:
         )
         if autonomy_policy_caps is not None:
             child_caps &= canonicalize_capabilities(autonomy_policy_caps)
+
+        requested_paths = None if allowed_paths is None else list(allowed_paths)
+        requested_scope = None if not requested_paths else requested_paths
+        child_scope = _intersect_path_scopes(self.path_scope, requested_scope)
+        if requested_scope is not None and child_scope == frozenset():
+            raise PermissionError("Child requested paths outside parent path scope")
+
         return ExecutionSecurityContext(
             workspace_id=self.workspace_id,
             conversation_id=self.conversation_id,
@@ -121,4 +232,5 @@ class ExecutionSecurityContext:
             capabilities=frozenset(child_caps),
             trace_id=self.trace_id,
             parent_principal_id=self.principal_id,
+            path_scope=child_scope,
         )
