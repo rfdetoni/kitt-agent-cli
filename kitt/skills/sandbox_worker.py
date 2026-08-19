@@ -9,7 +9,23 @@ import sys
 from typing import Any, Dict, List, Optional
 
 
+FORBIDDEN_MODULES = {
+    "os", "sys", "subprocess", "socket", "shutil", "importlib", "builtins",
+    "posix", "nt", "ctypes", "threading", "multiprocessing", "signal",
+    "inspect", "pickle", "urllib", "http", "requests", "aiohttp", "pathlib",
+    "code", "codeop", "pty", "commands",
+}
+
+
+def _safe_import(name: str, globals: Any = None, locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
+    mod_root = name.split(".")[0]
+    if mod_root in FORBIDDEN_MODULES:
+        raise PermissionError(f"Import of forbidden module '{mod_root}' is blocked in executable skill")
+    return __import__(name, globals, locals, fromlist, level)
+
+
 SAFE_BUILTINS = {
+    "__import__": _safe_import,
     "abs": abs,
     "all": all,
     "any": any,

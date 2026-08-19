@@ -177,8 +177,8 @@ class ArtifactStore:
             "content_hash": self.get(artifact_id).content_hash,
         }
 
-    def list(self, conversation_id: Optional[str] = None, workspace_id: Optional[str] = None,
-             limit: int = 20, offset: int = 0) -> List[Artifact]:
+    def list(self, conversation_id: Optional[str] = None, limit: int = 20,
+             offset: int = 0, workspace_id: Optional[str] = None) -> List[Artifact]:
         conditions = []
         args = []
         if workspace_id:
