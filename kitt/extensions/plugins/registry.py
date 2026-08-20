@@ -8,17 +8,25 @@ from typing import Dict, List, Optional
 from kitt.extensions.errors import PluginLoadError
 from kitt.extensions.models import PluginManifest, PluginState
 from kitt.extensions.plugins.loader import PluginInstance, PluginLoader
+from kitt.extensions.plugins.security import PluginStateStore
 
 logger = logging.getLogger("kitt.extensions.plugins.registry")
 
 
 class PluginRegistry:
-    def __init__(self, loader: Optional[PluginLoader] = None):
+    def __init__(
+        self,
+        loader: Optional[PluginLoader] = None,
+        state_store: Optional[PluginStateStore] = None,
+    ):
         self.loader = loader or PluginLoader()
+        self.state_store = state_store or PluginStateStore(self.loader.workspace_root)
         self._lock = threading.RLock()
         self._manifests: Dict[str, PluginManifest] = {}
         self._plugins: Dict[str, PluginInstance] = {}
-        self._disabled_plugins: set[str] = set()
+        enabled, disabled = self.state_store.load()
+        self._explicit_enabled: set[str] = set(enabled)
+        self._disabled_plugins: set[str] = set(disabled)
 
     def discover(self) -> Dict[str, PluginManifest]:
         manifests = self.loader.discover_manifests()
@@ -96,15 +104,30 @@ class PluginRegistry:
         plugin_id = name.strip().lower()
         with self._lock:
             self._disabled_plugins.add(plugin_id)
+            self._explicit_enabled.discard(plugin_id)
             if plugin_id in self._plugins:
                 self._plugins[plugin_id].state = PluginState.DISABLED
+        self.state_store.set_enabled(plugin_id, False)
 
     def enable(self, name: str) -> None:
         plugin_id = name.strip().lower()
         with self._lock:
             self._disabled_plugins.discard(plugin_id)
+            self._explicit_enabled.add(plugin_id)
             if plugin_id in self._plugins:
                 self._plugins[plugin_id].state = PluginState.LOADED
+        self.state_store.set_enabled(plugin_id, True)
+
+    def is_enabled(self, name: str, manifest: Optional[PluginManifest] = None) -> bool:
+        plugin_id = name.strip().lower()
+        with self._lock:
+            if plugin_id in self._disabled_plugins:
+                return False
+            if plugin_id in self._explicit_enabled:
+                return True
+        if manifest is None:
+            manifest = self._manifests.get(plugin_id)
+        return bool(manifest and manifest.enabled_by_default)
 
     def get(self, name: str) -> Optional[PluginInstance]:
         with self._lock:
@@ -121,9 +144,7 @@ class PluginRegistry:
     async def start_all(self) -> None:
         manifests = self.discover()
         for plugin_id, manifest in manifests.items():
-            with self._lock:
-                disabled = plugin_id in self._disabled_plugins
-            if not manifest.enabled_by_default or disabled:
+            if not self.is_enabled(plugin_id, manifest):
                 continue
             try:
                 instance = await self.load_async(plugin_id)
@@ -134,6 +155,15 @@ class PluginRegistry:
                 logger.error("Failed to start plugin '%s': %s", plugin_id, exc)
                 if manifest.is_critical:
                     raise
+
+    async def reload(self, name: str) -> PluginInstance:
+        plugin_id = name.strip().lower()
+        await self.unload(plugin_id)
+        await self.start(plugin_id)
+        instance = self.get(plugin_id)
+        if instance is None:
+            raise PluginLoadError(f"Plugin '{plugin_id}' failed to reload")
+        return instance
 
     async def stop_all(self) -> None:
         with self._lock:

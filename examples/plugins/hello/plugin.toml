@@ -4,3 +4,4 @@ api_version = "1"
 entrypoint = "plugin:setup"
 description = "Minimal hello world demonstration plugin"
 permissions = ["events.read"]
+trusted_in_process = true

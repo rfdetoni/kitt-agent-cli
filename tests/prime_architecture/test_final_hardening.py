@@ -14,6 +14,7 @@ from kitt.core.autonomy_store import AutonomyStore
 from kitt.extensions.errors import PluginLoadError
 from kitt.extensions.manifest import parse_manifest_data, parse_manifest_file
 from kitt.extensions.plugins.loader import PluginLoader
+from kitt.extensions.plugins.security import PluginTrustStore
 from kitt.goals.scheduler import GoalScheduler, LeaseLostError
 from kitt.goals.service import GoalService
 from kitt.history.database import HistoryDatabase
@@ -259,9 +260,12 @@ class TestPluginTrustBoundary(unittest.IsolatedAsyncioTestCase):
                 encoding="utf-8",
             )
             manifest = parse_manifest_file(plugin / "plugin.toml")
-            instance = await PluginLoader(
-                workspace_root=str(root)
-            ).load_async(manifest)
+            loader = PluginLoader(
+                workspace_root=str(root),
+                trust_store=PluginTrustStore(root, path=root / "trust.json"),
+            )
+            loader.trust_store.grant(manifest)
+            instance = await loader.load_async(manifest)
             self.assertTrue(marker.exists())
             self.assertEqual(instance.state.value, "LOADED")
 

@@ -9,6 +9,7 @@ from kitt.extensions.hooks.registry import HookRegistry
 from kitt.extensions.models import PluginState
 from kitt.extensions.plugins.loader import PluginLoader
 from kitt.extensions.plugins.registry import PluginRegistry
+from kitt.extensions.plugins.security import PluginTrustStore
 
 
 class TestExtensionLoader(unittest.TestCase):
@@ -19,7 +20,10 @@ class TestExtensionLoader(unittest.TestCase):
         self.ws_plugins_dir = self.root / ".kitt" / "plugins"
         self.ws_plugins_dir.mkdir(parents=True, exist_ok=True)
         self.hooks = HookRegistry()
-        self.loader = PluginLoader(workspace_root=str(self.root), hook_registry=self.hooks)
+        self.loader = PluginLoader(
+            workspace_root=str(self.root), hook_registry=self.hooks,
+            trust_store=PluginTrustStore(self.root, path=self.root / 'trust.json'),
+        )
         self.registry = PluginRegistry(loader=self.loader)
 
     def tearDown(self):
@@ -56,6 +60,7 @@ class TestExtensionLoader(unittest.TestCase):
 
         manifests = self.registry.discover()
         self.assertIn("test-plugin", manifests)
+        self.loader.trust_store.grant(manifests["test-plugin"])
 
         instance = self.registry.load("test-plugin")
         self.assertEqual(instance.state, PluginState.LOADED)
@@ -89,7 +94,8 @@ class TestExtensionLoader(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.registry.discover()
+        manifests = self.registry.discover()
+        self.loader.trust_store.grant(manifests["faulty-plugin"])
         with self.assertRaises(PluginLoadError):
             self.registry.load("faulty-plugin")
 

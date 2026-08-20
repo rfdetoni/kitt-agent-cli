@@ -22,6 +22,7 @@ from kitt.extensions.plugins.api import (
     ToolAPI,
 )
 from kitt.extensions.plugins.context import PluginContext
+from kitt.extensions.plugins.security import PluginTrustStore
 
 logger = logging.getLogger("kitt.extensions.plugins.loader")
 
@@ -81,6 +82,7 @@ class PluginLoader:
         hook_registry=None,
         tool_registry=None,
         command_registry=None,
+        trust_store: Optional[PluginTrustStore] = None,
     ):
         self.workspace_root = Path(workspace_root).resolve()
         self.global_plugins_dir = Path(
@@ -90,6 +92,7 @@ class PluginLoader:
         self.hook_registry = hook_registry
         self.tool_registry = tool_registry
         self.command_registry = command_registry
+        self.trust_store = trust_store or PluginTrustStore(self.workspace_root)
 
     def discover_manifests(self) -> Dict[str, PluginManifest]:
         manifests: Dict[str, PluginManifest] = {}
@@ -170,14 +173,18 @@ class PluginLoader:
             state=PluginState.LOADING,
         )
 
-    @staticmethod
-    def _assert_in_process_trust(manifest: PluginManifest) -> None:
-        if manifest.trusted_in_process:
+    def _assert_in_process_trust(self, manifest: PluginManifest) -> None:
+        if not manifest.trusted_in_process:
+            raise PluginLoadError(
+                f"Plugin '{manifest.name}' does not opt in to in-process execution. "
+                "Review it before setting trusted_in_process=true."
+            )
+        if self.trust_store.is_trusted(manifest):
             return
         raise PluginLoadError(
-            f"Plugin '{manifest.name}' is Python code and is not trusted for "
-            "in-process execution. Review it and set trusted_in_process=true, "
-            "or expose the extension through MCP/executable skills."
+            f"Plugin '{manifest.name}' is not trusted by the local user for this "
+            "workspace/content hash. Run 'kitt plugins trust "
+            f"{manifest.name}' after reviewing it, or use MCP/executable skills."
         )
 
     def _rollback(self, manifest: PluginManifest) -> None:

@@ -83,7 +83,7 @@ class DaemonServer:
         self.transport.secure_write(self.token_path, self.token, exclusive=True)
         return self.token
 
-    def _get_or_create_runtime(self, workspace_path=None):
+    async def _get_or_create_runtime(self, workspace_path=None):
         root = str(Path(workspace_path or self.workspace_root).resolve())
         if root not in self._runtimes:
             rt = KittRuntime.build(root)
@@ -92,9 +92,9 @@ class DaemonServer:
             if self.execution_client is not None:
                 rt.processor.execution_client = self.execution_client
             self._runtimes[root] = rt
-            if rt.config.scheduler_enabled and rt.goal_scheduler:
-                rt.goal_scheduler.start(interval_seconds=1.0)
-        return self._runtimes[root]
+        rt = self._runtimes[root]
+        await rt.start()
+        return rt
 
     async def start(self):
         self._instance_lock_fd = self.transport.acquire_instance_lock()
@@ -117,7 +117,7 @@ class DaemonServer:
                 self.transport.write_endpoint_metadata("tcp", address, actual)
             self.transport.write_pid(os.getpid())
             self._running = True
-            self._get_or_create_runtime(str(self.workspace_root))
+            await self._get_or_create_runtime(str(self.workspace_root))
         except Exception:
             self.transport.release_instance_lock(self._instance_lock_fd)
             self._instance_lock_fd = None
@@ -174,7 +174,7 @@ class DaemonServer:
                     await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "ping"}))
                     continue
 
-                rt = self._get_or_create_runtime(msg.get("workspace"))
+                rt = await self._get_or_create_runtime(msg.get("workspace"))
 
                 if action == "list_sessions":
                     convs = rt.history.list_history(limit=50)

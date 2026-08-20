@@ -370,11 +370,49 @@ class ToolRegistry:
                 },
                 ttl_seconds=3600.0,
             )
+            if self.goal_service is not None:
+                self.goal_service.resume(
+                    principal_id,
+                    conversation_id=security_context.conversation_id,
+                )
             if self.event_bus is not None:
                 self.event_bus.publish(
                     "GoalApprovalContinuationRecorded",
                     {"goal_id": principal_id, "turn_id": turn_id},
                 )
+
+    def _validate_goal_fence(
+        self,
+        security_context,
+        *,
+        allow_waiting_approval: bool = False,
+    ) -> None:
+        if security_context is None or security_context.principal_type != "GOAL":
+            return
+        if self.db is None:
+            raise PermissionError("Goal execution requires database-backed lease fencing")
+        token = getattr(security_context, "fencing_token", None)
+        owner = getattr(security_context, "fencing_owner_id", None)
+        if not token or not owner:
+            raise PermissionError("Goal execution is missing scheduler lease fencing token")
+        with self.db.get_connection() as connection:
+            row = connection.execute(
+                """SELECT state,lease_id,lease_owner_id,lease_expires_at
+                   FROM goals WHERE id=? AND conversation_id=?""",
+                (security_context.principal_id, security_context.conversation_id),
+            ).fetchone()
+        if not row:
+            raise PermissionError("Goal principal no longer exists in this conversation")
+        if allow_waiting_approval and row["state"] == "WAITING_APPROVAL":
+            return
+        expires = float(row["lease_expires_at"] or 0.0)
+        if (
+            row["state"] != "RUNNING"
+            or row["lease_id"] != token
+            or row["lease_owner_id"] != owner
+            or expires <= time.time()
+        ):
+            raise PermissionError("Goal scheduler lease lost; tool execution fenced")
 
     def execute_tool(
         self,
@@ -428,6 +466,7 @@ class ToolRegistry:
             )
 
         permission = self.policy.evaluate_tool(tool_name, args, origin=origin)
+        approval_validated = False
         if permission == "DENY":
             return ToolResult(
                 False,
@@ -452,6 +491,15 @@ class ToolRegistry:
                     f"Tool '{tool_name}' requires explicit user confirmation (ASK policy).",
                     requires_approval=True,
                 )
+            approval_validated = True
+
+        try:
+            self._validate_goal_fence(
+                security_context,
+                allow_waiting_approval=approval_validated,
+            )
+        except PermissionError as exc:
+            return ToolResult(False, "", str(exc))
 
         handler_args = dict(args)
         if (

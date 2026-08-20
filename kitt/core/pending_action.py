@@ -25,7 +25,7 @@ def embed_resume_descriptor(
     tool_name: str,
     arguments: dict,
     affected_paths: Optional[list[str]] = None,
-    before_hashes: Optional[dict[str, str]] = None,
+    before_hashes: Optional[dict[str, Optional[str]]] = None,
 ) -> None:
     """Attach a concrete resume action to a composite-tool request.
 
@@ -55,7 +55,7 @@ class PendingAction:
     action_hash: str
     source_response_sha256: str
     affected_paths: list[str]
-    before_hashes: dict[str, str]
+    before_hashes: dict[str, Optional[str]]
     created_at: float
     expires_at: float
     state: str
@@ -83,7 +83,10 @@ class PendingAction:
             object.__setattr__(
                 self,
                 "before_hashes",
-                {str(path): str(digest) for path, digest in before_hashes.items()},
+                {
+                    str(path): (None if digest is None else str(digest))
+                    for path, digest in before_hashes.items()
+                },
             )
             object.__setattr__(
                 self,

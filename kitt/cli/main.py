@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 'plugins' subcommand
     plugins_parser = subparsers.add_parser("plugins", help="Manage plugins and extensions")
-    plugins_parser.add_argument("plugin_action", nargs="?", default="list", choices=["list", "inspect", "enable", "disable", "reload"], help="Plugin action")
+    plugins_parser.add_argument("plugin_action", nargs="?", default="list", choices=["list", "inspect", "enable", "disable", "reload", "trust", "untrust"], help="Plugin action")
     plugins_parser.add_argument("plugin_name", nargs="?", default=None, help="Target plugin name")
 
     # 'mcp' subcommand
@@ -80,6 +80,7 @@ async def async_main(args) -> int:
     code = 1
     errors = []
     try:
+        await runtime.start()
         code = await backend.run_async()
     finally:
         try: await backend.shutdown()

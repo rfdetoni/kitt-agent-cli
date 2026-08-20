@@ -91,6 +91,8 @@ class ExecutionSecurityContext:
     parent_principal_id: Optional[str] = None
     path_scope: Optional[FrozenSet[str]] = None
     approval_integrity: Optional[dict[str, Optional[str]]] = None
+    fencing_token: Optional[str] = None
+    fencing_owner_id: Optional[str] = None
 
     def has_capability(self, capability: str) -> bool:
         return capability in self.capabilities
@@ -148,6 +150,8 @@ class ExecutionSecurityContext:
             "approval_integrity": (
                 None if self.approval_integrity is None else dict(self.approval_integrity)
             ),
+            "fencing_token": self.fencing_token,
+            "fencing_owner_id": self.fencing_owner_id,
         }
 
     @classmethod
@@ -177,6 +181,14 @@ class ExecutionSecurityContext:
                 dict(payload["approval_integrity"])
                 if isinstance(payload.get("approval_integrity"), dict)
                 else None
+            ),
+            fencing_token=(
+                str(payload["fencing_token"])
+                if payload.get("fencing_token") is not None else None
+            ),
+            fencing_owner_id=(
+                str(payload["fencing_owner_id"])
+                if payload.get("fencing_owner_id") is not None else None
             ),
         )
 
@@ -241,6 +253,8 @@ class ExecutionSecurityContext:
             trace_id=self.trace_id,
             parent_principal_id=self.principal_id,
             path_scope=skill_scope,
+            fencing_token=self.fencing_token,
+            fencing_owner_id=self.fencing_owner_id,
         )
 
     def derive_child_context(
@@ -277,4 +291,6 @@ class ExecutionSecurityContext:
             trace_id=self.trace_id,
             parent_principal_id=self.principal_id,
             path_scope=child_scope,
+            fencing_token=self.fencing_token,
+            fencing_owner_id=self.fencing_owner_id,
         )

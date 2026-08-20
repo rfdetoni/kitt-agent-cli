@@ -49,7 +49,14 @@ class TestExtensionLifecycle(unittest.TestCase):
             )
 
             tool_reg = ToolRegistry(root_dir=str(self.root))
-            mgr = ExtensionManager(workspace_root=str(self.root), tool_registry=tool_reg)
+            mgr = ExtensionManager(
+                workspace_root=str(self.root),
+                tool_registry=tool_reg,
+                plugin_trust_path=str(self.root / "trust.json"),
+                plugin_state_path=str(self.root / "state.json"),
+            )
+            manifests = mgr.plugins.discover()
+            mgr.plugin_trust.grant(manifests["lifecycle-plugin"])
 
             # Start manager
             await mgr.start()

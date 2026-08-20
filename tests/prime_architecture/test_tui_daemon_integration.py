@@ -37,7 +37,7 @@ class TestTUIDaemonIntegration(unittest.IsolatedAsyncioTestCase):
         )
         await self.server.start()
 
-        rt = self.server._get_or_create_runtime()
+        rt = await self.server._get_or_create_runtime()
         conv = rt.history.new_conversation("TUI Session")
         self.session_id = conv["id"]
 

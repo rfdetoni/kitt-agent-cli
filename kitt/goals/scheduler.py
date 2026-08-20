@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import threading
@@ -164,6 +165,19 @@ class GoalScheduler:
                 logger.exception("Goal lease heartbeat failed for %s", goal_id)
                 return
 
+    def _call_executor(self, goal, lease_id: str):
+        try:
+            parameters = inspect.signature(self.executor).parameters.values()
+            supports_fence = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "lease_id"
+                for p in parameters
+            )
+        except (TypeError, ValueError):
+            supports_fence = False
+        if supports_fence:
+            return self.executor(goal, lease_id=lease_id, lease_owner_id=self.worker_id)
+        return self.executor(goal)
+
     def _execute_with_heartbeat(self, goal, lease_id: str):
         stop_event = threading.Event()
         lease_lost = threading.Event()
@@ -175,7 +189,7 @@ class GoalScheduler:
         )
         heartbeat.start()
         try:
-            result = self.executor(goal)
+            result = self._call_executor(goal, lease_id)
             if lease_lost.is_set() or not self._owns_lease(goal.id, lease_id):
                 raise LeaseLostError(
                     f"Scheduler lease lost while executing goal {goal.id}"

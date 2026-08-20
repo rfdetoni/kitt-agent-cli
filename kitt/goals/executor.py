@@ -24,7 +24,7 @@ class GoalStepExecutor:
     def _resume_key(cls, goal_id: str) -> str:
         return f"{cls.RESUME_KEY_PREFIX}{goal_id}"
 
-    def __call__(self, goal):
+    def __call__(self, goal, *, lease_id=None, lease_owner_id=None):
         runtime = self.runtime_getter()
         state = RuntimeStateStore(
             runtime.database,
@@ -53,6 +53,8 @@ class GoalStepExecutor:
             principal_id=goal.id,
             capabilities=frozenset(goal.capabilities),
             trace_id=f"goal:{goal.id}",
+            fencing_token=lease_id,
+            fencing_owner_id=lease_owner_id,
         )
         command = TurnCommand(
             conversation_id=goal.conversation_id,

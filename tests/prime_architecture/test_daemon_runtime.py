@@ -38,7 +38,7 @@ class TestDaemonRuntime(unittest.IsolatedAsyncioTestCase):
         await self.server.start()
 
         # Create session under real runtime workspace identity
-        rt = self.server._get_or_create_runtime()
+        rt = await self.server._get_or_create_runtime()
         conv = rt.history.new_conversation("Session One")
         self.session_id = conv["id"]
 

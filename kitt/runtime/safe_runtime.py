@@ -177,6 +177,16 @@ class SafeRuntime:
                 SafeRuntimeResult(False, op, error=f"Unknown runtime operation: '{op}'"),
             )
 
+        if op == "handles.resolve" and security_context is None:
+            return self._result(
+                start,
+                SafeRuntimeResult(
+                    False,
+                    op,
+                    error="ExecutionSecurityContext is required for handles.resolve (fail-closed)",
+                ),
+            )
+
         if security_context is not None:
             try:
                 security_context.assert_scope(self.workspace_id, self.conversation_id)

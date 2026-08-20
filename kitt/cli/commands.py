@@ -140,62 +140,89 @@ def handle_plugins_command(
 ) -> int:
     import asyncio
     from kitt.extensions.manager import ExtensionManager
+
     ext = ExtensionManager(workspace_root=root_dir)
     manifests = ext.plugins.discover()
     action = (action or "list").strip().lower()
 
     if action == "list":
-        print("\n\033[1;36m=== Discovered & Installed Plugins ===\033[0m")
+        print("\n\033[1;36m=== Discovered Plugins ===\033[0m")
         if not manifests:
-            print("\033[90mNo plugins found in workspace (.kitt/plugins/) or global (~/.kitt/plugins/).\033[0m")
+            print("\033[90mNo plugins found.\033[0m")
             return 0
-
-        for p_name, m in manifests.items():
-            status = "\033[32m[enabled]\033[0m" if m.enabled_by_default else "\033[90m[disabled]\033[0m"
-            print(f"  • \033[1m{m.name}\033[0m v{m.version} ({m.source}) {status}")
-            if m.description:
-                print(f"    Description: {m.description}")
-            if m.permissions:
-                print(f"    Permissions: {', '.join(sorted(m.permissions))}")
+        for plugin_id, manifest in manifests.items():
+            enabled = ext.plugins.is_enabled(plugin_id, manifest)
+            trusted = ext.plugin_trust.is_trusted(manifest)
+            state = "enabled" if enabled else "disabled"
+            trust = "trusted" if trusted else "untrusted"
+            print(
+                f"  • \033[1m{manifest.name}\033[0m v{manifest.version} "
+                f"({manifest.source}) [{state}] [{trust}]"
+            )
         return 0
 
+    if not name:
+        print(f"\033[31mError: Missing plugin name for action '{action}'.\033[0m")
+        return 1
+    plugin_id = name.strip().lower()
+    manifest = manifests.get(plugin_id)
+    if not manifest:
+        print(f"\033[31mError: Plugin '{plugin_id}' not found.\033[0m")
+        return 1
+
     if action == "inspect":
-        if not name:
-            print("\033[31mError: Missing plugin name. Usage: kitt plugins inspect <name>\033[0m")
-            return 1
-        pid = name.strip().lower()
-        m = manifests.get(pid)
-        if not m:
-            print(f"\033[31mError: Plugin '{pid}' not found.\033[0m")
-            return 1
-        print(f"\n\033[1;36m=== Plugin: {m.name} ===\033[0m")
-        print(f"  Version      : {m.version}")
-        print(f"  API Version  : {m.api_version}")
-        print(f"  Entrypoint   : {m.entrypoint}")
-        print(f"  Source       : {m.source}")
-        print(f"  Path         : {m.manifest_path}")
-        print(f"  Author       : {m.author or 'N/A'}")
-        print(f"  Permissions  : {', '.join(sorted(m.permissions)) or 'None'}")
-        print(f"  Dependencies : {', '.join(m.dependencies) or 'None'}")
+        trust = ext.plugin_trust.status(manifest)
+        print(f"\n\033[1;36m=== Plugin: {manifest.name} ===\033[0m")
+        print(f"  Version      : {manifest.version}")
+        print(f"  API Version  : {manifest.api_version}")
+        print(f"  Entrypoint   : {manifest.entrypoint}")
+        print(f"  Source       : {manifest.source}")
+        print(f"  Path         : {manifest.manifest_path}")
+        print(f"  Permissions  : {', '.join(sorted(manifest.permissions)) or 'None'}")
+        print(f"  Enabled      : {ext.plugins.is_enabled(plugin_id, manifest)}")
+        print(f"  User trusted : {trust['trusted']}")
+        print(f"  Content SHA  : {trust['digest']}")
         return 0
 
     if action == "enable":
-        if not name:
-            print("\033[31mError: Missing plugin name. Usage: kitt plugins enable <name>\033[0m")
-            return 1
-        ext.plugins.enable(name)
-        print(f"\033[32m✓ Plugin '{name}' enabled.\033[0m")
+        ext.plugins.enable(plugin_id)
+        print(f"\033[32m✓ Plugin '{plugin_id}' enabled in local workspace state.\033[0m")
         return 0
-
     if action == "disable":
-        if not name:
-            print("\033[31mError: Missing plugin name. Usage: kitt plugins disable <name>\033[0m")
+        ext.plugins.disable(plugin_id)
+        print(f"\033[32m✓ Plugin '{plugin_id}' disabled in local workspace state.\033[0m")
+        return 0
+    if action == "trust":
+        try:
+            digest = ext.plugin_trust.grant(manifest)
+        except Exception as exc:
+            print(f"\033[31mTrust grant failed: {exc}\033[0m")
             return 1
-        ext.plugins.disable(name)
-        print(f"\033[32m✓ Plugin '{name}' disabled.\033[0m")
+        print(f"\033[32m✓ Trusted '{plugin_id}' for exact content hash {digest[:16]}…\033[0m")
+        return 0
+    if action == "untrust":
+        removed = ext.plugin_trust.revoke(plugin_id)
+        print(
+            f"\033[32m✓ Trust revoked for '{plugin_id}'.\033[0m"
+            if removed else f"\033[90mPlugin '{plugin_id}' had no trust grant.\033[0m"
+        )
+        return 0
+    if action == "reload":
+        async def _reload():
+            await ext.plugins.reload(plugin_id)
+            await ext.plugins.unload(plugin_id)
+        try:
+            asyncio.run(_reload())
+        except Exception as exc:
+            print(f"\033[31mPlugin reload validation failed: {exc}\033[0m")
+            return 1
+        print(
+            f"\033[32m✓ Plugin '{plugin_id}' reload validated. "
+            "Restart long-running KITT/daemon runtimes to pick up disk changes.\033[0m"
+        )
         return 0
 
-    print(f"\033[31mUnknown plugins action '{action}'. Choices: list, inspect, enable, disable.\033[0m")
+    print(f"\033[31mUnknown plugins action '{action}'.\033[0m")
     return 1
 
 
@@ -206,45 +233,95 @@ def handle_mcp_command(
 ) -> int:
     import asyncio
     from kitt.extensions.manager import ExtensionManager
+
     ext = ExtensionManager(workspace_root=root_dir)
     action = (action or "list").strip().lower()
+    servers = {cfg.server_id: cfg for cfg in ext.mcp.list_servers()}
 
     if action == "list":
-        servers = ext.mcp.list_servers()
         print("\n\033[1;36m=== Configured MCP Servers ===\033[0m")
         if not servers:
-            print("\033[90mNo MCP servers configured in ~/.kitt/config/mcp.json or .kitt/mcp.json.\033[0m")
+            print("\033[90mNo MCP servers configured.\033[0m")
             return 0
-
-        for s in servers:
-            status = ext.mcp.get_server_status(s.server_id).value
-            print(f"  • \033[1m{s.server_id}\033[0m (Transport: {s.transport}, Status: {status}, Trust: {s.trust})")
-            if s.command:
-                print(f"    Command: {s.command} {' '.join(s.args)}")
+        for server_id, cfg in servers.items():
+            status = ext.mcp.get_server_status(server_id).value
+            print(
+                f"  • \033[1m{server_id}\033[0m "
+                f"(Transport: {cfg.transport}, Status: {status}, Enabled: {cfg.enabled}, Trust: {cfg.trust})"
+            )
         return 0
 
-    if action in ("tools", "resources"):
-        async def _inspect():
-            if server:
-                await ext.mcp.connect(server)
-            else:
-                await ext.mcp.connect_all_enabled()
+    if action == "inspect":
+        if not server:
+            print("\033[31mError: Missing MCP server name.\033[0m")
+            return 1
+        cfg = servers.get(server.strip().lower())
+        if not cfg:
+            print(f"\033[31mError: MCP server '{server}' not found.\033[0m")
+            return 1
+        print(f"\n\033[1;36m=== MCP: {cfg.server_id} ===\033[0m")
+        print(f"  Transport : {cfg.transport}")
+        print(f"  Command   : {cfg.command or 'N/A'}")
+        print(f"  Args      : {' '.join(cfg.args)}")
+        print(f"  Enabled   : {cfg.enabled}")
+        print(f"  Trust     : {cfg.trust}")
+        print(f"  Timeout   : {cfg.timeout_seconds}s")
+        print(f"  Allow     : {cfg.allow_tools or 'all'}")
+        print(f"  Deny      : {cfg.deny_tools or 'none'}")
+        return 0
 
+    if action == "disconnect":
+        print(
+            "\033[90mStandalone CLI owns no persistent MCP transport. "
+            "The long-running KITT runtime/daemon owns connections and closes them on shutdown.\033[0m"
+        )
+        return 0
+
+    async def _inspect_connected():
+        clients = []
+        try:
+            if server:
+                clients.append(await ext.mcp.connect(server))
+            else:
+                for cfg in ext.mcp.list_servers():
+                    if cfg.enabled and cfg.command:
+                        clients.append(await ext.mcp.connect(cfg.server_id))
+            if action == "connect":
+                if not clients:
+                    raise RuntimeError("No MCP server selected/eligible")
+                for client in clients:
+                    tools = await client.list_tools()
+                    print(
+                        f"\033[32m✓ MCP '{client.config.server_id}' connected; "
+                        f"{len(tools)} tool(s) visible.\033[0m"
+                    )
+                return 0
             if action == "tools":
                 tools = ext.mcp.list_tools(server)
                 print(f"\n\033[1;36m=== MCP Tools ({len(tools)}) ===\033[0m")
-                for t in tools:
-                    print(f"  • \033[1m{t.full_name}\033[0m: {t.description}")
-            else:
-                print(f"\n\033[1;36m=== MCP Resources ===\033[0m")
-                # List resources if server connected
-                pass
+                for tool in tools:
+                    print(f"  • \033[1m{tool.full_name}\033[0m: {tool.description}")
+                return 0
+            if action == "resources":
+                resources = []
+                for client in clients:
+                    resources.extend(await client.list_resources())
+                print(f"\n\033[1;36m=== MCP Resources ({len(resources)}) ===\033[0m")
+                for resource in resources:
+                    print(f"  • \033[1m{resource.name}\033[0m [{resource.server_id}] {resource.uri}")
+                return 0
+            return 1
+        finally:
             await ext.mcp.disconnect_all()
 
-        asyncio.run(_inspect())
-        return 0
+    if action in {"connect", "tools", "resources"}:
+        try:
+            return asyncio.run(_inspect_connected())
+        except Exception as exc:
+            print(f"\033[31mMCP {action} failed: {exc}\033[0m")
+            return 1
 
-    print(f"\033[31mUnknown MCP action '{action}'. Choices: list, tools, resources.\033[0m")
+    print(f"\033[31mUnknown MCP action '{action}'.\033[0m")
     return 1
 
 

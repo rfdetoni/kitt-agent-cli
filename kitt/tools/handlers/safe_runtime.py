@@ -18,7 +18,7 @@ class SafeRuntimeHandler(ToolHandler):
         patch_text = str(payload.get("patch", ""))
         blocks = ctx.registry.parser.parse(patch_text)
         affected: list[str] = []
-        before_hashes: dict[str, str] = {}
+        before_hashes: dict[str, Optional[str]] = {}
         integrity_manifest: dict[str, str | None] = {}
         for block in blocks:
             is_safe, target, error = ctx.registry.path_policy.validate_path(block.file_path)
@@ -33,7 +33,7 @@ class SafeRuntimeHandler(ToolHandler):
                 before_hashes[relative] = digest
                 integrity_manifest[relative] = digest
             else:
-                before_hashes[relative] = "__MISSING__"
+                before_hashes[relative] = None
                 integrity_manifest[relative] = None
         payload[PATCH_INTEGRITY_KEY] = integrity_manifest
         return affected, before_hashes
@@ -109,7 +109,7 @@ class SafeRuntimeHandler(ToolHandler):
         if result.requires_approval:
             approval_payload = result.approval_payload or dict(operation_args)
             affected_paths: list[str] = []
-            before_hashes: dict[str, str] = {}
+            before_hashes: dict[str, Optional[str]] = {}
             if result.resume_tool_name == "apply_patch":
                 try:
                     affected_paths, before_hashes = self._patch_integrity_metadata(

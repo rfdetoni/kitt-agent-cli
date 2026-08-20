@@ -80,6 +80,7 @@ class KittRuntime:
 
     def __post_init__(self):
         self._closed = False
+        self._started = False
         self._close_lock = threading.RLock()
 
     @classmethod
@@ -317,6 +318,20 @@ class KittRuntime:
         runtime_holder["runtime"] = runtime
         runtime.prime_metrics = prime_metrics
         return runtime
+
+    async def start(self) -> None:
+        """Start async-owned runtime services exactly once."""
+        with self._close_lock:
+            if self._closed:
+                raise RuntimeError("Cannot start a closed KittRuntime")
+            if self._started:
+                return
+        if self.extensions is not None:
+            await self.extensions.start()
+        if self.config.scheduler_enabled and self.goal_scheduler is not None:
+            self.goal_scheduler.start(interval_seconds=1.0)
+        with self._close_lock:
+            self._started = True
 
     @property
     def workspace_id(self) -> str:

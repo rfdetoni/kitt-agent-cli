@@ -334,7 +334,7 @@ class TestDaemonServerClient(unittest.IsolatedAsyncioTestCase):
         await self.client.connect()
 
         # Seed events in server
-        rt = self.server._get_or_create_runtime(str(self.root))
+        rt = await self.server._get_or_create_runtime(str(self.root))
         conv = rt.history.new_conversation("daemon_session_1")
         session_id = conv["id"]
         self.server.record_event(rt.database, session_id, "SessionCreated", {"info": "init"})
