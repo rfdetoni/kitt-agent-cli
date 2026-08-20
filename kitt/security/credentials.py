@@ -8,7 +8,7 @@ and prevents secrets from leaking in repr, logs, or exceptions.
 from __future__ import annotations
 
 import os
-import sys
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,43 +98,145 @@ class CredentialResolver:
         return redacted
 
 
-def atomic_write_secure(target_path: str | Path, content: str, encoding: str = "utf-8") -> None:
-    """Atomically write file with strict POSIX permissions (0600) and directory permissions (0700).
-
-    Uses temporary file + fsync + os.replace.
-    Windows note: POSIX chmod modes (0600) are enforced on POSIX platforms. On Windows,
-    file inheritance and OS ACLs govern access; file creation uses exclusive atomic replace.
-    """
-    path = Path(target_path).resolve()
+def atomic_write_secure(
+    target_path: str | Path,
+    content: str,
+    encoding: str = "utf-8",
+) -> None:
+    """Atomically write private file without following final symlink."""
+    path = Path(
+        os.path.abspath(
+            os.path.expanduser(str(target_path))
+        )
+    )
     parent = path.parent
-    if not parent.exists():
-        parent.mkdir(parents=True, exist_ok=True)
-        if sys.platform != "win32":
+
+    def _lstat_optional(candidate: Path):
+        try:
+            return candidate.lstat()
+        except FileNotFoundError:
+            return None
+
+    parent_pre = _lstat_optional(parent)
+    if parent_pre is None:
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    parent_stat = _lstat_optional(parent)
+    if parent_stat is None:
+        raise PermissionError(
+            f"Secure write parent was not created: {parent}"
+        )
+    if stat.S_ISLNK(parent_stat.st_mode):
+        raise PermissionError(
+            f"Secure write parent must not be a symlink: {parent}"
+        )
+    if not stat.S_ISDIR(parent_stat.st_mode):
+        raise PermissionError(
+            f"Secure write parent must be a directory: {parent}"
+        )
+    if os.name == "posix":
+        if parent_stat.st_uid != os.getuid():
+            raise PermissionError(
+                f"Secure write parent owner mismatch: {parent}"
+            )
+        if parent_pre is None:
             try:
                 os.chmod(parent, 0o700)
-            except OSError:
-                pass
+            except OSError as exc:
+                raise PermissionError(
+                    f"Unable to secure new parent {parent}: {exc}"
+                ) from exc
 
-    temp_fd, temp_path_str = tempfile.mkstemp(dir=parent, prefix=f".{path.name}.", suffix=".tmp")
+    target_stat = _lstat_optional(path)
+    if target_stat is not None:
+        if stat.S_ISLNK(target_stat.st_mode):
+            raise PermissionError(
+                f"Refusing secure write through symlink: {path}"
+            )
+        if not stat.S_ISREG(target_stat.st_mode):
+            raise PermissionError(
+                f"Secure write target must be a regular file: {path}"
+            )
+        if os.name == "posix" and target_stat.st_uid != os.getuid():
+            raise PermissionError(
+                f"Secure write target owner mismatch: {path}"
+            )
+
+    temp_fd, temp_path_str = tempfile.mkstemp(
+        dir=str(parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
     temp_path = Path(temp_path_str)
 
     try:
-        if sys.platform != "win32":
-            os.chmod(temp_fd, 0o600)
-        with os.fdopen(temp_fd, "w", encoding=encoding) as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
+        temp_stat = os.fstat(temp_fd)
+        if not stat.S_ISREG(temp_stat.st_mode):
+            raise PermissionError(
+                f"Secure write temp is not a regular file: {temp_path}"
+            )
+        if os.name == "posix":
+            os.fchmod(temp_fd, 0o600)
+
+        payload = content.encode(encoding)
+        offset = 0
+        while offset < len(payload):
+            written = os.write(temp_fd, payload[offset:])
+            if written <= 0:
+                raise OSError("Short secure write")
+            offset += written
+        os.fsync(temp_fd)
+        os.close(temp_fd)
+        temp_fd = -1
+
+        target_now = _lstat_optional(path)
+        if target_now is not None:
+            if stat.S_ISLNK(target_now.st_mode):
+                raise PermissionError(
+                    f"Refusing secure write through symlink: {path}"
+                )
+            if not stat.S_ISREG(target_now.st_mode):
+                raise PermissionError(
+                    f"Secure write target must be a regular file: {path}"
+                )
+            if os.name == "posix" and target_now.st_uid != os.getuid():
+                raise PermissionError(
+                    f"Secure write target owner mismatch: {path}"
+                )
+
         os.replace(temp_path, path)
-        if sys.platform != "win32":
+        if os.name == "posix":
+            os.chmod(path, 0o600)
+
+        final_stat = path.lstat()
+        if stat.S_ISLNK(final_stat.st_mode) or not stat.S_ISREG(final_stat.st_mode):
+            raise PermissionError(
+                f"Secure write produced an unsafe target: {path}"
+            )
+        if os.name == "posix":
+            if final_stat.st_uid != os.getuid():
+                raise PermissionError(
+                    f"Secure write final owner mismatch: {path}"
+                )
+            if stat.S_IMODE(final_stat.st_mode) & 0o077:
+                raise PermissionError(
+                    f"Secure write final permissions are not private: {path}"
+                )
+
+        try:
+            dir_flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                dir_flags |= os.O_DIRECTORY
+            dir_fd = os.open(str(parent), dir_flags)
             try:
-                os.chmod(path, 0o600)
-            except OSError:
-                pass
-    except Exception:
-        if temp_path.exists():
-            try:
-                temp_path.unlink()
-            except OSError:
-                pass
-        raise
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    finally:
+        if temp_fd >= 0:
+            os.close(temp_fd)
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass

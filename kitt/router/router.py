@@ -25,6 +25,89 @@ DEFAULT_ROUTER_CONFIG = RouterConfig(
     },
 )
 
+_CREDENTIAL_REFERENCE_PREFIXES = ("env:", "auth:", "session:")
+
+
+def _sanitize_custom_provider_credentials(custom_providers, auth_service):
+    """Move literal custom-provider secrets to CredentialStore."""
+    if not isinstance(custom_providers, list):
+        return [], True
+
+    sanitized = []
+    changed = False
+
+    for raw_entry in custom_providers:
+        if not isinstance(raw_entry, dict):
+            changed = True
+            continue
+
+        entry = dict(raw_entry)
+        name = str(entry.get("name", "") or "").strip().lower()
+        raw_key = entry.get("api_key", "")
+        credential_ref = entry.get("credential_ref")
+
+        if raw_key is None:
+            raw_key = ""
+        if not isinstance(raw_key, str):
+            raw_key = ""
+            changed = True
+        raw_key = raw_key.strip()
+
+        if credential_ref is not None and not isinstance(credential_ref, str):
+            credential_ref = None
+            changed = True
+        if isinstance(credential_ref, str):
+            credential_ref = credential_ref.strip() or None
+
+        if raw_key:
+            if raw_key.startswith(_CREDENTIAL_REFERENCE_PREFIXES):
+                safe_ref = raw_key
+            elif name:
+                safe_ref = auth_service.login(
+                    name,
+                    raw_key,
+                    method="api_key",
+                ).credential_ref
+                changed = True
+            else:
+                safe_ref = ""
+                changed = True
+
+            if entry.get("api_key") != safe_ref:
+                changed = True
+            entry["api_key"] = safe_ref
+            if safe_ref:
+                if entry.get("credential_ref") != safe_ref:
+                    changed = True
+                entry["credential_ref"] = safe_ref
+            else:
+                entry.pop("credential_ref", None)
+        elif credential_ref:
+            if credential_ref.startswith(_CREDENTIAL_REFERENCE_PREFIXES):
+                safe_ref = credential_ref
+            elif name:
+                safe_ref = auth_service.login(
+                    name,
+                    credential_ref,
+                    method="api_key",
+                ).credential_ref
+                changed = True
+            else:
+                safe_ref = ""
+                changed = True
+
+            entry["credential_ref"] = safe_ref
+            entry["api_key"] = safe_ref
+        else:
+            if entry.get("api_key") not in ("", None):
+                changed = True
+            entry["api_key"] = ""
+            entry.pop("credential_ref", None)
+
+        sanitized.append(entry)
+
+    return sanitized, changed
+
 
 class TaskRouter:
     """Routes subtasks between fast context models and large execution models."""
@@ -74,7 +157,11 @@ class TaskRouter:
                 profiles[k] = ModelProfile(**v)
 
             routing = data.get("routing", {})
-            custom_providers = data.get("custom_providers", [])
+            custom_providers, custom_migrated = _sanitize_custom_provider_credentials(
+                data.get("custom_providers", []),
+                auth_service,
+            )
+            needs_migration = needs_migration or custom_migrated
             loaded_config = RouterConfig(
                 profiles={**defaults.profiles, **profiles},
                 routing={**defaults.routing, **routing},
@@ -120,10 +207,28 @@ class TaskRouter:
             }
             profiles_data[name] = profile_dict
 
+        auth_service = ProviderAuthService()
+        custom_providers, _ = _sanitize_custom_provider_credentials(
+            getattr(self.config, "custom_providers", []),
+            auth_service,
+        )
+        original_custom = getattr(self.config, "custom_providers", [])
+        if isinstance(original_custom, list):
+            shared = [
+                item for item in original_custom
+                if isinstance(item, dict)
+            ]
+            for existing, sanitized_item in zip(shared, custom_providers):
+                existing.clear()
+                existing.update(sanitized_item)
+            original_custom[:] = [dict(item) for item in custom_providers]
+            custom_providers = original_custom
+        self.config.custom_providers = custom_providers
+
         data = {
             "profiles": profiles_data,
             "routing": self.config.routing,
-            "custom_providers": getattr(self.config, "custom_providers", []),
+            "custom_providers": custom_providers,
         }
         atomic_write_secure(config_path, json.dumps(data, indent=2))
 
