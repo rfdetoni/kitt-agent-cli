@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import FrozenSet, List, Optional, Set
 
 CURRENT_PLUGIN_API_VERSION = "1"
 
@@ -53,7 +53,7 @@ class PluginState(Enum):
 class PluginIdentity:
     name: str
     version: str
-    source: str  # "workspace", "global", "package"
+    source: str
     root_path: Optional[Path] = None
 
 
@@ -73,3 +73,4 @@ class PluginManifest:
     is_critical: bool = False
     source: str = "workspace"
     manifest_path: Optional[Path] = None
+    trusted_in_process: bool = False

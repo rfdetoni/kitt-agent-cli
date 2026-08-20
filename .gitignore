@@ -43,3 +43,4 @@ plan/
 temp_reference/
 .kitt-prime-backup/
 .kitt-remediation-backup/
+.kitt-hardening-backup/

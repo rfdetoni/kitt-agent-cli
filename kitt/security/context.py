@@ -12,10 +12,12 @@ def _normalize_relative_scope_path(value: str) -> str:
     raw = str(value or ".").replace("\\", "/").strip()
     if raw in {"", ".", "./"}:
         return "."
-    path = PurePosixPath(raw)
+    while raw.startswith("./"):
+        raw = raw[2:]
+    path = PurePosixPath(raw or ".")
     if path.is_absolute() or ".." in path.parts:
         raise ValueError(f"Invalid scoped path: {value!r}")
-    normalized = path.as_posix().lstrip("./")
+    normalized = path.as_posix()
     return normalized or "."
 
 
@@ -88,6 +90,7 @@ class ExecutionSecurityContext:
     trace_id: str
     parent_principal_id: Optional[str] = None
     path_scope: Optional[FrozenSet[str]] = None
+    approval_integrity: Optional[dict[str, Optional[str]]] = None
 
     def has_capability(self, capability: str) -> bool:
         return capability in self.capabilities
@@ -142,6 +145,9 @@ class ExecutionSecurityContext:
             "trace_id": self.trace_id,
             "parent_principal_id": self.parent_principal_id,
             "path_scope": None if self.path_scope is None else sorted(self.path_scope),
+            "approval_integrity": (
+                None if self.approval_integrity is None else dict(self.approval_integrity)
+            ),
         }
 
     @classmethod
@@ -167,6 +173,11 @@ class ExecutionSecurityContext:
             trace_id=str(payload.get("trace_id") or uuid.uuid4().hex),
             parent_principal_id=payload.get("parent_principal_id"),
             path_scope=path_scope,
+            approval_integrity=(
+                dict(payload["approval_integrity"])
+                if isinstance(payload.get("approval_integrity"), dict)
+                else None
+            ),
         )
 
     @classmethod
@@ -197,6 +208,39 @@ class ExecutionSecurityContext:
             capabilities=caps,
             trace_id=trace_id or uuid.uuid4().hex,
             path_scope=normalized_scope,
+        )
+
+    def derive_skill_context(
+        self,
+        skill_id: str,
+        requested_capabilities: Iterable[str],
+        turn_id: Optional[str] = None,
+        allowed_paths: Optional[Iterable[str]] = None,
+    ) -> ExecutionSecurityContext:
+        """Derive a non-escalating executable-skill principal.
+
+        Skills inherit the parent's workspace/conversation and can only narrow
+        both capabilities and path scope. An omitted skill path request keeps
+        the parent's path scope unchanged.
+        """
+        requested_caps = canonicalize_capabilities(requested_capabilities)
+        skill_caps = requested_caps & set(self.capabilities)
+        requested_scope = None if allowed_paths is None else list(allowed_paths)
+        skill_scope = _intersect_path_scopes(self.path_scope, requested_scope)
+        if requested_scope is not None and skill_scope == frozenset():
+            raise PermissionError("Skill requested paths outside parent path scope")
+
+        return ExecutionSecurityContext(
+            workspace_id=self.workspace_id,
+            conversation_id=self.conversation_id,
+            turn_id=turn_id or self.turn_id,
+            origin="SKILL",
+            principal_type="SKILL",
+            principal_id=skill_id,
+            capabilities=frozenset(skill_caps),
+            trace_id=self.trace_id,
+            parent_principal_id=self.principal_id,
+            path_scope=skill_scope,
         )
 
     def derive_child_context(

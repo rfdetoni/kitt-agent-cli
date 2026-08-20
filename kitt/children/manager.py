@@ -392,13 +392,33 @@ class ChildAgentManager:
             )
 
     def _resume_child(self, child_id: str, workspace_id: str, grant, timeout_seconds: float) -> None:
+        child = self.repo.get(child_id)
+        pending_turn_id = child.current_task_id if child else None
         self.repo.update(child_id, state="RUNNING", error=None)
         try:
             result = self._continue_worker(child_id, grant, timeout_seconds)
             if result.get("state") == "WAITING_APPROVAL":
                 self._mark_waiting_approval(child_id, result)
                 return
-            self._complete_child(child_id, workspace_id, result)
+            if not result.get("success"):
+                raise RuntimeError(result.get("error", "child approval resume failed"))
+            if not pending_turn_id:
+                raise RuntimeError("Child approval resume lost pending turn id")
+
+            # TurnProcessor.continue_turn executes the approved host action.
+            # The retained agent still needs a normal model turn to consume that
+            # result and finish the remainder of its task.
+            self.repo.update(
+                child_id,
+                state="WAITING_APPROVAL",
+                current_task_id=pending_turn_id,
+                error=None,
+            )
+            self.on_approved_action_executed(
+                child_id,
+                pending_turn_id,
+                str(result.get("output", "")),
+            )
         except Exception as exc:
             child = self.repo.get(child_id)
             if child and child.state == "CANCELLED":
@@ -567,11 +587,12 @@ class ChildAgentManager:
     def on_approved_action_executed(
         self, child_id: str, turn_id: str, output: str
     ) -> bool:
-        """Finalize a waiting retained child after its approved tool executes.
+        """Continue a retained child after an approved action succeeds.
 
-        This hook is intentionally idempotent. It lets the regular
-        TurnProcessor/daemon approval flow complete a child without requiring
-        callers to know about ChildAgentManager.resume_after_approval().
+        The approved host action has already executed in the parent runtime.
+        Starting a fresh continuation turn avoids replaying the approved action
+        while preserving the retained child conversation/history. Completion is
+        recorded only after that continuation turn actually finishes.
         """
         child = self.repo.get(child_id)
         if (
@@ -580,39 +601,52 @@ class ChildAgentManager:
             or child.current_task_id != turn_id
         ):
             return False
+        if self._closed:
+            return False
         if not self.workspace_id:
             raise ValueError("Child manager has no workspace_id")
+        if child.tokens_used >= child.token_budget:
+            self.repo.update(
+                child_id,
+                state="FAILED",
+                error="Child token budget exhausted after approved action",
+                completed_at=time.time(),
+            )
+            return False
 
-        content = str(output or "")
-        artifact = self.artifacts.put(
-            self.workspace_id,
-            content,
-            "CHILD_RESULT",
-            f"Approved result from retained child {child_id}",
-            child.parent_conversation_id,
-            child.parent_turn_id,
-            metadata={
-                "child_session_id": child_id,
-                "runtime_conversation_id": child.runtime_conversation_id,
-                "approved_resume": True,
-            },
+        approved_output = str(output or "")[:8000]
+        continuation_task = (
+            "Continue the retained task after an approved host action. "
+            "The approved action has already succeeded; do not repeat it. "
+            "Use the retained conversation/history and finish the remaining work.\n\n"
+            f"Approved host result:\n{approved_output}\n\n"
+            f"Original retained task:\n{child.task}"
         )
+        continuation_id = f"resume_{uuid.uuid4().hex}"
         self.repo.update(
             child_id,
-            state="COMPLETED",
-            result_artifact_id=artifact.id,
-            completed_at=time.time(),
-            context_summary=content[-4000:],
+            state="QUEUED",
+            current_task_id=continuation_id,
+            completed_at=None,
             error=None,
+            context_summary=approved_output[-4000:],
         )
         self._on_event(
-            "ChildAgentFinished",
+            "ChildAgentApprovalContinued",
             {
                 "child_id": child_id,
-                "status": "COMPLETED",
-                "approved_resume": True,
-                "error": None,
+                "approved_turn_id": turn_id,
+                "continuation_id": continuation_id,
             },
+        )
+        timeout = min(float(child.timeout_seconds), self.max_worker_seconds)
+        self._pool.submit(
+            self._run_child,
+            child_id,
+            continuation_task,
+            self.workspace_id,
+            timeout,
+            None,
         )
         return True
 

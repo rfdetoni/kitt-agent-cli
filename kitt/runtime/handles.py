@@ -4,6 +4,13 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from kitt.security.capabilities import (
+    CAP_ARTIFACT_READ,
+    CAP_CHILD_INSPECT,
+    CAP_GOAL_MANAGE,
+    CAP_REPO_READ,
+)
+
 
 class ContextHandleResolver:
     """Resolve compact context handles with bounded, scoped I/O."""
@@ -30,23 +37,34 @@ class ContextHandleResolver:
     def _path_allowed(security_context, relative_path: str) -> bool:
         return security_context is None or security_context.allows_path(relative_path)
 
+    @staticmethod
+    def _require_capability(security_context, capability: str) -> None:
+        if security_context is not None:
+            security_context.check_capability(capability)
+
     def resolve(self, handle: str, security_context=None) -> Dict[str, Any]:
         if not isinstance(handle, str) or not handle.strip():
             raise ValueError("Handle must be a non-empty string")
         handle = handle.strip()
+
         if handle.startswith("ctx:repo:"):
+            self._require_capability(security_context, CAP_REPO_READ)
             return self._resolve_repo_symbol(
                 handle[len("ctx:repo:") :], security_context=security_context
             )
         if handle.startswith("ctx:file:"):
+            self._require_capability(security_context, CAP_REPO_READ)
             return self._resolve_file_slice(
                 handle[len("ctx:file:") :], security_context=security_context
             )
         if handle.startswith("artifact:"):
+            self._require_capability(security_context, CAP_ARTIFACT_READ)
             return self._resolve_artifact(handle[len("artifact:") :])
         if handle.startswith("child:"):
+            self._require_capability(security_context, CAP_CHILD_INSPECT)
             return self._resolve_child(handle[len("child:") :])
         if handle.startswith("goal:"):
+            self._require_capability(security_context, CAP_GOAL_MANAGE)
             return self._resolve_goal(handle[len("goal:") :])
         raise ValueError(f"Unknown handle scheme: '{handle}'")
 

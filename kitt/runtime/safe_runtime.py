@@ -10,6 +10,7 @@ from kitt.runtime.state import RuntimeStateStore
 from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
+    CAP_CHILD_INSPECT,
     CAP_CHILD_MESSAGE,
     CAP_CHILD_SPAWN,
     CAP_GOAL_MANAGE,
@@ -25,7 +26,7 @@ from kitt.security.capabilities import (
 @dataclass(frozen=True)
 class RuntimeOperationSpec:
     name: str
-    required_capability: str
+    required_capability: Optional[str]
     policy_tool_action: Optional[str] = None
     sensitive: bool = False
     resume_tool_name: Optional[str] = None
@@ -72,7 +73,7 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
         "children.send", CAP_CHILD_MESSAGE, sensitive=False
     ),
     "children.inspect": RuntimeOperationSpec(
-        "children.inspect", CAP_CHILD_SPAWN, sensitive=False
+        "children.inspect", CAP_CHILD_INSPECT, sensitive=False
     ),
     "goal.inspect": RuntimeOperationSpec(
         "goal.inspect", CAP_GOAL_MANAGE, sensitive=False
@@ -91,7 +92,7 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     "state.set": RuntimeOperationSpec("state.set", CAP_REPO_WRITE, sensitive=False),
     "state.list": RuntimeOperationSpec("state.list", CAP_REPO_READ, sensitive=False),
     "handles.resolve": RuntimeOperationSpec(
-        "handles.resolve", CAP_REPO_READ, sensitive=False
+        "handles.resolve", None, sensitive=False
     ),
 }
 
@@ -191,7 +192,7 @@ class SafeRuntime:
         else:
             capabilities = set()
 
-        if spec.required_capability not in capabilities:
+        if spec.required_capability and spec.required_capability not in capabilities:
             return self._result(
                 start,
                 SafeRuntimeResult(

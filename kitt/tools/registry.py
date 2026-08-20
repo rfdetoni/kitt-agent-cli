@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -334,6 +335,47 @@ class ToolRegistry:
         enabled = set(enabled_tools)
         return [tool for tool in all_tools if tool["name"] in enabled]
 
+    def _record_approved_principal_continuation(
+        self,
+        security_context,
+        turn_id: str,
+        result: ToolResult,
+    ) -> None:
+        """Record post-approval continuation without widening privileges."""
+        principal_type = getattr(security_context, "principal_type", "")
+        principal_id = getattr(security_context, "principal_id", "")
+        if principal_type == "CHILD":
+            if self.child_manager and hasattr(
+                self.child_manager, "on_approved_action_executed"
+            ):
+                self.child_manager.on_approved_action_executed(
+                    principal_id, turn_id, result.output
+                )
+            return
+
+        if principal_type == "GOAL" and self.db is not None:
+            from kitt.runtime.state import RuntimeStateStore
+
+            store = RuntimeStateStore(
+                self.db,
+                security_context.workspace_id,
+                security_context.conversation_id,
+            )
+            store.set(
+                f"goal.resume:{principal_id}",
+                {
+                    "turn_id": turn_id,
+                    "tool_output": str(result.output or "")[:32768],
+                    "recorded_at": time.time(),
+                },
+                ttl_seconds=3600.0,
+            )
+            if self.event_bus is not None:
+                self.event_bus.publish(
+                    "GoalApprovalContinuationRecorded",
+                    {"goal_id": principal_id, "turn_id": turn_id},
+                )
+
     def execute_tool(
         self,
         tool_name: str,
@@ -411,6 +453,21 @@ class ToolRegistry:
                     requires_approval=True,
                 )
 
+        handler_args = dict(args)
+        if (
+            tool_name == "apply_patch"
+            and security_context is not None
+            and getattr(security_context, "approval_integrity", None) is not None
+        ):
+            # The integrity manifest is deliberately injected only after the
+            # approval hash has been validated, so it cannot change the action
+            # the user approved.
+            from kitt.tools.handlers.system import PATCH_INTEGRITY_KEY
+
+            handler_args[PATCH_INTEGRITY_KEY] = dict(
+                security_context.approval_integrity
+            )
+
         context = ToolContext(
             registry=self,
             turn_id=turn_id,
@@ -425,17 +482,10 @@ class ToolRegistry:
         if not handler:
             return ToolResult(False, "", f"Tool '{tool_name}' execution not implemented.")
         try:
-            result = handler.execute(args, context)
-            if (
-                result.success
-                and grant is not None
-                and security_context is not None
-                and getattr(security_context, "principal_type", "") == "CHILD"
-                and self.child_manager is not None
-                and hasattr(self.child_manager, "on_approved_action_executed")
-            ):
-                self.child_manager.on_approved_action_executed(
-                    security_context.principal_id, turn_id, result.output
+            result = handler.execute(handler_args, context)
+            if result.success and grant is not None and security_context is not None:
+                self._record_approved_principal_continuation(
+                    security_context, turn_id, result
                 )
             return result
         except Exception as exc:

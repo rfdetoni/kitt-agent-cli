@@ -15,6 +15,10 @@ from kitt.history.database import HistoryDatabase
 logger = logging.getLogger(__name__)
 
 
+class LeaseLostError(RuntimeError):
+    """Raised when a scheduler worker no longer owns the goal lease."""
+
+
 class GoalScheduler:
     """Durable goal scheduler with lease ownership and active heartbeat renewal."""
 
@@ -115,6 +119,17 @@ class GoalScheduler:
             )
         return lease_id if cursor.rowcount == 1 else None
 
+    def _owns_lease(self, goal_id: str, lease_id: str) -> bool:
+        now = time.time()
+        with self.db.get_connection() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM goals
+                   WHERE id=? AND lease_id=? AND lease_owner_id=?
+                   AND state='RUNNING' AND lease_expires_at>?""",
+                (goal_id, lease_id, self.worker_id, now),
+            ).fetchone()
+        return row is not None
+
     def _heartbeat_lease_once(self, goal_id: str, lease_id: str) -> bool:
         now = time.time()
         with self.db.get_connection() as connection:
@@ -136,26 +151,36 @@ class GoalScheduler:
         goal_id: str,
         lease_id: str,
         stop_event: threading.Event,
+        lease_lost: threading.Event,
     ) -> None:
         interval = max(0.25, min(10.0, self.lease_duration / 3.0))
         while not stop_event.wait(interval):
             try:
                 if not self._heartbeat_lease_once(goal_id, lease_id):
+                    lease_lost.set()
                     return
             except Exception:
+                lease_lost.set()
                 logger.exception("Goal lease heartbeat failed for %s", goal_id)
+                return
 
     def _execute_with_heartbeat(self, goal, lease_id: str):
         stop_event = threading.Event()
+        lease_lost = threading.Event()
         heartbeat = threading.Thread(
             target=self._heartbeat_loop,
-            args=(goal.id, lease_id, stop_event),
+            args=(goal.id, lease_id, stop_event, lease_lost),
             name=f"kitt-goal-heartbeat-{goal.id[:8]}",
             daemon=True,
         )
         heartbeat.start()
         try:
-            return self.executor(goal)
+            result = self.executor(goal)
+            if lease_lost.is_set() or not self._owns_lease(goal.id, lease_id):
+                raise LeaseLostError(
+                    f"Scheduler lease lost while executing goal {goal.id}"
+                )
+            return result
         finally:
             stop_event.set()
             heartbeat.join(timeout=1.0)
@@ -305,6 +330,10 @@ class GoalScheduler:
                     {"goal_id": goal.id, "lease_id": lease_id},
                 )
                 result = self._execute_with_heartbeat(goal, lease_id)
+                if not self._owns_lease(goal.id, lease_id):
+                    raise LeaseLostError(
+                        f"Scheduler lease lost before committing goal {goal.id}"
+                    )
                 status = (
                     str(result.get("status", "FAILED"))
                     if isinstance(result, dict)
@@ -348,7 +377,27 @@ class GoalScheduler:
                 results.append(
                     {"goal_id": goal.id, "status": status, "result": result}
                 )
+            except LeaseLostError as exc:
+                # Fencing: a stale worker must not charge budgets or update goal
+                # state after another worker owns the lease.
+                self._on_event(
+                    "GoalSchedulerLeaseLost",
+                    {"goal_id": goal.id, "lease_id": lease_id, "error": str(exc)},
+                )
+                results.append(
+                    {"goal_id": goal.id, "status": "LEASE_LOST", "error": str(exc)}
+                )
+                continue
             except Exception as exc:
+                if not self._owns_lease(goal.id, lease_id):
+                    self._on_event(
+                        "GoalSchedulerLeaseLost",
+                        {"goal_id": goal.id, "lease_id": lease_id, "error": str(exc)},
+                    )
+                    results.append(
+                        {"goal_id": goal.id, "status": "LEASE_LOST", "error": str(exc)}
+                    )
+                    continue
                 retry = self._record_retry_failure(goal.id, str(exc))
                 if retry["status"] == "PAUSED_BUDGET_EXCEEDED":
                     self._release(

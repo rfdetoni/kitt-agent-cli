@@ -37,6 +37,7 @@ class TestExtensionLoader(unittest.TestCase):
             api_version = "1"
             entrypoint = "plugin:setup"
             permissions = ["events.read"]
+            trusted_in_process = true
             """),
             encoding="utf-8",
         )
@@ -72,6 +73,7 @@ class TestExtensionLoader(unittest.TestCase):
             api_version = "1"
             entrypoint = "plugin:setup"
             permissions = ["events.read"]
+            trusted_in_process = true
             """),
             encoding="utf-8",
         )

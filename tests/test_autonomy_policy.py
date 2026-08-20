@@ -28,9 +28,9 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertEqual(engine.evaluate_tool("apply_patch", {"patch": "diff"}), "DENY")
         self.assertEqual(engine.evaluate_tool("run_command", {"command": "pytest"}), "DENY")
 
-    def test_from_dict_ignores_flag_overrides(self):
+    def test_from_dict_preserves_flag_overrides(self):
         policy = AutonomyPolicy.from_dict({"level": "read_only", "allow_run_command_auto": True})
-        self.assertFalse(policy.allow_run_command_auto)
+        self.assertTrue(policy.allow_run_command_auto)
 
     def test_preset_invalid_level_raises_valueerror(self):
         with self.assertRaises(ValueError):

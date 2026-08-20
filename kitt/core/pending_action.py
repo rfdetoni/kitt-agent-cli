@@ -63,26 +63,43 @@ class PendingAction:
 
     def __post_init__(self) -> None:
         descriptor = self.normalized_args.get(RESUME_DESCRIPTOR_KEY)
-        if not isinstance(descriptor, dict):
-            return
+        if isinstance(descriptor, dict):
+            resume_tool = str(descriptor.get("tool_name") or "").strip()
+            resume_args = descriptor.get("arguments")
+            if not resume_tool or not isinstance(resume_args, dict):
+                raise ValueError("Invalid composite resume descriptor")
 
-        resume_tool = str(descriptor.get("tool_name") or "").strip()
-        resume_args = descriptor.get("arguments")
-        if not resume_tool or not isinstance(resume_args, dict):
-            raise ValueError("Invalid composite resume descriptor")
+            affected_paths = descriptor.get("affected_paths") or []
+            before_hashes = descriptor.get("before_hashes") or {}
+            if not isinstance(affected_paths, list) or not isinstance(before_hashes, dict):
+                raise ValueError("Invalid composite resume integrity metadata")
 
-        affected_paths = descriptor.get("affected_paths") or []
-        before_hashes = descriptor.get("before_hashes") or {}
-        if not isinstance(affected_paths, list) or not isinstance(before_hashes, dict):
-            raise ValueError("Invalid composite resume integrity metadata")
+            concrete_args = dict(resume_args)
+            object.__setattr__(self, "tool_name", resume_tool)
+            object.__setattr__(self, "normalized_args", concrete_args)
+            object.__setattr__(
+                self, "affected_paths", [str(path) for path in affected_paths]
+            )
+            object.__setattr__(
+                self,
+                "before_hashes",
+                {str(path): str(digest) for path, digest in before_hashes.items()},
+            )
+            object.__setattr__(
+                self,
+                "source_response_sha256",
+                canonical_args_digest(concrete_args),
+            )
 
-        concrete_args = dict(resume_args)
-        object.__setattr__(self, "tool_name", resume_tool)
-        object.__setattr__(self, "normalized_args", concrete_args)
-        object.__setattr__(self, "affected_paths", [str(path) for path in affected_paths])
-        object.__setattr__(
-            self,
-            "before_hashes",
-            {str(path): str(digest) for path, digest in before_hashes.items()},
-        )
-        object.__setattr__(self, "source_response_sha256", canonical_args_digest(concrete_args))
+        # Legacy direct patch approvals did not record a marker for paths that
+        # were absent at approval time. Persist an out-of-band integrity
+        # manifest in the security context so ToolRegistry can inject it only
+        # after grant validation (therefore it never changes the approved hash).
+        if self.tool_name == "apply_patch" and self.affected_paths:
+            manifest = {
+                str(path): self.before_hashes.get(str(path))
+                for path in self.affected_paths
+            }
+            security = dict(self.security_context or {})
+            security["approval_integrity"] = manifest
+            object.__setattr__(self, "security_context", security)
