@@ -9,6 +9,10 @@ from typing import Dict, Generator, List, Optional
 
 from kitt.domain.entities import ModelProfile
 from kitt.llm.auth import ProviderAuthService
+from kitt.llm.endpoint_security import (
+    ProviderEndpointTrustStore,
+    resolve_endpoint_credential,
+)
 from kitt.llm.domain import (
     ProviderAuthError,
     ProviderConnectionError,
@@ -59,6 +63,7 @@ class LLMClient:
         retry_policy: Optional[RetryPolicy] = None,
         registry: Optional[ProviderRegistry] = None,
         auth_service: Optional[ProviderAuthService] = None,
+        endpoint_policy: Optional[ProviderEndpointTrustStore] = None,
     ):
         self.profile = profile
         self._external_executor = executor is not None
@@ -69,6 +74,11 @@ class LLMClient:
         self.retry_policy = retry_policy or RetryPolicy()
         self.registry = registry or ProviderRegistry()
         self.auth_service = auth_service or self.registry.auth_service
+        self.endpoint_policy = (
+            endpoint_policy
+            or getattr(self.registry, "endpoint_policy", None)
+            or ProviderEndpointTrustStore()
+        )
 
     @property
     def capabilities(self) -> ModelCapabilities:
@@ -183,19 +193,25 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
     ) -> Generator[str, None, None]:
-        backend = (self.profile.backend or "").lower()
-        api_key = (
-            self.auth_service.resolve(
-                self.profile.credential_ref,
-                provider_id=backend,
-            )
-            or self.profile.api_key
-        )
+        backend = (self.profile.backend or "").strip().lower()
+        base_url = (self.profile.base_url or "").strip()
 
-        base_url = (self.profile.base_url or "").lower()
+        api_key = resolve_endpoint_credential(
+            self.auth_service,
+            backend,
+            base_url,
+            credential_ref=self.profile.credential_ref,
+            raw_secret=self.profile.api_key,
+            policy=self.endpoint_policy,
+        )
+        base_url_lower = base_url.lower()
         if self.profile.protocol:
             adapter = self.registry.get_adapter_for_protocol(self.profile.protocol)
-        elif ":11434" in base_url or "ollama" in backend or "ollama" in base_url:
+        elif (
+            ":11434" in base_url_lower
+            or "ollama" in backend
+            or "ollama" in base_url_lower
+        ):
             adapter = self.registry.get_adapter_for_protocol("ollama-chat")
         elif backend:
             adapter = self.registry.get_adapter_for_provider(backend)

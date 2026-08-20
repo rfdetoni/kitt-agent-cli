@@ -39,6 +39,10 @@ async def handle_model_command(app: KittUIApp, arg: str) -> None:
         return
 
     roles = app.model_setup_model.roles if role == "all" else (role,)
+    if base_url:
+        from kitt.llm.endpoint_security import ProviderEndpointTrustStore
+        effective_provider = provider or app._profile_for_role(roles[0]).backend
+        ProviderEndpointTrustStore().trust(effective_provider, base_url)
     for selected_role in roles:
         await app._set_model_role(selected_role, model, provider, base_url)
     backend = app._profile_for_role(roles[0]).backend
@@ -82,6 +86,17 @@ async def handle_add_provider_command(app: KittUIApp, arg: str) -> None:
     if not url.startswith(("http://", "https://")):
         url = f"http://{url}"
 
+    from kitt.llm.endpoint_security import (
+        ProviderEndpointTrustStore,
+        is_reserved_provider_id,
+    )
+    if is_reserved_provider_id(name):
+        app._show_result(
+            f"'{name}' é um ID built-in reservado. Use um nome customizado único."
+        )
+        return
+    ProviderEndpointTrustStore().trust(name, url)
+
     app.model_setup_model.set_pattern_by_id(pattern)
     selected_pattern = app.model_setup_model.selected_pattern
     app.model_setup_model.add_custom_provider(
@@ -124,6 +139,17 @@ async def handle_edit_provider_command(app: KittUIApp, arg: str) -> None:
     url = tokens[1] if len(tokens) > 1 else existing.get("base_url", "")
     if url and not url.startswith(("http://", "https://")):
         url = f"http://{url}"
+
+    from kitt.llm.endpoint_security import (
+        ProviderEndpointTrustStore,
+        is_reserved_provider_id,
+    )
+    if is_reserved_provider_id(name):
+        app._show_result(
+            f"'{name}' é um ID built-in reservado e não pode ser editado como custom."
+        )
+        return
+    ProviderEndpointTrustStore().trust(name, url)
 
     pattern = tokens[2].lower() if len(tokens) > 2 else existing.get("backend", "openai")
     app.model_setup_model.set_pattern_by_id(pattern)

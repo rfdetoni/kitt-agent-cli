@@ -4,6 +4,10 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Set
 from kitt.llm.auth import ProviderAuthService
 from kitt.llm.catalog import ProviderCatalogService
+from kitt.llm.endpoint_security import (
+    ProviderEndpointTrustStore,
+    resolve_endpoint_credential,
+)
 from kitt.llm.domain import (
     ModelDescriptor,
     ModelDiscoveryResult,
@@ -29,9 +33,11 @@ class ProviderRegistry:
         self,
         catalog: Optional[ProviderCatalogService] = None,
         auth_service: Optional[ProviderAuthService] = None,
+        endpoint_policy: Optional[ProviderEndpointTrustStore] = None,
     ):
         self.catalog = catalog or ProviderCatalogService()
         self.auth_service = auth_service or ProviderAuthService()
+        self.endpoint_policy = endpoint_policy or ProviderEndpointTrustStore()
         self._custom_providers: Dict[str, ProviderDescriptor] = {}
         self._custom_models: Dict[str, List[ModelDescriptor]] = {}
         self._whitelist_models: Dict[str, Set[str]] = {}
@@ -55,6 +61,13 @@ class ProviderRegistry:
         models: Optional[List[ModelDescriptor]] = None,
     ) -> ProviderDescriptor:
         pid = provider_id.strip().lower()
+        if not pid:
+            raise ValueError("Custom provider id cannot be empty")
+        catalog_provider = self.catalog.provider(pid)
+        if catalog_provider is not None and catalog_provider.source == "builtin":
+            raise ValueError(
+                f"Custom provider '{pid}' cannot shadow built-in provider identity"
+            )
         desc = ProviderDescriptor(
             id=pid,
             name=name,
@@ -117,11 +130,31 @@ class ProviderRegistry:
                 status=ProviderDiscoveryStatus.UNSUPPORTED, message=f"Unknown provider '{provider_id}'"
             )
 
-        api_key = self.auth_service.resolve(None, provider_id=p.id)
         target_base = base_url or p.base_url
+        if not target_base:
+            return ModelDiscoveryResult(
+                status=ProviderDiscoveryStatus.UNSUPPORTED,
+                message=f"Provider '{p.id}' has no endpoint",
+            )
+        try:
+            api_key = resolve_endpoint_credential(
+                self.auth_service,
+                p.id,
+                target_base,
+                policy=self.endpoint_policy,
+            )
+        except Exception as exc:
+            return ModelDiscoveryResult(
+                status=ProviderDiscoveryStatus.AUTH_REQUIRED,
+                message=str(exc),
+            )
 
         adapter = self.get_adapter_for_protocol(p.protocol)
-        result = adapter.list_models(base_url=target_base, api_key=api_key, timeout=timeout)
+        result = adapter.list_models(
+            base_url=target_base,
+            api_key=api_key,
+            timeout=timeout,
+        )
 
         # Apply whitelist and blacklist
         if result.status == ProviderDiscoveryStatus.SUCCESS:
@@ -162,7 +195,28 @@ class ProviderRegistry:
         if not p:
             return ProviderHealth(status="unsupported", error_code="UNKNOWN_PROVIDER")
 
-        api_key = self.auth_service.resolve(None, provider_id=p.id)
         target_base = base_url or p.base_url
+        if not target_base:
+            return ProviderHealth(
+                status="unsupported",
+                error_code="MISSING_ENDPOINT",
+            )
+        try:
+            api_key = resolve_endpoint_credential(
+                self.auth_service,
+                p.id,
+                target_base,
+                policy=self.endpoint_policy,
+            )
+        except Exception:
+            return ProviderHealth(
+                status="unhealthy",
+                authenticated=False,
+                error_code="UNTRUSTED_ENDPOINT",
+            )
         adapter = self.get_adapter_for_protocol(p.protocol)
-        return adapter.health(base_url=target_base, api_key=api_key, timeout=timeout)
+        return adapter.health(
+            base_url=target_base,
+            api_key=api_key,
+            timeout=timeout,
+        )

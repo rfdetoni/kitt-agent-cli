@@ -89,7 +89,10 @@ class KittUIApp:
                 self.state.large_model = execute.model
                 saved_custom = getattr(router.config, "custom_providers", [])
                 if saved_custom and hasattr(self, "model_setup_model"):
+                    from kitt.llm.endpoint_security import is_reserved_provider_id
                     for cp in saved_custom:
+                        if is_reserved_provider_id(cp.get("name", "")):
+                            continue
                         self.model_setup_model.add_custom_provider(
                             name=cp.get("name", ""),
                             base_url=cp.get("base_url", ""),
@@ -651,7 +654,8 @@ class KittUIApp:
         if fallback is None:
             raise RuntimeError("No provider profile available")
         provider = provider or fallback.backend
-        default_url, default_key = self._provider_defaults(provider)
+        same_provider = fallback.backend == provider
+        default_url, _ = self._provider_defaults(provider)
         if hasattr(self, "model_setup_model"):
             custom_entry = next((cp for cp in self.model_setup_model.custom_providers if cp["name"] == provider), None)
             if custom_entry and custom_entry.get("base_url"):
@@ -664,7 +668,10 @@ class KittUIApp:
             fallback, model=model, backend=provider,
             base_url=target_url,
             protocol=protocol,
-            api_key=fallback.api_key if fallback.backend == provider else default_key,
+            api_key=fallback.api_key if same_provider else "",
+            credential_ref=(
+                fallback.credential_ref if same_provider else None
+            ),
             max_output_tokens=max(fallback.max_output_tokens, 2048) if role == "principal" else max(fallback.max_output_tokens, 1024),
             supports_json=provider in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama"} or "ollama" in (provider or "").lower(),
         )
@@ -675,13 +682,34 @@ class KittUIApp:
         self.state.add_toast(f"{role.title()} model: {provider}/{model}")
 
     async def _models_for_provider(self, provider: str, base_url: str) -> list[str]:
+        from kitt.llm.auth import ProviderAuthService
         from kitt.llm.catalog import ProviderCatalogService
+        from kitt.llm.endpoint_security import (
+            ProviderEndpointTrustStore,
+            resolve_endpoint_credential,
+        )
         from kitt.router.model_selector import ModelConfigurator, fetch_provider_models
-        _, api_key = self._provider_defaults(provider)
 
         norm_url = (base_url or "").strip().rstrip("/")
         if norm_url and not norm_url.startswith(("http://", "https://")):
             norm_url = f"http://{norm_url}"
+
+        endpoint_policy = ProviderEndpointTrustStore()
+        endpoint_trusted = bool(
+            norm_url
+            and endpoint_policy.is_trusted(provider, norm_url)
+        )
+        api_key = None
+        if endpoint_trusted:
+            try:
+                api_key = resolve_endpoint_credential(
+                    ProviderAuthService(),
+                    provider,
+                    norm_url,
+                    policy=endpoint_policy,
+                )
+            except Exception:
+                api_key = None
 
         # 1. Live discovery for Ollama (local, remote LAN/WAN IP, or :11434 port)
         is_ollama = (
@@ -690,7 +718,7 @@ class KittUIApp:
             or "ollama" in provider.lower()
             or "ollama" in norm_url.lower()
         )
-        if is_ollama and norm_url:
+        if is_ollama and norm_url and endpoint_trusted:
             try:
                 models = await self._run_blocking(ModelConfigurator(self.state.workspace_path).fetch_ollama_models, norm_url)
                 if models:
@@ -699,7 +727,7 @@ class KittUIApp:
                 pass
 
         # 2. Live discovery for OpenAI-compatible endpoints (LM Studio, vLLM, LocalAI, custom servers, etc.)
-        if norm_url:
+        if norm_url and endpoint_trusted:
             try:
                 models = await self._run_blocking(fetch_provider_models, provider, norm_url, api_key, 2.5)
                 if models and models != [f"{provider}-default"]:
@@ -723,6 +751,26 @@ class KittUIApp:
                 return cat_models
         except Exception:
             pass
+
+        builtin_fallbacks = {
+            "openai": [
+                "gpt-4o",
+                "gpt-4o-mini",
+                "gpt-4.1",
+                "gpt-4.1-mini",
+                "gpt-4.1-nano",
+                "o4-mini",
+            ],
+            "anthropic": ["claude-3-7-sonnet", "claude-3-5-sonnet"],
+            "gemini": ["gemini-1.5-pro", "gemini-1.5-flash"],
+            "deepseek": ["deepseek-v3", "deepseek-r1"],
+            "groq": ["llama-3.3-70b-versatile"],
+            "mistral": ["mistral-large-latest"],
+            "openrouter": ["openrouter/auto"],
+            "antigravity": ["antigravity-chat-latest"],
+        }
+        if provider in builtin_fallbacks:
+            return builtin_fallbacks[provider]
 
         return [f"{provider}-default"]
 
@@ -1011,6 +1059,13 @@ class KittUIApp:
         if not name:
             self.state.add_toast("Nome do provedor não pode ser vazio.", persistent=True)
             return False
+        from kitt.llm.endpoint_security import is_reserved_provider_id
+        if is_reserved_provider_id(name):
+            self.state.add_toast(
+                f"'{name}' é um ID reservado de provedor built-in. Use um nome customizado único.",
+                persistent=True,
+            )
+            return False
         if not url.startswith(("http://", "https://")):
             url = f"http://{url}"
         pat = self.model_setup_model.selected_pattern
@@ -1035,6 +1090,8 @@ class KittUIApp:
         return True
 
     async def _finish_add_provider(self, name: str, url: str) -> None:
+        from kitt.llm.endpoint_security import ProviderEndpointTrustStore
+        ProviderEndpointTrustStore().trust(name, url)
         await self._persist_custom_providers()
         await self._prepare_model_setup(base_url=url, provider=name)
         action_msg = "atualizado" if self.editing_provider_name else "adicionado"
@@ -1057,6 +1114,11 @@ class KittUIApp:
         if not endpoint.startswith(("http://", "https://")):
             self.state.add_toast("Endpoint must start with http:// or https://", persistent=True)
             return
+        from kitt.llm.endpoint_security import ProviderEndpointTrustStore
+        ProviderEndpointTrustStore().trust(
+            self.model_setup_model.selected_provider,
+            endpoint,
+        )
         self.close_overlay()
         await self._prepare_model_setup(endpoint)
         if self.application:
@@ -1173,8 +1235,29 @@ class KittUIApp:
         env_var = auth_service.get_default_env_var(prov)
         env_val = auth_service.get_env_value(env_var)
 
+        def _trust_pending_endpoint() -> None:
+            from kitt.llm.endpoint_security import ProviderEndpointTrustStore
+            endpoint = None
+            if self.pending_model_selection:
+                _, _, pending_provider, pending_url = self.pending_model_selection
+                if pending_provider == prov:
+                    endpoint = pending_url
+            if not endpoint and hasattr(self, "model_setup_model"):
+                custom = next(
+                    (
+                        cp for cp in self.model_setup_model.custom_providers
+                        if cp.get("name") == prov
+                    ),
+                    None,
+                )
+                if custom:
+                    endpoint = custom.get("base_url")
+            if endpoint:
+                ProviderEndpointTrustStore().trust(prov, endpoint)
+
         if key.lower() in ("e", "env", "use_env", "$env"):
             if env_val:
+                _trust_pending_endpoint()
                 auth_service.login(prov, f"env:{env_var}", method="env")
                 self.state.add_toast(f"✓ Conectado via variável de ambiente (${env_var})!", persistent=False)
                 self.close_overlay()
@@ -1191,6 +1274,7 @@ class KittUIApp:
 
         if not key:
             if env_val:
+                _trust_pending_endpoint()
                 auth_service.login(prov, f"env:{env_var}", method="env")
                 self.state.add_toast(f"✓ Conectado via variável de ambiente (${env_var})!", persistent=False)
                 self.close_overlay()
@@ -1218,6 +1302,7 @@ class KittUIApp:
                 self.close_overlay()
                 return True
 
+        _trust_pending_endpoint()
         auth_service.login(prov, key, method="api_key")
         self.state.add_toast(f"✓ Credenciais salvas com segurança para {prov}!", persistent=False)
         self.close_overlay()
