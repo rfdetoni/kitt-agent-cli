@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import stat
 import threading
@@ -85,9 +86,6 @@ class MCPManager:
             return lock
 
     def _load_configs(self) -> None:
-        configs_data: Dict[str, Any] = {}
-        workspace_server_ids: set[str] = set()
-
         def _read_config(
             path: Path,
             *,
@@ -172,12 +170,222 @@ class MCPManager:
                 )
             return payload
 
-        try:
-            configs_data.update(
-                _read_config(
-                    self.config_file,
-                    trusted_source=True,
+        def _string_list(
+            value: Any,
+            field: str,
+            *,
+            optional: bool = False,
+            max_items: int = 512,
+            max_item_chars: int = 8192,
+        ) -> Optional[List[str]]:
+            if value is None and optional:
+                return None
+            if not isinstance(value, list):
+                raise MCPError(
+                    f"MCP field '{field}' must be a JSON array"
                 )
+            if len(value) > max_items:
+                raise MCPError(
+                    f"MCP field '{field}' exceeds {max_items} items"
+                )
+            result: List[str] = []
+            for item in value:
+                if not isinstance(item, str):
+                    raise MCPError(
+                        f"MCP field '{field}' must contain strings only"
+                    )
+                if len(item) > max_item_chars:
+                    raise MCPError(
+                        f"MCP field '{field}' contains an oversized value"
+                    )
+                result.append(item)
+            return result
+
+        def _string_map(
+            value: Any,
+            field: str,
+            *,
+            max_items: int = 256,
+            max_key_chars: int = 512,
+            max_value_chars: int = 8192,
+        ) -> Dict[str, str]:
+            if not isinstance(value, dict):
+                raise MCPError(
+                    f"MCP field '{field}' must be a JSON object"
+                )
+            if len(value) > max_items:
+                raise MCPError(
+                    f"MCP field '{field}' exceeds {max_items} entries"
+                )
+            result: Dict[str, str] = {}
+            for key, item in value.items():
+                if not isinstance(key, str) or not isinstance(item, str):
+                    raise MCPError(
+                        f"MCP field '{field}' keys/values must be strings"
+                    )
+                if len(key) > max_key_chars or len(item) > max_value_chars:
+                    raise MCPError(
+                        f"MCP field '{field}' contains an oversized entry"
+                    )
+                result[key] = item
+            return result
+
+        def _bounded_float(
+            value: Any,
+            field: str,
+            *,
+            minimum: float,
+            maximum: float,
+        ) -> float:
+            if isinstance(value, bool) or not isinstance(
+                value, (int, float)
+            ):
+                raise MCPError(
+                    f"MCP field '{field}' must be numeric"
+                )
+            parsed = float(value)
+            if not math.isfinite(parsed):
+                raise MCPError(
+                    f"MCP field '{field}' must be finite"
+                )
+            if parsed < minimum or parsed > maximum:
+                raise MCPError(
+                    f"MCP field '{field}' must be between {minimum} and {maximum}"
+                )
+            return parsed
+
+        def _bounded_int(
+            value: Any,
+            field: str,
+            *,
+            minimum: int,
+            maximum: int,
+        ) -> int:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise MCPError(
+                    f"MCP field '{field}' must be an integer"
+                )
+            if value < minimum or value > maximum:
+                raise MCPError(
+                    f"MCP field '{field}' must be between {minimum} and {maximum}"
+                )
+            return value
+
+        def _optional_string(
+            value: Any,
+            field: str,
+            *,
+            max_chars: int = 16384,
+        ) -> Optional[str]:
+            if value is None:
+                return None
+            if not isinstance(value, str):
+                raise MCPError(
+                    f"MCP field '{field}' must be a string or null"
+                )
+            if len(value) > max_chars:
+                raise MCPError(
+                    f"MCP field '{field}' is oversized"
+                )
+            return value
+
+        def _parse_server(
+            raw_id: Any,
+            raw: Any,
+            *,
+            source: str,
+        ) -> MCPServerConfig:
+            server_id = self._server_id(raw_id)
+            if not server_id:
+                raise MCPError("MCP server id is empty")
+            if len(server_id) > 128:
+                raise MCPError(
+                    "MCP server id exceeds 128 characters"
+                )
+            if not isinstance(raw, dict):
+                raise MCPError(
+                    f"MCP server '{server_id}' config must be an object"
+                )
+
+            raw_transport = raw.get("transport", "stdio")
+            if not isinstance(raw_transport, str):
+                raise MCPError(
+                    f"MCP server '{server_id}' field 'transport' must be string"
+                )
+            transport = self._transport_kind(raw_transport)
+            if transport not in {
+                "stdio",
+                "http",
+                "streamable_http",
+                "inprocess",
+            }:
+                raise MCPError(
+                    f"MCP server '{server_id}' has unsupported transport '{transport}'"
+                )
+
+            enabled = raw.get("enabled", True)
+            if not isinstance(enabled, bool):
+                raise MCPError(
+                    f"MCP server '{server_id}' field 'enabled' must be boolean"
+                )
+
+            trust = raw.get("trust", "restricted")
+            if not isinstance(trust, str):
+                raise MCPError(
+                    f"MCP server '{server_id}' field 'trust' must be string"
+                )
+            trust = trust.strip().lower()
+            if trust not in {"trusted", "restricted", "isolated"}:
+                raise MCPError(
+                    f"MCP server '{server_id}' has invalid trust mode"
+                )
+
+            return MCPServerConfig(
+                server_id=server_id,
+                transport=transport,
+                command=_optional_string(raw.get("command"), "command"),
+                args=_string_list(
+                    raw.get("args", []),
+                    "args",
+                    max_items=256,
+                )
+                or [],
+                env=_string_map(raw.get("env", {}), "env"),
+                url=_optional_string(raw.get("url"), "url"),
+                headers=_string_map(raw.get("headers", {}), "headers"),
+                enabled=enabled,
+                trust=trust,
+                allow_tools=_string_list(
+                    raw.get("allow_tools"),
+                    "allow_tools",
+                    optional=True,
+                ),
+                deny_tools=_string_list(
+                    raw.get("deny_tools", []),
+                    "deny_tools",
+                )
+                or [],
+                timeout_seconds=_bounded_float(
+                    raw.get("timeout_seconds", 30.0),
+                    "timeout_seconds",
+                    minimum=0.1,
+                    maximum=300.0,
+                ),
+                max_output_bytes=_bounded_int(
+                    raw.get("max_output_bytes", 2 * 1024 * 1024),
+                    "max_output_bytes",
+                    minimum=1024,
+                    maximum=64 * 1024 * 1024,
+                ),
+                source=source,
+            )
+
+        configs: Dict[str, MCPServerConfig] = {}
+
+        try:
+            global_data = _read_config(
+                self.config_file,
+                trusted_source=True,
             )
         except Exception as exc:
             logger.warning(
@@ -185,83 +393,59 @@ class MCPManager:
                 self.config_file,
                 exc,
             )
+            global_data = {}
+
+        for raw_id, raw in global_data.items():
+            try:
+                config = _parse_server(
+                    raw_id,
+                    raw,
+                    source="global",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping invalid global MCP server '%s': %s",
+                    raw_id,
+                    exc,
+                )
+                continue
+            configs[config.server_id] = config
 
         workspace_file = self.workspace_root / ".kitt" / "mcp.json"
         try:
             workspace_data = _read_config(workspace_file)
-            configs_data.update(workspace_data)
-            workspace_server_ids = {
-                self._server_id(server_id)
-                for server_id in workspace_data
-            }
         except Exception as exc:
             logger.warning(
                 "Failed to load workspace MCP config from %s: %s",
                 workspace_file,
                 exc,
             )
+            workspace_data = {}
 
-        for raw_id, raw in configs_data.items():
-            if not isinstance(raw, dict):
+        for raw_id, raw in workspace_data.items():
+            try:
+                config = _parse_server(
+                    raw_id,
+                    raw,
+                    source="workspace",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping invalid workspace MCP server '%s': %s",
+                    raw_id,
+                    exc,
+                )
                 continue
-            server_id = self._server_id(raw_id)
-            if not server_id:
+            if config.server_id in configs:
+                logger.warning(
+                    "Ignoring workspace MCP server '%s': id collides with a global MCP server",
+                    config.server_id,
+                )
                 continue
-            self._configs[server_id] = MCPServerConfig(
-                server_id=server_id,
-                transport=self._transport_kind(
-                    raw.get("transport", "stdio")
-                ),
-                command=(
-                    str(raw["command"])
-                    if raw.get("command") is not None
-                    else None
-                ),
-                args=[
-                    str(value)
-                    for value in (
-                        raw.get("args", [])
-                        if isinstance(raw.get("args", []), list)
-                        else []
-                    )
-                ],
-                env={
-                    str(k): str(v)
-                    for k, v in (
-                        raw.get("env", {})
-                        if isinstance(raw.get("env", {}), dict)
-                        else {}
-                    ).items()
-                },
-                url=raw.get("url"),
-                headers={
-                    str(k): str(v)
-                    for k, v in (
-                        raw.get("headers", {})
-                        if isinstance(raw.get("headers", {}), dict)
-                        else {}
-                    ).items()
-                },
-                enabled=(
-                    raw.get("enabled", True)
-                    if isinstance(raw.get("enabled", True), bool)
-                    else True
-                ),
-                trust=str(raw.get("trust", "restricted")),
-                allow_tools=raw.get("allow_tools"),
-                deny_tools=list(raw.get("deny_tools", [])),
-                timeout_seconds=float(
-                    raw.get("timeout_seconds", 30.0)
-                ),
-                max_output_bytes=int(
-                    raw.get("max_output_bytes", 2 * 1024 * 1024)
-                ),
-                source=(
-                    "workspace"
-                    if server_id in workspace_server_ids
-                    else "global"
-                ),
-            )
+            configs[config.server_id] = config
+
+        with self._lock:
+            self._configs = configs
 
     def get_config(self, server_id: str) -> MCPServerConfig:
         server_id = self._server_id(server_id)
