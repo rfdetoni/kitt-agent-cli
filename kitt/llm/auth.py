@@ -5,6 +5,8 @@ import json
 import os
 import stat
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -37,35 +39,324 @@ class ProviderAuthState:
     is_valid: bool = True
 
 
+class _CredentialFileLock:
+    """Cross-process lock for auth.json read-modify-write operations."""
+
+    def __init__(self, path: Path, timeout_seconds: float = 5.0):
+        self.path = path
+        self.timeout_seconds = timeout_seconds
+        self._handle = None
+
+    def __enter__(self):
+        parent = CredentialStore._ensure_private_dir(self.path.parent)
+        if self.path.is_symlink():
+            raise PermissionError(
+                f"Refusing symlink credential lock: {self.path}"
+            )
+
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+
+        try:
+            fd = os.open(str(self.path), flags, 0o600)
+        except OSError as exc:
+            raise PermissionError(
+                f"Unable to securely open credential lock {self.path}: {exc}"
+            ) from exc
+
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise PermissionError(
+                    f"Credential lock must be a regular file: {self.path}"
+                )
+            if os.name != "nt":
+                if st.st_uid != os.getuid():
+                    raise PermissionError(
+                        f"Credential lock owner mismatch: {self.path}"
+                    )
+                os.fchmod(fd, 0o600)
+            self._handle = os.fdopen(fd, "r+b", buffering=0)
+            fd = -1
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
+        deadline = time.monotonic() + self.timeout_seconds
+        if os.name == "nt":
+            import msvcrt
+
+            self._handle.seek(0, os.SEEK_END)
+            if self._handle.tell() == 0:
+                self._handle.write(b"\0")
+                self._handle.flush()
+            while True:
+                try:
+                    self._handle.seek(0)
+                    msvcrt.locking(
+                        self._handle.fileno(),
+                        msvcrt.LK_NBLCK,
+                        1,
+                    )
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"Timed out acquiring credential lock {self.path}"
+                        )
+                    time.sleep(0.05)
+        else:
+            import fcntl
+
+            while True:
+                try:
+                    fcntl.flock(
+                        self._handle.fileno(),
+                        fcntl.LOCK_EX | fcntl.LOCK_NB,
+                    )
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"Timed out acquiring credential lock {self.path}"
+                        )
+                    time.sleep(0.05)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._handle is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                self._handle.seek(0)
+                msvcrt.locking(
+                    self._handle.fileno(),
+                    msvcrt.LK_UNLCK,
+                    1,
+                )
+            else:
+                import fcntl
+
+                fcntl.flock(
+                    self._handle.fileno(),
+                    fcntl.LOCK_UN,
+                )
+        finally:
+            self._handle.close()
+            self._handle = None
+
+
 class CredentialStore:
-    """Secure global credential store at ~/.kitt/auth.json with 0600 POSIX permissions."""
+    """Private credential store for API keys and OAuth tokens."""
+
+    _MAX_AUTH_BYTES = 1024 * 1024
 
     def __init__(self, auth_file: Optional[str] = None):
         self.auth_file = self._resolve_auth_file(auth_file)
+        self.lock_file = self.auth_file.with_suffix(
+            self.auth_file.suffix + ".lock"
+        )
+        self._thread_lock = threading.RLock()
 
     @staticmethod
-    def _resolve_auth_file(auth_file: Optional[str]) -> Path:
-        if auth_file:
-            return Path(auth_file).resolve()
-        preferred = (Path.home() / ".kitt" / "auth.json").resolve()
+    def _absolute_unresolved(path: str | Path) -> Path:
+        return Path(
+            os.path.abspath(
+                os.path.expanduser(str(path))
+            )
+        )
+
+    @staticmethod
+    def _ensure_private_dir(path: str | Path) -> Path:
+        path = CredentialStore._absolute_unresolved(path)
+        if path.is_symlink():
+            raise PermissionError(
+                f"Credential directory must not be a symlink: {path}"
+            )
+
         try:
-            preferred.parent.mkdir(parents=True, exist_ok=True)
-            probe = preferred.parent / ".write-test"
-            probe.write_text("", encoding="utf-8")
-            probe.unlink(missing_ok=True)
-            return preferred
-        except OSError:
-            fallback = (Path(tempfile.gettempdir()) / "kitt" / "auth.json").resolve()
-            fallback.parent.mkdir(parents=True, exist_ok=True)
-            return fallback
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+            st = path.lstat()
+        except OSError as exc:
+            raise PermissionError(
+                f"Unable to prepare credential directory {path}: {exc}"
+            ) from exc
+
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            raise PermissionError(
+                f"Credential directory must be a real directory: {path}"
+            )
+
+        if os.name != "nt":
+            if st.st_uid != os.getuid():
+                raise PermissionError(
+                    f"Credential directory owner mismatch: {path}"
+                )
+            try:
+                os.chmod(path, 0o700)
+            except OSError as exc:
+                raise PermissionError(
+                    f"Unable to secure credential directory {path}: {exc}"
+                ) from exc
+            st = path.lstat()
+            if stat.S_IMODE(st.st_mode) & 0o077:
+                raise PermissionError(
+                    f"Credential directory permissions must be 0700: {path}"
+                )
+        return path
+
+    @classmethod
+    def _resolve_auth_file(cls, auth_file: Optional[str]) -> Path:
+        if auth_file:
+            candidate = cls._absolute_unresolved(auth_file)
+            cls._ensure_private_dir(candidate.parent)
+            return candidate
+
+        home = Path.home().resolve()
+        preferred_parent = home / ".kitt"
+        preferred = preferred_parent / "auth.json"
+        try:
+            cls._ensure_private_dir(preferred_parent)
+            return cls._absolute_unresolved(preferred)
+        except PermissionError:
+            owner = (
+                str(os.getuid())
+                if hasattr(os, "getuid")
+                else str(os.getpid())
+            )
+            fallback_parent = (
+                Path(tempfile.gettempdir())
+                / f"kitt-{owner}"
+            )
+            cls._ensure_private_dir(fallback_parent)
+            return cls._absolute_unresolved(
+                fallback_parent / "auth.json"
+            )
+
+    @staticmethod
+    def _read_flags() -> int:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_NONBLOCK"):
+            flags |= os.O_NONBLOCK
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        return flags
+
+    def _validate_auth_fd(self, fd: int) -> os.stat_result:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise PermissionError(
+                f"Credential store must be a regular file: {self.auth_file}"
+            )
+        if os.name != "nt":
+            if st.st_uid != os.getuid():
+                raise PermissionError(
+                    f"Credential store owner mismatch: {self.auth_file}"
+                )
+            if stat.S_IMODE(st.st_mode) & 0o077:
+                raise PermissionError(
+                    f"Credential store permissions must be 0600: "
+                    f"{self.auth_file}"
+                )
+        if st.st_size > self._MAX_AUTH_BYTES:
+            raise PermissionError(
+                f"Credential store exceeds {self._MAX_AUTH_BYTES} bytes: "
+                f"{self.auth_file}"
+            )
+        return st
+
+    def _load_unlocked(self) -> Dict[str, Dict[str, Any]]:
+        if self.auth_file.is_symlink():
+            raise PermissionError(
+                f"Refusing symlink credential store: {self.auth_file}"
+            )
+
+        try:
+            fd = os.open(
+                str(self.auth_file),
+                self._read_flags(),
+            )
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            raise PermissionError(
+                f"Unable to securely open credential store "
+                f"{self.auth_file}: {exc}"
+            ) from exc
+
+        try:
+            before = self._validate_auth_fd(fd)
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(
+                    fd,
+                    min(
+                        64 * 1024,
+                        (self._MAX_AUTH_BYTES + 1) - total,
+                    ),
+                )
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > self._MAX_AUTH_BYTES:
+                    raise PermissionError(
+                        f"Credential store exceeds "
+                        f"{self._MAX_AUTH_BYTES} bytes"
+                    )
+                chunks.append(chunk)
+
+            after = os.fstat(fd)
+            before_fp = (
+                getattr(before, "st_dev", None),
+                getattr(before, "st_ino", None),
+                before.st_size,
+                getattr(before, "st_mtime_ns", None),
+                getattr(before, "st_ctime_ns", None),
+            )
+            after_fp = (
+                getattr(after, "st_dev", None),
+                getattr(after, "st_ino", None),
+                after.st_size,
+                getattr(after, "st_mtime_ns", None),
+                getattr(after, "st_ctime_ns", None),
+            )
+            if before_fp != after_fp or total != before.st_size:
+                raise PermissionError(
+                    f"Credential store changed while being read: "
+                    f"{self.auth_file}"
+                )
+        finally:
+            os.close(fd)
+
+        try:
+            parsed = json.loads(
+                b"".join(chunks).decode("utf-8")
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            # Preserve the historical recovery behavior for corrupt JSON,
+            # while security violations above remain fail-closed.
+            return {}
+
+        if not isinstance(parsed, dict):
+            return {}
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for key, value in parsed.items():
+            if isinstance(key, str) and isinstance(value, dict):
+                result[key] = value
+        return result
 
     def load(self) -> Dict[str, Dict[str, Any]]:
-        if not self.auth_file.exists():
-            return {}
-        try:
-            return json.loads(self.auth_file.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+        with self._thread_lock:
+            return self._load_unlocked()
 
     def save_credential(
         self,
@@ -74,44 +365,121 @@ class CredentialStore:
         value_or_ref: str,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Stores a credential reference or secret with strict 0600 permissions."""
-        data = self.load()
-        pid = provider_id.strip().lower()
-        payload: Dict[str, Any] = {
-            "type": auth_type,
-            "value_ref": value_or_ref,
-        }
-        if extra:
-            payload.update(extra)
-        data[pid] = payload
-        self._write_atomic(data)
+        with self._thread_lock, _CredentialFileLock(self.lock_file):
+            data = self._load_unlocked()
+            pid = provider_id.strip().lower()
+            payload: Dict[str, Any] = {
+                "type": auth_type,
+                "value_ref": value_or_ref,
+            }
+            if extra:
+                payload.update(extra)
+            data[pid] = payload
+            self._write_atomic_unlocked(data)
 
     def remove_credential(self, provider_id: str) -> bool:
-        data = self.load()
-        pid = provider_id.strip().lower()
-        if pid in data:
-            del data[pid]
-            self._write_atomic(data)
-            return True
-        return False
+        with self._thread_lock, _CredentialFileLock(self.lock_file):
+            data = self._load_unlocked()
+            pid = provider_id.strip().lower()
+            if pid in data:
+                del data[pid]
+                self._write_atomic_unlocked(data)
+                return True
+            return False
+
+    def _write_atomic_unlocked(
+        self,
+        data: Dict[str, Any],
+    ) -> None:
+        parent = self._ensure_private_dir(self.auth_file.parent)
+        if self.auth_file.is_symlink():
+            raise PermissionError(
+                f"Refusing symlink credential store: {self.auth_file}"
+            )
+
+        payload = (
+            json.dumps(
+                data,
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        if len(payload) > self._MAX_AUTH_BYTES:
+            raise ValueError(
+                f"Credential store would exceed "
+                f"{self._MAX_AUTH_BYTES} bytes"
+            )
+
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".auth.",
+            dir=str(parent),
+        )
+        tmp = Path(tmp_name)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise PermissionError(
+                    f"Temporary credential file is not regular: {tmp}"
+                )
+            if os.name != "nt":
+                os.fchmod(fd, 0o600)
+
+            offset = 0
+            while offset < len(payload):
+                written = os.write(fd, payload[offset:])
+                if written <= 0:
+                    raise OSError("Short credential store write")
+                offset += written
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+
+            # The parent is private. Reject an already-present symlink rather
+            # than silently replacing an unexpected attacker-controlled entry.
+            if self.auth_file.is_symlink():
+                raise PermissionError(
+                    f"Refusing symlink credential store: {self.auth_file}"
+                )
+            os.replace(tmp, self.auth_file)
+            if os.name != "nt":
+                os.chmod(self.auth_file, 0o600)
+
+            # Validate the exact final object before returning success.
+            verify_fd = os.open(
+                str(self.auth_file),
+                self._read_flags(),
+            )
+            try:
+                self._validate_auth_fd(verify_fd)
+            finally:
+                os.close(verify_fd)
+
+            if os.name != "nt":
+                try:
+                    dir_fd = os.open(
+                        str(parent),
+                        os.O_RDONLY
+                        | (
+                            os.O_DIRECTORY
+                            if hasattr(os, "O_DIRECTORY")
+                            else 0
+                        ),
+                    )
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                except OSError:
+                    pass
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            tmp.unlink(missing_ok=True)
 
     def _write_atomic(self, data: Dict[str, Any]) -> None:
-        self.auth_file.parent.mkdir(parents=True, exist_ok=True)
-        # Create temp file with 0600 permissions
-        fd, tmp = tempfile.mkstemp(prefix=".auth.", dir=str(self.auth_file.parent))
-        try:
-            os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)  # 0600
-            with os.fdopen(fd, "w", encoding="utf-8") as h:
-                h.write(json.dumps(data, indent=2))
-                h.flush()
-                os.fsync(h.fileno())
-            os.replace(tmp, self.auth_file)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        with self._thread_lock, _CredentialFileLock(self.lock_file):
+            self._write_atomic_unlocked(data)
 
 
 class ProviderAuthService:
