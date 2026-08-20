@@ -16,6 +16,7 @@ from pathlib import Path
 from kitt.core.turn_events import ApprovalRequired
 from kitt.ui.commands import CommandRegistry
 from kitt.ui.event_bridge import TurnEventBridge
+from kitt.ui.git import read_git_branch_name
 from kitt.ui.layout import LayoutDimensions, build_root_container
 from kitt.ui.overlay_models import DiffViewerModel, ModelSetupModel, OverlayFrame, SessionPickerModel, TimelineModel
 from kitt.ui.reducer import reduce_ui_event
@@ -47,7 +48,11 @@ class KittUIApp:
         self.output = output
         self.no_animation = no_animation
         root = Path(runtime.canonical_root)
-        self.state = UIState(workspace_name=root.name or str(root), workspace_path=str(root))
+        self.state = UIState(
+            workspace_name=root.name or str(root),
+            workspace_path=str(root),
+            current_branch=read_git_branch_name(root),
+        )
         self.session_picker_model = SessionPickerModel(runtime)
         self.timeline_model = TimelineModel(runtime)
         self.diff_model = DiffViewerModel(str(root))
@@ -1388,6 +1393,7 @@ class KittUIApp:
         self.runtime = new_runtime
         self.state.workspace_path = str(new_runtime.canonical_root)
         self.state.workspace_name = new_runtime.canonical_root.name or str(new_runtime.canonical_root)
+        self.state.current_branch = read_git_branch_name(new_runtime.canonical_root)
         self.state.active_conversation_id = None
         self.state.transcript.clear()
         self.explicit_files.clear()
@@ -2174,8 +2180,22 @@ class KittUIApp:
             detail = active.summary if active else "processando solicitação"
             return f" {plan_badge}{self.state.status_text} {elapsed}s | {detail[:48]} | context {pct}% "
         if self.state.width < 80:
-            return f" {plan_badge}{self.state.status_text} | {self.state.large_model[:16]} | {pct}% "
-        return f" {self.state.workspace_name} | {plan_badge}{self.state.status_text} | {self.state.large_model} | context {pct}% "
+            branch_part = (
+                f" | branch:{self.state.current_branch[:12]}"
+                if self.state.current_branch
+                else ""
+            )
+            return f" {plan_badge}{self.state.status_text}{branch_part} | {self.state.large_model[:16]} | {pct}% "
+        branch_part = (
+            f" | branch:{self.state.current_branch}"
+            if self.state.current_branch
+            else ""
+        )
+        return (
+            f" {self.state.workspace_name}{branch_part} | "
+            f"{plan_badge}{self.state.status_text} | "
+            f"{self.state.large_model} | context {pct}% "
+        )
 
     def _context_details_text(self) -> str:
         cs = self.state.context_stats

@@ -83,6 +83,7 @@ class UIState:
     route: str = "home"
     workspace_name: str = "Local Workspace"
     workspace_path: str = "."
+    current_branch: str = ""
     active_conversation_id: str | None = None
     active_turn_id: str | None = None
     small_model: str = "context"

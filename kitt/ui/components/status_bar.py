@@ -1,5 +1,6 @@
 import time
 from kitt.ui.theme import DEFAULT_THEME
+from kitt.ui.git import read_git_branch_name
 from kitt.ui.state import UIState
 
 
@@ -47,7 +48,9 @@ class StatusBarComponent:
         if width < 60:
             return t.format_primary(f" {center[:width-2]}")
 
-        left = f" ⬡ {state.workspace_name[:16]} │ F4: {mode_tag} │ F12: Modelos"
+        branch = state.current_branch or read_git_branch_name(state.workspace_path)
+        branch_part = f" │ branch:{branch[:20]}" if branch else ""
+        left = f" ⬡ {state.workspace_name[:16]}{branch_part} │ F4: {mode_tag} │ F12: Modelos"
         right = f"{ctx_part}🧠 {state.reasoning_effort}% │ Ctrl+P "
 
         # Space balancing
@@ -65,4 +68,3 @@ class StatusBarComponent:
             line = compact_left + (" " * (spaces // 2)) + t.format_primary(center) + (" " * (spaces - spaces // 2)) + t.format_muted(compact_right)
 
         return line
-
