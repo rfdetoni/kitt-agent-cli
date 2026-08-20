@@ -310,7 +310,8 @@ def handle_mcp_command(
             status = ext.mcp.get_server_status(server_id).value
             print(
                 f"  • \033[1m{server_id}\033[0m "
-                f"(Transport: {cfg.transport}, Status: {status}, Enabled: {cfg.enabled}, Trust: {cfg.trust})"
+                f"(Transport: {cfg.transport}, Status: {status}, Enabled: {cfg.enabled}, "
+                f"Source: {cfg.source}, Trusted: {ext.mcp.is_trusted(server_id)})"
             )
         return 0
 
@@ -328,9 +329,52 @@ def handle_mcp_command(
         print(f"  Args      : {' '.join(cfg.args)}")
         print(f"  Enabled   : {cfg.enabled}")
         print(f"  Trust     : {cfg.trust}")
+        print(f"  Source    : {cfg.source}")
+        print(f"  Trusted   : {ext.mcp.is_trusted(cfg.server_id)}")
         print(f"  Timeout   : {cfg.timeout_seconds}s")
         print(f"  Allow     : {cfg.allow_tools or 'all'}")
         print(f"  Deny      : {cfg.deny_tools or 'none'}")
+        return 0
+
+    if action in {"trust", "untrust"}:
+        if not server:
+            print("\033[31mError: Missing MCP server name.\033[0m")
+            return 1
+        server_id = server.strip().lower()
+        if action == "trust" and server_id not in servers:
+            print(
+                f"\033[31mError: MCP server '{server_id}' not found.\033[0m"
+            )
+            return 1
+        daemon_res = asyncio.run(
+            _daemon_request(
+                f"mcp.{action}",
+                {"server_id": server_id},
+            )
+        )
+        if daemon_res is not None:
+            if daemon_res.get("status") != "ok":
+                print(
+                    f"\033[31mMCP {action} failed: {daemon_res.get('error')}\033[0m"
+                )
+                return 1
+            print(
+                f"\033[32m✓ MCP '{server_id}' "
+                f"{'trusted' if action == 'trust' else 'untrusted'}.\033[0m"
+            )
+            return 0
+        try:
+            if action == "trust":
+                ext.mcp.trust_server(server_id)
+            else:
+                asyncio.run(ext.mcp.untrust_server(server_id))
+        except Exception as exc:
+            print(f"\033[31mMCP {action} failed: {exc}\033[0m")
+            return 1
+        print(
+            f"\033[32m✓ MCP '{server_id}' "
+            f"{'trusted' if action == 'trust' else 'untrusted'}.\033[0m"
+        )
         return 0
 
     if action == "disconnect":

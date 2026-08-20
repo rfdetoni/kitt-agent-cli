@@ -15,6 +15,7 @@ from kitt.extensions.mcp.models import (
     MCPServerState,
     MCPTool,
 )
+from kitt.extensions.mcp.security import MCPTrustStore
 from kitt.extensions.mcp.tool_adapter import MCPToolAdapter
 from kitt.extensions.mcp.transport import (
     HTTPTransport,
@@ -23,6 +24,7 @@ from kitt.extensions.mcp.transport import (
 )
 
 logger = logging.getLogger("kitt.extensions.mcp.manager")
+_MAX_CONFIG_BYTES = 1024 * 1024
 
 
 class MCPManager:
@@ -31,6 +33,7 @@ class MCPManager:
         workspace_root: str = ".",
         config_file: Optional[str] = None,
         tool_registry=None,
+        trust_store: Optional[MCPTrustStore] = None,
     ):
         self.workspace_root = Path(workspace_root).resolve()
         self.config_file = Path(
@@ -38,6 +41,7 @@ class MCPManager:
             or (Path.home() / ".kitt" / "config" / "mcp.json")
         ).resolve()
         self.tool_registry = tool_registry
+        self.trust_store = trust_store or MCPTrustStore(self.workspace_root)
         self._lock = threading.RLock()
         self._configs: Dict[str, MCPServerConfig] = {}
         self._clients: Dict[str, MCPClient] = {}
@@ -69,33 +73,52 @@ class MCPManager:
 
     def _load_configs(self) -> None:
         configs_data: Dict[str, Any] = {}
+        workspace_server_ids: set[str] = set()
 
-        if self.config_file.is_file():
-            try:
-                data = json.loads(
-                    self.config_file.read_text(encoding="utf-8")
+        def _read_config(path: Path) -> dict[str, Any]:
+            if not path.is_file():
+                return {}
+            if path.is_symlink():
+                raise MCPError(f"Refusing symlink MCP config: {path}")
+            if path.stat().st_size > _MAX_CONFIG_BYTES:
+                raise MCPError(
+                    f"MCP config exceeds {_MAX_CONFIG_BYTES} bytes: {path}"
                 )
-                configs_data.update(data.get("mcp", data))
-            except Exception as exc:
-                logger.warning(
-                    "Failed to load global MCP config from %s: %s",
-                    self.config_file,
-                    exc,
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise MCPError(
+                    f"MCP config {path} must contain an object"
                 )
+            payload = data.get("mcp", data)
+            if not isinstance(payload, dict):
+                raise MCPError(
+                    f"MCP config {path} field 'mcp' must be an object"
+                )
+            return payload
+
+        try:
+            configs_data.update(_read_config(self.config_file))
+        except Exception as exc:
+            logger.warning(
+                "Failed to load global MCP config from %s: %s",
+                self.config_file,
+                exc,
+            )
 
         workspace_file = self.workspace_root / ".kitt" / "mcp.json"
-        if workspace_file.is_file():
-            try:
-                data = json.loads(
-                    workspace_file.read_text(encoding="utf-8")
-                )
-                configs_data.update(data.get("mcp", data))
-            except Exception as exc:
-                logger.warning(
-                    "Failed to load workspace MCP config from %s: %s",
-                    workspace_file,
-                    exc,
-                )
+        try:
+            workspace_data = _read_config(workspace_file)
+            configs_data.update(workspace_data)
+            workspace_server_ids = {
+                self._server_id(server_id)
+                for server_id in workspace_data
+            }
+        except Exception as exc:
+            logger.warning(
+                "Failed to load workspace MCP config from %s: %s",
+                workspace_file,
+                exc,
+            )
 
         for raw_id, raw in configs_data.items():
             if not isinstance(raw, dict):
@@ -129,7 +152,33 @@ class MCPManager:
                 max_output_bytes=int(
                     raw.get("max_output_bytes", 2 * 1024 * 1024)
                 ),
+                source=(
+                    "workspace"
+                    if server_id in workspace_server_ids
+                    else "global"
+                ),
             )
+
+    def get_config(self, server_id: str) -> MCPServerConfig:
+        server_id = self._server_id(server_id)
+        with self._lock:
+            config = self._configs.get(server_id)
+        if config is None:
+            raise MCPError(f"MCP server '{server_id}' not found")
+        return config
+
+    def is_trusted(self, server_id: str) -> bool:
+        return self.trust_store.is_trusted(
+            self.get_config(server_id)
+        )
+
+    def trust_server(self, server_id: str) -> str:
+        return self.trust_store.grant(self.get_config(server_id))
+
+    async def untrust_server(self, server_id: str) -> bool:
+        server_id = self._server_id(server_id)
+        await self.disconnect(server_id)
+        return self.trust_store.revoke(server_id)
 
     def register_server(
         self,
@@ -204,6 +253,7 @@ class MCPManager:
                 raise MCPError(
                     f"MCP server '{server_id}' not found"
                 )
+            self.trust_store.assert_trusted(config)
             current_loop = asyncio.get_running_loop()
             if client is not None and client.owner_loop is not None:
                 if client.owner_loop is not current_loop:
@@ -352,6 +402,14 @@ class MCPManager:
             configs = list(self._configs.values())
         for config in configs:
             if not config.enabled:
+                continue
+            if not self.trust_store.is_trusted(config):
+                logger.warning(
+                    "Skipping untrusted workspace MCP server '%s'; "
+                    "run 'kitt mcp trust %s' after review",
+                    config.server_id,
+                    config.server_id,
+                )
                 continue
             kind = self._transport_kind(config.transport)
             with self._lock:

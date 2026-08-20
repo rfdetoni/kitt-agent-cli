@@ -247,6 +247,8 @@ class DaemonServer:
                 "transport": cfg.transport,
                 "enabled": cfg.enabled,
                 "trust": cfg.trust,
+                "trusted": ext.mcp.is_trusted(cfg.server_id),
+                "source": cfg.source,
                 "state": ext.mcp.get_server_status(cfg.server_id).value,
                 "allow_tools": list(cfg.allow_tools or []),
                 "deny_tools": list(cfg.deny_tools or []),
@@ -285,6 +287,24 @@ class DaemonServer:
         ext = rt.extensions
         if ext is None:
             raise RuntimeError("Extensions manager is not available")
+        if action == "mcp.trust":
+            if not server_id:
+                raise ValueError("MCP server name is required")
+            digest = ext.mcp.trust_server(server_id)
+            return {
+                "server_id": server_id,
+                "trusted": True,
+                "digest": digest,
+            }
+        if action == "mcp.untrust":
+            if not server_id:
+                raise ValueError("MCP server name is required")
+            removed = await ext.mcp.untrust_server(server_id)
+            return {
+                "server_id": server_id,
+                "trusted": False,
+                "removed": removed,
+            }
         if action == "mcp.connect":
             if not server_id:
                 raise ValueError("MCP server name is required")
@@ -366,30 +386,18 @@ class DaemonServer:
                     await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "ping"}))
                     continue
 
-                if (
-                    action in {
-                        "extensions.status",
-                        "plugin.enable",
-                        "plugin.disable",
-                        "plugin.reload",
-                        "plugin.unload",
-                        "mcp.connect",
-                        "mcp.disconnect",
-                        "mcp.status",
-                        "mcp.tools",
-                        "mcp.resources",
-                    }
-                    and not self._workspace_allowed(msg.get("workspace"))
-                ):
+                if not self._workspace_allowed(msg.get("workspace")):
                     await q.put(encode_message({
                         "type": "RESPONSE",
                         "request_id": req_id,
                         "status": "error",
-                        "error": "Cross-workspace extension control blocked",
+                        "error": "Cross-workspace daemon request blocked",
                     }))
                     continue
 
-                rt = await self._get_or_create_runtime(msg.get("workspace"))
+                rt = await self._get_or_create_runtime(
+                    str(self.workspace_root)
+                )
 
                 if action == "list_sessions":
                     convs = rt.history.list_history(limit=50)
@@ -483,6 +491,8 @@ class DaemonServer:
                     "plugin.disable",
                     "plugin.reload",
                     "plugin.unload",
+                    "mcp.trust",
+                    "mcp.untrust",
                     "mcp.connect",
                     "mcp.disconnect",
                     "mcp.status",

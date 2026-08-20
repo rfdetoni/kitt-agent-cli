@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 'mcp' subcommand
     mcp_parser = subparsers.add_parser("mcp", help="Manage Model Context Protocol servers")
-    mcp_parser.add_argument("mcp_action", nargs="?", default="list", choices=["list", "inspect", "connect", "disconnect", "tools", "resources"], help="MCP action")
+    mcp_parser.add_argument("mcp_action", nargs="?", default="list", choices=["list", "inspect", "trust", "untrust", "connect", "disconnect", "tools", "resources"], help="MCP action")
     mcp_parser.add_argument("server_name", nargs="?", default=None, help="Target MCP server name")
 
     # 'daemon' subcommand

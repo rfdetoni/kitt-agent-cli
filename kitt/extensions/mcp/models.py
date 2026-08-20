@@ -30,6 +30,7 @@ class MCPServerConfig:
     deny_tools: List[str] = field(default_factory=list)
     timeout_seconds: float = 30.0
     max_output_bytes: int = 2 * 1024 * 1024
+    source: str = "runtime"  # global | workspace | runtime
 
 
 @dataclass
