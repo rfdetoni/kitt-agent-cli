@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -76,15 +77,58 @@ class MCPManager:
         workspace_server_ids: set[str] = set()
 
         def _read_config(path: Path) -> dict[str, Any]:
-            if not path.is_file():
+            if not path.exists():
                 return {}
             if path.is_symlink():
                 raise MCPError(f"Refusing symlink MCP config: {path}")
-            if path.stat().st_size > _MAX_CONFIG_BYTES:
+
+            flags = os.O_RDONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            try:
+                fd = os.open(str(path), flags)
+            except FileNotFoundError:
+                return {}
+            except OSError as exc:
                 raise MCPError(
-                    f"MCP config exceeds {_MAX_CONFIG_BYTES} bytes: {path}"
+                    f"Unable to securely open MCP config {path}: {exc}"
+                ) from exc
+
+            try:
+                stat_result = os.fstat(fd)
+                if stat_result.st_size > _MAX_CONFIG_BYTES:
+                    raise MCPError(
+                        f"MCP config exceeds {_MAX_CONFIG_BYTES} bytes: {path}"
+                    )
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = os.read(
+                        fd,
+                        min(
+                            64 * 1024,
+                            (_MAX_CONFIG_BYTES + 1) - total,
+                        ),
+                    )
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _MAX_CONFIG_BYTES:
+                        raise MCPError(
+                            f"MCP config exceeds {_MAX_CONFIG_BYTES} bytes: {path}"
+                        )
+                    chunks.append(chunk)
+            finally:
+                os.close(fd)
+
+            try:
+                data = json.loads(
+                    b"".join(chunks).decode("utf-8")
                 )
-            data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise MCPError(
+                    f"Invalid MCP config {path}: {exc}"
+                ) from exc
             if not isinstance(data, dict):
                 raise MCPError(
                     f"MCP config {path} must contain an object"
@@ -131,18 +175,41 @@ class MCPManager:
                 transport=self._transport_kind(
                     raw.get("transport", "stdio")
                 ),
-                command=raw.get("command"),
-                args=list(raw.get("args", [])),
+                command=(
+                    str(raw["command"])
+                    if raw.get("command") is not None
+                    else None
+                ),
+                args=[
+                    str(value)
+                    for value in (
+                        raw.get("args", [])
+                        if isinstance(raw.get("args", []), list)
+                        else []
+                    )
+                ],
                 env={
                     str(k): str(v)
-                    for k, v in dict(raw.get("env", {})).items()
+                    for k, v in (
+                        raw.get("env", {})
+                        if isinstance(raw.get("env", {}), dict)
+                        else {}
+                    ).items()
                 },
                 url=raw.get("url"),
                 headers={
                     str(k): str(v)
-                    for k, v in dict(raw.get("headers", {})).items()
+                    for k, v in (
+                        raw.get("headers", {})
+                        if isinstance(raw.get("headers", {}), dict)
+                        else {}
+                    ).items()
                 },
-                enabled=bool(raw.get("enabled", True)),
+                enabled=(
+                    raw.get("enabled", True)
+                    if isinstance(raw.get("enabled", True), bool)
+                    else True
+                ),
                 trust=str(raw.get("trust", "restricted")),
                 allow_tools=raw.get("allow_tools"),
                 deny_tools=list(raw.get("deny_tools", [])),

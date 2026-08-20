@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -22,6 +23,7 @@ def _workspace_key(root: str | Path) -> str:
 
 
 def mcp_config_digest(config: MCPServerConfig) -> str:
+    """Hash every normalized field that can affect activation or execution."""
     payload = {
         "server_id": str(config.server_id).strip().lower(),
         "transport": str(config.transport).strip().lower(),
@@ -30,6 +32,7 @@ def mcp_config_digest(config: MCPServerConfig) -> str:
         "env": dict(sorted(config.env.items())),
         "url": config.url,
         "headers": dict(sorted(config.headers.items())),
+        "enabled": bool(config.enabled),
         "trust": config.trust,
         "allow_tools": config.allow_tools,
         "deny_tools": list(config.deny_tools),
@@ -38,9 +41,25 @@ def mcp_config_digest(config: MCPServerConfig) -> str:
         "source": config.source,
     }
     raw = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _validate_private_state_file(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_symlink():
+        raise MCPError(f"Refusing symlink MCP trust store: {path}")
+    if os.name != "nt":
+        st = path.stat()
+        if st.st_uid != os.getuid():
+            raise MCPError("MCP trust store owner mismatch")
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            raise MCPError("MCP trust store permissions must be 0600")
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -50,7 +69,10 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             os.chmod(path.parent, 0o700)
         except OSError:
             pass
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        dir=str(path.parent),
+    )
     tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -74,17 +96,32 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 class _InterprocessLock:
-    def __init__(self, path: Path, timeout: float = _LOCK_TIMEOUT_SECONDS):
+    def __init__(
+        self,
+        path: Path,
+        timeout: float = _LOCK_TIMEOUT_SECONDS,
+    ):
         self.path = path
         self.timeout = timeout
         self.handle = None
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            try:
+                os.chmod(self.path.parent, 0o700)
+            except OSError:
+                pass
         self.handle = open(self.path, "a+b")
+        if os.name != "nt":
+            try:
+                os.chmod(self.path, 0o600)
+            except OSError:
+                pass
         deadline = time.monotonic() + self.timeout
         if os.name == "nt":
             import msvcrt
+
             self.handle.seek(0, os.SEEK_END)
             if self.handle.tell() == 0:
                 self.handle.write(b"\0")
@@ -92,14 +129,21 @@ class _InterprocessLock:
             while True:
                 try:
                     self.handle.seek(0)
-                    msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    msvcrt.locking(
+                        self.handle.fileno(),
+                        msvcrt.LK_NBLCK,
+                        1,
+                    )
                     break
                 except OSError:
                     if time.monotonic() >= deadline:
-                        raise TimeoutError(f"Timed out acquiring lock {self.path}")
+                        raise TimeoutError(
+                            f"Timed out acquiring lock {self.path}"
+                        )
                     time.sleep(0.05)
         else:
             import fcntl
+
             while True:
                 try:
                     fcntl.flock(
@@ -109,7 +153,9 @@ class _InterprocessLock:
                     break
                 except BlockingIOError:
                     if time.monotonic() >= deadline:
-                        raise TimeoutError(f"Timed out acquiring lock {self.path}")
+                        raise TimeoutError(
+                            f"Timed out acquiring lock {self.path}"
+                        )
                     time.sleep(0.05)
         return self
 
@@ -119,11 +165,20 @@ class _InterprocessLock:
         try:
             if os.name == "nt":
                 import msvcrt
+
                 self.handle.seek(0)
-                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+                msvcrt.locking(
+                    self.handle.fileno(),
+                    msvcrt.LK_UNLCK,
+                    1,
+                )
             else:
                 import fcntl
-                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+
+                fcntl.flock(
+                    self.handle.fileno(),
+                    fcntl.LOCK_UN,
+                )
         finally:
             self.handle.close()
             self.handle = None
@@ -140,19 +195,37 @@ class MCPTrustStore:
         self.workspace_root = Path(workspace_root).resolve()
         self.workspace_key = _workspace_key(self.workspace_root)
         self.path = Path(
-            path or (Path.home() / ".kitt" / "security" / "mcp-trust.json")
+            path
+            or (
+                Path.home()
+                / ".kitt"
+                / "security"
+                / "mcp-trust.json"
+            )
         ).expanduser().resolve()
-        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        self.lock_path = self.path.with_suffix(
+            self.path.suffix + ".lock"
+        )
 
     def _data(self) -> dict[str, Any]:
         if not self.path.is_file():
-            return {"version": _STATE_VERSION, "workspaces": {}}
+            return {
+                "version": _STATE_VERSION,
+                "workspaces": {},
+            }
+        _validate_private_state_file(self.path)
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = json.loads(
+                self.path.read_text(encoding="utf-8")
+            )
         except Exception as exc:
-            raise MCPError(f"Invalid MCP trust store {self.path}: {exc}") from exc
+            raise MCPError(
+                f"Invalid MCP trust store {self.path}: {exc}"
+            ) from exc
         if not isinstance(data, dict):
-            raise MCPError("MCP trust store must contain an object")
+            raise MCPError(
+                "MCP trust store must contain an object"
+            )
         data.setdefault("version", _STATE_VERSION)
         data.setdefault("workspaces", {})
         return data
@@ -180,8 +253,13 @@ class MCPTrustStore:
         server_id = str(config.server_id).strip().lower()
         with _InterprocessLock(self.lock_path):
             data = self._data()
-            workspace = data["workspaces"].setdefault(self.workspace_key, {})
-            workspace[server_id] = {"digest": digest}
+            workspace = data["workspaces"].setdefault(
+                self.workspace_key,
+                {},
+            )
+            workspace[server_id] = {
+                "digest": digest,
+            }
             _atomic_write_json(self.path, data)
         return digest
 
@@ -190,16 +268,23 @@ class MCPTrustStore:
         removed = False
         with _InterprocessLock(self.lock_path):
             data = self._data()
-            workspace = data.get("workspaces", {}).get(self.workspace_key, {})
+            workspace = (
+                data.get("workspaces", {})
+                .get(self.workspace_key, {})
+            )
             if server_id in workspace:
                 del workspace[server_id]
                 removed = True
                 _atomic_write_json(self.path, data)
         return removed
 
-    def assert_trusted(self, config: MCPServerConfig) -> None:
+    def assert_trusted(
+        self,
+        config: MCPServerConfig,
+    ) -> None:
         if not self.is_trusted(config):
             raise MCPError(
-                f"Workspace MCP server '{config.server_id}' is untrusted or changed. "
-                f"Review it and run 'kitt mcp trust {config.server_id}'."
+                f"Workspace MCP server '{config.server_id}' is "
+                "untrusted or changed. Review it and run "
+                f"'kitt mcp trust {config.server_id}'."
             )
