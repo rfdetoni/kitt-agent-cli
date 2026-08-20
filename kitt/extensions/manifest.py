@@ -1,7 +1,9 @@
 """Manifest parser and schema validator using Python stdlib tomllib."""
 from __future__ import annotations
 
+import os
 import re
+import stat
 import tomllib
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -37,24 +39,73 @@ def parse_manifest_file(
     manifest_path: Path,
     source: str = "workspace",
 ) -> PluginManifest:
-    path = Path(manifest_path).resolve()
-    if not path.is_file():
-        raise PluginManifestError(f"Plugin manifest file not found: {path}")
-
-    size = path.stat().st_size
-    if size > MAX_MANIFEST_SIZE_BYTES:
-        raise PluginManifestError(
-            f"Plugin manifest {path} exceeds maximum size limit "
-            f"({size} > {MAX_MANIFEST_SIZE_BYTES} bytes)."
+    path = Path(
+        os.path.abspath(
+            os.path.expanduser(str(manifest_path))
         )
+    )
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
 
     try:
-        with path.open("rb") as handle:
-            data = tomllib.load(handle)
-    except Exception as exc:
-        raise PluginManifestError(f"Failed to parse TOML in {path}: {exc}") from exc
+        fd = os.open(str(path), flags)
+    except FileNotFoundError as exc:
+        raise PluginManifestError(
+            f"Plugin manifest file not found: {path}"
+        ) from exc
+    except OSError as exc:
+        raise PluginManifestError(
+            f"Unable to securely open plugin manifest {path}: {exc}"
+        ) from exc
 
-    return parse_manifest_data(data, manifest_path=path, source=source)
+    try:
+        stat_result = os.fstat(fd)
+        if not stat.S_ISREG(stat_result.st_mode):
+            raise PluginManifestError(
+                f"Plugin manifest must be a regular file: {path}"
+            )
+        if stat_result.st_size > MAX_MANIFEST_SIZE_BYTES:
+            raise PluginManifestError(
+                f"Plugin manifest {path} exceeds maximum size limit "
+                f"({stat_result.st_size} > {MAX_MANIFEST_SIZE_BYTES} bytes)."
+            )
+
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                fd,
+                min(16 * 1024, (MAX_MANIFEST_SIZE_BYTES + 1) - total),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_MANIFEST_SIZE_BYTES:
+                raise PluginManifestError(
+                    f"Plugin manifest {path} exceeds maximum size limit."
+                )
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+    try:
+        data = tomllib.loads(
+            b"".join(chunks).decode("utf-8")
+        )
+    except Exception as exc:
+        raise PluginManifestError(
+            f"Failed to parse TOML in {path}: {exc}"
+        ) from exc
+
+    return parse_manifest_data(
+        data,
+        manifest_path=path,
+        source=source,
+    )
 
 
 def parse_manifest_data(

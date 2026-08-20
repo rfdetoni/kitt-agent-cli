@@ -122,12 +122,35 @@ class PluginLoader:
                         exc,
                     )
 
-        workspace_plugins = self.workspace_root / ".kitt" / "plugins"
+        kitt_dir = self.workspace_root / ".kitt"
+        workspace_plugins = kitt_dir / "plugins"
+        if kitt_dir.is_symlink():
+            logger.warning(
+                "Ignoring workspace plugins: .kitt is a symlink."
+            )
+            return manifests
+        if workspace_plugins.is_symlink():
+            logger.warning(
+                "Ignoring workspace plugins: .kitt/plugins is a symlink."
+            )
+            return manifests
         if workspace_plugins.is_dir():
             for child in sorted(workspace_plugins.iterdir()):
+                if child.is_symlink():
+                    logger.warning(
+                        "Ignoring workspace plugin symlink: %s",
+                        child,
+                    )
+                    continue
                 if not child.is_dir():
                     continue
                 manifest_file = child / "plugin.toml"
+                if manifest_file.is_symlink():
+                    logger.warning(
+                        "Ignoring symlink plugin manifest: %s",
+                        manifest_file,
+                    )
+                    continue
                 if not manifest_file.is_file():
                     continue
                 try:
@@ -135,10 +158,11 @@ class PluginLoader:
                         manifest_file, source="workspace"
                     )
                     if manifest.name in manifests:
-                        logger.info(
-                            "Workspace plugin '%s' overrides global plugin.",
+                        logger.warning(
+                            "Ignoring workspace plugin '%s': name collides with a global plugin. Use a unique plugin name.",
                             manifest.name,
                         )
+                        continue
                     manifests[manifest.name] = manifest
                 except Exception as exc:
                     logger.warning(
