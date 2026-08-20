@@ -115,6 +115,16 @@ def parse_manifest_data(
         raise PluginManifestError(
             f"Plugin '{name}' trusted_in_process must be boolean."
         )
+    enabled_raw = data.get("enabled_by_default", True)
+    if not isinstance(enabled_raw, bool):
+        raise PluginManifestError(
+            f"Plugin '{name}' enabled_by_default must be boolean."
+        )
+    critical_raw = data.get("is_critical", False)
+    if not isinstance(critical_raw, bool):
+        raise PluginManifestError(
+            f"Plugin '{name}' is_critical must be boolean."
+        )
 
     return PluginManifest(
         name=name,
@@ -127,8 +137,8 @@ def parse_manifest_data(
         homepage=str(data.get("homepage", "")),
         dependencies=dependencies,
         requires_kitt=str(data.get("requires_kitt", ">=1.0.0")),
-        enabled_by_default=bool(data.get("enabled_by_default", True)),
-        is_critical=bool(data.get("is_critical", False)),
+        enabled_by_default=enabled_raw,
+        is_critical=critical_raw,
         source=source,
         manifest_path=manifest_path,
         trusted_in_process=trusted_raw,

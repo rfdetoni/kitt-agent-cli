@@ -196,6 +196,26 @@ class PluginRegistry:
     async def start_all(self) -> None:
         manifests = self.discover()
         for plugin_id, manifest in manifests.items():
+            # Manifest flags are plugin-controlled input. Autostart and
+            # critical startup semantics are honored only after local trust
+            # verification for the exact manifest content.
+            try:
+                trusted = self.loader.trust_store.is_trusted(
+                    manifest
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping plugin '%s': trust verification failed: %s",
+                    plugin_id,
+                    exc,
+                )
+                trusted = False
+            if not trusted:
+                logger.info(
+                    "Skipping untrusted plugin '%s' during autostart.",
+                    plugin_id,
+                )
+                continue
             if not self.is_enabled(
                 plugin_id, manifest
             ):
@@ -208,6 +228,7 @@ class PluginRegistry:
                     plugin_id,
                     exc,
                 )
+                # Critical is honored only after trust verification above.
                 if manifest.is_critical:
                     raise PluginLoadError(
                         f"Critical plugin '{plugin_id}' failed: {exc}"
