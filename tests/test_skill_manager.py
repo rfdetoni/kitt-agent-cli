@@ -1,3 +1,4 @@
+import os
 import unittest
 import tempfile
 from pathlib import Path
@@ -6,9 +7,17 @@ from kitt.skills.skill_manager import SkillManager
 class TestSkillManager(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
+        self.kitt_home = Path(self.tmp_dir.name) / "private-home"
+        self.kitt_home.mkdir(mode=0o700)
+        self.old_kitt_home = os.environ.get("KITT_HOME")
+        os.environ["KITT_HOME"] = str(self.kitt_home)
         self.manager = SkillManager(root_dir=self.tmp_dir.name)
 
     def tearDown(self):
+        if self.old_kitt_home is None:
+            os.environ.pop("KITT_HOME", None)
+        else:
+            os.environ["KITT_HOME"] = self.old_kitt_home
         self.tmp_dir.cleanup()
 
     def test_create_and_list_skill(self):
@@ -39,7 +48,7 @@ Apply clean code principles automatically.
         self.assertIn("refactor-clean", prompt)
 
     def test_remove_skill(self):
-        skill_dir = Path(self.tmp_dir.name) / ".kitt" / "skills" / "temp-skill"
+        skill_dir = self.manager.project_skills_dir / "temp-skill"
         skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text("---\nname: temp-skill\ndescription: temp\n---\n", encoding='utf-8')
 

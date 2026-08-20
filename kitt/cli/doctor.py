@@ -3,6 +3,8 @@ import shutil
 from pathlib import Path
 from typing import Dict, Any, List
 
+from kitt.llm.http_security import secure_urlopen
+
 class DoctorCheck:
     """System diagnostic utility for K.I.T.T. environment, tools, database, and configuration."""
 
@@ -69,7 +71,7 @@ class DoctorCheck:
         import urllib.request
         try:
             req = urllib.request.Request("http://127.0.0.1:11434/api/tags", headers={"User-Agent": "kitt-doctor"})
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
+            with secure_urlopen(req, timeout=1.5) as resp:
                 if resp.status == 200:
                     results.append({"name": "Local Ollama Endpoint", "status": "PASS", "detail": "Online at 127.0.0.1:11434"})
                 else:

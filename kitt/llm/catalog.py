@@ -11,6 +11,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from kitt.llm.http_security import secure_urlopen
 from kitt.llm.domain import ModelDescriptor, ProviderDescriptor
 
 MODELS_DEV_URL = "https://models.dev/api.json"
@@ -302,7 +303,7 @@ class ProviderCatalogService:
         headers = {"User-Agent": "Kitt-Agent-CLI", "Accept": "application/json"}
         req = urllib.request.Request(self.fetch_url, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with secure_urlopen(req, timeout=self.timeout) as resp:
                 if resp.status == 200:
                     raw_text = resp.read().decode("utf-8")
                     data = json.loads(raw_text)

@@ -669,9 +669,7 @@ class ProviderAuthService:
                         except Exception:
                             pass
                 return stored.get("value_ref")
-            # Fallback to env var for this provider
-            env_var = self.get_default_env_var(pid)
-            return self.get_env_value(env_var)
+            return None
 
         if credential_ref.startswith("env:"):
             env_name = credential_ref[4:]

@@ -16,6 +16,7 @@ from kitt.llm.domain import (
     ProviderTimeoutError,
     ProviderConnectionError,
 )
+from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
 
 DEFAULT_OPENAI_URL = "https://api.openai.com"
@@ -58,7 +59,7 @@ class OpenAIResponsesAdapter:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=request.timeout_seconds) as resp:
+            with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
                     line_str = line.decode("utf-8").strip()
                     if line_str.startswith("data: "):
@@ -92,7 +93,7 @@ class OpenAIResponsesAdapter:
 
         req = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with secure_urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 raw_data = data.get("data", []) if isinstance(data, dict) else data
                 models: List[ModelDescriptor] = []

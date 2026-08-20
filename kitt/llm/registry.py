@@ -1,6 +1,8 @@
 """ProviderRegistry unifying catalog, authentication, custom providers, and protocol adapters."""
 from __future__ import annotations
 
+import ipaddress
+import urllib.parse
 from typing import Dict, List, Optional, Set
 from kitt.llm.auth import ProviderAuthService
 from kitt.llm.catalog import ProviderCatalogService
@@ -136,18 +138,24 @@ class ProviderRegistry:
                 status=ProviderDiscoveryStatus.UNSUPPORTED,
                 message=f"Provider '{p.id}' has no endpoint",
             )
-        try:
-            api_key = resolve_endpoint_credential(
-                self.auth_service,
-                p.id,
-                target_base,
-                policy=self.endpoint_policy,
-            )
-        except Exception as exc:
-            return ModelDiscoveryResult(
-                status=ProviderDiscoveryStatus.AUTH_REQUIRED,
-                message=str(exc),
-            )
+        api_key = None
+        if not self._is_local_discovery_endpoint(
+            p.id,
+            target_base,
+            local=bool(getattr(p, "local", False)),
+        ):
+            try:
+                api_key = resolve_endpoint_credential(
+                    self.auth_service,
+                    p.id,
+                    target_base,
+                    policy=self.endpoint_policy,
+                )
+            except Exception as exc:
+                return ModelDiscoveryResult(
+                    status=ProviderDiscoveryStatus.AUTH_REQUIRED,
+                    message=str(exc),
+                )
 
         adapter = self.get_adapter_for_protocol(p.protocol)
         result = adapter.list_models(
@@ -171,6 +179,32 @@ class ProviderRegistry:
                 result.status = ProviderDiscoveryStatus.NO_MODELS
 
         return result
+
+    @staticmethod
+    def _is_local_discovery_endpoint(
+        provider_id: str,
+        base_url: str,
+        *,
+        local: bool = False,
+    ) -> bool:
+        if local:
+            return True
+        pid = (provider_id or "").strip().lower()
+        if pid in {"ollama", "lmstudio"}:
+            return True
+        try:
+            host = (urllib.parse.urlsplit(base_url).hostname or "").strip().lower()
+        except Exception:
+            return False
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return True
+        if host.endswith((".local", ".lan", ".internal")):
+            return True
+        try:
+            ip = ipaddress.ip_address(host.split("%", 1)[0])
+        except ValueError:
+            return False
+        return bool(ip.is_loopback or ip.is_private)
 
     def effective_models(self, provider_id: str) -> List[ModelDescriptor]:
         """Combines runtime models (if accessible) and catalog/custom models."""

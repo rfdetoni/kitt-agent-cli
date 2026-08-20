@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict
 
 from kitt.daemon.client import DaemonClient
 from kitt.daemon.server import DaemonServer
 from kitt.daemon.transport import IPCTransport
+from kitt.tools.process_runner import sanitized_subprocess_env
 
 
 def run_daemon_foreground(workspace: str) -> None:
-    """Run daemon in foreground (used by supervisor or sub-process worker)."""
     server = DaemonServer(workspace_root=workspace)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -29,102 +30,167 @@ def run_daemon_foreground(workspace: str) -> None:
         loop.close()
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _terminate_spawned(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name != "nt":
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=2)
+            return
+        except Exception:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except Exception:
+                pass
+    else:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=sanitized_subprocess_env(),
+                timeout=3,
+                check=False,
+            )
+        except Exception:
+            pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
 def start_daemon_detached(workspace: str, timeout_seconds: float = 10.0) -> Dict[str, Any]:
-    """Spawn detached background daemon and wait for readiness handshake."""
     transport = IPCTransport(workspace)
     existing_pid = transport.read_pid()
-
-    # Check if existing daemon is alive
-    if existing_pid:
+    if existing_pid and _pid_alive(existing_pid):
+        client = DaemonClient(workspace_root=workspace)
         try:
-            os.kill(existing_pid, 0)
-            # Process is running
-            client = DaemonClient(workspace_root=workspace)
             if asyncio.run(client.is_running()):
-                return {"status": "ok", "message": f"Daemon is already running (PID {existing_pid})", "pid": existing_pid}
-        except OSError:
-            # Stale PID file
-            transport.cleanup()
+                return {
+                    "status": "ok",
+                    "message": f"Daemon is already running (PID {existing_pid})",
+                    "pid": existing_pid,
+                }
+        except Exception:
+            # A live PID with failed authenticated IPC is ambiguous. Never
+            # delete/replace its state and never signal it blindly.
+            return {
+                "status": "error",
+                "error": (
+                    f"PID {existing_pid} is alive but KITT daemon authentication "
+                    "failed; refusing to replace or signal it"
+                ),
+                "pid": existing_pid,
+            }
+    elif existing_pid:
+        transport.cleanup()
 
-    # Spawn background daemon process
+    root = str(Path(workspace).resolve())
     cmd = [
-        sys.executable,
-        "-m",
-        "kitt.cli.main",
-        "daemon",
-        "run",
-        "--workspace",
-        str(Path(workspace).resolve()),
+        sys.executable, "-m", "kitt.cli.main", "daemon", "run",
+        "--workspace", root,
     ]
-
     kwargs: Dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
-        "cwd": str(Path(workspace).resolve()),
+        "cwd": root,
+        "env": sanitized_subprocess_env(),
     }
-
-    if sys.platform != "win32":
+    if os.name != "nt":
         kwargs["start_new_session"] = True
     else:
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        kwargs["creationflags"] = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "DETACHED_PROCESS", 0)
+        )
 
     proc = subprocess.Popen(cmd, **kwargs)
-
-    # Readiness handshake: poll until daemon responds to ping
     client = DaemonClient(workspace_root=workspace)
-    deadline = time.monotonic() + timeout_seconds
-
+    deadline = time.monotonic() + max(1.0, float(timeout_seconds))
     while time.monotonic() < deadline:
         try:
             if asyncio.run(client.is_running()):
                 pid = transport.read_pid() or proc.pid
-                return {"status": "ok", "message": f"Daemon started successfully in background (PID {pid})", "pid": pid}
+                return {
+                    "status": "ok",
+                    "message": f"Daemon started successfully in background (PID {pid})",
+                    "pid": pid,
+                }
         except Exception:
             pass
+        if proc.poll() is not None:
+            break
         time.sleep(0.1)
 
-    return {"status": "error", "error": f"Daemon failed to report readiness within {timeout_seconds}s", "pid": proc.pid}
+    _terminate_spawned(proc)
+    # Only clean state generated by the failed child after it is no longer live.
+    if not _pid_alive(proc.pid):
+        transport.cleanup()
+    return {
+        "status": "error",
+        "error": f"Daemon failed to report readiness within {timeout_seconds}s",
+        "pid": proc.pid,
+    }
 
 
 def stop_daemon(workspace: str) -> Dict[str, Any]:
-    """Stop running background daemon."""
+    """Stop only through authenticated IPC; never signal a PID file blindly."""
     transport = IPCTransport(workspace)
     client = DaemonClient(workspace_root=workspace)
 
     try:
         if asyncio.run(client.is_running()):
-            resp = asyncio.run(client.stop_daemon())
-            transport.cleanup()
-            return {"status": "ok", "message": "Daemon stopped via IPC"}
-    except Exception:
-        pass
+            response = asyncio.run(client.stop_daemon())
+            return {"status": "ok", "message": "Daemon stopped via authenticated IPC", "response": response}
+    except Exception as exc:
+        pid = transport.read_pid()
+        if pid and _pid_alive(pid):
+            return {
+                "status": "error",
+                "error": (
+                    f"Daemon PID {pid} is alive but authenticated IPC stop failed; "
+                    "refusing to signal an unverified process"
+                ),
+            }
 
     pid = transport.read_pid()
+    if pid and not _pid_alive(pid):
+        transport.cleanup()
+        return {"status": "ok", "message": "Removed stale daemon state"}
     if pid:
-        try:
-            os.kill(pid, 15)  # SIGTERM
-            transport.cleanup()
-            return {"status": "ok", "message": f"Sent SIGTERM to daemon (PID {pid})"}
-        except OSError as exc:
-            transport.cleanup()
-            return {"status": "error", "error": f"Could not stop PID {pid}: {exc}"}
-
+        return {
+            "status": "error",
+            "error": f"PID {pid} is alive but cannot be authenticated as this KITT daemon",
+        }
     return {"status": "error", "error": "Daemon is not running"}
 
 
 def get_daemon_status(workspace: str) -> Dict[str, Any]:
-    """Inspect daemon status."""
     transport = IPCTransport(workspace)
     client = DaemonClient(workspace_root=workspace)
-    running = asyncio.run(client.is_running())
+    try:
+        running = asyncio.run(client.is_running())
+    except Exception:
+        running = False
     pid = transport.read_pid()
     endpoint = transport.read_endpoint_metadata()
-
     return {
         "running": running,
         "pid": pid,
-        "transport": endpoint.transport_type if endpoint else ("unix" if sys.platform != "win32" else "tcp"),
+        "pid_alive": bool(pid and _pid_alive(pid)),
+        "transport": endpoint.transport_type if endpoint else ("unix" if os.name != "nt" else "tcp"),
         "address": endpoint.address if endpoint else str(transport.socket_path),
         "port": endpoint.port if endpoint else None,
     }

@@ -67,7 +67,8 @@ class TestOpenCodeAnomalyCoUI(unittest.TestCase):
         self.assertIn("K.I.T.T.", home)
 
         status = StatusBarComponent().render(state, width=80)
-        self.assertIn("Test Workspace", status)
+        self.assertIn("Online", status)
+        self.assertIn("execution", status)
 
         sidebar = SidebarComponent().render(state, width=40)
         self.assertIn("SYSTEM METRICS", sidebar)

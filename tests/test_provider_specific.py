@@ -33,7 +33,7 @@ class TestProviderSpecificBehaviors(unittest.TestCase):
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("kitt.llm.providers.ollama.secure_urlopen", return_value=mock_resp) as mock_urlopen:
             chunks = list(adapter.stream(req))
             self.assertIn("<think>", chunks)
             self.assertIn("pensando...", chunks)
@@ -56,7 +56,7 @@ class TestProviderSpecificBehaviors(unittest.TestCase):
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("kitt.llm.providers.openai_chat.secure_urlopen", return_value=mock_resp) as mock_urlopen:
             res = adapter.list_models(base_url="http://localhost:1234")
             self.assertEqual(len(res.models), 1)
             self.assertEqual(res.models[0].id, "qwen2.5-coder-7b")
@@ -84,7 +84,7 @@ class TestProviderSpecificBehaviors(unittest.TestCase):
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("kitt.llm.providers.anthropic.secure_urlopen", return_value=mock_resp) as mock_urlopen:
             chunks = list(adapter.stream(req))
             self.assertEqual("".join(chunks), "Hi!")
 
@@ -110,7 +110,7 @@ class TestProviderSpecificBehaviors(unittest.TestCase):
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("kitt.llm.providers.gemini.secure_urlopen", return_value=mock_resp) as mock_urlopen:
             chunks = list(adapter.stream(req))
             self.assertEqual("".join(chunks), "Pong")
 
@@ -138,7 +138,7 @@ class TestProviderSpecificBehaviors(unittest.TestCase):
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("kitt.llm.providers.openai_responses.secure_urlopen", return_value=mock_resp) as mock_urlopen:
             chunks = list(adapter.stream(req))
             self.assertEqual("".join(chunks), "Math is cool.")
 

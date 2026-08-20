@@ -197,8 +197,9 @@ class TestUXStateOfTheArt(unittest.TestCase):
         from kitt.router.model_selector import ModelConfigurator
 
         cfg = ModelConfigurator()
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("kitt.llm.providers.ollama.secure_urlopen") as mock_urlopen:
             mock_resp = MagicMock()
+            mock_resp.status = 200
             mock_resp.read.return_value = b'{"models": [{"name": "qwen2.5:32b"}, {"name": "deepseek-r1:14b"}]}'
             mock_resp.__enter__.return_value = mock_resp
             mock_urlopen.return_value = mock_resp
@@ -206,7 +207,7 @@ class TestUXStateOfTheArt(unittest.TestCase):
             # Call with raw IP:port without http:// prefix
             models = cfg.fetch_ollama_models("192.168.100.51:11434")
             self.assertEqual(models, ["qwen2.5:32b", "deepseek-r1:14b"])
-            req = mock_urlopen.call_args[0][0]
+            req = mock_urlopen.call_args.args[0]
             self.assertEqual(req.full_url, "http://192.168.100.51:11434/api/tags")
 
     def test_custom_and_lan_providers_do_not_require_token(self):

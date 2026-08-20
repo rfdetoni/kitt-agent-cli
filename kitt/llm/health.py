@@ -5,6 +5,7 @@ import urllib.request
 import urllib.error
 import json
 from typing import Tuple
+from kitt.llm.http_security import secure_urlopen
 
 
 class ProviderHealthChecker:
@@ -15,7 +16,7 @@ class ProviderHealthChecker:
         url = f"{base_url.rstrip('/')}/api/tags"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "KITT-Agent-CLI"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with secure_urlopen(req, timeout=timeout) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     count = len(data.get("models", []))
@@ -32,7 +33,7 @@ class ProviderHealthChecker:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with secure_urlopen(req, timeout=timeout) as resp:
                 if resp.status in (200, 201):
                     return True, "OpenAI-compatible endpoint reachable"
                 return False, f"HTTP {resp.status}"

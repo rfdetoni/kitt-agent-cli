@@ -208,52 +208,12 @@ class TurnProcessor:
         return caps
 
     async def arun_turn(self, cmd: TurnCommand):
-        """Bridge the blocking providers to asyncio using asyncio.Queue (sem polling)."""
+        """Expose the synchronous turn loop as an async generator."""
         import asyncio as _asyncio
 
-        event_queue: _asyncio.Queue = _asyncio.Queue(maxsize=128)
-        sentinel = object()
-        loop = _asyncio.get_running_loop()
-        stop = threading.Event()
-
-        def produce():
-            try:
-                for event in self.run_turn(cmd):
-                    if stop.is_set():
-                        break
-                    future = _asyncio.run_coroutine_threadsafe(
-                        event_queue.put(event), loop
-                    )
-                    try:
-                        future.result(timeout=30.0)
-                    except Exception:
-                        break
-            except BaseException as exc:
-                if not stop.is_set():
-                    try:
-                        _asyncio.run_coroutine_threadsafe(
-                            event_queue.put(TurnFailed(error=str(exc))), loop
-                        ).result(timeout=5.0)
-                    except Exception:
-                        pass
-            finally:
-                if not stop.is_set():
-                    try:
-                        _asyncio.run_coroutine_threadsafe(
-                            event_queue.put(sentinel), loop
-                        ).result(timeout=5.0)
-                    except Exception:
-                        pass
-
-        threading.Thread(target=produce, daemon=True).start()
-        try:
-            while True:
-                item = await event_queue.get()
-                if item is sentinel:
-                    break
-                yield item
-        finally:
-            stop.set()
+        for item in self.run_turn(cmd):
+            yield item
+            await _asyncio.sleep(0)
 
     def _history_context(self, conversation_id: str, max_messages: int = 12,
                          exclude_prompt: Optional[str] = None) -> str:

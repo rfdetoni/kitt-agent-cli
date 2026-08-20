@@ -119,6 +119,8 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         self.assertIn("remote-model", self.ui.model_setup_model.models)
 
     async def test_model_overlay_switches_provider_for_selected_role(self):
+        from kitt.llm.auth import ProviderAuthService
+        ProviderAuthService().logout("openai")
         with patch("kitt.router.model_selector.ModelConfigurator.fetch_ollama_models", return_value=["one"]):
             await self.ui._execute_command("/setup-models")
         while self.ui.model_setup_model.selected_provider != "openai":
@@ -126,6 +128,10 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         self.assertIn("gpt-4o", self.ui.model_setup_model.models)
         self.ui.model_setup_model.model_index = self.ui.model_setup_model.models.index("gpt-4o")
         await self.ui._apply_selected_model()
+        self.assertEqual(self.ui.state.active_overlay, "auth_login")
+        self.ui.auth_login_buffer.text = "sk-openai-test-key-12345"
+        self.ui._accept_auth_login(self.ui.auth_login_buffer)
+        await asyncio.sleep(0.05)
         profile = self.runtime.processor.router.resolve_profile_for_task("code-generation")[1]
         self.assertEqual((profile.backend, profile.model), ("openai", "gpt-4o"))
 
@@ -140,11 +146,12 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
 
     async def test_lmstudio_model_discovery_uses_openai_compatible_endpoint(self):
         class Response:
+            status = 200
             def __enter__(self): return self
             def __exit__(self, *args): return False
-            def read(self): return b'{"data": [{"id": "local-model"}]}'
+            def read(self, _amt=-1): return b'{"data": [{"id": "local-model"}]}'
 
-        with patch("kitt.ui.app.urllib.request.urlopen", return_value=Response()) as open_url:
+        with patch("kitt.llm.providers.openai_chat.secure_urlopen", return_value=Response()) as open_url:
             models = await self.ui._models_for_provider("lmstudio", "http://localhost:1234")
         self.assertEqual(models, ["local-model"])
         self.assertEqual(open_url.call_args.args[0].full_url, "http://localhost:1234/v1/models")

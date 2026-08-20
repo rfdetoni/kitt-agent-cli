@@ -1,7 +1,10 @@
 import math
 import re
 from collections import Counter
+from pathlib import Path
 from typing import Any, List
+
+from kitt.skills.skill_manager import DEFAULT_SKILLS
 
 
 class ProgressiveSkillLoader:
@@ -45,5 +48,16 @@ class ProgressiveSkillLoader:
         return [item[2] for item in scored[:max_skills]]
 
     def load(self, skill: Any, max_chars: int = 12000) -> str:
-        text = (skill.path / "SKILL.md").read_text("utf-8", errors="ignore")
+        skill_path = Path(getattr(skill, "path", Path(".")))
+        skill_md = skill_path / "SKILL.md"
+        if skill_md.exists():
+            text = skill_md.read_text("utf-8", errors="ignore")
+        else:
+            text = DEFAULT_SKILLS.get(
+                getattr(skill, "name", ""),
+                {},
+            ).get(
+                "content",
+                f"---\nname: {getattr(skill, 'name', 'unknown')}\ndescription: {getattr(skill, 'description', '')}\n---\n",
+            )
         return text[:max_chars]

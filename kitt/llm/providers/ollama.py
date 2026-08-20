@@ -16,6 +16,7 @@ from kitt.llm.domain import (
     ProviderTimeoutError,
     ProviderConnectionError,
 )
+from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
@@ -62,7 +63,7 @@ class OllamaAdapter:
 
         in_thinking = False
         try:
-            with urllib.request.urlopen(req, timeout=request.timeout_seconds) as resp:
+            with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
                     if not line:
                         continue
@@ -102,7 +103,7 @@ class OllamaAdapter:
         req = urllib.request.Request(url, headers={"User-Agent": "Kitt-Agent-CLI"})
 
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with secure_urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 models_raw = data.get("models", [])
                 models: List[ModelDescriptor] = []

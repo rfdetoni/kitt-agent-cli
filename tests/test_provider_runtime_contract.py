@@ -13,6 +13,7 @@ from kitt.llm.domain import (
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
+from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
 from kitt.llm.providers.openai_chat import OpenAIChatAdapter
 
@@ -50,7 +51,7 @@ class TestProviderRuntimeContract(unittest.TestCase):
             timeout_seconds=2,
         )
 
-        with patch("urllib.request.urlopen", side_effect=socket.timeout("Timeout")):
+        with patch("kitt.llm.providers.openai_chat.secure_urlopen", side_effect=socket.timeout("Timeout")):
             with self.assertRaises(ProviderTimeoutError):
                 list(adapter.stream(req))
 
@@ -59,14 +60,13 @@ class TestProviderRuntimeContract(unittest.TestCase):
 
         # Auth failure (401)
         err_401 = urllib.error.HTTPError("http://test/v1/models", 401, "Unauthorized", {}, io.BytesIO(b'{"error":"invalid"}'))
-        with patch("urllib.request.urlopen", side_effect=err_401):
+        with patch("kitt.llm.providers.openai_chat.secure_urlopen", side_effect=err_401):
             res = adapter.list_models(base_url="https://api.openai.com", api_key="bad-key")
             self.assertEqual(res.status, ProviderDiscoveryStatus.AUTH_INVALID)
             self.assertEqual(len(res.models), 0)
 
-        # Rate limited (429)
         err_429 = urllib.error.HTTPError("http://test/v1/models", 429, "Rate Limited", {}, io.BytesIO(b'{"error":"rate_limit"}'))
-        with patch("urllib.request.urlopen", side_effect=err_429):
+        with patch("kitt.llm.providers.openai_chat.secure_urlopen", side_effect=err_429):
             res = adapter.list_models(base_url="https://api.openai.com", api_key="quota-key")
             self.assertEqual(res.status, ProviderDiscoveryStatus.RATE_LIMITED)
 

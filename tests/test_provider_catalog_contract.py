@@ -61,7 +61,7 @@ class TestProviderCatalogContract(unittest.TestCase):
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch("kitt.llm.catalog.secure_urlopen", return_value=mock_resp):
             success = catalog.refresh(force=True)
             self.assertTrue(success)
 
@@ -108,7 +108,7 @@ class TestProviderCatalogContract(unittest.TestCase):
         self.assertIsNotNone(catalog.provider("cached-prov"))
 
         # Simulate network failure on refresh
-        with patch("urllib.request.urlopen", side_effect=Exception("Network down")):
+        with patch("kitt.llm.catalog.secure_urlopen", side_effect=Exception("Network down")):
             success = catalog.refresh(force=True)
             self.assertFalse(success)
 

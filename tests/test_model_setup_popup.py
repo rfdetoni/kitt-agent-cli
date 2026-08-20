@@ -116,26 +116,25 @@ class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(len(self.ui.model_setup_model.models) > 0)
 
     async def test_dynamic_get_model_discovery_from_api(self):
-        from unittest.mock import patch, MagicMock
-        import io
         import json
+        from unittest.mock import patch, MagicMock
         from kitt.router.model_selector import fetch_provider_models
 
-        # Mock OpenAI /v1/models response
-        fake_openai_resp = json.dumps({"data": [{"id": "gpt-custom-finetuned-v9"}, {"id": "gpt-internal-test"}]}).encode("utf-8")
-        mock_cm = MagicMock()
-        mock_cm.__enter__.return_value = io.BytesIO(fake_openai_resp)
+        class Response:
+            status = 200
+            def __init__(self, payload: bytes):
+                self._payload = payload
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, _amt=-1): return self._payload
 
-        with patch("urllib.request.urlopen", return_value=mock_cm):
+        fake_openai_resp = json.dumps({"data": [{"id": "gpt-custom-finetuned-v9"}, {"id": "gpt-internal-test"}]}).encode("utf-8")
+        with patch("kitt.llm.providers.openai_chat.secure_urlopen", return_value=Response(fake_openai_resp)):
             models = fetch_provider_models("openai", "https://api.openai.com", "sk-test-key")
             self.assertEqual(models, ["gpt-custom-finetuned-v9", "gpt-internal-test"])
 
-        # Mock Ollama /api/tags response
         fake_ollama_resp = json.dumps({"models": [{"name": "deepseek-coder-v2:16b"}, {"name": "starlette:latest"}]}).encode("utf-8")
-        mock_cm_ollama = MagicMock()
-        mock_cm_ollama.__enter__.return_value = io.BytesIO(fake_ollama_resp)
-
-        with patch("urllib.request.urlopen", return_value=mock_cm_ollama):
+        with patch("kitt.llm.providers.ollama.secure_urlopen", return_value=Response(fake_ollama_resp)):
             models = fetch_provider_models("ollama", "http://localhost:11434")
             self.assertEqual(models, ["deepseek-coder-v2:16b", "starlette:latest"])
 

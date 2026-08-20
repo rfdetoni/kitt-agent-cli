@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Tuple, Any
 from kitt.skills.models import SkillDescriptor
+from kitt.skills.skill_manager import DEFAULT_SKILLS
 
 
 def _frontmatter(text: str) -> dict:
@@ -18,8 +19,11 @@ def _frontmatter(text: str) -> dict:
 class SkillDiscovery:
     def discover(self, roots: List[Any]) -> List[SkillDescriptor]:
         found: Dict[str, SkillDescriptor] = {}
+        saw_skills_root = False
         for root in roots:
             root = Path(root)
+            if root.name == "skills":
+                saw_skills_root = True
             if not root.exists():
                 continue
             # Search flat, nested skills, and plugins directories
@@ -50,6 +54,18 @@ class SkillDiscovery:
                         )
                 except Exception:
                     continue
+        if saw_skills_root:
+            for name, meta in DEFAULT_SKILLS.items():
+                found.setdefault(
+                    name,
+                    SkillDescriptor(
+                        name=name,
+                        description=meta.get("description", ""),
+                        version="1.0.0",
+                        author="K.I.T.T. Core",
+                        path=Path("."),
+                    ),
+                )
         return list(found.values())
 
     def get_skill_completions(self, roots: List[Any]) -> List[Tuple[str, str]]:
@@ -90,4 +106,3 @@ class SkillDiscovery:
 
         # Sort alphabetically
         return sorted(completions.items(), key=lambda x: x[0])
-

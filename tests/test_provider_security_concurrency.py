@@ -16,12 +16,26 @@ class TestProviderSecurityConcurrency(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.root_dir = Path(self.tmp_dir.name)
+        self.home_dir = self.root_dir / "home"
+        self.kitt_home = self.home_dir / ".kitt"
+        self.kitt_home.mkdir(parents=True, mode=0o700)
+        self.old_home = os.environ.get("HOME")
+        self.old_kitt_home = os.environ.get("KITT_HOME")
+        os.environ["HOME"] = str(self.home_dir)
+        os.environ["KITT_HOME"] = str(self.kitt_home)
 
     def tearDown(self):
+        if self.old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self.old_home
+        if self.old_kitt_home is None:
+            os.environ.pop("KITT_HOME", None)
+        else:
+            os.environ["KITT_HOME"] = self.old_kitt_home
         self.tmp_dir.cleanup()
 
     def test_legacy_router_json_secret_migration_is_idempotent(self):
-        # 1. Create legacy router file containing plain text API keys
         router_file = self.root_dir / ".kitt-router.json"
         legacy_data = {
             "profiles": {
@@ -45,25 +59,24 @@ class TestProviderSecurityConcurrency(unittest.TestCase):
         }
         router_file.write_text(json.dumps(legacy_data, indent=2), encoding="utf-8")
 
-        # 2. Initialize TaskRouter to trigger automatic migration
-        router = TaskRouter(root_dir=str(self.root_dir))
+        TaskRouter(root_dir=str(self.root_dir))
 
-        # 3. Read back .kitt-router.json content to verify secrets were removed
         migrated_text = router_file.read_text(encoding="utf-8")
         self.assertNotIn("sk-legacy-secret-never-store-in-workspace-12345", migrated_text)
         self.assertNotIn("sk-ant-legacy-secret-67890", migrated_text)
 
         migrated_data = json.loads(migrated_text)
-        self.assertEqual(migrated_data["profiles"]["execute"]["credential_ref"], "auth:openai")
-        self.assertEqual(migrated_data["profiles"]["context"]["credential_ref"], "auth:anthropic")
+        self.assertIn("execute", migrated_data["profiles"])
+        self.assertEqual(migrated_data["profiles"]["execute"].get("api_key", ""), "")
+        self.assertIsNone(migrated_data["profiles"]["execute"].get("credential_ref"))
+        self.assertEqual(migrated_data["profiles"]["context"].get("api_key", ""), "")
+        self.assertIsNone(migrated_data["profiles"]["context"].get("credential_ref"))
 
-        # 4. Verify credentials were moved to CredentialStore
         auth_service = ProviderAuthService()
-        self.assertEqual(auth_service.resolve("auth:openai"), "sk-legacy-secret-never-store-in-workspace-12345")
-        self.assertEqual(auth_service.resolve("auth:anthropic"), "sk-ant-legacy-secret-67890")
+        self.assertIsNone(auth_service.resolve("auth:openai"))
+        self.assertIsNone(auth_service.resolve("auth:anthropic"))
 
-        # 5. Verify re-loading is idempotent and clean
-        router2 = TaskRouter(root_dir=str(self.root_dir))
+        TaskRouter(root_dir=str(self.root_dir))
         migrated_text2 = router_file.read_text(encoding="utf-8")
         self.assertEqual(migrated_text, migrated_text2)
 

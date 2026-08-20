@@ -695,12 +695,15 @@ class KittUIApp:
             norm_url = f"http://{norm_url}"
 
         endpoint_policy = ProviderEndpointTrustStore()
-        endpoint_trusted = bool(
+        endpoint_allowed = bool(
             norm_url
-            and endpoint_policy.is_trusted(provider, norm_url)
+            and (
+                endpoint_policy.is_trusted(provider, norm_url)
+                or self._is_local_or_no_auth_provider(provider, norm_url)
+            )
         )
         api_key = None
-        if endpoint_trusted:
+        if norm_url and endpoint_policy.is_trusted(provider, norm_url):
             try:
                 api_key = resolve_endpoint_credential(
                     ProviderAuthService(),
@@ -718,7 +721,7 @@ class KittUIApp:
             or "ollama" in provider.lower()
             or "ollama" in norm_url.lower()
         )
-        if is_ollama and norm_url and endpoint_trusted:
+        if is_ollama and norm_url and endpoint_allowed:
             try:
                 models = await self._run_blocking(ModelConfigurator(self.state.workspace_path).fetch_ollama_models, norm_url)
                 if models:
@@ -727,7 +730,7 @@ class KittUIApp:
                 pass
 
         # 2. Live discovery for OpenAI-compatible endpoints (LM Studio, vLLM, LocalAI, custom servers, etc.)
-        if norm_url and endpoint_trusted:
+        if norm_url and endpoint_allowed:
             try:
                 models = await self._run_blocking(fetch_provider_models, provider, norm_url, api_key, 2.5)
                 if models and models != [f"{provider}-default"]:
@@ -2001,6 +2004,10 @@ class KittUIApp:
         def _(event):
             if not self.prompt_buffer.text and not self.state.is_thinking and not (self.bridge and self.bridge.is_active): self.request_exit()
 
+        @kb.add("escape", "c-d")
+        def _(event):
+            self.request_exit()
+
         @kb.add("y", filter=permission)
         def _(event): asyncio.create_task(self.resolve_approval("once"))
 
@@ -2153,6 +2160,16 @@ class KittUIApp:
             await asyncio.gather(self._animation_task, return_exceptions=True)
         if self.bridge:
             await self.bridge.shutdown()
+        app = self.application
+        if app is not None:
+            for stream_name in ("input", "output"):
+                stream = getattr(app, stream_name, None)
+                closer = getattr(stream, "close", None)
+                if callable(closer):
+                    try:
+                        closer()
+                    except Exception:
+                        pass
         self._blocking_executor.shutdown(wait=False, cancel_futures=True)
 
     def _home_text(self):

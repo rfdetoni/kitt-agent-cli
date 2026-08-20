@@ -97,7 +97,7 @@ class TestPrimeRuntime(unittest.TestCase):
         async def collect():
             return [e async for e in self.runtime.processor.arun_turn(
                 TurnCommand(self.conv["id"],"hello",no_history=True))]
-        events=asyncio.run(collect())
+        events=asyncio.run(asyncio.wait_for(collect(), timeout=2.0))
         self.assertTrue(events)
 
     def test_general_tool_protocol_reads_then_continues(self):

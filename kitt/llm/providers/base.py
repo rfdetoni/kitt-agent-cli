@@ -1,7 +1,6 @@
 """Base protocol and common request structure for provider runtime adapters."""
 from __future__ import annotations
 
-import socket
 import urllib.error
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Protocol
@@ -18,6 +17,7 @@ from kitt.llm.domain import (
     ProviderProtocolError,
     ProviderModelNotFoundError,
 )
+from kitt.llm.http_security import read_error_body
 
 
 @dataclass
@@ -40,41 +40,47 @@ class ProviderAdapter(Protocol):
     """Protocol implemented by protocol-specific runtime adapters."""
 
     def stream(self, request: LLMRequest) -> Iterator[str]:
-        """Streams text chunks from the provider endpoint."""
         ...
 
-    def list_models(self, base_url: Optional[str] = None, api_key: Optional[str] = None, timeout: float = 5.0) -> ModelDiscoveryResult:
-        """Discovers available runtime models from the provider endpoint."""
+    def list_models(
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        timeout: float = 5.0,
+    ) -> ModelDiscoveryResult:
         ...
 
-    def health(self, base_url: Optional[str] = None, api_key: Optional[str] = None, timeout: float = 5.0) -> ProviderHealth:
-        """Probes endpoint availability and latency."""
+    def health(
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        timeout: float = 5.0,
+    ) -> ProviderHealth:
         ...
 
 
 def handle_http_error(e: urllib.error.HTTPError, url: str) -> None:
-    """Translates urllib HTTPError into strongly-typed Provider exceptions."""
-    body = ""
-    try:
-        body = e.read().decode("utf-8", errors="replace")
-    except Exception:
-        pass
-
+    """Translate bounded, redacted HTTP failures into typed provider errors."""
+    body = read_error_body(e)
     msg = f"HTTP {e.code}: {e.reason}" + (f" - {body}" if body else "")
 
     if e.code in (401, 403):
-        raise ProviderAuthError(f"Authentication failed for {url} ({msg})")
-    elif e.code == 404:
-        raise ProviderModelNotFoundError(f"Model or endpoint not found at {url} ({msg})")
-    elif e.code == 429:
+        raise ProviderAuthError(f"Authentication failed for provider endpoint ({msg})")
+    if e.code == 404:
+        raise ProviderModelNotFoundError(f"Model or endpoint not found ({msg})")
+    if e.code == 429:
         retry_after = None
-        if "Retry-After" in e.headers:
+        if e.headers and "Retry-After" in e.headers:
             try:
                 retry_after = float(e.headers["Retry-After"])
-            except Exception:
+            except (TypeError, ValueError):
                 pass
-        raise ProviderRateLimitError(f"Rate limited by {url} ({msg})", retry_after=retry_after)
-    elif e.code >= 500:
-        raise ProviderConnectionError(f"Server error from {url} ({msg})")
-    else:
-        raise ProviderProtocolError(f"Protocol error from {url} ({msg})")
+        raise ProviderRateLimitError(
+            f"Rate limited by provider ({msg})",
+            retry_after=retry_after,
+        )
+    if e.code in (408, 504):
+        raise ProviderTimeoutError(f"Provider request timed out ({msg})")
+    if e.code >= 500:
+        raise ProviderConnectionError(f"Provider server error ({msg})")
+    raise ProviderProtocolError(f"Provider protocol error ({msg})")
