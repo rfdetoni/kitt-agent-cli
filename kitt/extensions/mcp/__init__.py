@@ -9,7 +9,12 @@ from kitt.extensions.mcp.models import (
     MCPTool,
 )
 from kitt.extensions.mcp.tool_adapter import MCPToolAdapter
-from kitt.extensions.mcp.transport import InProcessTransport, MCPTransport, StdioTransport
+from kitt.extensions.mcp.transport import (
+    HTTPTransport,
+    InProcessTransport,
+    MCPTransport,
+    StdioTransport,
+)
 
 __all__ = [
     "MCPClient",
@@ -22,5 +27,6 @@ __all__ = [
     "MCPToolAdapter",
     "MCPTransport",
     "StdioTransport",
+    "HTTPTransport",
     "InProcessTransport",
 ]

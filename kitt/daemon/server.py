@@ -67,6 +67,7 @@ class DaemonServer:
         self._subscribers: Dict[str, Set[asyncio.Queue]] = {}
         self._client_queues = {}
         self._session_locks = {}
+        self._workspace_locks = {}
         self._runtimes = {}
         self._instance_lock_fd = None
 
@@ -138,6 +139,165 @@ class DaemonServer:
         self.transport.release_instance_lock(self._instance_lock_fd)
         self._instance_lock_fd = None
 
+    def _workspace_lock(self, workspace_root: str) -> asyncio.Lock:
+        return self._workspace_locks.setdefault(workspace_root, asyncio.Lock())
+
+    def _workspace_allowed(self, workspace: Any) -> bool:
+        if workspace in {None, ""}:
+            return True
+        try:
+            return Path(workspace).resolve() == self.workspace_root
+        except Exception:
+            return False
+
+    async def _plugin_action(self, rt, action: str, plugin_id: str) -> dict[str, Any]:
+        ext = rt.extensions
+        if ext is None:
+            raise RuntimeError("Extensions manager is not available")
+        plugin_key = str(plugin_id or "").strip().lower()
+        if not plugin_key:
+            raise ValueError("Plugin name is required")
+        manifests = ext.plugins.discover()
+        manifest = manifests.get(plugin_key)
+        if action != "plugin.enable" and manifest is None:
+            raise ValueError(f"Plugin '{plugin_key}' not found")
+        if action == "plugin.enable":
+            ext.plugins.enable(plugin_key)
+            if ext.state == ext.STATE_STARTED:
+                try:
+                    await ext.plugins.start(plugin_key)
+                except Exception:
+                    ext.plugins.disable(plugin_key)
+                    raise
+            manifest = ext.plugins.discover().get(plugin_key)
+        elif action == "plugin.disable":
+            await ext.plugins.unload(plugin_key)
+            ext.plugins.disable(plugin_key)
+        elif action == "plugin.reload":
+            await ext.plugins.reload(plugin_key)
+        elif action == "plugin.unload":
+            await ext.plugins.unload(plugin_key)
+        else:
+            raise ValueError(f"Unknown plugin action '{action}'")
+        instance = ext.plugins.get(plugin_key)
+        return {
+            "plugin": plugin_key,
+            "enabled": bool(manifest and ext.plugins.is_enabled(plugin_key, manifest)),
+            "loaded": instance is not None,
+            "state": instance.state.value if instance is not None else "UNLOADED",
+            "trusted": bool(manifest and ext.plugin_trust.is_trusted(manifest)),
+        }
+
+    async def _ensure_mcp_clients(self, rt, server_id: Optional[str] = None):
+        ext = rt.extensions
+        if ext is None:
+            raise RuntimeError("Extensions manager is not available")
+        if server_id:
+            return [await ext.mcp.connect(server_id)]
+        clients = []
+        for cfg in ext.mcp.list_servers():
+            if cfg.enabled and (cfg.command or cfg.url):
+                clients.append(await ext.mcp.connect(cfg.server_id))
+        return clients
+
+    def _mcp_status_payload(self, rt, server_id: Optional[str] = None):
+        ext = rt.extensions
+        if ext is None:
+            raise RuntimeError("Extensions manager is not available")
+        configs = ext.mcp.list_servers()
+        if server_id:
+            configs = [cfg for cfg in configs if cfg.server_id == server_id]
+        return [
+            {
+                "server_id": cfg.server_id,
+                "transport": cfg.transport,
+                "enabled": cfg.enabled,
+                "trust": cfg.trust,
+                "state": ext.mcp.get_server_status(cfg.server_id).value,
+                "allow_tools": list(cfg.allow_tools or []),
+                "deny_tools": list(cfg.deny_tools or []),
+                "timeout_seconds": cfg.timeout_seconds,
+            }
+            for cfg in configs
+        ]
+
+    def _extensions_status_payload(self, rt) -> dict[str, Any]:
+        ext = rt.extensions
+        if ext is None:
+            raise RuntimeError("Extensions manager is not available")
+        manifests = ext.plugins.discover()
+        plugins = []
+        for plugin_id, manifest in manifests.items():
+            instance = ext.plugins.get(plugin_id)
+            plugins.append(
+                {
+                    "name": manifest.name,
+                    "version": manifest.version,
+                    "enabled": ext.plugins.is_enabled(plugin_id, manifest),
+                    "trusted": ext.plugin_trust.is_trusted(manifest),
+                    "loaded": instance is not None,
+                    "state": instance.state.value if instance is not None else "UNLOADED",
+                    "critical": bool(manifest.is_critical),
+                }
+            )
+        return {
+            "workspace_root": str(self.workspace_root),
+            "state": ext.state,
+            "plugins": plugins,
+            "mcp": self._mcp_status_payload(rt),
+        }
+
+    async def _mcp_action(self, rt, action: str, server_id: Optional[str]) -> dict[str, Any]:
+        ext = rt.extensions
+        if ext is None:
+            raise RuntimeError("Extensions manager is not available")
+        if action == "mcp.connect":
+            if not server_id:
+                raise ValueError("MCP server name is required")
+            client = await ext.mcp.connect(server_id)
+            return {
+                "server_id": server_id,
+                "state": ext.mcp.get_server_status(server_id).value,
+                "tools": len(await client.list_tools()),
+            }
+        if action == "mcp.disconnect":
+            if not server_id:
+                raise ValueError("MCP server name is required")
+            await ext.mcp.disconnect(server_id)
+            return {"server_id": server_id, "state": ext.mcp.get_server_status(server_id).value}
+        if action == "mcp.status":
+            return {"servers": self._mcp_status_payload(rt, server_id)}
+        if action == "mcp.tools":
+            await self._ensure_mcp_clients(rt, server_id)
+            tools = ext.mcp.list_tools(server_id)
+            return {
+                "tools": [
+                    {
+                        "server_id": tool.server_id,
+                        "name": tool.name,
+                        "full_name": tool.full_name,
+                        "description": tool.description,
+                    }
+                    for tool in tools
+                ]
+            }
+        if action == "mcp.resources":
+            clients = await self._ensure_mcp_clients(rt, server_id)
+            resources = []
+            for client in clients:
+                for resource in await client.list_resources():
+                    resources.append(
+                        {
+                            "server_id": resource.server_id,
+                            "name": resource.name,
+                            "uri": resource.uri,
+                            "mime_type": resource.mime_type,
+                            "description": resource.description,
+                        }
+                    )
+            return {"resources": resources}
+        raise ValueError(f"Unknown MCP action '{action}'")
+
     async def _handle_client(self, reader, writer):
         authenticated = False
         attached_session = None
@@ -170,6 +330,29 @@ class DaemonServer:
 
                 if action == "ping":
                     await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok", "action": "ping"}))
+                    continue
+
+                if (
+                    action in {
+                        "extensions.status",
+                        "plugin.enable",
+                        "plugin.disable",
+                        "plugin.reload",
+                        "plugin.unload",
+                        "mcp.connect",
+                        "mcp.disconnect",
+                        "mcp.status",
+                        "mcp.tools",
+                        "mcp.resources",
+                    }
+                    and not self._workspace_allowed(msg.get("workspace"))
+                ):
+                    await q.put(encode_message({
+                        "type": "RESPONSE",
+                        "request_id": req_id,
+                        "status": "error",
+                        "error": "Cross-workspace extension control blocked",
+                    }))
                     continue
 
                 rt = await self._get_or_create_runtime(msg.get("workspace"))
@@ -260,6 +443,51 @@ class DaemonServer:
                     await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok"}))
                     asyncio.create_task(self.stop())
                     break
+                elif action in {
+                    "extensions.status",
+                    "plugin.enable",
+                    "plugin.disable",
+                    "plugin.reload",
+                    "plugin.unload",
+                    "mcp.connect",
+                    "mcp.disconnect",
+                    "mcp.status",
+                    "mcp.tools",
+                    "mcp.resources",
+                }:
+                    lock = self._workspace_lock(str(self.workspace_root))
+                    try:
+                        async with lock:
+                            if action == "extensions.status":
+                                payload = self._extensions_status_payload(rt)
+                            elif action.startswith("plugin."):
+                                payload = await self._plugin_action(
+                                    rt, action, str(msg.get("name", ""))
+                                )
+                            else:
+                                payload = await self._mcp_action(
+                                    rt,
+                                    action,
+                                    (
+                                        str(msg.get("server_id", "")).strip().lower()
+                                        or None
+                                    ),
+                                )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE",
+                            "request_id": req_id,
+                            "status": "error",
+                            "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE",
+                        "request_id": req_id,
+                        "status": "ok",
+                        "action": action,
+                        **payload,
+                    }))
                 else:
                     await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": f"Unknown action '{action}'"}))
         finally:

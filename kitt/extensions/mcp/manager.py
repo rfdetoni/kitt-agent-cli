@@ -18,7 +18,7 @@ from kitt.extensions.mcp.models import (
     MCPTool,
 )
 from kitt.extensions.mcp.tool_adapter import MCPToolAdapter
-from kitt.extensions.mcp.transport import MCPTransport, StdioTransport
+from kitt.extensions.mcp.transport import HTTPTransport, MCPTransport, StdioTransport
 
 logger = logging.getLogger("kitt.extensions.mcp.manager")
 
@@ -84,6 +84,22 @@ class MCPManager:
             if custom_transport:
                 self._clients[config.server_id] = MCPClient(config, custom_transport)
 
+    def _build_transport(
+        self, config: MCPServerConfig, transport: Optional[MCPTransport] = None
+    ) -> MCPTransport:
+        if transport is not None:
+            return transport
+        if config.transport in {"http", "streamable_http"}:
+            return HTTPTransport(
+                url=config.url or "",
+                timeout_seconds=config.timeout_seconds,
+            )
+        return StdioTransport(
+            command=config.command or "",
+            args=config.args,
+            env=config.env,
+        )
+
     async def connect(self, server_id: str, transport: Optional[MCPTransport] = None) -> MCPClient:
         """Connects to an MCP server, performs handshake, and syncs exposed tools."""
         s_id = server_id.strip().lower()
@@ -94,7 +110,7 @@ class MCPManager:
 
             client = self._clients.get(s_id)
             if not client:
-                t = transport or StdioTransport(command=config.command or "", args=config.args, env=config.env)
+                t = self._build_transport(config, transport)
                 client = MCPClient(config, t)
                 self._clients[s_id] = client
 
@@ -161,7 +177,7 @@ class MCPManager:
 
     async def connect_all_enabled(self) -> None:
         for s_id, cfg in list(self._configs.items()):
-            if cfg.enabled and cfg.command:
+            if cfg.enabled and (cfg.command or cfg.url):
                 try:
                     await self.connect(s_id)
                 except Exception as exc:

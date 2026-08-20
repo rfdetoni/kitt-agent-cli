@@ -6,6 +6,10 @@ class ExtensionError(Exception):
     """Base exception for all extension errors."""
 
 
+class ExtensionStartupFailed(ExtensionError):
+    """Raised when extension startup fails and startup must abort."""
+
+
 class PluginManifestError(ExtensionError):
     """Raised when a plugin manifest is missing, malformed, or invalid."""
 

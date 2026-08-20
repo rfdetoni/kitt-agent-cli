@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from kitt.extensions.errors import ExtensionStartupFailed
 from kitt.extensions.hooks.registry import HookRegistry
 from kitt.extensions.mcp.manager import MCPManager
 from kitt.extensions.plugins.loader import PluginLoader
@@ -15,6 +16,11 @@ logger = logging.getLogger("kitt.extensions.manager")
 
 
 class ExtensionManager:
+    STATE_STOPPED = "STOPPED"
+    STATE_STARTING = "STARTING"
+    STATE_STARTED = "STARTED"
+    STATE_STOPPING = "STOPPING"
+
     """Composition root managing the lifecycle of plugins, hooks, and MCP servers."""
 
     def __init__(
@@ -45,6 +51,7 @@ class ExtensionManager:
         )
         self.plugins = PluginRegistry(loader=self.loader, state_store=self.plugin_state)
         self._started = False
+        self.state = self.STATE_STOPPED
         self.mcp = MCPManager(
             workspace_root=str(self.workspace_root),
             tool_registry=tool_registry,
@@ -52,29 +59,43 @@ class ExtensionManager:
 
     async def start(self) -> None:
         """Starts plugins, connects MCP servers, and triggers app.started hooks."""
-        if self._started:
+        if self.state == self.STATE_STARTED:
             return
+        if self.state == self.STATE_STARTING:
+            raise RuntimeError("ExtensionManager.start() already in progress")
         logger.debug("Starting ExtensionManager...")
+        self.state = self.STATE_STARTING
         try:
             await self.plugins.start_all()
-        except Exception as exc:
-            logger.error("Error starting plugins: %s", exc)
-
-        try:
             await self.mcp.connect_all_enabled()
+            await self.hooks.run_observers(
+                "app.started",
+                {"workspace_root": str(self.workspace_root)},
+            )
         except Exception as exc:
-            logger.error("Error connecting MCP servers: %s", exc)
-
-        await self.hooks.run_observers("app.started", {"workspace_root": str(self.workspace_root)})
+            if self.event_bus is not None:
+                self.event_bus.publish(
+                    "ExtensionStartupFailed",
+                    {"error": str(exc), "workspace_root": str(self.workspace_root)},
+                )
+            try:
+                await self.stop()
+            except Exception:
+                logger.exception("Extension rollback failed after startup error")
+            raise ExtensionStartupFailed(str(exc)) from exc
         self._started = True
+        self.state = self.STATE_STARTED
 
     async def stop(self) -> None:
         """Triggers app.stopping hooks, disconnects MCP, and unloads plugins."""
-        if not self._started:
+        if self.state == self.STATE_STOPPED:
             return
+        self.state = self.STATE_STOPPING
         logger.debug("Stopping ExtensionManager...")
         try:
-            await self.hooks.run_observers("app.stopping", {"workspace_root": str(self.workspace_root)})
+            await self.hooks.run_observers(
+                "app.stopping", {"workspace_root": str(self.workspace_root)}
+            )
         except Exception as exc:
             logger.warning("Error running app.stopping hooks: %s", exc)
 
@@ -89,6 +110,7 @@ class ExtensionManager:
             logger.warning("Error stopping plugins: %s", exc)
         finally:
             self._started = False
+            self.state = self.STATE_STOPPED
 
     def close(self) -> None:
         """Synchronous cleanup for ExtensionManager."""

@@ -139,11 +139,24 @@ def handle_plugins_command(
     root_dir: str = ".",
 ) -> int:
     import asyncio
+    from kitt.daemon.client import DaemonClient
     from kitt.extensions.manager import ExtensionManager
 
     ext = ExtensionManager(workspace_root=root_dir)
     manifests = ext.plugins.discover()
     action = (action or "list").strip().lower()
+
+    async def _daemon_request(ipc_action: str, params=None):
+        client = DaemonClient(workspace_root=root_dir)
+        try:
+            if not await client.is_running():
+                return None
+            payload = {"workspace": root_dir}
+            if params:
+                payload.update(params)
+            return await client.send_request(ipc_action, payload)
+        finally:
+            await client.close()
 
     if action == "list":
         print("\n\033[1;36m=== Discovered Plugins ===\033[0m")
@@ -185,10 +198,28 @@ def handle_plugins_command(
         return 0
 
     if action == "enable":
+        daemon_res = asyncio.run(
+            _daemon_request("plugin.enable", {"name": plugin_id})
+        )
+        if daemon_res is not None:
+            if daemon_res.get("status") != "ok":
+                print(f"\033[31mPlugin enable failed: {daemon_res.get('error')}\033[0m")
+                return 1
+            print(f"\033[32m✓ Plugin '{plugin_id}' enabled.\033[0m")
+            return 0
         ext.plugins.enable(plugin_id)
         print(f"\033[32m✓ Plugin '{plugin_id}' enabled in local workspace state.\033[0m")
         return 0
     if action == "disable":
+        daemon_res = asyncio.run(
+            _daemon_request("plugin.disable", {"name": plugin_id})
+        )
+        if daemon_res is not None:
+            if daemon_res.get("status") != "ok":
+                print(f"\033[31mPlugin disable failed: {daemon_res.get('error')}\033[0m")
+                return 1
+            print(f"\033[32m✓ Plugin '{plugin_id}' disabled.\033[0m")
+            return 0
         ext.plugins.disable(plugin_id)
         print(f"\033[32m✓ Plugin '{plugin_id}' disabled in local workspace state.\033[0m")
         return 0
@@ -208,6 +239,15 @@ def handle_plugins_command(
         )
         return 0
     if action == "reload":
+        daemon_res = asyncio.run(
+            _daemon_request("plugin.reload", {"name": plugin_id})
+        )
+        if daemon_res is not None:
+            if daemon_res.get("status") != "ok":
+                print(f"\033[31mPlugin reload failed: {daemon_res.get('error')}\033[0m")
+                return 1
+            print(f"\033[32m✓ Plugin '{plugin_id}' reloaded in active daemon.\033[0m")
+            return 0
         async def _reload():
             await ext.plugins.reload(plugin_id)
             await ext.plugins.unload(plugin_id)
@@ -232,11 +272,24 @@ def handle_mcp_command(
     root_dir: str = ".",
 ) -> int:
     import asyncio
+    from kitt.daemon.client import DaemonClient
     from kitt.extensions.manager import ExtensionManager
 
     ext = ExtensionManager(workspace_root=root_dir)
     action = (action or "list").strip().lower()
     servers = {cfg.server_id: cfg for cfg in ext.mcp.list_servers()}
+
+    async def _daemon_request(ipc_action: str, params=None):
+        client = DaemonClient(workspace_root=root_dir)
+        try:
+            if not await client.is_running():
+                return None
+            payload = {"workspace": root_dir}
+            if params:
+                payload.update(params)
+            return await client.send_request(ipc_action, payload)
+        finally:
+            await client.close()
 
     if action == "list":
         print("\n\033[1;36m=== Configured MCP Servers ===\033[0m")
@@ -271,11 +324,60 @@ def handle_mcp_command(
         return 0
 
     if action == "disconnect":
+        daemon_res = asyncio.run(
+            _daemon_request(
+                "mcp.disconnect",
+                {"server_id": server.strip().lower() if server else ""},
+            )
+        )
+        if daemon_res is not None:
+            if daemon_res.get("status") != "ok":
+                print(f"\033[31mMCP disconnect failed: {daemon_res.get('error')}\033[0m")
+                return 1
+            print(f"\033[32m✓ MCP '{server}' disconnected.\033[0m")
+            return 0
         print(
             "\033[90mStandalone CLI owns no persistent MCP transport. "
             "The long-running KITT runtime/daemon owns connections and closes them on shutdown.\033[0m"
         )
         return 0
+
+    if action in {"connect", "tools", "resources"}:
+        ipc_action = {
+            "connect": "mcp.connect",
+            "tools": "mcp.tools",
+            "resources": "mcp.resources",
+        }[action]
+        daemon_res = asyncio.run(
+            _daemon_request(
+                ipc_action,
+                {"server_id": server.strip().lower() if server else ""},
+            )
+        )
+        if daemon_res is not None:
+            if daemon_res.get("status") != "ok":
+                print(f"\033[31mMCP {action} failed: {daemon_res.get('error')}\033[0m")
+                return 1
+            if action == "connect":
+                print(
+                    f"\033[32m✓ MCP '{daemon_res.get('server_id')}' connected; "
+                    f"{daemon_res.get('tools', 0)} tool(s) visible.\033[0m"
+                )
+                return 0
+            if action == "tools":
+                tools = daemon_res.get("tools", [])
+                print(f"\n\033[1;36m=== MCP Tools ({len(tools)}) ===\033[0m")
+                for tool in tools:
+                    print(f"  • \033[1m{tool.get('full_name')}\033[0m: {tool.get('description', '')}")
+                return 0
+            resources = daemon_res.get("resources", [])
+            print(f"\n\033[1;36m=== MCP Resources ({len(resources)}) ===\033[0m")
+            for resource in resources:
+                print(
+                    f"  • \033[1m{resource.get('name')}\033[0m "
+                    f"[{resource.get('server_id')}] {resource.get('uri')}"
+                )
+            return 0
 
     async def _inspect_connected():
         clients = []
@@ -284,7 +386,7 @@ def handle_mcp_command(
                 clients.append(await ext.mcp.connect(server))
             else:
                 for cfg in ext.mcp.list_servers():
-                    if cfg.enabled and cfg.command:
+                    if cfg.enabled and (cfg.command or cfg.url):
                         clients.append(await ext.mcp.connect(cfg.server_id))
             if action == "connect":
                 if not clients:
@@ -457,4 +559,3 @@ def handle_detach_command(root_dir: str = ".") -> int:
 def handle_resume_command(session_id: str, root_dir: str = ".") -> int:
     # Resuming validates session, restores execution context, and attaches
     return handle_attach_command(session_id, root_dir=root_dir)
-

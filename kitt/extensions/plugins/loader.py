@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import ast
+import contextlib
 import importlib.util
 import inspect
 import logging
 import sys
+import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional, Protocol
+from typing import Callable, Dict, Iterator, Optional, Protocol
 
 from kitt.extensions.errors import PluginLoadError
 from kitt.extensions.manifest import parse_manifest_file
@@ -53,6 +56,28 @@ class DefaultPluginHandle:
     async def stop(self) -> None:
         if self._stop_fn:
             result = self._stop_fn()
+            if inspect.isawaitable(result):
+                await result
+
+
+class ScopedPluginHandle:
+    def __init__(
+        self,
+        inner: PluginHandle,
+        scope_factory: Callable[[], contextlib.AbstractContextManager[None]],
+    ):
+        self._inner = inner
+        self._scope_factory = scope_factory
+
+    async def start(self) -> None:
+        with self._scope_factory():
+            result = self._inner.start()
+            if inspect.isawaitable(result):
+                await result
+
+    async def stop(self) -> None:
+        with self._scope_factory():
+            result = self._inner.stop()
             if inspect.isawaitable(result):
                 await result
 
@@ -191,14 +216,108 @@ class PluginLoader:
             f"{manifest.name}' after reviewing it, or use MCP/executable skills."
         )
 
-    def _rollback(self, manifest: PluginManifest) -> None:
+    @staticmethod
+    def _module_safe_name(value: str) -> str:
+        return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
+
+    def _package_key(self, manifest: PluginManifest, approved_digest: str) -> str:
+        return (
+            f"kitt_plugin_{self._module_safe_name(manifest.name)}_{approved_digest}"
+        )
+
+    @contextlib.contextmanager
+    def _snapshot_import_scope(self, snapshot_root: Path) -> Iterator[None]:
+        snapshot = str(snapshot_root.resolve())
+        workspace = str(self.workspace_root.resolve())
+        removed: list[tuple[int, str]] = []
+        retained: list[str] = []
+        for index, entry in enumerate(sys.path):
+            raw = str(entry or "")
+            candidate = raw
+            try:
+                candidate = str(Path(raw or ".").resolve())
+            except OSError:
+                pass
+            if candidate == workspace:
+                removed.append((index, raw))
+            else:
+                retained.append(raw)
+        sys.path[:] = [snapshot] + retained
+        try:
+            yield
+        finally:
+            if sys.path and sys.path[0] == snapshot:
+                sys.path.pop(0)
+            for index, entry in sorted(removed, key=lambda item: item[0]):
+                insert_at = min(index, len(sys.path))
+                sys.path.insert(insert_at, entry)
+
+    @staticmethod
+    def _local_top_level_names(snapshot_root: Path) -> set[str]:
+        names: set[str] = set()
+        for candidate in snapshot_root.rglob("*"):
+            if candidate.is_dir():
+                init_file = candidate / "__init__.py"
+                if init_file.is_file():
+                    try:
+                        relative = candidate.relative_to(snapshot_root)
+                    except ValueError:
+                        continue
+                    if relative.parts:
+                        names.add(relative.parts[0])
+                continue
+            if candidate.suffix == ".py" and candidate.name != "__init__.py":
+                try:
+                    relative = candidate.relative_to(snapshot_root)
+                except ValueError:
+                    continue
+                if relative.parts:
+                    names.add(relative.parts[0].removesuffix(".py"))
+        return names
+
+    def _validate_relative_local_imports(
+        self, manifest: PluginManifest, snapshot_root: Path
+    ) -> None:
+        local_names = self._local_top_level_names(snapshot_root)
+        if not local_names:
+            return
+        for candidate in snapshot_root.rglob("*.py"):
+            source = candidate.read_text(encoding="utf-8")
+            try:
+                tree = ast.parse(source, filename=str(candidate))
+            except SyntaxError as exc:
+                raise PluginLoadError(
+                    f"Plugin '{manifest.name}' has invalid Python syntax: {exc}"
+                ) from exc
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.split(".", 1)[0] in local_names:
+                            raise PluginLoadError(
+                                f"Plugin '{manifest.name}' must use relative imports for local module '{alias.name}'"
+                            )
+                elif (
+                    isinstance(node, ast.ImportFrom)
+                    and node.level == 0
+                    and node.module
+                    and node.module.split(".", 1)[0] in local_names
+                ):
+                    raise PluginLoadError(
+                        f"Plugin '{manifest.name}' must use relative imports for local module '{node.module}'"
+                    )
+
+    def _rollback(
+        self, manifest: PluginManifest, module_prefix: Optional[str] = None
+    ) -> None:
         if self.hook_registry:
             self.hook_registry.unregister(plugin_id=manifest.name)
         if self.tool_registry and hasattr(
             self.tool_registry, "unregister_by_owner"
         ):
             self.tool_registry.unregister_by_owner(manifest.name)
-        sys.modules.pop(f"kitt_plugin_{manifest.name}", None)
+        prefix = module_prefix or f"kitt_plugin_{self._module_safe_name(manifest.name)}"
+        for key in [name for name in list(sys.modules) if name == prefix or name.startswith(f"{prefix}.")]:
+            sys.modules.pop(key, None)
 
     async def load_async(self, manifest: PluginManifest) -> PluginInstance:
         """Load one trusted plugin and await async setup correctly."""
@@ -208,22 +327,37 @@ class PluginLoader:
             approved_digest,
             self.workspace_root,
         )
+        self._validate_relative_local_imports(manifest, snapshot_root)
         instance = self._build_instance(manifest)
         manifest_dir = snapshot_root
 
         try:
             module_name_rel, separator, function_name = manifest.entrypoint.partition(":")
             function_name = function_name if separator else "setup"
-            module_file = manifest_dir / f"{module_name_rel}.py"
+            module_name_rel = module_name_rel.replace("\\", "/").strip().removesuffix(".py")
+            module_parts = [part for part in module_name_rel.split("/") if part]
+            if not module_parts:
+                raise PluginLoadError(
+                    f"Plugin '{manifest.name}' entrypoint is invalid: {manifest.entrypoint}"
+                )
+            module_candidate = manifest_dir.joinpath(*module_parts)
+            module_file = module_candidate.with_suffix(".py")
+            if not module_file.is_file() and module_candidate.is_dir():
+                module_file = module_candidate / "__init__.py"
             if not module_file.is_file():
-                module_file = manifest_dir / module_name_rel
+                module_file = module_candidate
             if not module_file.is_file():
                 raise PluginLoadError(
                     f"Plugin '{manifest.name}' entrypoint file not found: "
                     f"{module_file}"
                 )
 
-            module_key = f"kitt_plugin_{manifest.name}"
+            package_key = self._package_key(manifest, approved_digest)
+            package_module = types.ModuleType(package_key)
+            package_module.__path__ = [str(snapshot_root)]
+            package_module.__file__ = str(snapshot_root / "__init__.py")
+            sys.modules[package_key] = package_module
+            module_key = f"{package_key}.{'.'.join(module_parts)}"
             spec = importlib.util.spec_from_file_location(module_key, module_file)
             if spec is None or spec.loader is None:
                 raise PluginLoadError(
@@ -233,12 +367,8 @@ class PluginLoader:
 
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_key] = module
-            sys.path.insert(0, str(snapshot_root))
-            try:
+            with self._snapshot_import_scope(snapshot_root):
                 spec.loader.exec_module(module)
-            finally:
-                if sys.path and sys.path[0] == str(snapshot_root):
-                    sys.path.pop(0)
 
             setup = getattr(module, function_name, None)
             if not callable(setup):
@@ -247,9 +377,10 @@ class PluginLoader:
                     f"is not callable in {module_file}"
                 )
 
-            result = setup(instance.context)
-            if inspect.isawaitable(result):
-                result = await result
+            with self._snapshot_import_scope(snapshot_root):
+                result = setup(instance.context)
+                if inspect.isawaitable(result):
+                    result = await result
 
             if hasattr(result, "start") and hasattr(result, "stop"):
                 handle: Optional[PluginHandle] = result
@@ -261,13 +392,16 @@ class PluginLoader:
             else:
                 handle = DefaultPluginHandle()
 
-            instance.handle = handle
+            instance.handle = ScopedPluginHandle(
+                handle,
+                lambda: self._snapshot_import_scope(snapshot_root),
+            )
             instance.state = PluginState.LOADED
             return instance
         except Exception as exc:
             instance.state = PluginState.FAILED
             instance.last_error = str(exc)
-            self._rollback(manifest)
+            self._rollback(manifest, package_key if "package_key" in locals() else None)
             if isinstance(exc, PluginLoadError):
                 raise
             raise PluginLoadError(

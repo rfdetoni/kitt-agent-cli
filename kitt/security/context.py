@@ -95,6 +95,7 @@ class ExecutionSecurityContext:
     fencing_owner_id: Optional[str] = None
     fencing_subject_type: Optional[str] = None
     fencing_subject_id: Optional[str] = None
+    fencing_subject_conversation_id: Optional[str] = None
 
     def has_capability(self, capability: str) -> bool:
         return capability in self.capabilities
@@ -156,6 +157,7 @@ class ExecutionSecurityContext:
             "fencing_owner_id": self.fencing_owner_id,
             "fencing_subject_type": self.fencing_subject_type,
             "fencing_subject_id": self.fencing_subject_id,
+            "fencing_subject_conversation_id": self.fencing_subject_conversation_id,
         }
 
     @classmethod
@@ -201,6 +203,11 @@ class ExecutionSecurityContext:
             fencing_subject_id=(
                 str(payload["fencing_subject_id"])
                 if payload.get("fencing_subject_id") is not None else None
+            ),
+            fencing_subject_conversation_id=(
+                str(payload["fencing_subject_conversation_id"])
+                if payload.get("fencing_subject_conversation_id") is not None
+                else None
             ),
         )
 
@@ -269,6 +276,15 @@ class ExecutionSecurityContext:
             fencing_owner_id=self.fencing_owner_id,
             fencing_subject_type=self.fencing_subject_type,
             fencing_subject_id=self.fencing_subject_id,
+            fencing_subject_conversation_id=(
+                self.fencing_subject_conversation_id
+                or (
+                    self.conversation_id
+                    if self.fencing_subject_type == "GOAL"
+                    and self.fencing_subject_id
+                    else None
+                )
+            ),
         )
 
     def derive_child_context(
@@ -309,4 +325,13 @@ class ExecutionSecurityContext:
             fencing_owner_id=self.fencing_owner_id,
             fencing_subject_type=self.fencing_subject_type,
             fencing_subject_id=self.fencing_subject_id,
+            fencing_subject_conversation_id=(
+                self.fencing_subject_conversation_id
+                or (
+                    self.conversation_id
+                    if self.fencing_subject_type == "GOAL"
+                    and self.fencing_subject_id
+                    else None
+                )
+            ),
         )

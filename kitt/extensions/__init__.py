@@ -1,6 +1,7 @@
 """KITT Extension subsystem package (Plugins, Hooks, MCP)."""
 from kitt.extensions.errors import (
     ExtensionError,
+    ExtensionStartupFailed,
     HookReentrancyError,
     HookTimeoutError,
     MCPError,
@@ -26,6 +27,7 @@ from kitt.extensions.mcp.models import (
     MCPServerState,
     MCPTool,
 )
+from kitt.extensions.mcp.transport import HTTPTransport
 from kitt.extensions.models import (
     CURRENT_PLUGIN_API_VERSION,
     VALID_PERMISSIONS,
@@ -56,9 +58,11 @@ __all__ = [
     "MCPTool",
     "MCPResource",
     "MCPPrompt",
+    "HTTPTransport",
     "MCPServerConfig",
     "MCPServerState",
     "ExtensionError",
+    "ExtensionStartupFailed",
     "PluginManifestError",
     "PluginCompatibilityError",
     "PluginPermissionError",

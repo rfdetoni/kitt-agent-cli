@@ -66,6 +66,15 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
         fencing_owner_id=source_context.fencing_owner_id,
         fencing_subject_type=source_context.fencing_subject_type,
         fencing_subject_id=source_context.fencing_subject_id,
+        fencing_subject_conversation_id=(
+            source_context.fencing_subject_conversation_id
+            or (
+                source_context.conversation_id
+                if source_context.fencing_subject_type == "GOAL"
+                and source_context.fencing_subject_id
+                else None
+            )
+        ),
     )
     command = TurnCommand(
         conversation_id=child_conversation,

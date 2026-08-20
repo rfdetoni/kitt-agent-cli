@@ -140,9 +140,11 @@ def _trusted_plugin_cache_root(workspace_root: str | Path) -> Path:
         _set_private_permissions(preferred)
         return preferred
     except OSError:
-        fallback = (
-            Path(workspace_root).resolve() / ".kitt" / "cache" / "trusted-plugins"
-        )
+        if os.name == "nt":
+            base = Path(tempfile.gettempdir()) / "kitt" / "trusted-plugins"
+        else:
+            base = Path(tempfile.gettempdir()) / f"kitt-{os.getuid()}" / "trusted-plugins"
+        fallback = base.resolve()
         fallback.mkdir(parents=True, exist_ok=True)
         _set_private_permissions(fallback)
         return fallback
@@ -227,7 +229,31 @@ def prepare_trusted_plugin_snapshot(
     ).resolve()
     final_root = cache_root / approved_digest
     if final_root.is_dir():
-        return final_root
+        snapshot_manifest = PluginManifest(
+            name=manifest.name,
+            version=manifest.version,
+            api_version=manifest.api_version,
+            entrypoint=manifest.entrypoint,
+            permissions=set(manifest.permissions),
+            description=manifest.description,
+            author=manifest.author,
+            homepage=manifest.homepage,
+            dependencies=list(manifest.dependencies),
+            requires_kitt=manifest.requires_kitt,
+            enabled_by_default=manifest.enabled_by_default,
+            is_critical=manifest.is_critical,
+            source=manifest.source,
+            manifest_path=final_root / manifest.manifest_path.name,
+            trusted_in_process=manifest.trusted_in_process,
+        )
+        try:
+            snapshot_digest = plugin_content_digest(snapshot_manifest)
+        except Exception:
+            shutil.rmtree(final_root, ignore_errors=True)
+        else:
+            if hmac.compare_digest(snapshot_digest, approved_digest):
+                return final_root
+            shutil.rmtree(final_root, ignore_errors=True)
 
     cache_root.mkdir(parents=True, exist_ok=True)
     _set_private_permissions(cache_root)

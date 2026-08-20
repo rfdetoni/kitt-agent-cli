@@ -1070,6 +1070,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     target = (self.root_path / rel).resolve()
                     if target.exists() and self.root_path in target.parents:
                         before_hashes[rel] = hashlib.sha256(target.read_bytes()).hexdigest()
+                    else:
+                        before_hashes[rel] = None
                 approval_id = f"req_{cmd.turn_id}_{hashlib.sha256(action_hash.encode()).hexdigest()[:8]}"
                 self.registry.approval_manager.register_request(
                     cmd.turn_id, cmd.conversation_id, pa_ws, action_hash, approval_id, tool_name="apply_patch"
@@ -1373,11 +1375,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         import pathlib
         for path_str, expected_hash in pa.before_hashes.items():
             p = pathlib.Path(self.root_path) / path_str
+            if expected_hash is None:
+                if p.exists():
+                    yield TurnFailed(error=f"File {path_str} was created after approval request.")
+                    return
+                continue
             if p.exists():
                 curr_hash = hashlib.sha256(p.read_bytes()).hexdigest()
                 if curr_hash != expected_hash:
                     yield TurnFailed(error=f"File {path_str} was modified after approval request.")
                     return
+            else:
+                yield TurnFailed(error=f"File {path_str} was removed after approval request.")
+                return
 
         # Validated inside execute_tool by registry
         # Execute exactly the approved action by delegating to registry, avoiding raw invocation
@@ -1397,18 +1407,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         )
 
         if res.success:
-            goal_id = None
-            if sec_ctx.principal_type == "GOAL":
-                goal_id = sec_ctx.principal_id
-            elif getattr(sec_ctx, "fencing_subject_type", None) == "GOAL":
-                goal_id = getattr(sec_ctx, "fencing_subject_id", None)
-            if goal_id and self.registry.goal_service:
-                try:
-                    self.registry.goal_service.resume_after_approval(
-                        goal_id, conversation_id=pa.conversation_id
-                    )
-                except Exception:
-                    pass
             self.working_set.touch_paths(
                 pa.conversation_id,
                 self._paths_from_tool(pa.tool_name, pa.normalized_args, res),

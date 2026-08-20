@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from kitt.core.pending_action import embed_resume_descriptor
 from kitt.runtime.safe_runtime import SafeRuntime
@@ -14,7 +14,9 @@ class SafeRuntimeHandler(ToolHandler):
     """Single compact model-facing entry point for SafeRuntime operations."""
 
     @staticmethod
-    def _patch_integrity_metadata(ctx: ToolContext, payload: dict) -> tuple[list[str], dict[str, str]]:
+    def _patch_integrity_metadata(
+        ctx: ToolContext, payload: dict
+    ) -> tuple[list[str], dict[str, str | None]]:
         patch_text = str(payload.get("patch", ""))
         blocks = ctx.registry.parser.parse(patch_text)
         affected: list[str] = []

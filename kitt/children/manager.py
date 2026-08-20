@@ -194,6 +194,14 @@ class ChildAgentManager:
             payload["principal_id"] = child.id
             payload["conversation_id"] = child.parent_conversation_id
             payload["turn_id"] = child.parent_turn_id
+            if (
+                payload.get("fencing_subject_type") == "GOAL"
+                and payload.get("fencing_subject_id")
+                and payload.get("fencing_subject_conversation_id") is None
+            ):
+                payload["fencing_subject_conversation_id"] = (
+                    child.parent_conversation_id
+                )
             return ExecutionSecurityContext.from_dict(payload)
         return ExecutionSecurityContext(
             workspace_id=self.workspace_id,

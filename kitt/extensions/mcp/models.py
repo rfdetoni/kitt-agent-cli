@@ -18,7 +18,7 @@ class MCPServerState(Enum):
 @dataclass
 class MCPServerConfig:
     server_id: str
-    transport: str = "stdio"  # "stdio", "http", "inprocess"
+    transport: str = "stdio"  # "stdio", "http", "streamable_http", "inprocess"
     command: Optional[str] = None
     args: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
@@ -28,7 +28,7 @@ class MCPServerConfig:
     allow_tools: Optional[List[str]] = None
     deny_tools: List[str] = field(default_factory=list)
     timeout_seconds: float = 30.0
-    max_output_bytes: int = 1024 * 1024  # 1 MB bounds limit
+    max_output_bytes: int = 2 * 1024 * 1024
 
 
 @dataclass
