@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from dataclasses import dataclass
 from typing import Optional
@@ -80,8 +81,10 @@ class KittRuntime:
 
     def __post_init__(self):
         self._closed = False
+        self._closing = False
         self._started = False
         self._close_lock = threading.RLock()
+        self._lifecycle_loop: Optional[asyncio.AbstractEventLoop] = None
 
     @classmethod
     def build(
@@ -324,14 +327,39 @@ class KittRuntime:
         with self._close_lock:
             if self._closed:
                 raise RuntimeError("Cannot start a closed KittRuntime")
+            if self._closing:
+                raise RuntimeError("Cannot start KittRuntime while it is closing")
             if self._started:
                 return
-        if self.extensions is not None:
-            await self.extensions.start()
-        if self.config.scheduler_enabled and self.goal_scheduler is not None:
-            self.goal_scheduler.start(interval_seconds=1.0)
-        with self._close_lock:
-            self._started = True
+            self._lifecycle_loop = asyncio.get_running_loop()
+
+        started_goal_scheduler = False
+        try:
+            if self.extensions is not None:
+                await self.extensions.start()
+            if self.config.scheduler_enabled and self.goal_scheduler is not None:
+                self.goal_scheduler.start(interval_seconds=1.0)
+                started_goal_scheduler = True
+            with self._close_lock:
+                self._started = True
+        except Exception:
+            errors = []
+            if started_goal_scheduler and self.goal_scheduler is not None:
+                try:
+                    self.goal_scheduler.stop()
+                except Exception as exc:
+                    errors.append(f"goal_scheduler: {exc}")
+            if self.extensions is not None:
+                try:
+                    await self.extensions.stop()
+                except Exception as exc:
+                    errors.append(f"extensions: {exc}")
+            with self._close_lock:
+                self._started = False
+                self._lifecycle_loop = None
+            if errors:
+                raise RuntimeError("; ".join(errors))
+            raise
 
     @property
     def workspace_id(self) -> str:
@@ -357,49 +385,96 @@ class KittRuntime:
             active_goal_id=active_goal.id if active_goal else "",
         )
 
-    def close(self):
+    async def aclose(self) -> None:
         """Thread-safe, idempotent shutdown of every owned resource."""
         with self._close_lock:
             if self._closed:
                 return
+            if self._closing:
+                return
+            current_loop = asyncio.get_running_loop()
+            if self._lifecycle_loop is not None and self._lifecycle_loop is not current_loop:
+                raise RuntimeError(
+                    "KittRuntime.aclose() must run on same event loop used for start()."
+                )
+            self._closing = True
             self._closed = True
-            errors = []
-            for name, close in (
-                ("extensions", getattr(self.extensions, "close", lambda: None)),
-                (
-                    "dream_scheduler",
-                    getattr(self.dream_scheduler, "close", lambda: None),
-                ),
-                (
-                    "goal_scheduler",
-                    getattr(self.goal_scheduler, "stop", lambda: None),
-                ),
-                ("processor", self.processor.close),
-                ("children", self.children.close),
-                ("metrics", self.metrics.close),
-                ("artifacts", self.artifacts.close),
-                ("events", self.events.close),
-                ("database", self.database.close),
-                (
-                    "repository_index",
-                    getattr(self.repository_index, "close", lambda: None),
-                ),
-            ):
-                try:
-                    close()
-                except Exception as exc:
-                    errors.append(f"{name}: {exc}")
-            if errors:
-                raise RuntimeError("Runtime shutdown errors: " + "; ".join(errors))
+            self._started = False
 
-    def switch_workspace(self, new_root: str) -> KittRuntime:
+        errors = []
+        for name, close_async, close_sync in (
+            ("goal_scheduler", None, getattr(self.goal_scheduler, "stop", None)),
+            ("dream_scheduler", None, getattr(self.dream_scheduler, "close", None)),
+            ("extensions", getattr(self.extensions, "stop", None), None),
+            ("children", None, getattr(self.children, "close", None)),
+            ("processor", None, getattr(self.processor, "close", None)),
+            ("metrics", None, getattr(self.metrics, "close", None)),
+            ("artifacts", None, getattr(self.artifacts, "close", None)),
+            ("events", None, getattr(self.events, "close", None)),
+            (
+                "repository_index",
+                None,
+                getattr(self.repository_index, "close", None),
+            ),
+            ("database", None, getattr(self.database, "close", None)),
+        ):
+            try:
+                if close_async is not None:
+                    await close_async()
+                elif close_sync is not None:
+                    close_sync()
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+
+        with self._close_lock:
+            self._closing = False
+            self._lifecycle_loop = None
+        if errors:
+            raise RuntimeError("Runtime shutdown errors: " + "; ".join(errors))
+
+    def close(self):
+        """Synchronous compatibility wrapper for runtime shutdown."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None and loop.is_running():
+            raise RuntimeError(
+                "KittRuntime.close() cannot run inside an active event loop; await aclose()."
+            )
+        asyncio.run(self.aclose())
+
+    async def aswitch_workspace(self, new_root: str) -> KittRuntime:
         """Build the new runtime before closing the current runtime."""
         new_runtime = KittRuntime.build(new_root, config=self.config)
-        self.close()
+        try:
+            await new_runtime.start()
+        except Exception:
+            await new_runtime.aclose()
+            raise
+        await self.aclose()
         return new_runtime
+
+    def switch_workspace(self, new_root: str) -> KittRuntime:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None and loop.is_running():
+            raise RuntimeError(
+                "KittRuntime.switch_workspace() cannot run inside active event loop; await aswitch_workspace()."
+            )
+        return asyncio.run(self.aswitch_workspace(new_root))
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    async def __aenter__(self):
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.aclose()

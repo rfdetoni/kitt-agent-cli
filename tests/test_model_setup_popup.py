@@ -25,7 +25,7 @@ class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.ui.request_exit()
         await asyncio.wait_for(self.task, 2)
-        self.runtime.close()
+        await self.runtime.aclose()
         self.input_cm.__exit__(None, None, None)
         self.temp.cleanup()
 

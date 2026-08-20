@@ -121,6 +121,30 @@ class GoalService:
     def resume(self, gid, conversation_id=None):
         return self.update_state(gid, "ACTIVE", conversation_id=conversation_id)
 
+    def resume_after_approval(self, gid, conversation_id=None):
+        now = time.time()
+        with self.db.get_connection() as c:
+            where, args = "id=?", [gid]
+            if conversation_id:
+                where += " AND conversation_id=?"
+                args.append(conversation_id)
+            cur = c.execute(
+                f"""UPDATE goals
+                    SET state='ACTIVE',
+                        lease_id=NULL,
+                        lease_owner_id=NULL,
+                        lease_expires_at=NULL,
+                        lease_heartbeat_at=NULL,
+                        updated_at=?
+                    WHERE {where}""",
+                [now, *args],
+            )
+        return (
+            self.get_scoped(gid, conversation_id)
+            if cur.rowcount and conversation_id
+            else (self.get(gid) if cur.rowcount else None)
+        )
+
     def finish(self, gid, success, error=None):
         return self.update_state(gid, "SUCCEEDED" if (success is True or str(success).upper() == "SUCCEEDED") else "FAILED", error)
 

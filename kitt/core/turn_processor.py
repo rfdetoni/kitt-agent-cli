@@ -1397,10 +1397,15 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         )
 
         if res.success:
-            if sec_ctx.principal_type == "GOAL" and self.registry.goal_service:
+            goal_id = None
+            if sec_ctx.principal_type == "GOAL":
+                goal_id = sec_ctx.principal_id
+            elif getattr(sec_ctx, "fencing_subject_type", None) == "GOAL":
+                goal_id = getattr(sec_ctx, "fencing_subject_id", None)
+            if goal_id and self.registry.goal_service:
                 try:
-                    self.registry.goal_service.update_state(
-                        sec_ctx.principal_id, "ACTIVE", conversation_id=pa.conversation_id
+                    self.registry.goal_service.resume_after_approval(
+                        goal_id, conversation_id=pa.conversation_id
                     )
                 except Exception:
                     pass

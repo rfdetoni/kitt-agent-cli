@@ -635,6 +635,14 @@ MIGRATIONS.append(Migration(
     )
 ))
 
+MIGRATIONS.append(Migration(
+    version=13,
+    name="goal_fence_subject_and_child_context_v13",
+    statements=(
+        "ALTER TABLE child_sessions ADD COLUMN security_context_json TEXT DEFAULT '{}';",
+    )
+))
+
 class MigrationRunner:
     def __init__(self, migrations: list[Migration] = None):
         if migrations is None:

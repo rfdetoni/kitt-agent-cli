@@ -17,7 +17,7 @@ class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
         self.runtime = KittRuntime.build(self.tmp.name, RuntimeConfig(history_enabled=False, persistence_enabled=False))
 
     async def asyncTearDown(self):
-        self.runtime.close()
+        await self.runtime.aclose()
         self.tmp.cleanup()
 
     async def test_full_screen_palette_focus_and_clean_exit(self):

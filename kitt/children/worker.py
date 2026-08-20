@@ -62,6 +62,10 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
         trace_id=source_context.trace_id,
         parent_principal_id=source_context.parent_principal_id,
         path_scope=source_context.path_scope,
+        fencing_token=source_context.fencing_token,
+        fencing_owner_id=source_context.fencing_owner_id,
+        fencing_subject_type=source_context.fencing_subject_type,
+        fencing_subject_id=source_context.fencing_subject_id,
     )
     command = TurnCommand(
         conversation_id=child_conversation,

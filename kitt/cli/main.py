@@ -85,7 +85,7 @@ async def async_main(args) -> int:
     finally:
         try: await backend.shutdown()
         except BaseException as exc: errors.append(exc)
-        try: runtime.close()
+        try: await runtime.aclose()
         except BaseException as exc: errors.append(exc)
     if errors:
         raise RuntimeError("Shutdown failed: " + "; ".join(map(str, errors)))

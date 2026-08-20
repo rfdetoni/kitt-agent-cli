@@ -342,8 +342,17 @@ class ToolRegistry:
         result: ToolResult,
     ) -> None:
         """Record post-approval continuation without widening privileges."""
-        principal_type = getattr(security_context, "principal_type", "")
-        principal_id = getattr(security_context, "principal_id", "")
+        principal_type = str(getattr(security_context, "principal_type", "") or "").upper()
+        principal_id = str(getattr(security_context, "principal_id", "") or "").strip()
+        subject_type = str(
+            getattr(security_context, "fencing_subject_type", "") or ""
+        ).upper()
+        subject_id = str(
+            getattr(security_context, "fencing_subject_id", "") or ""
+        ).strip()
+        if subject_type == "GOAL" and subject_id:
+            principal_type = "GOAL"
+            principal_id = subject_id
         if principal_type == "CHILD":
             if self.child_manager and hasattr(
                 self.child_manager, "on_approved_action_executed"
@@ -371,7 +380,7 @@ class ToolRegistry:
                 ttl_seconds=3600.0,
             )
             if self.goal_service is not None:
-                self.goal_service.resume(
+                self.goal_service.resume_after_approval(
                     principal_id,
                     conversation_id=security_context.conversation_id,
                 )
@@ -387,19 +396,27 @@ class ToolRegistry:
         *,
         allow_waiting_approval: bool = False,
     ) -> None:
-        if security_context is None or security_context.principal_type != "GOAL":
+        if security_context is None:
+            return
+        token = getattr(security_context, "fencing_token", None)
+        if not token:
             return
         if self.db is None:
             raise PermissionError("Goal execution requires database-backed lease fencing")
-        token = getattr(security_context, "fencing_token", None)
         owner = getattr(security_context, "fencing_owner_id", None)
-        if not token or not owner:
+        subject_type = getattr(security_context, "fencing_subject_type", None)
+        subject_id = getattr(security_context, "fencing_subject_id", None)
+        if subject_type not in {None, "GOAL"}:
+            raise PermissionError("Goal fence subject type is invalid")
+        if not subject_id and getattr(security_context, "principal_type", None) == "GOAL":
+            subject_id = getattr(security_context, "principal_id", None)
+        if not owner or not subject_id:
             raise PermissionError("Goal execution is missing scheduler lease fencing token")
         with self.db.get_connection() as connection:
             row = connection.execute(
                 """SELECT state,lease_id,lease_owner_id,lease_expires_at
                    FROM goals WHERE id=? AND conversation_id=?""",
-                (security_context.principal_id, security_context.conversation_id),
+                (subject_id, security_context.conversation_id),
             ).fetchone()
         if not row:
             raise PermissionError("Goal principal no longer exists in this conversation")

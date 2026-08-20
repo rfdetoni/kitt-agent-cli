@@ -29,7 +29,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.ui.request_exit()
         await asyncio.wait_for(self.task, 2)
-        self.runtime.close()
+        await self.runtime.aclose()
         self.input_cm.__exit__(None, None, None)
         self.temp.cleanup()
 
@@ -76,7 +76,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
                 profile = other.processor.router.resolve_profile_for_task("code-generation")[1]
                 self.assertEqual((profile.backend, profile.model), ("ollama", "qwen2.5:32b-instruct"))
             finally:
-                other.close()
+                await other.aclose()
 
     async def test_model_overlay_assigns_selected_model(self):
         with patch("kitt.router.model_selector.ModelConfigurator.fetch_ollama_models", return_value=["one", "two"]):

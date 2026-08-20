@@ -1381,7 +1381,7 @@ class KittUIApp:
             self._show_result(f"Directory not found: {raw_path}")
             return
         try:
-            new_runtime = await self._run_blocking(self.runtime.switch_workspace, str(target))
+            new_runtime = await self.runtime.aswitch_workspace(str(target))
         except Exception as exc:
             self._show_result(f"Workspace switch failed: {exc}")
             return

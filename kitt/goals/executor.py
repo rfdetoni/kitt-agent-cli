@@ -55,6 +55,8 @@ class GoalStepExecutor:
             trace_id=f"goal:{goal.id}",
             fencing_token=lease_id,
             fencing_owner_id=lease_owner_id,
+            fencing_subject_type="GOAL",
+            fencing_subject_id=goal.id,
         )
         command = TurnCommand(
             conversation_id=goal.conversation_id,

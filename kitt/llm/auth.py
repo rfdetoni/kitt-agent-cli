@@ -41,7 +41,23 @@ class CredentialStore:
     """Secure global credential store at ~/.kitt/auth.json with 0600 POSIX permissions."""
 
     def __init__(self, auth_file: Optional[str] = None):
-        self.auth_file = Path(auth_file or (Path.home() / ".kitt" / "auth.json")).resolve()
+        self.auth_file = self._resolve_auth_file(auth_file)
+
+    @staticmethod
+    def _resolve_auth_file(auth_file: Optional[str]) -> Path:
+        if auth_file:
+            return Path(auth_file).resolve()
+        preferred = (Path.home() / ".kitt" / "auth.json").resolve()
+        try:
+            preferred.parent.mkdir(parents=True, exist_ok=True)
+            probe = preferred.parent / ".write-test"
+            probe.write_text("", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return preferred
+        except OSError:
+            fallback = (Path(tempfile.gettempdir()) / "kitt" / "auth.json").resolve()
+            fallback.parent.mkdir(parents=True, exist_ok=True)
+            return fallback
 
     def load(self) -> Dict[str, Dict[str, Any]]:
         if not self.auth_file.exists():

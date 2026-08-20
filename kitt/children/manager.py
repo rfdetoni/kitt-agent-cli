@@ -137,6 +137,17 @@ class ChildAgentManager:
 
         timeout = min(float(timeout_seconds), self.max_worker_seconds)
         self._last_spawn_time[parent_conversation_id] = now
+        child_security_context = (
+            security_context.derive_child_context(
+                child_id="pending",
+                requested_capabilities=effective_caps,
+                turn_id=parent_turn_id,
+                workspace_policy_caps=effective_caps,
+                allowed_paths=paths,
+            )
+            if security_context is not None
+            else None
+        )
         child = self.repo.create(
             parent_conversation_id,
             parent_turn_id,
@@ -149,7 +160,19 @@ class ChildAgentManager:
             max(1, int(token_budget)),
             timeout,
             capabilities=effective_caps,
+            security_context=(
+                None if child_security_context is None else child_security_context.to_dict()
+            ),
         )
+        if child_security_context is not None:
+            child_security_context = child_security_context.with_turn(parent_turn_id)
+            payload = child_security_context.to_dict()
+            payload["principal_id"] = child.id
+            self.repo.update(
+                child.id,
+                security_context_json=json.dumps(payload, ensure_ascii=False),
+            )
+            child = self.repo.get(child.id)
         self.repo.update(child.id, state="QUEUED", started_at=time.time())
         self._on_event(
             "ChildAgentSpawned",
@@ -166,6 +189,12 @@ class ChildAgentManager:
         return self.repo.get(child.id)
 
     def _child_security_context(self, child) -> ExecutionSecurityContext:
+        if child.security_context:
+            payload = dict(child.security_context)
+            payload["principal_id"] = child.id
+            payload["conversation_id"] = child.parent_conversation_id
+            payload["turn_id"] = child.parent_turn_id
+            return ExecutionSecurityContext.from_dict(payload)
         return ExecutionSecurityContext(
             workspace_id=self.workspace_id,
             conversation_id=child.parent_conversation_id,

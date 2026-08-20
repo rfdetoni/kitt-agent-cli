@@ -130,9 +130,7 @@ class DaemonServer:
             await self._server.wait_closed()
         for rt in list(self._runtimes.values()):
             try:
-                if rt.goal_scheduler:
-                    rt.goal_scheduler.stop()
-                rt.close()
+                await rt.aclose()
             except Exception:
                 logger.exception("Runtime shutdown failure")
         self._runtimes.clear()

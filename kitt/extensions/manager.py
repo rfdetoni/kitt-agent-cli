@@ -93,16 +93,13 @@ class ExtensionManager:
     def close(self) -> None:
         """Synchronous cleanup for ExtensionManager."""
         import asyncio
-        import concurrent.futures
+
         try:
             loop = asyncio.get_running_loop()
-            if loop.is_running():
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    pool.submit(asyncio.run, self.stop()).result(timeout=5.0)
-            else:
-                loop.run_until_complete(self.stop())
         except RuntimeError:
-            try:
-                asyncio.run(self.stop())
-            except Exception as exc:
-                logger.warning("Error during ExtensionManager sync close: %s", exc)
+            loop = None
+        if loop is not None and loop.is_running():
+            raise RuntimeError(
+                "ExtensionManager.close() cannot run inside an active event loop; await stop()."
+            )
+        asyncio.run(self.stop())

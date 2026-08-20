@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, List, Optional
 
 
 @dataclass(frozen=True)
@@ -27,3 +27,4 @@ class ChildSession:
     capabilities: List[str] = field(default_factory=list)
     context_summary: str = ""
     runtime_conversation_id: Optional[str] = None
+    security_context: dict[str, Any] = field(default_factory=dict)

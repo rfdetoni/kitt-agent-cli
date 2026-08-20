@@ -22,7 +22,10 @@ from kitt.extensions.plugins.api import (
     ToolAPI,
 )
 from kitt.extensions.plugins.context import PluginContext
-from kitt.extensions.plugins.security import PluginTrustStore
+from kitt.extensions.plugins.security import (
+    PluginTrustStore,
+    prepare_trusted_plugin_snapshot,
+)
 
 logger = logging.getLogger("kitt.extensions.plugins.loader")
 
@@ -173,14 +176,15 @@ class PluginLoader:
             state=PluginState.LOADING,
         )
 
-    def _assert_in_process_trust(self, manifest: PluginManifest) -> None:
+    def _approved_digest(self, manifest: PluginManifest) -> str:
         if not manifest.trusted_in_process:
             raise PluginLoadError(
                 f"Plugin '{manifest.name}' does not opt in to in-process execution. "
                 "Review it before setting trusted_in_process=true."
             )
-        if self.trust_store.is_trusted(manifest):
-            return
+        approved = self.trust_store.approved_digest(manifest)
+        if approved:
+            return approved
         raise PluginLoadError(
             f"Plugin '{manifest.name}' is not trusted by the local user for this "
             "workspace/content hash. Run 'kitt plugins trust "
@@ -198,9 +202,14 @@ class PluginLoader:
 
     async def load_async(self, manifest: PluginManifest) -> PluginInstance:
         """Load one trusted plugin and await async setup correctly."""
-        self._assert_in_process_trust(manifest)
+        approved_digest = self._approved_digest(manifest)
+        snapshot_root = prepare_trusted_plugin_snapshot(
+            manifest,
+            approved_digest,
+            self.workspace_root,
+        )
         instance = self._build_instance(manifest)
-        manifest_dir = instance.identity.root_path or self.workspace_root
+        manifest_dir = snapshot_root
 
         try:
             module_name_rel, separator, function_name = manifest.entrypoint.partition(":")
@@ -224,7 +233,12 @@ class PluginLoader:
 
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_key] = module
-            spec.loader.exec_module(module)
+            sys.path.insert(0, str(snapshot_root))
+            try:
+                spec.loader.exec_module(module)
+            finally:
+                if sys.path and sys.path[0] == str(snapshot_root):
+                    sys.path.pop(0)
 
             setup = getattr(module, function_name, None)
             if not callable(setup):
