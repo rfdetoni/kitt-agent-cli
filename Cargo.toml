@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/kitt-native-engine",
+  "crates/kitt-native-python",
+]

@@ -30,12 +30,33 @@ class DoctorCheck:
             "detail": git_path or "git binary not found in PATH"
         })
 
-        # 3. Ripgrep executable
+        # 3. KITT native code engine. External rg/grep is optional; KITT does not require it.
+        try:
+            from kitt.native.bridge import NativeCodeEngine
+            native = NativeCodeEngine(str(self.root_path))
+            results.append({
+                "name": "KITT Native Code Engine",
+                "status": "PASS" if native.status.backend == "rust" else "INFO",
+                "detail": (
+                    f"Rust {native.status.version}" if native.status.backend == "rust"
+                    else f"Python compatibility backend ({native.status.detail or 'native wheel unavailable'})"
+                ),
+            })
+        except Exception as e:
+            results.append({"name": "KITT Native Code Engine", "status": "WARN", "detail": str(e)})
+
         rg_path = shutil.which("rg") or shutil.which("grep")
         results.append({
-            "name": "Search Utility",
-            "status": "PASS" if rg_path else "WARN",
-            "detail": f"Using {rg_path}" if rg_path else "rg/grep not found"
+            "name": "External Search Utility",
+            "status": "INFO",
+            "detail": f"Optional: {rg_path}" if rg_path else "Optional and not installed"
+        })
+
+        git_repo = (self.root_path / ".git").exists()
+        results.append({
+            "name": "Child Worktree Isolation",
+            "status": "PASS" if git_path and git_repo else "INFO",
+            "detail": "Git worktrees available" if git_path and git_repo else "Compatibility shared-root fallback for non-Git workspace",
         })
 
         # 4. Workspace .kitt directory permissions

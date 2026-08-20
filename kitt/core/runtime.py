@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from kitt.artifacts.store import ArtifactStore
 from kitt.children.manager import ChildAgentManager
@@ -78,6 +78,7 @@ class KittRuntime:
     dream_scheduler: Optional[DreamScheduler] = None
     goal_scheduler: Optional[GoalScheduler] = None
     extensions: Optional[ExtensionManager] = None
+    native: Optional[Any] = None
 
     def __post_init__(self):
         self._closed = False
@@ -88,22 +89,23 @@ class KittRuntime:
 
     @classmethod
     def build(
-        cls, root_dir: str, config: Optional[RuntimeConfig] = None
+        cls, root_dir: str, config: Optional[RuntimeConfig] = None, state_root_dir: Optional[str] = None
     ) -> KittRuntime:
         from kitt.core.workspace_identity import canonical_workspace_path
 
         config = config or RuntimeConfig.from_env()
         canonical_root = canonical_workspace_path(root_dir)
+        state_root = canonical_workspace_path(state_root_dir) if state_root_dir else canonical_root
         ephemeral = config.ephemeral
         in_memory = not config.history_enabled
         persistence_enabled = not ephemeral
-        database = HistoryDatabase(canonical_root, in_memory=in_memory)
+        database = HistoryDatabase(state_root, in_memory=in_memory)
 
         session_tree = SessionTreeRepository(database)
         history_repo = HistoryRepository(database)
-        identity = resolve_workspace_identity(database, canonical_root)
+        identity = resolve_workspace_identity(database, state_root)
         history = HistoryService(
-            canonical_root,
+            state_root,
             db=database,
             repo=history_repo,
             tree=session_tree,
@@ -113,7 +115,7 @@ class KittRuntime:
         )
 
         autonomy_store = AutonomyStore(
-            canonical_root, persistence_enabled=persistence_enabled
+            state_root, persistence_enabled=persistence_enabled
         )
         approval = ApprovalManager(
             db=database, ttl_seconds=config.approval_ttl_seconds
@@ -136,7 +138,7 @@ class KittRuntime:
             persistence_enabled=persistence_enabled,
         )
         working_set = ConversationWorkingSetStore(
-            canonical_root, persistence_enabled=persistence_enabled
+            state_root, persistence_enabled=persistence_enabled
         )
 
         registry = ToolRegistry(canonical_root, context_engine=context_engine)
@@ -150,7 +152,7 @@ class KittRuntime:
         skills.executable_enabled = config.executable_skills_enabled
 
         artifacts = ArtifactStore(
-            canonical_root,
+            state_root,
             database,
             inline_limit=config.artifact_inline_limit,
             max_artifact_bytes=config.max_artifact_bytes,
@@ -170,7 +172,7 @@ class KittRuntime:
 
         from kitt.metrics.prime import PrimeMetrics
 
-        prime_metrics = PrimeMetrics(canonical_root)
+        prime_metrics = PrimeMetrics(state_root)
         events.subscribe("MetricsRecorded", lambda name, payload: metrics.record(payload))
         events.subscribe("*", prime_metrics.observe)
         registry.event_bus = events
@@ -189,11 +191,30 @@ class KittRuntime:
 
         memory_repo = MemoryRepository(database)
         memory = MemoryManager(
-            canonical_root,
+            state_root,
             persistence_enabled=persistence_enabled,
             memory_repo=memory_repo,
             workspace_id=identity.id,
         )
+
+        # KITT-owned clean-room native subsystem. Native Rust is optional at runtime;
+        # the Python fallback preserves behavior on unsupported platforms.
+        from kitt.native.runtime import NativeSubsystem
+        native = NativeSubsystem.build(
+            execution_root=canonical_root,
+            state_root=state_root,
+            db=database,
+            workspace_id=identity.id,
+            memory_repo=memory_repo,
+            memory_manager=memory,
+        )
+        memory = native.memory
+        children.attach_coordinator(native.coordinator)
+        registry.native_engine = native.engine
+        registry.output_optimizer = native.output
+        registry.coordinator = native.coordinator
+        events.subscribe("*", native.on_event)
+
         registry.attach_services(
             artifacts=artifacts,
             queue_service=queue,
@@ -220,7 +241,7 @@ class KittRuntime:
             memory_repo=memory_repo,
             history_repo=history_repo,
             session_tree=session_tree,
-            root_dir=canonical_root,
+            root_dir=state_root,
             llm_client=dream_llm,
             egress_policy=egress_policy,
             event_callback=lambda name, payload: events.publish(name, payload),
@@ -317,6 +338,7 @@ class KittRuntime:
             dream_scheduler=dream_scheduler,
             goal_scheduler=goal_scheduler,
             extensions=extensions,
+            native=native,
         )
         runtime_holder["runtime"] = runtime
         runtime.prime_metrics = prime_metrics

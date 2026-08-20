@@ -643,6 +643,25 @@ MIGRATIONS.append(Migration(
     )
 ))
 
+MIGRATIONS.append(Migration(
+    version=14,
+    name="kitt_native_subsystem_v14",
+    statements=(
+        'CREATE TABLE IF NOT EXISTS native_memory_vectors (\n    memory_id TEXT PRIMARY KEY,\n    workspace_id TEXT NOT NULL,\n    vector_json TEXT NOT NULL,\n    dimensions INTEGER NOT NULL,\n    encoder TEXT NOT NULL,\n    updated_at REAL NOT NULL\n);',
+        'CREATE INDEX IF NOT EXISTS idx_native_memory_vectors_workspace ON native_memory_vectors(workspace_id);',
+        "CREATE TABLE IF NOT EXISTS knowledge_concepts (\n    id TEXT PRIMARY KEY,\n    workspace_id TEXT NOT NULL,\n    name TEXT NOT NULL,\n    definition TEXT NOT NULL,\n    confidence REAL NOT NULL DEFAULT 0.5,\n    revision INTEGER NOT NULL DEFAULT 1,\n    labels_json TEXT NOT NULL DEFAULT '[]',\n    source_memory_ids_json TEXT NOT NULL DEFAULT '[]',\n    created_at REAL NOT NULL,\n    updated_at REAL NOT NULL,\n    UNIQUE(workspace_id, name)\n);",
+        'CREATE INDEX IF NOT EXISTS idx_knowledge_concepts_workspace ON knowledge_concepts(workspace_id);',
+        'CREATE TABLE IF NOT EXISTS knowledge_links (\n    id TEXT PRIMARY KEY,\n    workspace_id TEXT NOT NULL,\n    source_id TEXT NOT NULL,\n    target_id TEXT NOT NULL,\n    relation TEXT NOT NULL,\n    weight REAL NOT NULL DEFAULT 1.0,\n    created_at REAL NOT NULL,\n    UNIQUE(workspace_id, source_id, target_id, relation),\n    CHECK(source_id <> target_id),\n    FOREIGN KEY(source_id) REFERENCES knowledge_concepts(id) ON DELETE CASCADE,\n    FOREIGN KEY(target_id) REFERENCES knowledge_concepts(id) ON DELETE CASCADE\n);',
+        'CREATE INDEX IF NOT EXISTS idx_knowledge_links_source ON knowledge_links(workspace_id, source_id);',
+        'CREATE INDEX IF NOT EXISTS idx_knowledge_links_target ON knowledge_links(workspace_id, target_id);',
+        "CREATE TABLE IF NOT EXISTS correction_memories (\n    id TEXT PRIMARY KEY,\n    workspace_id TEXT NOT NULL,\n    context TEXT NOT NULL,\n    predicted TEXT NOT NULL,\n    corrected TEXT NOT NULL,\n    reason TEXT,\n    source TEXT NOT NULL DEFAULT 'user',\n    applied_count INTEGER NOT NULL DEFAULT 0,\n    vector_json TEXT,\n    created_at REAL NOT NULL,\n    updated_at REAL NOT NULL\n);",
+        'CREATE INDEX IF NOT EXISTS idx_correction_memories_workspace ON correction_memories(workspace_id);',
+        "CREATE TABLE IF NOT EXISTS coordination_leases (\n    workspace_id TEXT NOT NULL,\n    resource_id TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    mode TEXT NOT NULL CHECK(mode IN ('READ','WRITE')),\n    intent TEXT NOT NULL,\n    lease_token TEXT NOT NULL,\n    acquired_at REAL NOT NULL,\n    expires_at REAL NOT NULL,\n    PRIMARY KEY(workspace_id, resource_id, owner_id)\n);",
+        'CREATE INDEX IF NOT EXISTS idx_coordination_leases_expiry ON coordination_leases(workspace_id, expires_at);',
+        'CREATE TABLE IF NOT EXISTS child_worktrees (\n    child_id TEXT PRIMARY KEY,\n    workspace_id TEXT NOT NULL,\n    path TEXT NOT NULL,\n    branch TEXT NOT NULL,\n    base_ref TEXT NOT NULL,\n    state TEXT NOT NULL,\n    created_at REAL NOT NULL,\n    updated_at REAL NOT NULL,\n    last_error TEXT\n);',
+    )
+))
+
 class MigrationRunner:
     def __init__(self, migrations: list[Migration] = None):
         if migrations is None:

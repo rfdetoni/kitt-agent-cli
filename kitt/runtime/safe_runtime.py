@@ -16,6 +16,7 @@ from kitt.security.capabilities import (
     CAP_GOAL_MANAGE,
     CAP_MCP_CALL,
     CAP_MEMORY_READ,
+    CAP_MEMORY_WRITE,
     CAP_PROCESS_RUN,
     CAP_REPO_READ,
     CAP_REPO_SEARCH,
@@ -38,6 +39,9 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     "repo.inspect_symbol": RuntimeOperationSpec(
         "repo.inspect_symbol", CAP_REPO_READ, "read_file"
     ),
+    "repo.read_symbol": RuntimeOperationSpec("repo.read_symbol", CAP_REPO_READ, "read_file"),
+    "repo.references": RuntimeOperationSpec("repo.references", CAP_REPO_SEARCH, "search"),
+    "repo.edit_symbol": RuntimeOperationSpec("repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True),
     "artifacts.store": RuntimeOperationSpec(
         "artifacts.store",
         CAP_ARTIFACT_WRITE,
@@ -84,6 +88,9 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     "memory.query": RuntimeOperationSpec(
         "memory.query", CAP_MEMORY_READ, sensitive=False
     ),
+    "memory.correct": RuntimeOperationSpec("memory.correct", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
+    "memory.concept": RuntimeOperationSpec("memory.concept", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
+    "memory.link": RuntimeOperationSpec("memory.link", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
     "skill.call": RuntimeOperationSpec("skill.call", CAP_REPO_READ, sensitive=False),
     "mcp.call": RuntimeOperationSpec(
         "mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True
@@ -329,6 +336,9 @@ class SafeRuntime:
             "repo.read": lambda: self._op_repo_read(args, turn_id, origin, security_context),
             "repo.search": lambda: self._op_repo_search(args, turn_id, origin, security_context),
             "repo.inspect_symbol": lambda: self._op_repo_inspect_symbol(args, turn_id, origin, security_context),
+            "repo.read_symbol": lambda: self._op_repo_read_symbol(args, security_context),
+            "repo.references": lambda: self._op_repo_references(args, security_context),
+            "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id),
@@ -339,6 +349,9 @@ class SafeRuntime:
             "goal.inspect": lambda: self._op_goal_inspect(args),
             "goal.update": lambda: self._op_goal_update(args),
             "memory.query": lambda: self._op_memory_query(args),
+            "memory.correct": lambda: self._op_memory_correct(args),
+            "memory.concept": lambda: self._op_memory_concept(args),
+            "memory.link": lambda: self._op_memory_link(args),
             "skill.call": lambda: self._op_skill_call(args, security_context),
             "mcp.call": lambda: self._op_mcp_call(args, turn_id, security_context),
             "state.get": lambda: self._op_state_get(args),
@@ -398,6 +411,24 @@ class SafeRuntime:
         return result
 
     def _op_repo_search(self, args, turn_id, origin, security_context):
+        engine = getattr(self.registry, "native_engine", None) if self.registry else None
+        if engine is not None and not getattr(security_context, "is_path_scoped", False):
+            query = str(args.get("query", args.get("pattern", ""))).strip()
+            if query:
+                data = engine.search(
+                    query,
+                    regex=bool(args.get("regex", False)),
+                    case_sensitive=bool(args.get("case_sensitive", False)),
+                    max_results=int(args.get("max_results", args.get("limit", 50)) or 50),
+                    max_per_file=int(args.get("max_per_file", 8) or 8),
+                    context_lines=int(args.get("context_lines", 1) or 1),
+                    token_budget=int(args.get("token_budget", 1200) or 1200),
+                )
+                return SafeRuntimeResult(
+                    True, "repo.search", data=data,
+                    tokens_saved=max(0, int(data.get("omitted_matches", 0)) * 10),
+                    metadata={"backend": engine.status.backend},
+                )
         return self._op_registry_tool(
             "repo.search", "search", args, turn_id, origin, security_context
         )
@@ -406,6 +437,28 @@ class SafeRuntime:
         symbol = str(args.get("symbol", "")).strip()
         if not symbol:
             return SafeRuntimeResult(False, "repo.inspect_symbol", error="Symbol argument required")
+        engine = getattr(self.registry, "native_engine", None) if self.registry else None
+        if engine is not None:
+            native_matches = engine.find_symbols(symbol, limit=5)
+            safe_matches = []
+            for item in native_matches:
+                try:
+                    self._assert_native_path_allowed(security_context, item["path"])
+                except PermissionError:
+                    continue
+                safe_matches.append(item)
+            if safe_matches:
+                snippets = []
+                for item in safe_matches[:3]:
+                    read = engine.read_symbol(item["id"])
+                    if read:
+                        snippets.append({"symbol": item["name"], "path": item["path"], "kind": item["kind"], "lines": f"{item['start_line']}-{item['end_line']}", "content": read["source"]})
+                return SafeRuntimeResult(
+                    True, "repo.inspect_symbol",
+                    data={"symbol": symbol, "matches": safe_matches, "snippets": snippets},
+                    context_handles=[f"ctx:repo:{symbol}"],
+                    metadata={"backend": engine.status.backend},
+                )
         handle_info = self.handles.resolve(
             f"ctx:repo:{symbol}", security_context=security_context
         )
@@ -439,6 +492,110 @@ class SafeRuntime:
             context_handles=[f"ctx:repo:{symbol}"],
             tokens_saved=max(50, content_chars // 4),
         )
+
+    def _resolve_native_symbol(self, value: str):
+        engine = getattr(self.registry, "native_engine", None) if self.registry else None
+        if engine is None:
+            return None, None
+        direct = engine.read_symbol(value)
+        if direct:
+            return engine, direct
+        matches = engine.find_symbols(value, limit=5)
+        if not matches:
+            return engine, None
+        return engine, engine.read_symbol(matches[0]["id"])
+
+    @staticmethod
+    def _assert_native_path_allowed(security_context, path: str) -> None:
+        if security_context is not None:
+            security_context.assert_path_allowed(path)
+
+    def _op_repo_read_symbol(self, args, security_context):
+        value = str(args.get("symbol_id", args.get("symbol", ""))).strip()
+        if not value:
+            return SafeRuntimeResult(False, "repo.read_symbol", error="symbol or symbol_id required")
+        engine, found = self._resolve_native_symbol(value)
+        if engine is None:
+            return SafeRuntimeResult(False, "repo.read_symbol", error="native code engine unavailable")
+        if not found:
+            return SafeRuntimeResult(False, "repo.read_symbol", error=f"symbol not found: {value}")
+        self._assert_native_path_allowed(security_context, found["symbol"]["path"])
+        return SafeRuntimeResult(True, "repo.read_symbol", data=found, context_handles=[f"ctx:repo:{found['symbol']['id']}"])
+
+    def _op_repo_references(self, args, security_context):
+        value = str(args.get("symbol_id", args.get("symbol", ""))).strip()
+        if not value:
+            return SafeRuntimeResult(False, "repo.references", error="symbol or symbol_id required")
+        engine = getattr(self.registry, "native_engine", None) if self.registry else None
+        if engine is None:
+            return SafeRuntimeResult(False, "repo.references", error="native code engine unavailable")
+        rows = engine.references(value, int(args.get("limit", 100) or 100))
+        allowed = []
+        for row in rows:
+            try:
+                self._assert_native_path_allowed(security_context, row["path"])
+            except PermissionError:
+                continue
+            allowed.append(row)
+        return SafeRuntimeResult(True, "repo.references", data=allowed)
+
+    def _op_repo_edit_symbol(self, args, security_context):
+        value = str(args.get("symbol_id", args.get("symbol", ""))).strip()
+        replacement = args.get("replacement")
+        if not value or not isinstance(replacement, str):
+            return SafeRuntimeResult(False, "repo.edit_symbol", error="symbol_id/symbol and replacement are required")
+        engine, found = self._resolve_native_symbol(value)
+        if engine is None or not found:
+            return SafeRuntimeResult(False, "repo.edit_symbol", error=f"symbol not found: {value}")
+        symbol = found["symbol"]
+        self._assert_native_path_allowed(security_context, symbol["path"])
+        coordinator = getattr(self.registry, "coordinator", None) if self.registry else None
+        if coordinator is not None and security_context is not None and getattr(security_context, "principal_type", "") == "CHILD":
+            coordinator.claim_symbol_for_edit(
+                symbol["id"], security_context.principal_id,
+                str(args.get("intent", f"edit {symbol['id']}")),
+            )
+        result = engine.replace_symbol(
+            symbol["id"], replacement,
+            expected_hash=args.get("expected_hash", symbol.get("source_hash")),
+            validate_syntax=bool(args.get("validate_syntax", True)),
+        )
+        if self.registry and result.get("changed"):
+            self.registry._refresh_index([result["path"]])
+        return SafeRuntimeResult(True, "repo.edit_symbol", data=result)
+
+    def _op_memory_correct(self, args):
+        if not self.memory or not hasattr(self.memory, "remember_correction"):
+            return SafeRuntimeResult(False, "memory.correct", error="hybrid memory service unavailable")
+        context = str(args.get("context", "")).strip()
+        predicted = str(args.get("predicted", "")).strip()
+        corrected = str(args.get("corrected", "")).strip()
+        if not context or not predicted or not corrected:
+            return SafeRuntimeResult(False, "memory.correct", error="context, predicted and corrected are required")
+        cid = self.memory.remember_correction(context, predicted, corrected, args.get("reason"), str(args.get("source", "agent")))
+        return SafeRuntimeResult(True, "memory.correct", data={"id": cid})
+
+    def _op_memory_concept(self, args):
+        if not self.memory or not hasattr(self.memory, "remember_concept"):
+            return SafeRuntimeResult(False, "memory.concept", error="hybrid memory service unavailable")
+        name = str(args.get("name", "")).strip(); definition = str(args.get("definition", "")).strip()
+        if not name or not definition:
+            return SafeRuntimeResult(False, "memory.concept", error="name and definition are required")
+        data = self.memory.remember_concept(
+            name, definition, float(args.get("confidence", 0.7) or 0.7),
+            args.get("labels", []) or [], args.get("source_memory_ids", []) or [],
+        )
+        return SafeRuntimeResult(True, "memory.concept", data=data)
+
+    def _op_memory_link(self, args):
+        if not self.memory or not hasattr(self.memory, "link_concepts"):
+            return SafeRuntimeResult(False, "memory.link", error="hybrid memory service unavailable")
+        source_id = str(args.get("source_id", "")).strip(); target_id = str(args.get("target_id", "")).strip()
+        relation = str(args.get("relation", "RELATED_TO")).strip()
+        if not source_id or not target_id:
+            return SafeRuntimeResult(False, "memory.link", error="source_id and target_id are required")
+        link_id = self.memory.link_concepts(source_id, target_id, relation, float(args.get("weight", 1.0) or 1.0))
+        return SafeRuntimeResult(True, "memory.link", data={"id": link_id})
 
     def _op_children_send(self, args):
         child_id = str(args.get("child_id", ""))

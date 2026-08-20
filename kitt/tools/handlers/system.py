@@ -76,6 +76,14 @@ class ApplyPatchHandler:
                 if actual != expected:
                     return ToolResult(False, "", f"File {relative} changed after approval request.")
 
+        coordinator = getattr(ctx.registry, "coordinator", None)
+        security = ctx.security_context
+        if coordinator is not None and security is not None and getattr(security, "principal_type", "") == "CHILD":
+            try:
+                coordinator.claim_paths(resolved_paths.values(), security.principal_id, f"patch turn {ctx.turn_id}")
+            except Exception as exc:
+                return ToolResult(False, "", f"Coordination conflict: {exc}")
+
         edit_result = ctx.registry.applier.apply(
             blocks,
             root_dir=str(ctx.registry.root_path),
@@ -117,13 +125,31 @@ class RunCommandHandler:
             return ToolResult(False, "", f"Invalid shell command syntax: {exc}")
 
         result = ctx.registry.process_runner.run(argv, timeout_seconds=30)
-        output = result.stdout + (("\n" + result.stderr) if result.stderr else "")
+        optimizer = getattr(ctx.registry, "output_optimizer", None)
+        if optimizer is not None:
+            optimized = optimizer.optimize(
+                argv, result.stdout, result.stderr, result.returncode,
+                artifact_store=getattr(ctx.registry, "artifacts", None),
+                workspace_id=ctx.workspace_id, conversation_id=ctx.conversation_id, turn_id=ctx.turn_id,
+            )
+            output = optimized.output
+            metadata = {
+                "output_family": optimized.family,
+                "raw_bytes": optimized.raw_bytes,
+                "optimized_bytes": optimized.output_bytes,
+                "omitted_lines": optimized.omitted_lines,
+                "raw_artifact_id": optimized.raw_artifact_id,
+            }
+        else:
+            output = result.stdout + (("\n" + result.stderr) if result.stderr else "")
+            metadata = {}
         return ToolResult(
             success=(result.returncode == 0 and not result.timed_out),
             output=output,
-            error=None if result.returncode == 0 else result.stderr,
+            error=None if result.returncode == 0 else f"Command exited with code {result.returncode}",
             bytes_count=len(output.encode()),
             truncated=result.truncated,
+            metadata=metadata,
         )
 
 

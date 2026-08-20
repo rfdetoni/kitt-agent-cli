@@ -42,6 +42,33 @@ class SearchHandler:
         if not pattern or len(pattern) > 500:
             return ToolResult(False, "", "Invalid search pattern.")
 
+        native_engine = getattr(ctx.registry, "native_engine", None)
+        if native_engine is not None and not (ctx.security_context is not None and ctx.security_context.is_path_scoped):
+            try:
+                result = native_engine.search(
+                    pattern,
+                    regex=bool(args.get("regex", False)),
+                    case_sensitive=bool(args.get("case_sensitive", False)),
+                    max_results=min(int(args.get("limit", 80) or 80), 500),
+                    max_per_file=min(int(args.get("max_per_file", 8) or 8), 100),
+                    context_lines=min(int(args.get("context_lines", 0) or 0), 8),
+                    token_budget=min(int(args.get("max_tokens", 1200) or 1200), 8000),
+                )
+                lines = [f"{hit['path']}:{hit['line']}:{hit['text']}" for hit in result.get("hits", [])]
+                return ToolResult(
+                    True, "\n".join(lines),
+                    truncated=bool(result.get("omitted_matches")),
+                    metadata={
+                        "method": "native",
+                        "backend": native_engine.status.backend,
+                        "omitted_matches": result.get("omitted_matches", 0),
+                        "estimated_tokens": result.get("estimated_tokens", 0),
+                    },
+                )
+            except Exception:
+                # Native optimization is never allowed to make search unavailable.
+                pass
+
         if not bool(args.get("regex", False)) and ctx.registry.repository_index is not None:
             ctx.registry._refresh_index()
             rows = ctx.registry.repository_index.search_text(pattern, limit=200)

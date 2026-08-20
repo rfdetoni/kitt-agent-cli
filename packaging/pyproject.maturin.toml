@@ -1,0 +1,25 @@
+# Release-time pyproject template. The source checkout may keep setuptools so
+# Python fallback installs do not require Rust. CI can use this template to
+# produce platform wheels that bundle kitt_native into the same KITT wheel.
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "kitt-agent-cli"
+version = "0.2.0"
+description = "K.I.T.T. autonomous AI coding agent CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = ["prompt-toolkit>=3.0.52,<4"]
+
+[project.scripts]
+kitt = "kitt.cli.main:main"
+
+[tool.maturin]
+manifest-path = "crates/kitt-native-python/Cargo.toml"
+python-source = "."
+module-name = "kitt_native"
+bindings = "pyo3"
+strip = true

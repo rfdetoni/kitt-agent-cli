@@ -21,6 +21,7 @@ codebase.llm.txt
 node_modules/
 dist/
 web/dist/
+target/
 __pycache__/
 *.py[cod]
 .pytest_cache/

@@ -249,7 +249,7 @@ class ToolRegistry:
                 "name": "kitt_runtime",
                 "description": (
                     "Execute safe, compact, policy-governed KITT runtime operations "
-                    "(repo.*, artifacts.*, patch.*, process.*, children.*, goal.*, state.*, handles.*)."
+                    "(repo.*, artifacts.*, patch.*, process.*, children.*, goal.*, memory.*, state.*, handles.*)."
                 ),
             },
             {"name": "list_files", "description": "List files in directory"},

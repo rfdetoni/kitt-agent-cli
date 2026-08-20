@@ -192,7 +192,7 @@ def main() -> None:
     runtime = None
     try:
         request = json.loads(sys.stdin.read())
-        runtime = KittRuntime.build(request["root"])
+        runtime = KittRuntime.build(request["root"], state_root_dir=request.get("state_root"))
         mode = str(request.get("mode", "run"))
         if mode == "run":
             result = _run_new_turn(runtime, request)

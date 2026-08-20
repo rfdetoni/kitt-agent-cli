@@ -62,6 +62,10 @@ class ChildAgentManager:
         self._execution_lock = threading.RLock()
         self._processes: dict[str, subprocess.Popen] = {}
         self._closed = False
+        self.coordinator = None
+
+    def attach_coordinator(self, coordinator) -> None:
+        self.coordinator = coordinator
 
     def spawn(
         self,
@@ -220,9 +224,15 @@ class ChildAgentManager:
 
     def _build_run_payload(self, child, task: str) -> dict:
         security_context = self._child_security_context(child)
+        execution_root = str(self.root)
+        if self.coordinator is not None:
+            worktree = self.coordinator.prepare_child(child.id)
+            execution_root = worktree.path
+            self.coordinator.mark_running(child.id)
         return {
             "mode": "run",
-            "root": str(self.root),
+            "root": execution_root,
+            "state_root": str(self.root),
             "child_id": child.id,
             "runtime_conversation_id": (
                 child.runtime_conversation_id or f"childconv_{child.id}"
@@ -233,9 +243,13 @@ class ChildAgentManager:
         }
 
     def _build_continue_payload(self, child, grant) -> dict:
+        execution_root = str(self.root)
+        if self.coordinator is not None:
+            execution_root = self.coordinator.prepare_child(child.id).path
         return {
             "mode": "continue",
-            "root": str(self.root),
+            "root": execution_root,
+            "state_root": str(self.root),
             "child_id": child.id,
             "runtime_conversation_id": child.runtime_conversation_id,
             "turn_id": child.current_task_id,
@@ -355,6 +369,8 @@ class ChildAgentManager:
             raise RuntimeError(result.get("error", "child worker failed"))
 
         output = str(result.get("output", ""))
+        if self.coordinator is not None:
+            self.coordinator.integrate_child(child_id)
         total_tokens = self._accumulate_tokens(
             child_id, int(result.get("tokens_used", 0) or 0)
         )
@@ -417,6 +433,8 @@ class ChildAgentManager:
             if child and child.state == "CANCELLED":
                 return
             state = "TIMED_OUT" if isinstance(exc, TimeoutError) else "FAILED"
+            if self.coordinator is not None:
+                self.coordinator.abandon_child(child_id, preserve_worktree=True)
             self.repo.update(
                 child_id,
                 state=state,
@@ -516,6 +534,8 @@ class ChildAgentManager:
             process = self._processes.get(child_id)
         if process:
             self._kill_tree(process)
+        if self.coordinator is not None:
+            self.coordinator.abandon_child(child_id, preserve_worktree=True)
         return True
 
     def wait(self, child_id, timeout=60.0):
