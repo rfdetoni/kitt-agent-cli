@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import stat
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -38,9 +39,20 @@ class MCPManager:
     ):
         self.workspace_root = Path(workspace_root).resolve()
         self.config_file = Path(
-            config_file
-            or (Path.home() / ".kitt" / "config" / "mcp.json")
-        ).resolve()
+            os.path.abspath(
+                os.path.expanduser(
+                    str(
+                        config_file
+                        or (
+                            Path.home()
+                            / ".kitt"
+                            / "config"
+                            / "mcp.json"
+                        )
+                    )
+                )
+            )
+        )
         self.tool_registry = tool_registry
         self.trust_store = trust_store or MCPTrustStore(self.workspace_root)
         self._lock = threading.RLock()
@@ -76,7 +88,11 @@ class MCPManager:
         configs_data: Dict[str, Any] = {}
         workspace_server_ids: set[str] = set()
 
-        def _read_config(path: Path) -> dict[str, Any]:
+        def _read_config(
+            path: Path,
+            *,
+            trusted_source: bool = False,
+        ) -> dict[str, Any]:
             if not path.exists():
                 return {}
             if path.is_symlink():
@@ -85,6 +101,8 @@ class MCPManager:
             flags = os.O_RDONLY
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
+            if hasattr(os, "O_NONBLOCK"):
+                flags |= os.O_NONBLOCK
             try:
                 fd = os.open(str(path), flags)
             except FileNotFoundError:
@@ -96,6 +114,20 @@ class MCPManager:
 
             try:
                 stat_result = os.fstat(fd)
+                if not stat.S_ISREG(stat_result.st_mode):
+                    raise MCPError(
+                        f"MCP config must be a regular file: {path}"
+                    )
+                if trusted_source and os.name != "nt":
+                    if stat_result.st_uid != os.getuid():
+                        raise MCPError(
+                            f"Trusted MCP config owner mismatch: {path}"
+                        )
+                    if stat.S_IMODE(stat_result.st_mode) & 0o077:
+                        raise MCPError(
+                            "Trusted MCP config must not be accessible "
+                            f"by group/other; run chmod 600 {path}"
+                        )
                 if stat_result.st_size > _MAX_CONFIG_BYTES:
                     raise MCPError(
                         f"MCP config exceeds {_MAX_CONFIG_BYTES} bytes: {path}"
@@ -141,7 +173,12 @@ class MCPManager:
             return payload
 
         try:
-            configs_data.update(_read_config(self.config_file))
+            configs_data.update(
+                _read_config(
+                    self.config_file,
+                    trusted_source=True,
+                )
+            )
         except Exception as exc:
             logger.warning(
                 "Failed to load global MCP config from %s: %s",

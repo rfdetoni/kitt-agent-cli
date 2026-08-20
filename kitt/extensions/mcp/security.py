@@ -61,6 +61,8 @@ def _read_private_json(
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     try:
         fd = os.open(str(path), flags)
     except FileNotFoundError:
@@ -72,6 +74,10 @@ def _read_private_json(
 
     try:
         st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise MCPError(
+                f"MCP trust store must be a regular file: {path}"
+            )
         if os.name != "nt":
             if st.st_uid != os.getuid():
                 raise MCPError("MCP trust store owner mismatch")
@@ -172,6 +178,11 @@ class _InterprocessLock:
             raise MCPError(
                 f"Unable to securely open MCP trust lock {self.path}: {exc}"
             ) from exc
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            raise MCPError(
+                f"MCP trust lock must be a regular file: {self.path}"
+            )
         self.handle = os.fdopen(fd, "r+b", buffering=0)
         if os.name != "nt":
             try:

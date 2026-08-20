@@ -78,6 +78,8 @@ def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     try:
         fd = os.open(str(path), flags)
     except FileNotFoundError:
@@ -89,6 +91,10 @@ def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
 
     try:
         st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise PluginLoadError(
+                f"Plugin state file must be regular: {path}"
+            )
         if os.name != "nt":
             if st.st_uid != os.getuid():
                 raise PluginLoadError(
@@ -156,6 +162,11 @@ class _InterprocessLock:
             raise PluginLoadError(
                 f"Unable to securely open plugin state lock {self.path}: {exc}"
             ) from exc
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            raise PluginLoadError(
+                f"Plugin state lock must be regular: {self.path}"
+            )
         self._handle = os.fdopen(fd, "r+b", buffering=0)
         _set_private_permissions(self.path)
         deadline = time.monotonic() + self.timeout_seconds
