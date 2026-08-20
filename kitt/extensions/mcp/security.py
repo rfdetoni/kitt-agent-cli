@@ -16,6 +16,7 @@ from kitt.extensions.mcp.models import MCPServerConfig
 
 _STATE_VERSION = 1
 _LOCK_TIMEOUT_SECONDS = 5.0
+_MAX_STATE_BYTES = 1024 * 1024
 
 
 def _workspace_key(root: str | Path) -> str:
@@ -49,17 +50,67 @@ def mcp_config_digest(config: MCPServerConfig) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _validate_private_state_file(path: Path) -> None:
-    if not path.exists():
-        return
-    if path.is_symlink():
-        raise MCPError(f"Refusing symlink MCP trust store: {path}")
-    if os.name != "nt":
-        st = path.stat()
-        if st.st_uid != os.getuid():
-            raise MCPError("MCP trust store owner mismatch")
-        if stat.S_IMODE(st.st_mode) & 0o077:
-            raise MCPError("MCP trust store permissions must be 0600")
+def _state_path(value: str | Path) -> Path:
+    return Path(os.path.abspath(os.path.expanduser(str(value))))
+
+
+def _read_private_json(
+    path: Path,
+    default: dict[str, Any],
+) -> dict[str, Any]:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(str(path), flags)
+    except FileNotFoundError:
+        return dict(default)
+    except OSError as exc:
+        raise MCPError(
+            f"Unable to securely open MCP trust store {path}: {exc}"
+        ) from exc
+
+    try:
+        st = os.fstat(fd)
+        if os.name != "nt":
+            if st.st_uid != os.getuid():
+                raise MCPError("MCP trust store owner mismatch")
+            if stat.S_IMODE(st.st_mode) & 0o077:
+                raise MCPError(
+                    "MCP trust store permissions must be 0600"
+                )
+        if st.st_size > _MAX_STATE_BYTES:
+            raise MCPError(
+                f"MCP trust store exceeds {_MAX_STATE_BYTES} bytes"
+            )
+
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                fd,
+                min(64 * 1024, (_MAX_STATE_BYTES + 1) - total),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_STATE_BYTES:
+                raise MCPError(
+                    f"MCP trust store exceeds {_MAX_STATE_BYTES} bytes"
+                )
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+    try:
+        data = json.loads(b"".join(chunks).decode("utf-8"))
+    except Exception as exc:
+        raise MCPError(
+            f"Invalid MCP trust store {path}: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise MCPError("MCP trust store must contain an object")
+    return data
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -112,7 +163,16 @@ class _InterprocessLock:
                 os.chmod(self.path.parent, 0o700)
             except OSError:
                 pass
-        self.handle = open(self.path, "a+b")
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(str(self.path), flags, 0o600)
+        except OSError as exc:
+            raise MCPError(
+                f"Unable to securely open MCP trust lock {self.path}: {exc}"
+            ) from exc
+        self.handle = os.fdopen(fd, "r+b", buffering=0)
         if os.name != "nt":
             try:
                 os.chmod(self.path, 0o600)
@@ -194,7 +254,7 @@ class MCPTrustStore:
     ):
         self.workspace_root = Path(workspace_root).resolve()
         self.workspace_key = _workspace_key(self.workspace_root)
-        self.path = Path(
+        self.path = _state_path(
             path
             or (
                 Path.home()
@@ -202,30 +262,19 @@ class MCPTrustStore:
                 / "security"
                 / "mcp-trust.json"
             )
-        ).expanduser().resolve()
+        )
         self.lock_path = self.path.with_suffix(
             self.path.suffix + ".lock"
         )
 
     def _data(self) -> dict[str, Any]:
-        if not self.path.is_file():
-            return {
+        data = _read_private_json(
+            self.path,
+            {
                 "version": _STATE_VERSION,
                 "workspaces": {},
-            }
-        _validate_private_state_file(self.path)
-        try:
-            data = json.loads(
-                self.path.read_text(encoding="utf-8")
-            )
-        except Exception as exc:
-            raise MCPError(
-                f"Invalid MCP trust store {self.path}: {exc}"
-            ) from exc
-        if not isinstance(data, dict):
-            raise MCPError(
-                "MCP trust store must contain an object"
-            )
+            },
+        )
         data.setdefault("version", _STATE_VERSION)
         data.setdefault("workspaces", {})
         return data

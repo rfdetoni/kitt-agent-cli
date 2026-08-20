@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import shutil
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -19,6 +20,7 @@ _MAX_PLUGIN_FILES = 4096
 _MAX_PLUGIN_FILE_BYTES = 8 * 1024 * 1024
 _MAX_PLUGIN_TOTAL_BYTES = 64 * 1024 * 1024
 _LOCK_TIMEOUT_SECONDS = 5.0
+_MAX_STATE_BYTES = 1024 * 1024
 
 
 def _workspace_key(workspace_root: str | Path) -> str:
@@ -68,11 +70,59 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _state_path(value: str | Path) -> Path:
+    return Path(os.path.abspath(os.path.expanduser(str(value))))
+
+
 def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
-    if not path.is_file():
-        return dict(default)
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        fd = os.open(str(path), flags)
+    except FileNotFoundError:
+        return dict(default)
+    except OSError as exc:
+        raise PluginLoadError(
+            f"Unable to securely open plugin state file {path}: {exc}"
+        ) from exc
+
+    try:
+        st = os.fstat(fd)
+        if os.name != "nt":
+            if st.st_uid != os.getuid():
+                raise PluginLoadError(
+                    f"Plugin state file owner mismatch: {path}"
+                )
+            if stat.S_IMODE(st.st_mode) & 0o077:
+                raise PluginLoadError(
+                    f"Plugin state file permissions must be 0600: {path}"
+                )
+        if st.st_size > _MAX_STATE_BYTES:
+            raise PluginLoadError(
+                f"Plugin state file exceeds {_MAX_STATE_BYTES} bytes: {path}"
+            )
+
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                fd,
+                min(64 * 1024, (_MAX_STATE_BYTES + 1) - total),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_STATE_BYTES:
+                raise PluginLoadError(
+                    f"Plugin state file exceeds {_MAX_STATE_BYTES} bytes: {path}"
+                )
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+    try:
+        data = json.loads(b"".join(chunks).decode("utf-8"))
     except Exception as exc:
         raise PluginLoadError(
             f"Invalid plugin security state file {path}: {exc}"
@@ -97,7 +147,16 @@ class _InterprocessLock:
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         _set_private_permissions(self.path.parent)
-        self._handle = open(self.path, "a+b")
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(str(self.path), flags, 0o600)
+        except OSError as exc:
+            raise PluginLoadError(
+                f"Unable to securely open plugin state lock {self.path}: {exc}"
+            ) from exc
+        self._handle = os.fdopen(fd, "r+b", buffering=0)
         _set_private_permissions(self.path)
         deadline = time.monotonic() + self.timeout_seconds
 
@@ -409,7 +468,7 @@ class PluginTrustStore:
     ):
         self.workspace_root = Path(workspace_root).resolve()
         self.workspace_key = _workspace_key(self.workspace_root)
-        self.path = Path(
+        self.path = _state_path(
             path
             or (
                 Path.home()
@@ -417,7 +476,7 @@ class PluginTrustStore:
                 / "security"
                 / "plugin-trust.json"
             )
-        ).expanduser().resolve()
+        )
         self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
 
     def _data(self) -> dict[str, Any]:
@@ -519,7 +578,7 @@ class PluginStateStore:
     ):
         self.workspace_root = Path(workspace_root).resolve()
         self.workspace_key = _workspace_key(self.workspace_root)
-        self.path = Path(
+        self.path = _state_path(
             path
             or (
                 Path.home()
@@ -527,7 +586,7 @@ class PluginStateStore:
                 / "state"
                 / "plugin-state.json"
             )
-        ).expanduser().resolve()
+        )
         self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
 
     def _data(self) -> dict[str, Any]:
