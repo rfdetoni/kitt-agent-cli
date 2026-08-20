@@ -233,6 +233,16 @@ def handle_plugins_command(
         return 0
     if action == "untrust":
         removed = ext.plugin_trust.revoke(plugin_id)
+        if removed:
+            daemon_res = asyncio.run(
+                _daemon_request("plugin.unload", {"name": plugin_id})
+            )
+            if daemon_res is not None and daemon_res.get("status") != "ok":
+                print(
+                    f"\033[31mTrust revoked, but active daemon unload failed: "
+                    f"{daemon_res.get('error')}. Restart the daemon before continuing.\033[0m"
+                )
+                return 1
         print(
             f"\033[32m✓ Trust revoked for '{plugin_id}'.\033[0m"
             if removed else f"\033[90mPlugin '{plugin_id}' had no trust grant.\033[0m"
@@ -324,6 +334,9 @@ def handle_mcp_command(
         return 0
 
     if action == "disconnect":
+        if not server:
+            print("\033[31mError: Missing MCP server name.\033[0m")
+            return 1
         daemon_res = asyncio.run(
             _daemon_request(
                 "mcp.disconnect",

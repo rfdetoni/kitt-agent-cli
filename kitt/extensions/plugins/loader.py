@@ -1,9 +1,8 @@
-"""Plugin loader with explicit in-process trust and correct async lifecycle."""
+"""Plugin loader for user-approved immutable snapshots."""
 from __future__ import annotations
 
 import asyncio
 import ast
-import contextlib
 import importlib.util
 import inspect
 import logging
@@ -11,11 +10,15 @@ import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterator, Optional, Protocol
+from typing import Callable, Dict, Optional, Protocol
 
 from kitt.extensions.errors import PluginLoadError
 from kitt.extensions.manifest import parse_manifest_file
-from kitt.extensions.models import PluginIdentity, PluginManifest, PluginState
+from kitt.extensions.models import (
+    PluginIdentity,
+    PluginManifest,
+    PluginState,
+)
 from kitt.extensions.plugins.api import (
     CommandAPI,
     EventAPI,
@@ -60,28 +63,6 @@ class DefaultPluginHandle:
                 await result
 
 
-class ScopedPluginHandle:
-    def __init__(
-        self,
-        inner: PluginHandle,
-        scope_factory: Callable[[], contextlib.AbstractContextManager[None]],
-    ):
-        self._inner = inner
-        self._scope_factory = scope_factory
-
-    async def start(self) -> None:
-        with self._scope_factory():
-            result = self._inner.start()
-            if inspect.isawaitable(result):
-                await result
-
-    async def stop(self) -> None:
-        with self._scope_factory():
-            result = self._inner.stop()
-            if inspect.isawaitable(result):
-                await result
-
-
 @dataclass
 class PluginInstance:
     manifest: PluginManifest
@@ -90,17 +71,12 @@ class PluginInstance:
     handle: Optional[PluginHandle] = None
     state: PluginState = PluginState.DISCOVERED
     last_error: Optional[str] = None
+    module_prefix: Optional[str] = None
+    snapshot_root: Optional[Path] = None
 
 
 class PluginLoader:
-    """Discover and load explicitly trusted Python plugins.
-
-    Python import executes arbitrary code before KITT's API facade can enforce
-    permissions. Therefore workspace/global Python plugins are fail-closed unless
-    the manifest explicitly declares ``trusted_in_process = true``. Untrusted
-    extensibility should use MCP or executable skills, which already have a
-    process boundary.
-    """
+    """Load only an externally-approved content snapshot."""
 
     def __init__(
         self,
@@ -120,7 +96,9 @@ class PluginLoader:
         self.hook_registry = hook_registry
         self.tool_registry = tool_registry
         self.command_registry = command_registry
-        self.trust_store = trust_store or PluginTrustStore(self.workspace_root)
+        self.trust_store = trust_store or PluginTrustStore(
+            self.workspace_root
+        )
 
     def discover_manifests(self) -> Dict[str, PluginManifest]:
         manifests: Dict[str, PluginManifest] = {}
@@ -133,7 +111,9 @@ class PluginLoader:
                 if not manifest_file.is_file():
                     continue
                 try:
-                    manifest = parse_manifest_file(manifest_file, source="global")
+                    manifest = parse_manifest_file(
+                        manifest_file, source="global"
+                    )
                     manifests[manifest.name] = manifest
                 except Exception as exc:
                     logger.warning(
@@ -168,24 +148,122 @@ class PluginLoader:
                     )
         return manifests
 
-    def _build_instance(self, manifest: PluginManifest) -> PluginInstance:
-        manifest_dir = (
-            manifest.manifest_path.parent
-            if manifest.manifest_path
-            else self.workspace_root
+    def _approved_digest(self, manifest: PluginManifest) -> str:
+        if not manifest.trusted_in_process:
+            raise PluginLoadError(
+                f"Plugin '{manifest.name}' does not opt in to "
+                "in-process execution."
+            )
+        approved = self.trust_store.approved_digest(manifest)
+        if approved:
+            return approved
+        raise PluginLoadError(
+            f"Plugin '{manifest.name}' is not trusted by the local user "
+            "for this workspace/content hash."
         )
+
+    @staticmethod
+    def _safe_module_name(value: str) -> str:
+        return "".join(
+            char if char.isalnum() or char == "_" else "_"
+            for char in value
+        )
+
+    def _package_key(
+        self, manifest: PluginManifest, digest: str
+    ) -> str:
+        return (
+            f"kitt_plugin_{self._safe_module_name(manifest.name)}_"
+            f"{digest}"
+        )
+
+    @staticmethod
+    def _local_top_level_names(snapshot_root: Path) -> set[str]:
+        names: set[str] = set()
+        for candidate in snapshot_root.iterdir():
+            if (
+                candidate.is_file()
+                and candidate.suffix == ".py"
+                and candidate.name != "__init__.py"
+            ):
+                names.add(candidate.stem)
+            elif (
+                candidate.is_dir()
+                and (candidate / "__init__.py").is_file()
+            ):
+                names.add(candidate.name)
+        return names
+
+    def _validate_relative_local_imports(
+        self,
+        manifest: PluginManifest,
+        snapshot_root: Path,
+    ) -> None:
+        """Local plugin modules must be imported through the synthetic package."""
+        local_names = self._local_top_level_names(snapshot_root)
+        if not local_names:
+            return
+        for candidate in snapshot_root.rglob("*.py"):
+            try:
+                tree = ast.parse(
+                    candidate.read_text(encoding="utf-8"),
+                    filename=str(candidate),
+                )
+            except (UnicodeDecodeError, SyntaxError) as exc:
+                raise PluginLoadError(
+                    f"Plugin '{manifest.name}' has invalid Python source "
+                    f"{candidate.name}: {exc}"
+                ) from exc
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.split(".", 1)[0] in local_names:
+                            raise PluginLoadError(
+                                f"Plugin '{manifest.name}' must use "
+                                f"relative import for local module "
+                                f"'{alias.name}'"
+                            )
+                elif (
+                    isinstance(node, ast.ImportFrom)
+                    and node.level == 0
+                    and node.module
+                    and node.module.split(".", 1)[0] in local_names
+                ):
+                    raise PluginLoadError(
+                        f"Plugin '{manifest.name}' must use relative "
+                        f"import for local module '{node.module}'"
+                    )
+
+    def _build_instance(
+        self,
+        manifest: PluginManifest,
+        snapshot_root: Path,
+    ) -> PluginInstance:
         identity = PluginIdentity(
             name=manifest.name,
             version=manifest.version,
             source=manifest.source,
-            root_path=manifest_dir,
+            root_path=snapshot_root,
         )
         context = PluginContext(
             identity=identity,
             manifest=manifest,
-            events=EventAPI(manifest.name, manifest.permissions, self.event_bus),
-            hooks=HookAPI(manifest.name, manifest.permissions, self.hook_registry),
-            tools=ToolAPI(manifest.name, manifest.permissions, self.tool_registry),
+            events=EventAPI(
+                manifest.name,
+                manifest.permissions,
+                self.event_bus,
+            ),
+            hooks=HookAPI(
+                manifest.name,
+                manifest.permissions,
+                self.hook_registry,
+            ),
+            tools=ToolAPI(
+                manifest.name,
+                manifest.permissions,
+                self.tool_registry,
+            ),
             commands=CommandAPI(
                 manifest.name,
                 manifest.permissions,
@@ -199,191 +277,151 @@ class PluginLoader:
             identity=identity,
             context=context,
             state=PluginState.LOADING,
+            snapshot_root=snapshot_root,
         )
 
-    def _approved_digest(self, manifest: PluginManifest) -> str:
-        if not manifest.trusted_in_process:
+    def _resolve_entrypoint(
+        self,
+        snapshot_root: Path,
+        module_name: str,
+    ) -> tuple[list[str], Path, bool]:
+        normalized = module_name.replace("\\", "/").strip("/")
+        if normalized.endswith(".py"):
+            normalized = normalized[:-3]
+        if "/" not in normalized and "." in normalized:
+            normalized = normalized.replace(".", "/")
+        parts = [part for part in normalized.split("/") if part]
+        if not parts or any(part in {".", ".."} for part in parts):
             raise PluginLoadError(
-                f"Plugin '{manifest.name}' does not opt in to in-process execution. "
-                "Review it before setting trusted_in_process=true."
+                f"Invalid plugin entrypoint module '{module_name}'"
             )
-        approved = self.trust_store.approved_digest(manifest)
-        if approved:
-            return approved
+
+        module_candidate = snapshot_root.joinpath(*parts)
+        py_file = module_candidate.with_suffix(".py")
+        package_init = module_candidate / "__init__.py"
+        if py_file.is_file():
+            return parts, py_file, False
+        if package_init.is_file():
+            return parts, package_init, True
+        if module_candidate.is_file():
+            return parts, module_candidate, False
         raise PluginLoadError(
-            f"Plugin '{manifest.name}' is not trusted by the local user for this "
-            "workspace/content hash. Run 'kitt plugins trust "
-            f"{manifest.name}' after reviewing it, or use MCP/executable skills."
+            f"Plugin entrypoint file not found for '{module_name}'"
         )
 
     @staticmethod
-    def _module_safe_name(value: str) -> str:
-        return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
-
-    def _package_key(self, manifest: PluginManifest, approved_digest: str) -> str:
-        return (
-            f"kitt_plugin_{self._module_safe_name(manifest.name)}_{approved_digest}"
-        )
-
-    @contextlib.contextmanager
-    def _snapshot_import_scope(self, snapshot_root: Path) -> Iterator[None]:
-        snapshot = str(snapshot_root.resolve())
-        workspace = str(self.workspace_root.resolve())
-        removed: list[tuple[int, str]] = []
-        retained: list[str] = []
-        for index, entry in enumerate(sys.path):
-            raw = str(entry or "")
-            candidate = raw
-            try:
-                candidate = str(Path(raw or ".").resolve())
-            except OSError:
-                pass
-            if candidate == workspace:
-                removed.append((index, raw))
-            else:
-                retained.append(raw)
-        sys.path[:] = [snapshot] + retained
-        try:
-            yield
-        finally:
-            if sys.path and sys.path[0] == snapshot:
-                sys.path.pop(0)
-            for index, entry in sorted(removed, key=lambda item: item[0]):
-                insert_at = min(index, len(sys.path))
-                sys.path.insert(insert_at, entry)
-
-    @staticmethod
-    def _local_top_level_names(snapshot_root: Path) -> set[str]:
-        names: set[str] = set()
-        for candidate in snapshot_root.rglob("*"):
-            if candidate.is_dir():
-                init_file = candidate / "__init__.py"
-                if init_file.is_file():
-                    try:
-                        relative = candidate.relative_to(snapshot_root)
-                    except ValueError:
-                        continue
-                    if relative.parts:
-                        names.add(relative.parts[0])
-                continue
-            if candidate.suffix == ".py" and candidate.name != "__init__.py":
-                try:
-                    relative = candidate.relative_to(snapshot_root)
-                except ValueError:
-                    continue
-                if relative.parts:
-                    names.add(relative.parts[0].removesuffix(".py"))
-        return names
-
-    def _validate_relative_local_imports(
-        self, manifest: PluginManifest, snapshot_root: Path
-    ) -> None:
-        local_names = self._local_top_level_names(snapshot_root)
-        if not local_names:
+    def _ensure_package(module_name: str, package_path: Path) -> None:
+        if module_name in sys.modules:
             return
-        for candidate in snapshot_root.rglob("*.py"):
-            source = candidate.read_text(encoding="utf-8")
-            try:
-                tree = ast.parse(source, filename=str(candidate))
-            except SyntaxError as exc:
-                raise PluginLoadError(
-                    f"Plugin '{manifest.name}' has invalid Python syntax: {exc}"
-                ) from exc
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name.split(".", 1)[0] in local_names:
-                            raise PluginLoadError(
-                                f"Plugin '{manifest.name}' must use relative imports for local module '{alias.name}'"
-                            )
-                elif (
-                    isinstance(node, ast.ImportFrom)
-                    and node.level == 0
-                    and node.module
-                    and node.module.split(".", 1)[0] in local_names
-                ):
-                    raise PluginLoadError(
-                        f"Plugin '{manifest.name}' must use relative imports for local module '{node.module}'"
-                    )
+        module = types.ModuleType(module_name)
+        module.__path__ = [str(package_path)]
+        module.__package__ = module_name
+        module.__file__ = str(package_path / "__init__.py")
+        sys.modules[module_name] = module
 
-    def _rollback(
-        self, manifest: PluginManifest, module_prefix: Optional[str] = None
-    ) -> None:
+    def unload_instance(self, instance: PluginInstance) -> None:
+        prefix = instance.module_prefix
+        if not prefix:
+            return
+        for name in list(sys.modules):
+            if name == prefix or name.startswith(prefix + "."):
+                sys.modules.pop(name, None)
+
+    def _rollback(self, instance: PluginInstance) -> None:
         if self.hook_registry:
-            self.hook_registry.unregister(plugin_id=manifest.name)
-        if self.tool_registry and hasattr(
-            self.tool_registry, "unregister_by_owner"
+            self.hook_registry.unregister(
+                plugin_id=instance.manifest.name
+            )
+        if (
+            self.tool_registry
+            and hasattr(self.tool_registry, "unregister_by_owner")
         ):
-            self.tool_registry.unregister_by_owner(manifest.name)
-        prefix = module_prefix or f"kitt_plugin_{self._module_safe_name(manifest.name)}"
-        for key in [name for name in list(sys.modules) if name == prefix or name.startswith(f"{prefix}.")]:
-            sys.modules.pop(key, None)
+            self.tool_registry.unregister_by_owner(
+                instance.manifest.name
+            )
+        self.unload_instance(instance)
 
-    async def load_async(self, manifest: PluginManifest) -> PluginInstance:
-        """Load one trusted plugin and await async setup correctly."""
+    async def load_async(
+        self, manifest: PluginManifest
+    ) -> PluginInstance:
         approved_digest = self._approved_digest(manifest)
         snapshot_root = prepare_trusted_plugin_snapshot(
             manifest,
             approved_digest,
             self.workspace_root,
         )
-        self._validate_relative_local_imports(manifest, snapshot_root)
-        instance = self._build_instance(manifest)
-        manifest_dir = snapshot_root
+        self._validate_relative_local_imports(
+            manifest, snapshot_root
+        )
+        instance = self._build_instance(
+            manifest, snapshot_root
+        )
+        package_key = self._package_key(
+            manifest, approved_digest
+        )
+        instance.module_prefix = package_key
 
         try:
-            module_name_rel, separator, function_name = manifest.entrypoint.partition(":")
+            module_name, separator, function_name = (
+                manifest.entrypoint.partition(":")
+            )
             function_name = function_name if separator else "setup"
-            module_name_rel = module_name_rel.replace("\\", "/").strip().removesuffix(".py")
-            module_parts = [part for part in module_name_rel.split("/") if part]
-            if not module_parts:
-                raise PluginLoadError(
-                    f"Plugin '{manifest.name}' entrypoint is invalid: {manifest.entrypoint}"
+            parts, module_file, is_package = (
+                self._resolve_entrypoint(
+                    snapshot_root, module_name
                 )
-            module_candidate = manifest_dir.joinpath(*module_parts)
-            module_file = module_candidate.with_suffix(".py")
-            if not module_file.is_file() and module_candidate.is_dir():
-                module_file = module_candidate / "__init__.py"
-            if not module_file.is_file():
-                module_file = module_candidate
-            if not module_file.is_file():
-                raise PluginLoadError(
-                    f"Plugin '{manifest.name}' entrypoint file not found: "
-                    f"{module_file}"
+            )
+
+            self._ensure_package(
+                package_key, snapshot_root
+            )
+            for depth in range(1, len(parts)):
+                package_name = (
+                    package_key
+                    + "."
+                    + ".".join(parts[:depth])
+                )
+                package_path = snapshot_root.joinpath(
+                    *parts[:depth]
+                )
+                self._ensure_package(
+                    package_name, package_path
                 )
 
-            package_key = self._package_key(manifest, approved_digest)
-            package_module = types.ModuleType(package_key)
-            package_module.__path__ = [str(snapshot_root)]
-            package_module.__file__ = str(snapshot_root / "__init__.py")
-            sys.modules[package_key] = package_module
-            module_key = f"{package_key}.{'.'.join(module_parts)}"
-            spec = importlib.util.spec_from_file_location(module_key, module_file)
+            module_key = package_key + "." + ".".join(parts)
+            kwargs = {}
+            if is_package:
+                kwargs["submodule_search_locations"] = [
+                    str(module_file.parent)
+                ]
+            spec = importlib.util.spec_from_file_location(
+                module_key,
+                module_file,
+                **kwargs,
+            )
             if spec is None or spec.loader is None:
                 raise PluginLoadError(
-                    f"Failed to create module spec for plugin '{manifest.name}' "
-                    f"at {module_file}"
+                    f"Failed creating module spec for "
+                    f"'{manifest.name}'"
                 )
 
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_key] = module
-            with self._snapshot_import_scope(snapshot_root):
-                spec.loader.exec_module(module)
+            spec.loader.exec_module(module)
 
             setup = getattr(module, function_name, None)
             if not callable(setup):
                 raise PluginLoadError(
-                    f"Plugin '{manifest.name}' entrypoint '{function_name}' "
-                    f"is not callable in {module_file}"
+                    f"Plugin '{manifest.name}' entrypoint "
+                    f"'{function_name}' is not callable"
                 )
 
-            with self._snapshot_import_scope(snapshot_root):
-                result = setup(instance.context)
-                if inspect.isawaitable(result):
-                    result = await result
+            result = setup(instance.context)
+            if inspect.isawaitable(result):
+                result = await result
 
             if hasattr(result, "start") and hasattr(result, "stop"):
-                handle: Optional[PluginHandle] = result
+                handle: PluginHandle = result
             elif isinstance(result, tuple) and len(result) == 2:
                 handle = DefaultPluginHandle(
                     start_fn=result[0],
@@ -392,24 +430,22 @@ class PluginLoader:
             else:
                 handle = DefaultPluginHandle()
 
-            instance.handle = ScopedPluginHandle(
-                handle,
-                lambda: self._snapshot_import_scope(snapshot_root),
-            )
+            instance.handle = handle
             instance.state = PluginState.LOADED
             return instance
         except Exception as exc:
             instance.state = PluginState.FAILED
             instance.last_error = str(exc)
-            self._rollback(manifest, package_key if "package_key" in locals() else None)
+            self._rollback(instance)
             if isinstance(exc, PluginLoadError):
                 raise
             raise PluginLoadError(
                 f"Failed to load plugin '{manifest.name}': {exc}"
             ) from exc
 
-    def load(self, manifest: PluginManifest) -> PluginInstance:
-        """Synchronous compatibility wrapper for non-async callers."""
+    def load(
+        self, manifest: PluginManifest
+    ) -> PluginInstance:
         try:
             asyncio.get_running_loop()
         except RuntimeError:

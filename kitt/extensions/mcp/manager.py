@@ -1,9 +1,9 @@
-"""MCP Manager coordinating multi-server connections, tools syncing, and lifecycle."""
+"""MCP Manager coordinating connections, tools and lifecycle."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -11,21 +11,21 @@ from typing import Any, Dict, List, Optional
 from kitt.extensions.errors import MCPError
 from kitt.extensions.mcp.client import MCPClient
 from kitt.extensions.mcp.models import (
-    MCPPrompt,
-    MCPResource,
     MCPServerConfig,
     MCPServerState,
     MCPTool,
 )
 from kitt.extensions.mcp.tool_adapter import MCPToolAdapter
-from kitt.extensions.mcp.transport import HTTPTransport, MCPTransport, StdioTransport
+from kitt.extensions.mcp.transport import (
+    HTTPTransport,
+    MCPTransport,
+    StdioTransport,
+)
 
 logger = logging.getLogger("kitt.extensions.mcp.manager")
 
 
 class MCPManager:
-    """Central manager for Model Context Protocol servers and integrated capabilities."""
-
     def __init__(
         self,
         workspace_root: str = ".",
@@ -33,97 +33,242 @@ class MCPManager:
         tool_registry=None,
     ):
         self.workspace_root = Path(workspace_root).resolve()
-        self.config_file = Path(config_file or (Path.home() / ".kitt" / "config" / "mcp.json")).resolve()
+        self.config_file = Path(
+            config_file
+            or (Path.home() / ".kitt" / "config" / "mcp.json")
+        ).resolve()
         self.tool_registry = tool_registry
         self._lock = threading.RLock()
         self._configs: Dict[str, MCPServerConfig] = {}
         self._clients: Dict[str, MCPClient] = {}
+        self._custom_transports: Dict[str, MCPTransport] = {}
         self._server_tools: Dict[str, List[MCPTool]] = {}
+        self._async_locks: Dict[str, asyncio.Lock] = {}
         self._load_configs()
 
-    def _load_configs(self) -> None:
-        """Loads MCP configurations from global and workspace configs."""
-        configs_data: Dict[str, Any] = {}
+    @staticmethod
+    def _server_id(value: str) -> str:
+        return str(value or "").strip().lower()
 
-        # 1. Global config (~/.kitt/config/mcp.json)
-        if self.config_file.is_file():
-            try:
-                data = json.loads(self.config_file.read_text(encoding="utf-8"))
-                configs_data.update(data.get("mcp", data))
-            except Exception as exc:
-                logger.warning("Failed to load global MCP config from %s: %s", self.config_file, exc)
-
-        # 2. Workspace config (<workspace>/.kitt/mcp.json)
-        ws_mcp_file = self.workspace_root / ".kitt" / "mcp.json"
-        if ws_mcp_file.is_file():
-            try:
-                ws_data = json.loads(ws_mcp_file.read_text(encoding="utf-8"))
-                configs_data.update(ws_data.get("mcp", ws_data))
-            except Exception as exc:
-                logger.warning("Failed to load workspace MCP config from %s: %s", ws_mcp_file, exc)
-
-        for s_id, s_data in configs_data.items():
-            if isinstance(s_data, dict):
-                self._configs[s_id] = MCPServerConfig(
-                    server_id=s_id,
-                    transport=s_data.get("transport", "stdio"),
-                    command=s_data.get("command"),
-                    args=s_data.get("args", []),
-                    env=s_data.get("env", {}),
-                    url=s_data.get("url"),
-                    enabled=bool(s_data.get("enabled", True)),
-                    trust=s_data.get("trust", "restricted"),
-                    allow_tools=s_data.get("allow_tools"),
-                    deny_tools=s_data.get("deny_tools", []),
-                    timeout_seconds=float(s_data.get("timeout_seconds", 30.0)),
-                )
-
-    def register_server(self, config: MCPServerConfig, custom_transport: Optional[MCPTransport] = None) -> None:
-        with self._lock:
-            self._configs[config.server_id] = config
-            if custom_transport:
-                self._clients[config.server_id] = MCPClient(config, custom_transport)
-
-    def _build_transport(
-        self, config: MCPServerConfig, transport: Optional[MCPTransport] = None
-    ) -> MCPTransport:
-        if transport is not None:
-            return transport
-        if config.transport in {"http", "streamable_http"}:
-            return HTTPTransport(
-                url=config.url or "",
-                timeout_seconds=config.timeout_seconds,
-            )
-        return StdioTransport(
-            command=config.command or "",
-            args=config.args,
-            env=config.env,
+    @staticmethod
+    def _transport_kind(value: str) -> str:
+        return (
+            str(value or "stdio")
+            .strip()
+            .lower()
+            .replace("-", "_")
         )
 
-    async def connect(self, server_id: str, transport: Optional[MCPTransport] = None) -> MCPClient:
-        """Connects to an MCP server, performs handshake, and syncs exposed tools."""
-        s_id = server_id.strip().lower()
+    def _server_lock(self, server_id: str) -> asyncio.Lock:
         with self._lock:
-            config = self._configs.get(s_id)
-            if not config:
-                raise MCPError(f"MCP server '{s_id}' not found in configuration.")
+            lock = self._async_locks.get(server_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._async_locks[server_id] = lock
+            return lock
 
-            client = self._clients.get(s_id)
-            if not client:
-                t = self._build_transport(config, transport)
-                client = MCPClient(config, t)
-                self._clients[s_id] = client
+    def _load_configs(self) -> None:
+        configs_data: Dict[str, Any] = {}
 
-        await client.connect()
+        if self.config_file.is_file():
+            try:
+                data = json.loads(
+                    self.config_file.read_text(encoding="utf-8")
+                )
+                configs_data.update(data.get("mcp", data))
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load global MCP config from %s: %s",
+                    self.config_file,
+                    exc,
+                )
 
-        # Discover and register tools
-        try:
-            tools = await client.list_tools()
+        workspace_file = self.workspace_root / ".kitt" / "mcp.json"
+        if workspace_file.is_file():
+            try:
+                data = json.loads(
+                    workspace_file.read_text(encoding="utf-8")
+                )
+                configs_data.update(data.get("mcp", data))
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load workspace MCP config from %s: %s",
+                    workspace_file,
+                    exc,
+                )
+
+        for raw_id, raw in configs_data.items():
+            if not isinstance(raw, dict):
+                continue
+            server_id = self._server_id(raw_id)
+            if not server_id:
+                continue
+            self._configs[server_id] = MCPServerConfig(
+                server_id=server_id,
+                transport=self._transport_kind(
+                    raw.get("transport", "stdio")
+                ),
+                command=raw.get("command"),
+                args=list(raw.get("args", [])),
+                env={
+                    str(k): str(v)
+                    for k, v in dict(raw.get("env", {})).items()
+                },
+                url=raw.get("url"),
+                headers={
+                    str(k): str(v)
+                    for k, v in dict(raw.get("headers", {})).items()
+                },
+                enabled=bool(raw.get("enabled", True)),
+                trust=str(raw.get("trust", "restricted")),
+                allow_tools=raw.get("allow_tools"),
+                deny_tools=list(raw.get("deny_tools", [])),
+                timeout_seconds=float(
+                    raw.get("timeout_seconds", 30.0)
+                ),
+                max_output_bytes=int(
+                    raw.get("max_output_bytes", 2 * 1024 * 1024)
+                ),
+            )
+
+    def register_server(
+        self,
+        config: MCPServerConfig,
+        custom_transport: Optional[MCPTransport] = None,
+    ) -> None:
+        server_id = self._server_id(config.server_id)
+        config.server_id = server_id
+        config.transport = self._transport_kind(config.transport)
+        with self._lock:
+            self._configs[server_id] = config
+            if custom_transport is not None:
+                self._custom_transports[server_id] = custom_transport
+
+    def _build_transport(
+        self,
+        config: MCPServerConfig,
+        override: Optional[MCPTransport] = None,
+    ) -> MCPTransport:
+        if override is not None:
+            return override
+        with self._lock:
+            custom = self._custom_transports.get(config.server_id)
+        if custom is not None:
+            return custom
+
+        kind = self._transport_kind(config.transport)
+        if kind == "stdio":
+            if not config.command:
+                raise MCPError(
+                    f"MCP stdio server '{config.server_id}' requires command"
+                )
+            return StdioTransport(
+                command=config.command,
+                args=config.args,
+                env=config.env,
+                cwd=str(self.workspace_root),
+            )
+        if kind in {"http", "streamable_http"}:
+            if not config.url:
+                raise MCPError(
+                    f"MCP HTTP server '{config.server_id}' requires url"
+                )
+            return HTTPTransport(
+                url=config.url,
+                timeout_seconds=config.timeout_seconds,
+                headers=config.headers,
+            )
+        if kind == "inprocess":
+            raise MCPError(
+                f"MCP inprocess server '{config.server_id}' requires "
+                "a trusted custom transport"
+            )
+        raise MCPError(
+            f"Unsupported MCP transport '{config.transport}'"
+        )
+
+    async def connect(
+        self,
+        server_id: str,
+        transport: Optional[MCPTransport] = None,
+    ) -> MCPClient:
+        server_id = self._server_id(server_id)
+        if not server_id:
+            raise MCPError("MCP server id is required")
+
+        async with self._server_lock(server_id):
             with self._lock:
-                self._server_tools[s_id] = tools
+                config = self._configs.get(server_id)
+                client = self._clients.get(server_id)
+            if config is None:
+                raise MCPError(
+                    f"MCP server '{server_id}' not found"
+                )
+            current_loop = asyncio.get_running_loop()
+            if client is not None and client.owner_loop is not None:
+                if client.owner_loop is not current_loop:
+                    raise MCPError(
+                        f"MCP server '{server_id}' is owned by another "
+                        "event loop"
+                    )
+            if (
+                client is not None
+                and client.state == MCPServerState.CONNECTED
+            ):
+                return client
 
-            # Register with KITT's tool registry
-            if self.tool_registry and hasattr(self.tool_registry, "register"):
+            if client is not None:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    logger.debug(
+                        "Discarding stale MCP client",
+                        exc_info=True,
+                    )
+
+            client = MCPClient(
+                config,
+                self._build_transport(config, transport),
+            )
+            with self._lock:
+                self._clients[server_id] = client
+
+            try:
+                await client.connect()
+                capabilities = getattr(
+                    client, "_server_capabilities", {}
+                )
+                tools = (
+                    await client.list_tools()
+                    if "tools" in capabilities
+                    else []
+                )
+            except Exception:
+                with self._lock:
+                    self._clients.pop(server_id, None)
+                    self._server_tools.pop(server_id, None)
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                raise
+
+            with self._lock:
+                self._server_tools[server_id] = tools
+
+            if (
+                self.tool_registry
+                and hasattr(
+                    self.tool_registry, "unregister_by_owner"
+                )
+            ):
+                self.tool_registry.unregister_by_owner(
+                    f"mcp:{server_id}"
+                )
+            if (
+                self.tool_registry
+                and hasattr(self.tool_registry, "register")
+            ):
                 for tool in tools:
                     adapter = MCPToolAdapter(tool, client)
                     self.tool_registry.register(
@@ -131,27 +276,39 @@ class MCPManager:
                         adapter.execute,
                         description=adapter.description,
                         schema=adapter.schema,
-                        owner_plugin_id=f"mcp:{s_id}",
+                        owner_plugin_id=f"mcp:{server_id}",
                     )
-        except Exception as exc:
-            logger.error("Failed to list tools from MCP server '%s': %s", s_id, exc)
-
-        return client
+            return client
 
     async def disconnect(self, server_id: str) -> None:
-        s_id = server_id.strip().lower()
-        with self._lock:
-            client = self._clients.get(s_id)
-            if not client:
-                return
-
-            # Unregister tools from ToolRegistry
-            if self.tool_registry and hasattr(self.tool_registry, "unregister_by_owner"):
-                self.tool_registry.unregister_by_owner(f"mcp:{s_id}")
-
-            self._server_tools.pop(s_id, None)
-
-        await client.disconnect()
+        server_id = self._server_id(server_id)
+        if not server_id:
+            return
+        async with self._server_lock(server_id):
+            with self._lock:
+                client = self._clients.get(server_id)
+            if (
+                client is not None
+                and client.owner_loop is not None
+                and client.owner_loop is not asyncio.get_running_loop()
+            ):
+                raise MCPError(
+                    f"MCP server '{server_id}' is owned by another event loop"
+                )
+            with self._lock:
+                client = self._clients.pop(server_id, None)
+                self._server_tools.pop(server_id, None)
+            if (
+                self.tool_registry
+                and hasattr(
+                    self.tool_registry, "unregister_by_owner"
+                )
+            ):
+                self.tool_registry.unregister_by_owner(
+                    f"mcp:{server_id}"
+                )
+            if client is not None:
+                await client.disconnect()
 
     async def reconnect(self, server_id: str) -> MCPClient:
         await self.disconnect(server_id)
@@ -161,31 +318,79 @@ class MCPManager:
         with self._lock:
             return list(self._configs.values())
 
-    def get_server_status(self, server_id: str) -> MCPServerState:
+    def get_server_status(
+        self, server_id: str
+    ) -> MCPServerState:
         with self._lock:
-            client = self._clients.get(server_id.strip().lower())
-            return client.state if client else MCPServerState.DISCONNECTED
+            client = self._clients.get(
+                self._server_id(server_id)
+            )
+            return (
+                client.state
+                if client
+                else MCPServerState.DISCONNECTED
+            )
 
-    def list_tools(self, server_id: Optional[str] = None) -> List[MCPTool]:
+    def list_tools(
+        self,
+        server_id: Optional[str] = None,
+    ) -> List[MCPTool]:
         with self._lock:
             if server_id:
-                return list(self._server_tools.get(server_id.strip().lower(), []))
-            all_tools = []
-            for t_list in self._server_tools.values():
-                all_tools.extend(t_list)
-            return all_tools
+                return list(
+                    self._server_tools.get(
+                        self._server_id(server_id), []
+                    )
+                )
+            result: List[MCPTool] = []
+            for tools in self._server_tools.values():
+                result.extend(tools)
+            return result
 
     async def connect_all_enabled(self) -> None:
-        for s_id, cfg in list(self._configs.items()):
-            if cfg.enabled and (cfg.command or cfg.url):
-                try:
-                    await self.connect(s_id)
-                except Exception as exc:
-                    logger.warning("Failed to connect enabled MCP server '%s': %s", s_id, exc)
+        with self._lock:
+            configs = list(self._configs.values())
+        for config in configs:
+            if not config.enabled:
+                continue
+            kind = self._transport_kind(config.transport)
+            with self._lock:
+                custom = config.server_id in self._custom_transports
+            ready = (
+                bool(config.command)
+                if kind == "stdio"
+                else bool(config.url)
+                if kind in {"http", "streamable_http"}
+                else custom
+                if kind == "inprocess"
+                else False
+            )
+            if not ready:
+                logger.warning(
+                    "Enabled MCP server '%s' has invalid %s configuration",
+                    config.server_id,
+                    config.transport,
+                )
+                continue
+            try:
+                await self.connect(config.server_id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to connect enabled MCP server '%s': %s",
+                    config.server_id,
+                    exc,
+                )
 
     async def disconnect_all(self) -> None:
-        for s_id in list(self._clients.keys()):
+        with self._lock:
+            server_ids = list(self._clients)
+        errors: list[str] = []
+        for server_id in server_ids:
             try:
-                await self.disconnect(s_id)
+                await self.disconnect(server_id)
             except Exception as exc:
-                logger.warning("Error disconnecting MCP server '%s': %s", s_id, exc)
+                errors.append(f"{server_id}: {exc}")
+        if errors:
+            raise RuntimeError(
+                "MCP shutdown errors: " + "; ".join(errors)
+            )

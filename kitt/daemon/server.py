@@ -120,6 +120,33 @@ class DaemonServer:
             self._running = True
             await self._get_or_create_runtime(str(self.workspace_root))
         except Exception:
+            self._running = False
+            if self._server is not None:
+                self._server.close()
+                try:
+                    await self._server.wait_closed()
+                except Exception:
+                    logger.debug(
+                        "Daemon server close after startup failure failed",
+                        exc_info=True,
+                    )
+                self._server = None
+            for runtime in list(self._runtimes.values()):
+                try:
+                    await runtime.aclose()
+                except Exception:
+                    logger.debug(
+                        "Runtime rollback after daemon startup failure failed",
+                        exc_info=True,
+                    )
+            self._runtimes.clear()
+            try:
+                self.transport.cleanup()
+            except Exception:
+                logger.debug(
+                    "Daemon transport cleanup after startup failure failed",
+                    exc_info=True,
+                )
             self.transport.release_instance_lock(self._instance_lock_fd)
             self._instance_lock_fd = None
             raise
@@ -129,6 +156,13 @@ class DaemonServer:
         if self._server:
             self._server.close()
             await self._server.wait_closed()
+            self._server = None
+        for writer in list(self._client_queues):
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
         for rt in list(self._runtimes.values()):
             try:
                 await rt.aclose()
