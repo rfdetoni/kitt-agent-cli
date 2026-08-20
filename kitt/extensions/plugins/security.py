@@ -310,18 +310,167 @@ def _iter_plugin_files(root: Path, manifest_name: str):
         yield candidate, relative
 
 
-def plugin_content_digest(manifest: PluginManifest) -> str:
+def _secure_read_plugin_file(
+    candidate: Path,
+    manifest_name: str,
+) -> bytes:
+    if candidate.is_symlink():
+        raise PluginLoadError(
+            f"Plugin '{manifest_name}' contains a symlink: {candidate}"
+        )
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    try:
+        fd = os.open(str(candidate), flags)
+    except OSError as exc:
+        raise PluginLoadError(
+            f"Unable to securely open plugin file {candidate}: {exc}"
+        ) from exc
+
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise PluginLoadError(
+                f"Plugin file must be regular: {candidate}"
+            )
+        if os.name != "nt" and getattr(before, "st_nlink", 1) > 1:
+            raise PluginLoadError(
+                f"Plugin '{manifest_name}' contains a hard-linked file: "
+                f"{candidate}"
+            )
+        if before.st_size > _MAX_PLUGIN_FILE_BYTES:
+            raise PluginLoadError(
+                f"Plugin file {candidate.name} exceeds "
+                f"{_MAX_PLUGIN_FILE_BYTES} bytes"
+            )
+
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                fd,
+                min(
+                    1024 * 1024,
+                    (_MAX_PLUGIN_FILE_BYTES + 1) - total,
+                ),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_PLUGIN_FILE_BYTES:
+                raise PluginLoadError(
+                    f"Plugin file {candidate.name} exceeds "
+                    f"{_MAX_PLUGIN_FILE_BYTES} bytes"
+                )
+            chunks.append(chunk)
+
+        after = os.fstat(fd)
+        fingerprint_before = (
+            getattr(before, "st_dev", None),
+            getattr(before, "st_ino", None),
+            before.st_size,
+            getattr(before, "st_mtime_ns", None),
+            getattr(before, "st_ctime_ns", None),
+        )
+        fingerprint_after = (
+            getattr(after, "st_dev", None),
+            getattr(after, "st_ino", None),
+            after.st_size,
+            getattr(after, "st_mtime_ns", None),
+            getattr(after, "st_ctime_ns", None),
+        )
+        if (
+            fingerprint_before != fingerprint_after
+            or total != before.st_size
+        ):
+            raise PluginLoadError(
+                f"Plugin file changed while being read: {candidate}"
+            )
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _plugin_source_root(
+    manifest: PluginManifest,
+    workspace_root: Optional[str | Path] = None,
+) -> Path:
     if manifest.manifest_path is None:
         raise PluginLoadError(
             f"Plugin '{manifest.name}' has no manifest path"
         )
-    root = manifest.manifest_path.parent.resolve()
+    root = Path(
+        os.path.abspath(
+            os.path.expanduser(str(manifest.manifest_path.parent))
+        )
+    )
+
+    if manifest.source == "workspace" and workspace_root is not None:
+        workspace = Path(workspace_root).resolve()
+        expected_plugins = workspace / ".kitt" / "plugins"
+        try:
+            root.relative_to(expected_plugins)
+        except ValueError as exc:
+            raise PluginLoadError(
+                f"Workspace plugin '{manifest.name}' is outside "
+                f"{expected_plugins}"
+            ) from exc
+
+        for component in (
+            workspace / ".kitt",
+            expected_plugins,
+            root,
+        ):
+            if component.is_symlink():
+                raise PluginLoadError(
+                    f"Workspace plugin path became a symlink: {component}"
+                )
+
+        resolved_root = root.resolve()
+        resolved_plugins = expected_plugins.resolve()
+        try:
+            resolved_root.relative_to(resolved_plugins)
+        except ValueError as exc:
+            raise PluginLoadError(
+                f"Workspace plugin '{manifest.name}' escaped "
+                "the workspace plugin directory"
+            ) from exc
+        return root
+
+    return root.resolve()
+
+
+def plugin_content_digest(
+    manifest: PluginManifest,
+    workspace_root: Optional[str | Path] = None,
+) -> str:
+    root = _plugin_source_root(
+        manifest,
+        workspace_root,
+    )
     if not root.is_dir():
         raise PluginLoadError(f"Plugin root does not exist: {root}")
 
     digest = hashlib.sha256()
-    for candidate, relative_path in _iter_plugin_files(root, manifest.name):
-        data = candidate.read_bytes()
+    actual_total = 0
+    for candidate, relative_path in _iter_plugin_files(
+        root,
+        manifest.name,
+    ):
+        data = _secure_read_plugin_file(
+            candidate,
+            manifest.name,
+        )
+        actual_total += len(data)
+        if actual_total > _MAX_PLUGIN_TOTAL_BYTES:
+            raise PluginLoadError(
+                f"Plugin '{manifest.name}' exceeds "
+                f"{_MAX_PLUGIN_TOTAL_BYTES} total bytes"
+            )
         relative = relative_path.as_posix().encode("utf-8")
         digest.update(len(relative).to_bytes(4, "big"))
         digest.update(relative)
@@ -380,9 +529,16 @@ def prepare_trusted_plugin_snapshot(
         raise PluginLoadError(
             f"Plugin '{manifest.name}' has no manifest path"
         )
-    source_root = manifest.manifest_path.parent.resolve()
+    source_root = _plugin_source_root(
+        manifest,
+        workspace_root,
+    )
     if not hmac.compare_digest(
-        plugin_content_digest(manifest), approved_digest
+        plugin_content_digest(
+            manifest,
+            workspace_root,
+        ),
+        approved_digest,
     ):
         raise PluginLoadError(
             f"Plugin '{manifest.name}' content changed since trust approval."
@@ -419,14 +575,14 @@ def prepare_trusted_plugin_snapshot(
                 target_path = temp_root / relative_path
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 _set_private_permissions(target_path.parent)
-                with source_path.open("rb") as src, target_path.open(
-                    "xb"
-                ) as dst:
-                    while True:
-                        chunk = src.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        dst.write(chunk)
+                data = _secure_read_plugin_file(
+                    source_path,
+                    manifest.name,
+                )
+                with target_path.open("xb") as dst:
+                    dst.write(data)
+                    dst.flush()
+                    os.fsync(dst.fileno())
                 _set_private_permissions(target_path)
 
             if not _verify_snapshot(manifest, temp_root, approved_digest):
@@ -529,7 +685,10 @@ class PluginTrustStore:
                 f"Plugin '{manifest.name}' does not opt in to in-process "
                 "execution."
             )
-        digest = plugin_content_digest(manifest)
+        digest = plugin_content_digest(
+            manifest,
+            self.workspace_root,
+        )
         with _InterprocessLock(self.lock_path):
             data = self._data()
             workspace = data["workspaces"].setdefault(
@@ -564,11 +723,17 @@ class PluginTrustStore:
         expected = self.approved_digest(manifest)
         if not expected:
             return False
-        actual = plugin_content_digest(manifest)
+        actual = plugin_content_digest(
+            manifest,
+            self.workspace_root,
+        )
         return hmac.compare_digest(expected, actual)
 
     def status(self, manifest: PluginManifest) -> dict[str, Any]:
-        actual = plugin_content_digest(manifest)
+        actual = plugin_content_digest(
+            manifest,
+            self.workspace_root,
+        )
         approved = self.approved_digest(manifest)
         return {
             "trusted": bool(
