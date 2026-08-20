@@ -52,14 +52,16 @@ def _tokens(text: str) -> set[str]:
     return {t.casefold() for t in _TOKEN_RE.findall(text)}
 
 
-def _lexical(query: set[str], text: str) -> float:
+def _lexical(query: set[str], text: str, raw_query: str = "") -> float:
     if not query:
         return 0.0
     target = _tokens(text)
     if not target:
         return 0.0
     overlap = len(query & target)
-    exact_bonus = 0.25 if " ".join(query) in text.casefold() else 0.0
+    normalized_query = " ".join(str(raw_query).casefold().split())
+    normalized_text = " ".join(text.casefold().split())
+    exact_bonus = 0.25 if normalized_query and normalized_query in normalized_text else 0.0
     return min(1.0, overlap / max(1, min(len(query), 8)) + exact_bonus)
 
 
@@ -95,7 +97,9 @@ class HybridMemoryService:
 
     def _ensure_memory_vectors(self, memories: Iterable[Any]) -> dict[str, list[float]]:
         records = list(memories)
-        existing = self.native_repo.get_vectors([m.id for m in records])
+        existing = self.native_repo.get_vectors(
+            [m.id for m in records], encoder=self.embedder.name, dimensions=self.embedder.dimensions
+        )
         for memory in records:
             if memory.id in existing:
                 continue
@@ -122,7 +126,7 @@ class HybridMemoryService:
 
         for memory in memories:
             text = memory.content
-            lexical = _lexical(q_tokens, text)
+            lexical = _lexical(q_tokens, text, query)
             vector = max(0.0, _cosine(q_vector, vectors.get(memory.id, [])))
             salience = self._salience(memory)
             task = 0.15 if any(token in text.casefold() for token in q_tokens) else 0.0
@@ -136,7 +140,7 @@ class HybridMemoryService:
 
         for concept in self.native_repo.search_concepts(query, limit=max(limit * 2, 8)):
             text = f"{concept['name']}: {concept['definition']}"
-            lexical = _lexical(q_tokens, text)
+            lexical = _lexical(q_tokens, text, query)
             vector = max(0.0, _cosine(q_vector, self.embedder.embed(text)))
             score = 0.42 * lexical + 0.38 * vector + 0.20 * float(concept["confidence"])
             ranked.append(RankedMemory(
@@ -145,7 +149,7 @@ class HybridMemoryService:
 
         for correction in self.native_repo.list_corrections():
             text = f"When {correction['context']}: prefer {correction['corrected']} instead of {correction['predicted']}"
-            lexical = _lexical(q_tokens, text)
+            lexical = _lexical(q_tokens, text, query)
             vector_data = correction.get("vector") or self.embedder.embed(text)
             vector = max(0.0, _cosine(q_vector, vector_data))
             applied = min(0.15, int(correction.get("applied_count", 0)) * 0.02)
@@ -163,12 +167,6 @@ class HybridMemoryService:
                 self.memory_repo.touch_memory_access(memory_ids)
             except Exception:
                 pass
-        for item in selected:
-            if item.source == "correction":
-                try:
-                    self.native_repo.mark_correction_applied(item.id)
-                except Exception:
-                    pass
         return [{
             "source": item.source, "id": item.id, "text": item.text,
             "score": round(item.score, 5), "lexical_score": round(item.lexical_score, 5),

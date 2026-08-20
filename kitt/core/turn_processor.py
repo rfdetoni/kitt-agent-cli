@@ -208,12 +208,62 @@ class TurnProcessor:
         return caps
 
     async def arun_turn(self, cmd: TurnCommand):
-        """Expose the synchronous turn loop as an async generator."""
+        """Stream the blocking synchronous turn loop without blocking asyncio.
+
+        Providers and host tools are intentionally synchronous today. Run the
+        iterator on a producer thread and bridge events through a bounded async
+        queue so TUI/daemon heartbeats, cancellation and other tasks continue
+        to make progress while a model/tool call is blocked.
+        """
         import asyncio as _asyncio
 
-        for item in self.run_turn(cmd):
-            yield item
-            await _asyncio.sleep(0)
+        loop = _asyncio.get_running_loop()
+        queue: _asyncio.Queue = _asyncio.Queue(maxsize=128)
+        sentinel = object()
+        stop = threading.Event()
+
+        def put(item, timeout: float = 30.0) -> bool:
+            if stop.is_set():
+                return False
+            future = _asyncio.run_coroutine_threadsafe(queue.put(item), loop)
+            try:
+                future.result(timeout=timeout)
+                return True
+            except Exception:
+                future.cancel()
+                return False
+
+        def produce() -> None:
+            iterator = None
+            try:
+                iterator = self.run_turn(cmd)
+                for event in iterator:
+                    if stop.is_set() or not put(event):
+                        break
+            except BaseException as exc:
+                if not stop.is_set():
+                    put(TurnFailed(error=str(exc)), timeout=5.0)
+            finally:
+                if iterator is not None and hasattr(iterator, "close"):
+                    try:
+                        iterator.close()
+                    except Exception:
+                        pass
+                if not stop.is_set():
+                    put(sentinel, timeout=5.0)
+
+        producer = threading.Thread(
+            target=produce, name=f"kitt-turn-{cmd.turn_id[:8]}", daemon=True
+        )
+        producer.start()
+        try:
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                yield item
+        finally:
+            stop.set()
 
     def _history_context(self, conversation_id: str, max_messages: int = 12,
                          exclude_prompt: Optional[str] = None) -> str:
@@ -244,7 +294,7 @@ To call the safe runtime, respond with exactly:
 <kitt-tool>
 {{"name":"kitt_runtime","arguments":{{"operation":"repo.read","arguments":{{"path":"path.ext","start_line":1,"end_line":100}}}}}}
 </kitt-tool>
-Supported operations: repo.read, repo.search, repo.inspect_symbol, patch.apply, process.run, artifacts.store, artifacts.read, children.spawn, children.send, children.inspect, goal.inspect, goal.update, state.get, state.set, handles.resolve.
+Supported operations: repo.read, repo.search, repo.inspect_symbol, repo.read_symbol, repo.references, repo.edit_symbol, patch.apply, process.run, artifacts.store, artifacts.read, children.spawn, children.send, children.inspect, goal.inspect, goal.update, memory.query, memory.correct, memory.concept, memory.link, state.get, state.set, state.list, handles.resolve.
 RULES:
 1. Focus strictly on user request.
 2. Put reasoning inside <think>...</think> before tool call.

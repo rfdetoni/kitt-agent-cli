@@ -241,6 +241,23 @@ class ToolRegistry:
                 {"applied": edit_result.applied_files, "created": edit_result.created_files},
             )
 
+    def record_changed_paths(
+        self, *, conversation_id: str, turn_id: str, changed: List[str], kind: str
+    ) -> None:
+        changed = [str(path) for path in changed if str(path)]
+        if not changed:
+            return
+        processor = self._processor
+        if processor is not None:
+            processor.working_set.touch_paths(
+                conversation_id, changed, turn_id, weight=2.0, kind=kind
+            )
+            processor._emit("EditApplied", {"applied": changed, "created": [], "kind": kind})
+        elif self.event_bus is not None:
+            self.event_bus.publish(
+                "EditApplied", {"applied": changed, "created": [], "kind": kind}
+            )
+
     def get_tool_definitions(
         self, enabled_tools: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:

@@ -47,7 +47,7 @@ def _safe_ref_for_provider(ref: object, provider: str) -> str | None:
     if value.startswith(("auth:", "session:")):
         return value if value.split(":", 1)[1].strip().lower() == pid else None
     env_name = value[4:].strip()
-    return value if env_name == ProviderAuthService.get_default_env_var(pid) else None
+    return value if env_name.isidentifier() else None
 
 
 def _sanitize_custom_provider_credentials(
@@ -90,7 +90,7 @@ def _sanitize_custom_provider_credentials(
                 ).credential_ref
             changed = True
 
-        entry["api_key"] = ""
+        entry["api_key"] = safe_ref or ""
         if safe_ref:
             entry["credential_ref"] = safe_ref
         else:
@@ -219,7 +219,7 @@ class TaskRouter:
             custom, custom_changed = _sanitize_custom_provider_credentials(
                 data.get("custom_providers", []),
                 ProviderAuthService(),
-                allow_secret_import=False,
+                allow_secret_import=True,
             )
             changed = changed or custom_changed
             loaded = RouterConfig(

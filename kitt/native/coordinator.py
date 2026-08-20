@@ -77,30 +77,58 @@ class WorkspaceCoordinator:
         mode = mode.upper()
         if mode not in {"READ", "WRITE"}:
             raise ValueError("lease mode must be READ or WRITE")
-        now = time.time(); expires = now + max(5.0, min(float(ttl_seconds), 3600.0))
+        now = time.time()
+        expires = now + max(5.0, min(float(ttl_seconds), 3600.0))
         token = secrets.token_urlsafe(18)
+        # Serialize conflict-check + write across KITT processes.  The primary
+        # key includes owner_id, so a plain SELECT followed by INSERT is not
+        # sufficient to prevent two different owners from acquiring WRITE.
         with self.db.get_connection() as conn:
-            conn.execute("DELETE FROM coordination_leases WHERE workspace_id=? AND expires_at<=?", (self.workspace_id, now))
-            rows = conn.execute(
-                "SELECT owner_id,mode,intent FROM coordination_leases WHERE workspace_id=? AND resource_id=?",
-                (self.workspace_id, resource_id),
-            ).fetchall()
-            for row in rows:
-                other_owner, other_mode, other_intent = str(row[0]), str(row[1]), str(row[2])
-                if other_owner == owner_id:
-                    continue
-                if mode == "WRITE" or other_mode == "WRITE":
-                    raise CoordinationConflict(
-                        f"resource {resource_id} is leased by {other_owner} ({other_mode}: {other_intent})"
-                    )
-            conn.execute(
-                """INSERT INTO coordination_leases(workspace_id,resource_id,owner_id,mode,intent,lease_token,acquired_at,expires_at)
-                   VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,resource_id,owner_id) DO UPDATE SET
-                   mode=excluded.mode,intent=excluded.intent,lease_token=excluded.lease_token,
-                   acquired_at=excluded.acquired_at,expires_at=excluded.expires_at""",
-                (self.workspace_id, resource_id, owner_id, mode, intent[:500], token, now, expires),
-            )
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    "DELETE FROM coordination_leases WHERE workspace_id=? AND expires_at<=?",
+                    (self.workspace_id, now),
+                )
+                rows = conn.execute(
+                    "SELECT owner_id,mode,intent FROM coordination_leases WHERE workspace_id=? AND resource_id=?",
+                    (self.workspace_id, resource_id),
+                ).fetchall()
+                for row in rows:
+                    other_owner, other_mode, other_intent = str(row[0]), str(row[1]), str(row[2])
+                    if other_owner == owner_id:
+                        continue
+                    if mode == "WRITE" or other_mode == "WRITE":
+                        raise CoordinationConflict(
+                            f"resource {resource_id} is leased by {other_owner} ({other_mode}: {other_intent})"
+                        )
+                conn.execute(
+                    """INSERT INTO coordination_leases(workspace_id,resource_id,owner_id,mode,intent,lease_token,acquired_at,expires_at)
+                       VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,resource_id,owner_id) DO UPDATE SET
+                       mode=excluded.mode,intent=excluded.intent,lease_token=excluded.lease_token,
+                       acquired_at=excluded.acquired_at,expires_at=excluded.expires_at""",
+                    (self.workspace_id, resource_id, owner_id, mode, intent[:500], token, now, expires),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         return LeaseGrant(resource_id, owner_id, mode, token, expires)
+
+    def release(self, resource_id: str, owner_id: str, token: str | None = None) -> int:
+        with self.db.get_connection() as conn:
+            if token is None:
+                cursor = conn.execute(
+                    "DELETE FROM coordination_leases WHERE workspace_id=? AND resource_id=? AND owner_id=?",
+                    (self.workspace_id, resource_id, owner_id),
+                )
+            else:
+                cursor = conn.execute(
+                    """DELETE FROM coordination_leases
+                       WHERE workspace_id=? AND resource_id=? AND owner_id=? AND lease_token=?""",
+                    (self.workspace_id, resource_id, owner_id, token),
+                )
+            return int(cursor.rowcount or 0)
 
     def refresh_owner(self, owner_id: str, ttl_seconds: float = 180.0) -> int:
         expires = time.time() + max(5.0, min(float(ttl_seconds), 3600.0))
@@ -136,11 +164,11 @@ class WorkspaceCoordinator:
 
     def prepare_child(self, child_id: str) -> WorktreeState:
         safe = self._safe_id(child_id)
+        self.worktree_root.mkdir(parents=True, exist_ok=True)
         path = self.worktree_root / safe
         branch = f"kitt/child/{safe}"
         if not self.is_git_repository():
             return WorktreeState(child_id, str(self.execution_root), "", "SHARED_FALLBACK")
-        self.worktree_root.mkdir(parents=True, exist_ok=True)
         with self.db.get_connection() as conn:
             row = conn.execute("SELECT path,branch,state FROM child_worktrees WHERE child_id=?", (child_id,)).fetchone()
             if row and Path(row[0]).exists():
@@ -168,7 +196,7 @@ class WorkspaceCoordinator:
     def _main_branch(self) -> str:
         return self._git(["branch", "--show-current"]).stdout.strip() or "HEAD"
 
-    def integrate_child(self, child_id: str) -> WorktreeState:
+    def integrate_child(self, child_id: str, allowed_paths: Iterable[str] | None = None) -> WorktreeState:
         with self.db.get_connection() as conn:
             row = conn.execute("SELECT path,branch,state FROM child_worktrees WHERE child_id=?", (child_id,)).fetchone()
         if not row:
@@ -178,31 +206,61 @@ class WorkspaceCoordinator:
             raise RuntimeError(f"child worktree missing: {path}")
         status = self._git(["status", "--porcelain"], cwd=path).stdout
         if not status.strip():
+            self.release_owner(child_id)
             self._cleanup(child_id, path, branch, delete_branch=True)
             return WorktreeState(child_id, str(path), branch, "CLEAN")
-        self._git(["add", "--all", "--", ":/"], cwd=path)
-        commit = self._git(["commit", "-m", f"kitt: integrate child {self._safe_id(child_id)}"], cwd=path, check=False)
+
+        scopes = [Path(value).as_posix() for value in (allowed_paths or []) if str(value).strip()]
+        if scopes:
+            # A scoped child must not leave modifications outside its declared
+            # paths, even if a tool or subprocess managed to create them.
+            changed = self._git(["status", "--porcelain", "-z"], cwd=path).stdout.split("\0")
+            for record in changed:
+                if not record:
+                    continue
+                rel = record[3:] if len(record) >= 4 else record
+                rel = rel.split(" -> ")[-1].strip()
+                candidate = Path(rel)
+                if not any(candidate == Path(scope) or Path(scope) in candidate.parents for scope in scopes):
+                    self._record_error(child_id, f"out-of-scope child change: {rel}")
+                    raise CoordinationConflict(f"child changed out-of-scope path: {rel}")
+            self._git(["add", "--all", "--", *scopes], cwd=path)
+        else:
+            self._git(["add", "--all", "--", ":/"], cwd=path)
+
+        commit = self._git(
+            ["-c", "user.name=KITT", "-c", "user.email=kitt@local.invalid",
+             "commit", "-m", f"kitt: integrate child {self._safe_id(child_id)}"],
+            cwd=path, check=False,
+        )
         if commit.returncode != 0 and "nothing to commit" not in (commit.stderr + commit.stdout).casefold():
             self._record_error(child_id, commit.stderr or commit.stdout)
             raise RuntimeError(commit.stderr.strip() or "child commit failed")
 
-        with self._merge_lock:
-            # Main tracked edits could be overwritten or mixed with child work. Preserve child branch instead.
-            dirty = self._git(["status", "--porcelain", "--untracked-files=no"]).stdout.strip()
-            if dirty:
-                self._record_error(child_id, "main worktree has tracked uncommitted changes")
-                raise CoordinationConflict("main worktree is dirty; child branch preserved for explicit recovery")
-            base = self._main_branch()
-            rebase = self._git(["rebase", base], cwd=path, check=False)
-            if rebase.returncode != 0:
-                self._git(["rebase", "--abort"], cwd=path, check=False)
-                self._record_error(child_id, rebase.stderr or rebase.stdout)
-                raise CoordinationConflict("child rebase conflict; branch and worktree preserved")
-            merge = self._git(["merge", "--no-ff", branch, "-m", f"kitt: merge child {self._safe_id(child_id)}"], check=False)
-            if merge.returncode != 0:
-                self._git(["merge", "--abort"], check=False)
-                self._record_error(child_id, merge.stderr or merge.stdout)
-                raise CoordinationConflict("child merge conflict; branch and worktree preserved")
+        merge_resource = "workspace:integration"
+        merge_grant: LeaseGrant | None = None
+        try:
+            merge_grant = self.acquire(merge_resource, child_id, "WRITE", f"integrate child {child_id}", ttl_seconds=300)
+            with self._merge_lock:
+                # Main tracked edits could be overwritten or mixed with child work. Preserve child branch instead.
+                dirty = self._git(["status", "--porcelain", "--untracked-files=no"]).stdout.strip()
+                if dirty:
+                    self._record_error(child_id, "main worktree has tracked uncommitted changes")
+                    raise CoordinationConflict("main worktree is dirty; child branch preserved for explicit recovery")
+                base = self._main_branch()
+                rebase = self._git(["rebase", base], cwd=path, check=False)
+                if rebase.returncode != 0:
+                    self._git(["rebase", "--abort"], cwd=path, check=False)
+                    self._record_error(child_id, rebase.stderr or rebase.stdout)
+                    raise CoordinationConflict("child rebase conflict; branch and worktree preserved")
+                merge = self._git(["merge", "--no-ff", branch, "-m", f"kitt: merge child {self._safe_id(child_id)}"], check=False)
+                if merge.returncode != 0:
+                    self._git(["merge", "--abort"], check=False)
+                    self._record_error(child_id, merge.stderr or merge.stdout)
+                    raise CoordinationConflict("child merge conflict; branch and worktree preserved")
+        finally:
+            if merge_grant is not None:
+                self.release(merge_resource, child_id, merge_grant.token)
 
         self.release_owner(child_id)
         self._cleanup(child_id, path, branch, delete_branch=True)

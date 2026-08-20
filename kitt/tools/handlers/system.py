@@ -127,10 +127,15 @@ class RunCommandHandler:
         result = ctx.registry.process_runner.run(argv, timeout_seconds=30)
         optimizer = getattr(ctx.registry, "output_optimizer", None)
         if optimizer is not None:
+            raw_total_bytes = (
+                result.stdout_total_bytes + result.stderr_total_bytes
+                + (1 if result.stdout_total_bytes and result.stderr_total_bytes else 0)
+            )
             optimized = optimizer.optimize(
                 argv, result.stdout, result.stderr, result.returncode,
                 artifact_store=getattr(ctx.registry, "artifacts", None),
                 workspace_id=ctx.workspace_id, conversation_id=ctx.conversation_id, turn_id=ctx.turn_id,
+                capture_truncated=result.truncated, raw_total_bytes=raw_total_bytes,
             )
             output = optimized.output
             metadata = {
@@ -139,14 +144,24 @@ class RunCommandHandler:
                 "optimized_bytes": optimized.output_bytes,
                 "omitted_lines": optimized.omitted_lines,
                 "raw_artifact_id": optimized.raw_artifact_id,
+                "capture_truncated": optimized.capture_truncated,
+                "raw_total_bytes": optimized.raw_total_bytes,
             }
         else:
             output = result.stdout + (("\n" + result.stderr) if result.stderr else "")
             metadata = {}
+        if result.timed_out:
+            command_error = "Command timed out"
+        elif result.cancelled:
+            command_error = "Command cancelled"
+        elif result.returncode != 0:
+            command_error = f"Command exited with code {result.returncode}"
+        else:
+            command_error = None
         return ToolResult(
-            success=(result.returncode == 0 and not result.timed_out),
+            success=(result.returncode == 0 and not result.timed_out and not result.cancelled),
             output=output,
-            error=None if result.returncode == 0 else f"Command exited with code {result.returncode}",
+            error=command_error,
             bytes_count=len(output.encode()),
             truncated=result.truncated,
             metadata=metadata,

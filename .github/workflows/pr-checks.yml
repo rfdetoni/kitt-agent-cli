@@ -3,130 +3,73 @@ name: PR Checks
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  smoke-and-tests:
-    runs-on: ubuntu-latest
+  python:
     strategy:
+      fail-fast: false
       matrix:
-        node-version: ["22", "24.11.x"]
-
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
-          node-version: ${{ matrix.node-version }}
+          python-version: ${{ matrix.python }}
+      - name: Install project
+        run: python -m pip install -U pip && python -m pip install -e '.[dev]'
+      - name: Compile Python sources
+        run: python -m compileall -q kitt tests
+      - name: Run complete Python suite
+        run: python -m pytest -q
+      - name: Clean-room provenance guard
+        run: python packaging/verify_cleanroom.py
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          bun-version-file: .bun-version
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --all-features
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Smoke and full unit test suite
-        run: bun run check
-
-      - name: Launcher compatibility
+  install-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build native KITT wheel
         run: |
-          node bin/kitt --version
-          NODE_DISABLE_COMPILE_CACHE=1 node bin/kitt --version
-
-      - name: Suspicious PR intent scan
-        env:
-          PR_SCAN_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'origin/main' }}
-          PR_SCAN_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'HEAD' }}
-        run: bun run security:pr-scan -- --base "$PR_SCAN_BASE" --head "$PR_SCAN_HEAD"
-      - name: Provider tests
-        run: bun run test:provider
-
-      - name: Provider recommendation tests
-        run: npm run test:provider-recommendation
-
-  launcher-node-floor:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Set up minimum supported Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "22.0.0"
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build
-        run: bun run build
-
-      - name: Launch on the minimum supported Node.js
-        run: node bin/kitt --version
-
-  typecheck:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Type tests
-        run: bun run typecheck:type-tests
-
-  web:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 22
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      - name: Install web dependencies
-        run: bun install --cwd web --frozen-lockfile
-
-      - name: Typecheck web
-        run: bun run --cwd web typecheck
-
-      - name: Build web
-        run: bun run --cwd web build
+          python -m pip install -U pip maturin
+          python packaging/build_native_release.py --out dist-native
+      - name: Install generated wheel
+        shell: bash
+        run: |
+          python -m pip install --force-reinstall dist-native/*.whl
+          kitt --help >/dev/null
+          python -c "import kitt_native; print(kitt_native.ENGINE_VERSION)"

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -239,21 +240,44 @@ def replace_symbol(root: Path, symbol_id: str, replacement: str, expected_hash: 
     if not current:
         raise KeyError(f"symbol not found: {symbol_id}")
     sym = current["symbol"]
+    path = root / sym["path"]
+    # The compatibility parser is structural only for Python.  For other
+    # languages its ranges are intentionally approximate, so editing through
+    # them could truncate a declaration/body. Fail closed and let apply_patch
+    # handle those platforms when the Rust/Tree-sitter engine is unavailable.
+    if path.suffix.lower() != ".py":
+        raise RuntimeError(
+            "structural editing for this language requires the KITT native engine; use apply_patch fallback"
+        )
     if expected_hash and expected_hash != sym["source_hash"]:
         raise RuntimeError("optimistic edit conflict: symbol hash changed")
-    path = root / sym["path"]
     raw = path.read_bytes()
-    updated = raw[:sym["start_byte"]] + replacement.encode("utf-8") + raw[sym["end_byte"]:]
-    if validate_syntax and path.suffix.lower() == ".py":
-        ast.parse(updated.decode("utf-8", "replace"))
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
-        tmp.write(updated); tmp.flush(); os.fsync(tmp.fileno()); tmp_path = Path(tmp.name)
-    os.replace(tmp_path, path)
-    refreshed = read_symbol(root, symbol_id)
+    replacement_bytes = replacement.encode("utf-8")
+    updated = raw[:sym["start_byte"]] + replacement_bytes + raw[sym["end_byte"]:]
+    if raw == updated:
+        return {
+            "path": sym["path"], "old_hash": sym["source_hash"],
+            "new_hash": sym["source_hash"], "changed": False,
+        }
+    if validate_syntax:
+        ast.parse(updated.decode("utf-8", "strict"))
+    original_mode = stat.S_IMODE(path.stat().st_mode)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+            tmp.write(updated)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            tmp_path = Path(tmp.name)
+        os.chmod(tmp_path, original_mode)
+        os.replace(tmp_path, path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
     return {
         "path": sym["path"], "old_hash": sym["source_hash"],
-        "new_hash": refreshed["symbol"]["source_hash"] if refreshed else _sha(updated),
-        "changed": raw != updated,
+        "new_hash": _sha(replacement_bytes), "changed": True,
     }
 
 
@@ -262,16 +286,18 @@ def dependency_edges(root: Path, max_symbols: int = 10000) -> dict[str, list[str
     by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for sym in all_symbols:
         by_name[sym["name"]].append(sym)
+    callish = re.compile(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:\(|\.)")
     result: dict[str, list[str]] = {}
     for sym in all_symbols:
         current = read_symbol(root, sym["id"])
         if not current:
             continue
-        deps = []
-        for name, candidates in by_name.items():
-            if name == sym["name"] or len(candidates) != 1:
+        deps: list[str] = []
+        for name in set(callish.findall(current["source"])):
+            if name == sym["name"]:
                 continue
-            if f"{name}(" in current["source"] or f"{name}." in current["source"]:
+            candidates = by_name.get(name, [])
+            if len(candidates) == 1:
                 deps.append(candidates[0]["id"])
         if deps:
             result[sym["id"]] = sorted(set(deps))
@@ -280,7 +306,13 @@ def dependency_edges(root: Path, max_symbols: int = 10000) -> dict[str, list[str
 
 def compress_output(argv: list[str], stdout: str, stderr: str, returncode: int) -> dict[str, Any]:
     raw = stdout if not stderr else stderr if not stdout else stdout + "\n" + stderr
-    cmd = Path(argv[0]).name if argv else ""
+    cmd = Path(argv[0]).name.casefold() if argv else ""
+    for suffix in (".exe", ".cmd", ".bat"):
+        if cmd.endswith(suffix):
+            cmd = cmd[:-len(suffix)]
+            break
+    if cmd in {"python", "python3", "py"} and len(argv) >= 3 and argv[1] == "-m":
+        cmd = str(argv[2]).casefold()
     family = (
         "search" if cmd in {"grep", "rg", "ripgrep"} else
         "vcs" if cmd in {"git", "gh", "glab"} else

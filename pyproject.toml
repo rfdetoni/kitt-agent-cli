@@ -24,3 +24,6 @@ dev = [
 
 [project.scripts]
 kitt = "kitt.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["kitt*"]

@@ -222,6 +222,18 @@ class SafeRuntime:
                 ),
             )
 
+        # Structural edits must bind approval to the exact symbol version.
+        # Resolve path/id/hash before PolicyEngine computes the action hash; a
+        # post-approval file change will then fail optimistic locking instead
+        # of silently retargeting the approved edit.
+        if op == "repo.edit_symbol":
+            try:
+                args = self._canonicalize_repo_edit_args(args, security_context)
+            except (KeyError, ValueError, RuntimeError, PermissionError) as exc:
+                return self._result(
+                    start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
+                )
+
         delegated_grant = None
         delegated_approval_id = None
         if self.registry and getattr(self.registry, "policy", None):
@@ -338,7 +350,7 @@ class SafeRuntime:
             "repo.inspect_symbol": lambda: self._op_repo_inspect_symbol(args, turn_id, origin, security_context),
             "repo.read_symbol": lambda: self._op_repo_read_symbol(args, security_context),
             "repo.references": lambda: self._op_repo_references(args, security_context),
-            "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, security_context),
+            "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id),
@@ -539,29 +551,61 @@ class SafeRuntime:
             allowed.append(row)
         return SafeRuntimeResult(True, "repo.references", data=allowed)
 
-    def _op_repo_edit_symbol(self, args, security_context):
+    def _canonicalize_repo_edit_args(self, args: dict, security_context) -> dict:
         value = str(args.get("symbol_id", args.get("symbol", ""))).strip()
         replacement = args.get("replacement")
         if not value or not isinstance(replacement, str):
-            return SafeRuntimeResult(False, "repo.edit_symbol", error="symbol_id/symbol and replacement are required")
+            raise ValueError("symbol_id/symbol and replacement are required")
         engine, found = self._resolve_native_symbol(value)
         if engine is None or not found:
-            return SafeRuntimeResult(False, "repo.edit_symbol", error=f"symbol not found: {value}")
+            raise KeyError(f"symbol not found: {value}")
         symbol = found["symbol"]
+        self._assert_native_path_allowed(security_context, symbol["path"])
+        expected = args.get("expected_hash")
+        if expected is not None and str(expected) != str(symbol["source_hash"]):
+            raise RuntimeError("optimistic edit conflict: supplied symbol hash is stale")
+        normalized = dict(args)
+        normalized["symbol_id"] = symbol["id"]
+        normalized["path"] = symbol["path"]
+        normalized["expected_hash"] = symbol["source_hash"]
+        normalized.pop("symbol", None)
+        return normalized
+
+    def _op_repo_edit_symbol(self, args, turn_id, security_context):
+        symbol_id = str(args.get("symbol_id", "")).strip()
+        replacement = args.get("replacement")
+        expected_hash = str(args.get("expected_hash", "")).strip()
+        expected_path = str(args.get("path", "")).strip()
+        if not symbol_id or not isinstance(replacement, str) or not expected_hash:
+            return SafeRuntimeResult(False, "repo.edit_symbol", error="canonical structural edit arguments missing")
+        engine = getattr(self.registry, "native_engine", None) if self.registry else None
+        if engine is None:
+            return SafeRuntimeResult(False, "repo.edit_symbol", error="native code engine unavailable")
+        found = engine.read_symbol(symbol_id)
+        if not found:
+            return SafeRuntimeResult(False, "repo.edit_symbol", error=f"symbol no longer exists: {symbol_id}")
+        symbol = found["symbol"]
+        if expected_path and str(symbol["path"]) != expected_path:
+            return SafeRuntimeResult(False, "repo.edit_symbol", error="structural edit target path changed after approval")
         self._assert_native_path_allowed(security_context, symbol["path"])
         coordinator = getattr(self.registry, "coordinator", None) if self.registry else None
         if coordinator is not None and security_context is not None and getattr(security_context, "principal_type", "") == "CHILD":
             coordinator.claim_symbol_for_edit(
-                symbol["id"], security_context.principal_id,
-                str(args.get("intent", f"edit {symbol['id']}")),
+                symbol_id, security_context.principal_id,
+                str(args.get("intent", f"edit {symbol_id}")),
             )
         result = engine.replace_symbol(
-            symbol["id"], replacement,
-            expected_hash=args.get("expected_hash", symbol.get("source_hash")),
+            symbol_id, replacement, expected_hash=expected_hash,
             validate_syntax=bool(args.get("validate_syntax", True)),
         )
         if self.registry and result.get("changed"):
             self.registry._refresh_index([result["path"]])
+            recorder = getattr(self.registry, "record_changed_paths", None)
+            if recorder is not None:
+                recorder(
+                    conversation_id=self.conversation_id, turn_id=turn_id,
+                    changed=[result["path"]], kind="native_symbol_edit",
+                )
         return SafeRuntimeResult(True, "repo.edit_symbol", data=result)
 
     def _op_memory_correct(self, args):

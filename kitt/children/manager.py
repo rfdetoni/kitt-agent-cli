@@ -43,8 +43,10 @@ class ChildAgentManager:
         messaging_repo=None,
         allow_peer_agent_messages=False,
         enabled=True,
+        state_root_dir: Optional[str] = None,
     ):
         self.root = Path(root_dir).resolve()
+        self.state_root = Path(state_root_dir).resolve() if state_root_dir else self.root
         self.repo = repository
         self.artifacts = artifacts
         self.max_children = max_children
@@ -66,6 +68,9 @@ class ChildAgentManager:
 
     def attach_coordinator(self, coordinator) -> None:
         self.coordinator = coordinator
+        coordinator_state_root = getattr(coordinator, "state_root", None)
+        if coordinator_state_root is not None:
+            self.state_root = Path(coordinator_state_root).resolve()
 
     def spawn(
         self,
@@ -178,6 +183,7 @@ class ChildAgentManager:
             )
             child = self.repo.get(child.id)
         self.repo.update(child.id, state="QUEUED", started_at=time.time())
+        queued_child = self.repo.get(child.id)
         self._on_event(
             "ChildAgentSpawned",
             {"child_id": child.id, "name": name, "task": task},
@@ -190,7 +196,7 @@ class ChildAgentManager:
             timeout,
             worker,
         )
-        return self.repo.get(child.id)
+        return queued_child
 
     def _child_security_context(self, child) -> ExecutionSecurityContext:
         if child.security_context:
@@ -232,7 +238,7 @@ class ChildAgentManager:
         return {
             "mode": "run",
             "root": execution_root,
-            "state_root": str(self.root),
+            "state_root": str(self.state_root),
             "child_id": child.id,
             "runtime_conversation_id": (
                 child.runtime_conversation_id or f"childconv_{child.id}"
@@ -249,7 +255,7 @@ class ChildAgentManager:
         return {
             "mode": "continue",
             "root": execution_root,
-            "state_root": str(self.root),
+            "state_root": str(self.state_root),
             "child_id": child.id,
             "runtime_conversation_id": child.runtime_conversation_id,
             "turn_id": child.current_task_id,
@@ -370,7 +376,7 @@ class ChildAgentManager:
 
         output = str(result.get("output", ""))
         if self.coordinator is not None:
-            self.coordinator.integrate_child(child_id)
+            self.coordinator.integrate_child(child_id, allowed_paths=child.allowed_paths)
         total_tokens = self._accumulate_tokens(
             child_id, int(result.get("tokens_used", 0) or 0)
         )
@@ -479,6 +485,8 @@ class ChildAgentManager:
             if child and child.state == "CANCELLED":
                 return
             state = "TIMED_OUT" if isinstance(exc, TimeoutError) else "FAILED"
+            if self.coordinator is not None:
+                self.coordinator.abandon_child(child_id, preserve_worktree=True)
             self.repo.update(
                 child_id,
                 state=state,
@@ -591,6 +599,7 @@ class ChildAgentManager:
             current_task_id=f"task_{uuid.uuid4().hex}",
             task_started_at=time.time(),
         )
+        queued_child = self.repo.get(child_id)
         self._pool.submit(
             self._run_child,
             child_id,
@@ -599,7 +608,7 @@ class ChildAgentManager:
             timeout,
             worker,
         )
-        return self.repo.get(child_id)
+        return queued_child
 
     def resume_after_approval(
         self,

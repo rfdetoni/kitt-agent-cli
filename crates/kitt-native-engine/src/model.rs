@@ -13,9 +13,15 @@ pub struct SearchOptions {
 
 impl SearchOptions {
     pub fn normalized(mut self) -> Self {
-        if self.max_results == 0 { self.max_results = 50; }
-        if self.max_per_file == 0 { self.max_per_file = 8; }
-        if self.token_budget == 0 { self.token_budget = 1200; }
+        if self.max_results == 0 {
+            self.max_results = 50;
+        }
+        if self.max_per_file == 0 {
+            self.max_per_file = 8;
+        }
+        if self.token_budget == 0 {
+            self.token_budget = 1200;
+        }
         self.max_results = self.max_results.min(500);
         self.max_per_file = self.max_per_file.min(100);
         self.context_lines = self.context_lines.min(12);
@@ -101,7 +107,10 @@ pub struct CompressionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum LeaseMode { Read, Write }
+pub enum LeaseMode {
+    Read,
+    Write,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseView {
@@ -112,7 +121,13 @@ pub struct LeaseView {
     pub expires_at_ms: u64,
 }
 
-pub fn lease_conflicts(existing: &LeaseView, requested_owner: &str, requested_mode: LeaseMode) -> bool {
-    if existing.owner_id == requested_owner { return false; }
+pub fn lease_conflicts(
+    existing: &LeaseView,
+    requested_owner: &str,
+    requested_mode: LeaseMode,
+) -> bool {
+    if existing.owner_id == requested_owner {
+        return false;
+    }
     matches!(existing.mode, LeaseMode::Write) || matches!(requested_mode, LeaseMode::Write)
 }

@@ -24,6 +24,8 @@ class ProcessResult:
     timed_out: bool = False
     cancelled: bool = False
     truncated: bool = False
+    stdout_total_bytes: int = 0
+    stderr_total_bytes: int = 0
 
 
 _SECRET_ENV_RE = re.compile(
@@ -73,6 +75,7 @@ class _BoundedCapture:
         self.limit = max(1024, int(limit))
         self.data = bytearray()
         self.truncated = False
+        self.total_bytes = 0
         self._lock = threading.Lock()
 
     def consume(self, pipe):
@@ -82,6 +85,7 @@ class _BoundedCapture:
                 if not chunk:
                     break
                 with self._lock:
+                    self.total_bytes += len(chunk)
                     remaining = self.limit - len(self.data)
                     if remaining > 0:
                         self.data.extend(chunk[:remaining])
@@ -210,4 +214,6 @@ class ProcessRunner:
             timed_out,
             cancelled,
             combined_truncated,
+            out_cap.total_bytes,
+            err_cap.total_bytes,
         )

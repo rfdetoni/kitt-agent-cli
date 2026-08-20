@@ -20,6 +20,8 @@ codebase.llm.txt
 # Node & Python
 node_modules/
 dist/
+dist*/
+build/
 web/dist/
 target/
 __pycache__/

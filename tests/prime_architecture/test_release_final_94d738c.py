@@ -384,7 +384,7 @@ class TestHTTPTransport(unittest.IsolatedAsyncioTestCase):
             return FakeResponse(request.get_method())
 
         transport = HTTPTransport("http://127.0.0.1:8765/mcp", timeout_seconds=1.0)
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch.object(HTTPTransport, "_open", side_effect=fake_urlopen):
             await transport.connect()
             await transport.send(
                 {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}

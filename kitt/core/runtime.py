@@ -181,6 +181,7 @@ class KittRuntime:
             canonical_root,
             ChildRepository(database),
             artifacts,
+            state_root_dir=state_root,
             max_children=config.max_children,
             max_depth=config.max_child_depth,
             workspace_id=identity.id,
