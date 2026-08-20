@@ -229,27 +229,76 @@ class _InterprocessLock:
             self._handle = None
 
 
-def _trusted_plugin_cache_root() -> Path:
-    preferred = Path.home() / ".kitt" / "cache" / "trusted-plugins"
+def _assert_private_cache_dir(
+    path: Path,
+    *,
+    create: bool = True,
+) -> Path:
+    path = Path(
+        os.path.abspath(
+            os.path.expanduser(str(path))
+        )
+    )
+    if path.is_symlink():
+        raise PluginLoadError(
+            f"Trusted plugin cache must not be a symlink: {path}"
+        )
+
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+
     try:
-        preferred.mkdir(parents=True, exist_ok=True)
-        _set_private_permissions(preferred)
-        return preferred.resolve()
-    except OSError:
+        stat_result = path.lstat()
+    except OSError as exc:
+        raise PluginLoadError(
+            f"Unable to inspect trusted plugin cache {path}: {exc}"
+        ) from exc
+
+    if stat.S_ISLNK(stat_result.st_mode) or not stat.S_ISDIR(
+        stat_result.st_mode
+    ):
+        raise PluginLoadError(
+            f"Trusted plugin cache must be a real directory: {path}"
+        )
+
+    if os.name != "nt":
+        if stat_result.st_uid != os.getuid():
+            raise PluginLoadError(
+                f"Trusted plugin cache owner mismatch: {path}"
+            )
+        mode = stat.S_IMODE(stat_result.st_mode)
+        if mode & 0o077:
+            try:
+                os.chmod(path, 0o700)
+            except OSError as exc:
+                raise PluginLoadError(
+                    f"Unable to secure trusted plugin cache {path}: {exc}"
+                ) from exc
+            stat_result = path.lstat()
+            if stat.S_IMODE(stat_result.st_mode) & 0o077:
+                raise PluginLoadError(
+                    f"Trusted plugin cache permissions must be 0700: {path}"
+                )
+    return path
+
+
+def _trusted_plugin_cache_root() -> Path:
+    home = Path.home().resolve()
+    preferred = home / ".kitt" / "cache" / "trusted-plugins"
+    try:
+        kitt_dir = _assert_private_cache_dir(home / ".kitt")
+        _assert_private_cache_dir(kitt_dir / "cache")
+        return _assert_private_cache_dir(preferred)
+    except (OSError, PluginLoadError):
         owner = (
             str(os.getuid())
             if hasattr(os, "getuid")
             else str(os.getpid())
         )
-        fallback = (
-            Path(tempfile.gettempdir())
-            / f"kitt-{owner}"
-            / "trusted-plugins"
-        )
-        fallback.mkdir(parents=True, exist_ok=True)
-        _set_private_permissions(fallback.parent)
-        _set_private_permissions(fallback)
-        return fallback.resolve()
+        fallback_parent = Path(tempfile.gettempdir()) / f"kitt-{owner}"
+        fallback = fallback_parent / "trusted-plugins"
+        _assert_private_cache_dir(fallback_parent)
+        return _assert_private_cache_dir(fallback)
 
 
 def _iter_plugin_files(root: Path, manifest_name: str):
@@ -510,9 +559,17 @@ def _verify_snapshot(
     root: Path,
     approved_digest: str,
 ) -> bool:
-    if not root.is_dir():
-        return False
     try:
+        if root.is_symlink():
+            return False
+        stat_result = root.lstat()
+        if not stat.S_ISDIR(stat_result.st_mode):
+            return False
+        if os.name != "nt":
+            if stat_result.st_uid != os.getuid():
+                return False
+            if stat.S_IMODE(stat_result.st_mode) & 0o077:
+                return False
         actual = plugin_content_digest(_snapshot_manifest(manifest, root))
     except Exception:
         return False
@@ -544,18 +601,18 @@ def prepare_trusted_plugin_snapshot(
             f"Plugin '{manifest.name}' content changed since trust approval."
         )
 
-    cache_root = (
-        _trusted_plugin_cache_root()
-        / _workspace_key(workspace_root)
-        / manifest.name
-    ).resolve()
-    cache_root.mkdir(parents=True, exist_ok=True)
-    _set_private_permissions(cache_root)
+    trusted_root = _trusted_plugin_cache_root()
+    workspace_cache = trusted_root / _workspace_key(workspace_root)
+    _assert_private_cache_dir(workspace_cache)
+    cache_root = workspace_cache / manifest.name
+    _assert_private_cache_dir(cache_root)
     final_root = cache_root / approved_digest
     lock_path = cache_root / f".{approved_digest}.snapshot.lock"
 
     with _InterprocessLock(lock_path):
-        if final_root.exists():
+        if final_root.is_symlink():
+            final_root.unlink()
+        elif final_root.exists():
             if _verify_snapshot(manifest, final_root, approved_digest):
                 return final_root
             _make_tree_writable(final_root)
@@ -609,6 +666,18 @@ def prepare_trusted_plugin_snapshot(
                     raise
                 _make_tree_writable(temp_root)
                 shutil.rmtree(temp_root, ignore_errors=True)
+
+            if final_root.is_symlink():
+                raise PluginLoadError(
+                    f"Trusted snapshot became a symlink: {final_root}"
+                )
+            if os.name != "nt":
+                try:
+                    os.chmod(final_root, 0o700)
+                except OSError as exc:
+                    raise PluginLoadError(
+                        f"Unable to secure trusted snapshot {final_root}: {exc}"
+                    ) from exc
 
             if not _verify_snapshot(manifest, final_root, approved_digest):
                 _make_tree_writable(final_root)
