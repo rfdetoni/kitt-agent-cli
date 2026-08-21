@@ -187,6 +187,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             "/delete-provider meu-ollama",
             "/mode plan",
             "/mouse",
+            "/remote status",
         ]
         tested = set()
         with patch("kitt.router.model_selector.ModelConfigurator.fetch_ollama_models", return_value=["local-test"]):

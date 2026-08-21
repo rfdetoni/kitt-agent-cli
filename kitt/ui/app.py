@@ -558,6 +558,9 @@ class KittUIApp:
                 await self._execute_direct_tool("run_command", {"command": arg})
             else:
                 self._show_result("Usage: /run <command>")
+        elif found.id in {"remote", "web"}:
+            from kitt.ui.remote_commands import handle_remote_command
+            await handle_remote_command(self, arg)
         elif found.id == "commit":
             message = arg or "Auto-commit by K.I.T.T."
             await self._execute_direct_tool("run_command", {"command": f"git commit -am {shlex.quote(message)}"})
@@ -1730,6 +1733,12 @@ class KittUIApp:
         self.open_overlay("diff", self.diff_control)
 
     def request_exit(self) -> None:
+        if getattr(self, "_remote_server", None):
+            try:
+                self._remote_server.stop()
+            except Exception:
+                pass
+            self._remote_server = None
         if self.application and not self.application.is_done:
             self.application.exit(result=0)
 
@@ -1817,6 +1826,11 @@ class KittUIApp:
         @kb.add("c-x", "a")
         @kb.add("c-x", "c-a")
         def _(event): self.open_overlay("agents", self.agents_control)
+
+        @kb.add("c-x", "r")
+        def _(event):
+            from kitt.ui.remote_commands import handle_remote_command
+            asyncio.create_task(handle_remote_command(self, ""))
 
         @kb.add("c-x", "s")
         def _(event): self.state.add_toast(self._status_text()); event.app.invalidate()
