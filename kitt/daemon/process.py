@@ -91,8 +91,11 @@ async def _stop_daemon_via_ipc(workspace: str) -> Dict[str, Any]:
     try:
         if not await client.is_running():
             return {"status": "error", "error": "Daemon is not running"}
-        response = await client.stop_daemon()
-        return {"status": "ok", "response": response}
+        try:
+            response = await client.stop_daemon()
+            return {"status": "ok", "response": response}
+        except (asyncio.CancelledError, ConnectionError, EOFError, OSError):
+            return {"status": "ok", "message": "Daemon stopped"}
     finally:
         await client.close()
 
