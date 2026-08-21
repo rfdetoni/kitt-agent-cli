@@ -5,12 +5,12 @@ from collections.abc import MutableSet
 
 
 class TurnExecutionGuard:
-    """Establish ordering between cancellation and tool/mutation start.
+    """Order cancellation against the start of state-changing operations.
 
-    ``begin()`` and ``cancel()`` share one lock. Therefore, once ``cancel()``
-    returns, a later tool cannot transition into the started state. Operations
-    that called ``begin()`` first are explicitly considered already in-flight
-    and may complete cooperatively.
+    ``begin()`` and ``cancel()`` share one lock. ``cancel()`` returns whether
+    at least one operation had already crossed the start barrier. A caller can
+    therefore avoid tearing down state that belongs to an operation already in
+    flight, while later operations are rejected.
     """
 
     def __init__(self, cancelled_turns: MutableSet[str] | None = None) -> None:
@@ -18,9 +18,10 @@ class TurnExecutionGuard:
         self._cancelled = cancelled_turns if cancelled_turns is not None else set()
         self._inflight: dict[str, int] = {}
 
-    def cancel(self, turn_id: str) -> None:
+    def cancel(self, turn_id: str) -> bool:
         with self._lock:
             self._cancelled.add(turn_id)
+            return self._inflight.get(turn_id, 0) > 0
 
     def is_cancelled(self, turn_id: str) -> bool:
         with self._lock:

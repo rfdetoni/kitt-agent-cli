@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import stat
 import subprocess
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-from kitt.security.workspace_fs import WorkspaceFileSystem
+from kitt.security.workspace_fs import WorkspaceFileStat, WorkspaceFileSystem
 
 MANIFEST_NAMES = {
     "pyproject.toml": "python",
@@ -102,16 +101,15 @@ class RepositoryScanner:
         p = Path(path)
         return MANIFEST_NAMES.get(p.name) or MANIFEST_SUFFIXES.get(p.suffix)
 
-    def _safe_lstat_regular(self, rel_path: str) -> os.stat_result | None:
-        """Cheap discovery check; final content reads still go through WorkspaceFileSystem."""
+    def _safe_stat_regular(self, rel_path: str) -> WorkspaceFileStat | None:
+        """Validate a file through the canonical no-follow workspace boundary."""
         try:
             normalized = self.workspace_fs.relative(rel_path)
             if normalized == ".":
                 return None
-            st = os.lstat(self.root_path / normalized)
-        except (OSError, PermissionError):
+            return self.workspace_fs.stat_regular(normalized)
+        except (FileNotFoundError, IsADirectoryError, OSError, PermissionError):
             return None
-        return st if stat.S_ISREG(st.st_mode) else None
 
     def detect_modules(
         self,
@@ -128,7 +126,7 @@ class RepositoryScanner:
             for rel_file in candidates:
                 if len(modules) >= max_manifests or self._is_ignored(rel_file):
                     continue
-                if self._safe_lstat_regular(rel_file) is None:
+                if self._safe_stat_regular(rel_file) is None:
                     continue
                 if max_depth is not None:
                     depth = len(Path(rel_file).parent.parts)
@@ -158,10 +156,9 @@ class RepositoryScanner:
                     candidate = Path(path) / directory
                     try:
                         rel_dir = str(candidate.relative_to(self.root_path))
-                        st = os.lstat(candidate)
-                    except OSError:
+                    except ValueError:
                         continue
-                    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+                    if not self.workspace_fs.is_safe_directory(rel_dir):
                         continue
                     if not self._is_ignored(rel_dir):
                         safe_dirs.append(directory)
@@ -175,7 +172,7 @@ class RepositoryScanner:
                     if not kind:
                         continue
                     rel_file = str(rel / filename) if str(rel) != "." else filename
-                    if self._is_ignored(rel_file) or self._safe_lstat_regular(rel_file) is None:
+                    if self._is_ignored(rel_file) or self._safe_stat_regular(rel_file) is None:
                         continue
                     root = "." if str(rel) == "." else str(rel)
                     key = (root, rel_file)
@@ -211,10 +208,10 @@ class RepositoryScanner:
             path = Path(rel_path)
             if path.suffix in IGNORED_EXTS or self._is_ignored(rel_path):
                 return False
-            st = self._safe_lstat_regular(rel_path)
-            if st is None:
+            file_stat = self._safe_stat_regular(rel_path)
+            if file_stat is None:
                 return False
-            if st.st_size > max_file_bytes or total_bytes + st.st_size > max_total_bytes:
+            if file_stat.size > max_file_bytes or total_bytes + file_stat.size > max_total_bytes:
                 return False
             try:
                 sample = self.workspace_fs.read_prefix(
@@ -225,7 +222,7 @@ class RepositoryScanner:
                 return False
             if b"\0" in sample:
                 return False
-            total_bytes += st.st_size
+            total_bytes += file_stat.size
             return True
 
         git_files = self._git_files()
@@ -243,10 +240,9 @@ class RepositoryScanner:
                 candidate = Path(root) / directory
                 try:
                     rel_dir = str(candidate.relative_to(self.root_path))
-                    st = os.lstat(candidate)
-                except OSError:
+                except ValueError:
                     continue
-                if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+                if not self.workspace_fs.is_safe_directory(rel_dir):
                     continue
                 if not self._is_ignored(rel_dir):
                     safe_dirs.append(directory)

@@ -64,19 +64,34 @@ class WorkspaceFileSystem:
         """Return a lexical workspace path after normalization, without following it."""
         return self.root.joinpath(*self._normalize(rel))
 
+    @staticmethod
+    def _windows_reparse_point(st: os.stat_result) -> bool:
+        """Return True for symlinks, junctions and other Windows reparse points."""
+        attributes = int(getattr(st, "st_file_attributes", 0))
+        reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+        return bool(attributes & reparse_flag)
+
     def _windows_path(self, parts: tuple[str, ...], *, allow_missing: bool = False) -> Path:
         target = self.root.joinpath(*parts)
         current = self.root
         for part in parts:
             current = current / part
-            if current.exists() or current.is_symlink():
-                if current.is_symlink():
-                    raise PermissionError(f"Workspace symlink/reparse traversal refused: {current}")
+            try:
+                current_st = current.lstat()
+            except FileNotFoundError:
+                continue
+            if self._windows_reparse_point(current_st):
+                raise PermissionError(
+                    f"Workspace symlink/junction/reparse traversal refused: {current}"
+                )
         resolved_parent = target.parent.resolve(strict=False)
         if not resolved_parent.is_relative_to(self.root):
             raise PermissionError("Workspace containment violation")
-        if not allow_missing and not target.exists():
-            raise FileNotFoundError(str(target))
+        if not allow_missing:
+            try:
+                target.lstat()
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(str(target)) from exc
         return target
 
     def _open_root_fd(self) -> int:
@@ -163,7 +178,7 @@ class WorkspaceFileSystem:
         if os.name == "nt":
             target = self._windows_path(parts)
             st = target.lstat()
-            if not stat.S_ISREG(st.st_mode):
+            if self._windows_reparse_point(st) or not stat.S_ISREG(st.st_mode):
                 raise PermissionError("Workspace target must be a regular file")
             return WorkspaceFileStat(rel_path=rel_path, size=st.st_size, mtime_ns=st.st_mtime_ns)
 
@@ -174,6 +189,39 @@ class WorkspaceFileSystem:
         finally:
             os.close(fd)
             os.close(parent_fd)
+
+    def is_safe_directory(self, rel: str | Path) -> bool:
+        """Return True only when every path component is a real directory."""
+        try:
+            parts = self._normalize(rel)
+        except PermissionError:
+            return False
+        if not parts:
+            return True
+
+        if os.name == "nt":
+            try:
+                target = self._windows_path(parts)
+                st = target.lstat()
+            except (FileNotFoundError, OSError, PermissionError):
+                return False
+            return not self._windows_reparse_point(st) and stat.S_ISDIR(st.st_mode)
+
+        fd = self._open_root_fd()
+        try:
+            for component in parts:
+                flags = os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0))
+                flags |= int(getattr(os, "O_NOFOLLOW", 0))
+                flags |= int(getattr(os, "O_CLOEXEC", 0))
+                try:
+                    next_fd = os.open(component, flags, dir_fd=fd)
+                except OSError:
+                    return False
+                os.close(fd)
+                fd = next_fd
+            return stat.S_ISDIR(os.fstat(fd).st_mode)
+        finally:
+            os.close(fd)
 
     def _read_common(self, rel: str | Path, limit: int, *, allow_prefix: bool) -> WorkspaceFileData:
         parts = self._normalize(rel)
@@ -266,13 +314,19 @@ class WorkspaceFileSystem:
             target = self._windows_path(parts, allow_missing=True)
             target.parent.mkdir(parents=True, exist_ok=True)
             self._windows_path(parts, allow_missing=True)
-            target_exists = target.exists() or target.is_symlink()
+            try:
+                validated_st = target.lstat()
+                target_exists = True
+            except FileNotFoundError:
+                validated_st = None
+                target_exists = False
             if expected_exists is True and not target_exists:
                 raise ValueError("expected file to exist")
             if expected_exists is False and target_exists:
                 raise ValueError("expected file to remain absent")
             if target_exists:
-                if target.is_symlink() or not target.is_file():
+                assert validated_st is not None
+                if self._windows_reparse_point(validated_st) or not stat.S_ISREG(validated_st.st_mode):
                     raise PermissionError("Refusing unsafe workspace write target")
                 if expected_sha256 is not None and self.read(rel).sha256 != expected_sha256:
                     raise ValueError("expected_content_hash mismatch")
@@ -284,6 +338,25 @@ class WorkspaceFileSystem:
                     handle.write(payload)
                     handle.flush()
                     os.fsync(handle.fileno())
+
+                # Revalidate optimistic-concurrency preconditions immediately
+                # before the replace. This cannot make Windows rename conditional,
+                # but it closes the broad validation-to-commit window.
+                if expected_exists is True or expected_sha256 is not None:
+                    try:
+                        final_st = target.lstat()
+                    except FileNotFoundError as exc:
+                        raise ValueError("workspace target changed before write") from exc
+                    if self._windows_reparse_point(final_st) or not stat.S_ISREG(final_st.st_mode):
+                        raise PermissionError("Refusing unsafe workspace replace target")
+                    if validated_st is not None:
+                        old_ino = int(getattr(validated_st, "st_ino", 0))
+                        new_ino = int(getattr(final_st, "st_ino", 0))
+                        if old_ino and new_ino and old_ino != new_ino:
+                            raise ValueError("workspace target identity changed before write")
+                    if expected_sha256 is not None and self.read(rel).sha256 != expected_sha256:
+                        raise ValueError("expected_content_hash mismatch")
+
                 if expected_exists is False:
                     os.rename(tmp, target)
                 else:
@@ -316,6 +389,7 @@ class WorkspaceFileSystem:
                 if current_fd is not None:
                     os.close(current_fd)
                 raise ValueError("expected file to remain absent")
+            current_st = None
             if current_fd is not None:
                 try:
                     current_st = os.fstat(current_fd)
@@ -348,8 +422,42 @@ class WorkspaceFileSystem:
                 final_st = None
             if final_st is not None and not stat.S_ISREG(final_st.st_mode):
                 raise PermissionError("Refusing unsafe workspace replace target")
+
+            has_precondition = expected_exists is not None or expected_sha256 is not None
+            if has_precondition and current_st is not None:
+                if final_st is None:
+                    raise ValueError("workspace target changed before write")
+                if (current_st.st_dev, current_st.st_ino) != (final_st.st_dev, final_st.st_ino):
+                    raise ValueError("workspace target identity changed before write")
+                if expected_sha256 is not None:
+                    verify_fd = os.open(
+                        name,
+                        os.O_RDONLY
+                        | int(getattr(os, "O_NOFOLLOW", 0))
+                        | int(getattr(os, "O_CLOEXEC", 0)),
+                        dir_fd=parent_fd,
+                    )
+                    try:
+                        verify_st = os.fstat(verify_fd)
+                        if (verify_st.st_dev, verify_st.st_ino) != (
+                            current_st.st_dev,
+                            current_st.st_ino,
+                        ):
+                            raise ValueError("workspace target identity changed before write")
+                        verify_bytes = self._read_fd(verify_fd, limit)
+                        if hashlib.sha256(verify_bytes).hexdigest() != expected_sha256:
+                            raise ValueError("expected_content_hash mismatch")
+                    finally:
+                        os.close(verify_fd)
+
             if expected_exists is False:
-                os.link(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+                os.link(
+                    temp_name,
+                    name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
                 os.unlink(temp_name, dir_fd=parent_fd)
             else:
                 os.replace(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
@@ -376,16 +484,36 @@ class WorkspaceFileSystem:
         parts = self._normalize(rel)
         if os.name == "nt":
             target = self._windows_path(parts, allow_missing=True)
-            exists = target.exists() or target.is_symlink()
+            try:
+                st = target.lstat()
+                exists = True
+            except FileNotFoundError:
+                st = None
+                exists = False
             if expected_exists is True and not exists:
                 raise ValueError("expected file to exist")
             if expected_exists is False and exists:
                 raise ValueError("expected file to remain absent")
             if not exists:
                 return False
-            st = target.lstat()
-            if target.is_symlink() or not stat.S_ISREG(st.st_mode):
+            assert st is not None
+            if self._windows_reparse_point(st) or not stat.S_ISREG(st.st_mode):
                 raise PermissionError("Only regular workspace files may be deleted")
+            if expected_sha256 is not None and self.read(rel).sha256 != expected_sha256:
+                raise ValueError("expected_content_hash mismatch")
+
+            # Revalidate immediately before unlink so a swapped regular target
+            # does not silently satisfy an earlier hash check.
+            try:
+                final_st = target.lstat()
+            except FileNotFoundError as exc:
+                raise ValueError("workspace target changed before delete") from exc
+            if self._windows_reparse_point(final_st) or not stat.S_ISREG(final_st.st_mode):
+                raise PermissionError("Only regular workspace files may be deleted")
+            old_ino = int(getattr(st, "st_ino", 0))
+            new_ino = int(getattr(final_st, "st_ino", 0))
+            if old_ino and new_ino and old_ino != new_ino:
+                raise ValueError("workspace target identity changed before delete")
             if expected_sha256 is not None and self.read(rel).sha256 != expected_sha256:
                 raise ValueError("expected_content_hash mismatch")
             target.unlink()
@@ -414,6 +542,32 @@ class WorkspaceFileSystem:
                         raise ValueError("expected_content_hash mismatch")
             finally:
                 os.close(fd)
+
+            try:
+                final_st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError as exc:
+                raise ValueError("workspace target changed before delete") from exc
+            if not stat.S_ISREG(final_st.st_mode):
+                raise PermissionError("Only regular workspace files may be deleted")
+            if (st.st_dev, st.st_ino) != (final_st.st_dev, final_st.st_ino):
+                raise ValueError("workspace target identity changed before delete")
+            if expected_sha256 is not None:
+                verify_fd = os.open(
+                    name,
+                    os.O_RDONLY
+                    | int(getattr(os, "O_NOFOLLOW", 0))
+                    | int(getattr(os, "O_CLOEXEC", 0)),
+                    dir_fd=parent_fd,
+                )
+                try:
+                    verify_st = os.fstat(verify_fd)
+                    if (verify_st.st_dev, verify_st.st_ino) != (st.st_dev, st.st_ino):
+                        raise ValueError("workspace target identity changed before delete")
+                    verify_bytes = self._read_fd(verify_fd, self.max_file_bytes)
+                    if hashlib.sha256(verify_bytes).hexdigest() != expected_sha256:
+                        raise ValueError("expected_content_hash mismatch")
+                finally:
+                    os.close(verify_fd)
             os.unlink(name, dir_fd=parent_fd)
             os.fsync(parent_fd)
             return True

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import secrets
 import threading
 import time
@@ -50,6 +51,19 @@ class PairingAuth:
     @staticmethod
     def _digest(value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _canonical_client_ip(value: str | None) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            address = ipaddress.ip_address(raw.split("%", 1)[0])
+        except ValueError:
+            return raw.lower()
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        return str(address)
 
     def _csrf_for(self, token: str) -> str:
         return hmac.new(
@@ -107,7 +121,7 @@ class PairingAuth:
                 token_hash=token_hash,
                 created_at=now,
                 expires_at=expires_at,
-                client_ip=str(client_ip or ""),
+                client_ip=self._canonical_client_ip(client_ip),
             )
             # The code that created this session is consumed. A fresh code is
             # available for explicit display/rotation flows, but the old code
@@ -129,7 +143,8 @@ class PairingAuth:
             if not session:
                 return None
             if client_ip is not None and session.client_ip:
-                if not hmac.compare_digest(session.client_ip, str(client_ip)):
+                supplied_ip = self._canonical_client_ip(client_ip)
+                if not hmac.compare_digest(session.client_ip, supplied_ip):
                     return None
             return session
 
