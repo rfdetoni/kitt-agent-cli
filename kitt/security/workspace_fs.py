@@ -170,6 +170,7 @@ class WorkspaceFileSystem:
         content: bytes | str,
         *,
         expected_sha256: str | None = None,
+        expected_exists: bool | None = None,
         max_bytes: int | None = None,
     ) -> str:
         parts = self._normalize(rel)
@@ -184,7 +185,12 @@ class WorkspaceFileSystem:
             target.parent.mkdir(parents=True, exist_ok=True)
             # Revalidate parent after creation.
             self._windows_path(parts, allow_missing=True)
-            if target.exists() or target.is_symlink():
+            target_exists = target.exists() or target.is_symlink()
+            if expected_exists is True and not target_exists:
+                raise ValueError("expected file to exist")
+            if expected_exists is False and target_exists:
+                raise ValueError("expected file to remain absent")
+            if target_exists:
                 if target.is_symlink() or not target.is_file():
                     raise PermissionError("Refusing unsafe workspace write target")
                 if expected_sha256 is not None:
@@ -199,7 +205,11 @@ class WorkspaceFileSystem:
                     handle.write(payload)
                     handle.flush()
                     os.fsync(handle.fileno())
-                os.replace(tmp, target)
+                if expected_exists is False:
+                    # Atomic no-overwrite create on Windows.
+                    os.rename(tmp, target)
+                else:
+                    os.replace(tmp, target)
             finally:
                 try:
                     tmp.unlink(missing_ok=True)
@@ -219,6 +229,15 @@ class WorkspaceFileSystem:
                 )
             except FileNotFoundError:
                 current_fd = None
+            current_exists = current_fd is not None
+            if expected_exists is True and not current_exists:
+                if current_fd is not None:
+                    os.close(current_fd)
+                raise ValueError("expected file to exist")
+            if expected_exists is False and current_exists:
+                if current_fd is not None:
+                    os.close(current_fd)
+                raise ValueError("expected file to remain absent")
             if current_fd is not None:
                 try:
                     current_st = os.fstat(current_fd)
@@ -252,7 +271,12 @@ class WorkspaceFileSystem:
                 final_st = None
             if final_st is not None and not stat.S_ISREG(final_st.st_mode):
                 raise PermissionError("Refusing unsafe workspace replace target")
-            os.replace(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            if expected_exists is False:
+                # Atomic no-replace create: link fails with EEXIST if target appeared.
+                os.link(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+                os.unlink(temp_name, dir_fd=parent_fd)
+            else:
+                os.replace(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             os.fsync(parent_fd)
             return digest
         finally:
@@ -266,20 +290,53 @@ class WorkspaceFileSystem:
                 pass
             os.close(parent_fd)
 
-    def unlink(self, rel: str | Path) -> bool:
+    def unlink(
+        self,
+        rel: str | Path,
+        *,
+        expected_sha256: str | None = None,
+        expected_exists: bool | None = True,
+    ) -> bool:
         parts = self._normalize(rel)
         if os.name == "nt":
-            target = self._windows_path(parts)
+            target = self._windows_path(parts, allow_missing=True)
+            exists = target.exists() or target.is_symlink()
+            if expected_exists is True and not exists:
+                raise ValueError("expected file to exist")
+            if expected_exists is False and exists:
+                raise ValueError("expected file to remain absent")
+            if not exists:
+                return False
             st = target.lstat()
-            if not stat.S_ISREG(st.st_mode):
+            if target.is_symlink() or not stat.S_ISREG(st.st_mode):
                 raise PermissionError("Only regular workspace files may be deleted")
+            if expected_sha256 is not None and self.read(rel).sha256 != expected_sha256:
+                raise ValueError("expected_content_hash mismatch")
             target.unlink()
             return True
         parent_fd, name = self._open_parent_posix(parts, create=False)
         try:
-            st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-            if not stat.S_ISREG(st.st_mode):
-                raise PermissionError("Only regular workspace files may be deleted")
+            try:
+                fd = os.open(
+                    name, os.O_RDONLY | int(getattr(os, "O_NOFOLLOW", 0)) | int(getattr(os, "O_CLOEXEC", 0)),
+                    dir_fd=parent_fd,
+                )
+            except FileNotFoundError:
+                if expected_exists is True:
+                    raise ValueError("expected file to exist")
+                return False
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    raise PermissionError("Only regular workspace files may be deleted")
+                if expected_exists is False:
+                    raise ValueError("expected file to remain absent")
+                if expected_sha256 is not None:
+                    current = self._read_fd(fd, self.max_file_bytes)
+                    if hashlib.sha256(current).hexdigest() != expected_sha256:
+                        raise ValueError("expected_content_hash mismatch")
+            finally:
+                os.close(fd)
             os.unlink(name, dir_fd=parent_fd)
             os.fsync(parent_fd)
             return True

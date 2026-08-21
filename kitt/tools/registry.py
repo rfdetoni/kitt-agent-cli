@@ -59,6 +59,7 @@ class ToolRegistry:
         self.policy = PolicyEngine(root_dir=root_dir)
         self.path_policy = WorkspacePathPolicy(root_dir=root_dir)
         self.applier = DiffApplier()
+        self.applier.tracker.root_dir = self.root_path
         self.parser = SearchReplaceParser()
         self.approval_manager = ApprovalManager()
         self.safe_python = SafePythonExecutor()
@@ -204,6 +205,7 @@ class ToolRegistry:
         self.memory_service = memory_service
         self.skill_manager = skill_manager
         self.db = db
+        self.applier.tracker.attach_db(db)
 
     def attach_processor(self, processor) -> None:
         """Attach application-level edit observers after TurnProcessor is built."""
@@ -505,7 +507,9 @@ class ToolRegistry:
                 f"Tool '{tool_name}' is not enabled in ContextPlan.",
             )
 
-        permission = self.policy.evaluate_tool(tool_name, args, origin=origin)
+        permission = self.policy.evaluate_tool(
+            tool_name, args, origin=origin, conversation_id=conversation_id
+        )
         approval_validated = False
         if permission == "DENY":
             return ToolResult(

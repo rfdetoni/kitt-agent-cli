@@ -673,6 +673,35 @@ MIGRATIONS.append(Migration(
     )
 ))
 
+MIGRATIONS.append(Migration(
+    version=16,
+    name="session_scoped_transactional_undo_v16",
+    statements=(
+        """CREATE TABLE IF NOT EXISTS edit_changesets (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            description TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'APPLIED'
+        );""",
+        """CREATE TABLE IF NOT EXISTS edit_change_snapshots (
+            changeset_id TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            existed INTEGER NOT NULL,
+            content TEXT,
+            post_exists INTEGER NOT NULL,
+            post_sha256 TEXT,
+            post_content TEXT,
+            PRIMARY KEY(changeset_id, relative_path),
+            FOREIGN KEY(changeset_id) REFERENCES edit_changesets(id) ON DELETE CASCADE
+        );""",
+        "CREATE INDEX IF NOT EXISTS idx_edit_changesets_scope_created ON edit_changesets(workspace_id, conversation_id, state, created_at DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_edit_snapshots_changeset ON edit_change_snapshots(changeset_id);",
+    )
+))
+
 class MigrationRunner:
     def __init__(self, migrations: list[Migration] = None):
         if migrations is None:

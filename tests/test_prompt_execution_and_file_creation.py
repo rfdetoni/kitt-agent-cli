@@ -26,7 +26,7 @@ class TestPromptExecutionAndFileCreation(unittest.TestCase):
     def test_file_creation_tool_execution_with_remembered_rule(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             runtime = KittRuntime.build(root_dir=tmp_dir)
-            runtime.approval.remember("write_file", "**", "allow", scope="session")
+            runtime.approval.remember("write_file", "**", "allow", scope="workspace")
 
             res = runtime.registry.execute_tool(
                 "write_file",

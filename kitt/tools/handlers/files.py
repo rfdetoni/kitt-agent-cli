@@ -108,21 +108,60 @@ class ReadFileHandler:
 class WriteFileHandler:
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult
+
         rel = str(args.get("path", "") or args.get("file", "") or "")
         content = args.get("content", "")
         if not isinstance(content, str):
             return ToolResult(False, "", "write_file content must be a string")
         if len(content.encode("utf-8")) > DEFAULT_MAX_FILE_BYTES:
             return ToolResult(False, "", f"write_file content exceeds {DEFAULT_MAX_FILE_BYTES} bytes")
+
+        fs = _fs(ctx)
         try:
-            fs = _fs(ctx)
             relative = _scope(ctx, fs.relative(rel))
-            digest = fs.atomic_write(
-                rel,
-                content,
-                expected_sha256=args.get("expected_content_hash"),
-                max_bytes=DEFAULT_MAX_FILE_BYTES,
-            )
+            try:
+                before = fs.read(relative)
+                existed = True
+                before_hash = before.sha256
+                before_content = before.content.decode("utf-8")
+            except FileNotFoundError:
+                existed = False
+                before_hash = None
+                before_content = None
+
+            supplied_hash = args.get("expected_content_hash")
+            if supplied_hash is not None and supplied_hash != before_hash:
+                return ToolResult(False, "", "expected_content_hash mismatch")
+
+            from kitt.domain.entities import FileSnapshot
+            from kitt.edit_format.transaction import workspace_mutation_lock
+            with workspace_mutation_lock(ctx.registry.root_path):
+                digest = fs.atomic_write(
+                    relative, content,
+                    expected_exists=existed,
+                    expected_sha256=before_hash if existed else None,
+                    max_bytes=DEFAULT_MAX_FILE_BYTES,
+                )
+                try:
+                    changeset = ctx.registry.applier.tracker.record_changeset(
+                        description=f"write_file {relative}",
+                        snapshots=[FileSnapshot(relative, existed, before_content)],
+                        workspace_id=ctx.workspace_id,
+                        conversation_id=ctx.conversation_id,
+                        turn_id=ctx.turn_id,
+                        post_hashes={relative: digest},
+                        post_exists={relative: True},
+                        post_contents={relative: content},
+                    )
+                except Exception:
+                    if existed:
+                        fs.atomic_write(
+                            relative, before_content or "",
+                            expected_exists=True, expected_sha256=digest,
+                        )
+                    else:
+                        fs.unlink(relative, expected_exists=True, expected_sha256=digest)
+                    raise
         except Exception as exc:
             return ToolResult(False, "", f"Workspace write refused: {exc}")
 
@@ -130,5 +169,5 @@ class WriteFileHandler:
         return ToolResult(
             True,
             f"Successfully wrote {len(content.encode('utf-8'))} bytes to {relative}.",
-            metadata={"content_hash": digest, "path": relative},
+            metadata={"content_hash": digest, "path": relative, "changeset": changeset},
         )

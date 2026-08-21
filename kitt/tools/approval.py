@@ -16,6 +16,7 @@ class RememberedRule:
     decision: Literal["allow", "deny"]
     scope: Literal["session", "workspace"]
     created_at: float
+    conversation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,7 @@ class ApprovalManager:
                     if decision not in {"allow", "deny"}:
                         continue
                     self.remembered_rules.append(
-                        RememberedRule(row[0], row[1], decision, "workspace", row[3])
+                        RememberedRule(row[0], row[1], decision, "workspace", row[3], None)
                     )
         except Exception:
             pass
@@ -93,32 +94,80 @@ class ApprovalManager:
         path_glob: str | None,
         decision: str,
         scope: str = "workspace",
+        conversation_id: str | None = None,
     ) -> None:
         if decision not in {"allow", "deny"}:
             raise ValueError("Approval decision must be allow or deny")
         if scope not in {"session", "workspace"}:
             raise ValueError("Approval scope must be session or workspace")
-        rule = RememberedRule(tool_name, path_glob, decision, scope, time.time())
+        conv = str(conversation_id or "").strip() or None
+        if scope == "session" and conv is None:
+            raise ValueError("Session-scoped approval requires conversation_id")
+        if scope == "workspace":
+            conv = None
+        rule = RememberedRule(tool_name, path_glob, decision, scope, time.time(), conv)
+
+        # Workspace rules are durable authority. Persist first so a failed DB
+        # write cannot create an in-memory permission that differs after restart.
+        if scope == "workspace" and self.db:
+            with self.db.get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO remembered_approval_rules"
+                    "(tool_name,path_glob,decision,created_at) VALUES(?,?,?,?)",
+                    (tool_name, path_glob, decision, rule.created_at),
+                )
         with self._lock:
             self.remembered_rules.append(rule)
-        if scope == "workspace" and self.db:
-            try:
-                with self.db.get_connection() as conn:
-                    conn.execute(
-                        "INSERT INTO remembered_approval_rules"
-                        "(tool_name,path_glob,decision,created_at) VALUES(?,?,?,?)",
-                        (tool_name, path_glob, decision, rule.created_at),
-                    )
-            except Exception:
-                pass
 
-    def check_remembered(self, tool_name: str, path: str | None) -> str | None:
+    def clear_remembered(
+        self,
+        *,
+        scope: str | None = None,
+        conversation_id: str | None = None,
+    ) -> int:
+        if scope == "all":
+            scope = None
+        if scope not in {None, "session", "workspace"}:
+            raise ValueError("Invalid remembered approval scope")
+        conv = str(conversation_id or "").strip() or None
+        if scope == "session" and conv is None:
+            raise ValueError("Session-scoped clear requires conversation_id")
+
+        # Delete durable authority before mutating the in-memory mirror. A DB
+        # failure therefore fails closed and leaves the effective policy intact.
+        if self.db and scope in {None, "workspace"}:
+            with self.db.get_connection() as conn:
+                conn.execute("DELETE FROM remembered_approval_rules")
+
+        def matches(rule: RememberedRule) -> bool:
+            if scope is None:
+                return True
+            if scope == "workspace":
+                return rule.scope == "workspace"
+            return rule.scope == "session" and rule.conversation_id == conv
+
+        with self._lock:
+            before = len(self.remembered_rules)
+            self.remembered_rules = [
+                rule for rule in self.remembered_rules if not matches(rule)
+            ]
+            return before - len(self.remembered_rules)
+
+    def check_remembered(
+        self,
+        tool_name: str,
+        path: str | None,
+        conversation_id: str | None = None,
+    ) -> str | None:
         import fnmatch
         import re
+        conv = str(conversation_id or "").strip() or None
         with self._lock:
             rules = list(self.remembered_rules)
         for rule in reversed(rules):
             if rule.tool_name != tool_name:
+                continue
+            if rule.scope == "session" and rule.conversation_id != conv:
                 continue
             if rule.path_glob is None or rule.path_glob == "**":
                 return rule.decision

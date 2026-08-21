@@ -88,6 +88,9 @@ class ApplyPatchHandler:
             blocks,
             root_dir=str(ctx.registry.root_path),
             allow_overwrite_existing=True,
+            workspace_id=ctx.workspace_id,
+            conversation_id=ctx.conversation_id,
+            turn_id=ctx.turn_id,
         )
         if edit_result.success:
             changed = edit_result.applied_files + edit_result.created_files

@@ -1214,7 +1214,8 @@ class DaemonServer:
                     try:
                         self._require_session(rt, sid)
                         changeset = await asyncio.to_thread(
-                            rt.processor.diff_applier.tracker.revert_last_changeset
+                            rt.processor.diff_applier.tracker.revert_last_changeset,
+                            sid, rt.workspace_id,
                         )
                     except Exception as exc:
                         await q.put(encode_message({
@@ -1263,18 +1264,37 @@ class DaemonServer:
                     try:
                         decision = str(msg.get("decision", "allow"))
                         scope = str(msg.get("scope", "session"))
+                        sid = str(msg.get("session_id", "")).strip()
+                        if scope == "session":
+                            self._require_session(rt, sid)
                         rt.approval.remember(
                             str(msg.get("tool_name", "")),
                             str(msg.get("path_glob", "**")),
                             decision, scope,
+                            conversation_id=sid if scope == "session" else None,
                         )
                     except Exception as exc:
-                        await q.put(encode_message({
-                            "type": "RESPONSE", "request_id": req_id, "status": "error", "error": str(exc),
-                        }))
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": str(exc)}))
                         continue
                     await q.put(encode_message({
                         "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                    }))
+                elif action == "approval.clear_remembered":
+                    try:
+                        scope = str(msg.get("scope", "session"))
+                        sid = str(msg.get("session_id", "")).strip()
+                        if scope == "session":
+                            self._require_session(rt, sid)
+                        removed = rt.approval.clear_remembered(
+                            scope=scope,
+                            conversation_id=sid if scope == "session" else None,
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": str(exc)}))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                        "removed": removed,
                     }))
                 elif action == "list_sessions":
                     convs = rt.history.list_history(limit=50)

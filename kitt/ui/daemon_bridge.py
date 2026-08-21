@@ -51,8 +51,13 @@ class DaemonUIBridge:
         self.event_sink = event_sink
         self.client: Optional[DaemonClient] = None
         self.attached_session_id: Optional[str] = None
-        self.last_sequence_id = 0
+        self._last_sequence_by_session: dict[str, int] = {}
         self._connected = False
+
+    @property
+    def last_sequence_id(self) -> int:
+        sid = self.attached_session_id or ""
+        return self._last_sequence_by_session.get(sid, 0)
 
     async def connect(self) -> bool:
         self.client = DaemonClient(self.workspace_dir, token=self.token)
@@ -75,7 +80,11 @@ class DaemonUIBridge:
         return res.get("session_id")
 
     def _on_wire_event(self, event: DaemonEvent) -> None:
-        self.last_sequence_id = max(self.last_sequence_id, event.sequence_id)
+        sid = str(event.session_id or self.attached_session_id or "")
+        if sid:
+            self._last_sequence_by_session[sid] = max(
+                self._last_sequence_by_session.get(sid, 0), event.sequence_id
+            )
         if self.event_sink:
             mapped = map_daemon_event_to_turn_event(event)
             if mapped is not None:
@@ -87,7 +96,7 @@ class DaemonUIBridge:
         res = await self.client.attach(
             session_id,
             on_event=self._on_wire_event,
-            last_sequence=self.last_sequence_id,
+            last_sequence=self._last_sequence_by_session.get(session_id, 0),
         )
         if res.get("status") != "ok":
             return False
@@ -171,6 +180,8 @@ class DaemonUIBridge:
         return (await self.request("approval.list", params)).get("approvals", [])
 
     async def remember_approval(self, tool_name: str, scope: str) -> dict:
+        if scope == "session" and not self.attached_session_id:
+            raise RuntimeError("Session-scoped approval requires an attached daemon session")
         return await self.request(
             "approval.remember",
             {
@@ -178,7 +189,16 @@ class DaemonUIBridge:
                 "scope": scope,
                 "decision": "allow",
                 "path_glob": "**",
+                "session_id": self.attached_session_id or "",
             },
+        )
+
+    async def clear_remembered(self, scope: str = "session") -> dict:
+        if scope == "session" and not self.attached_session_id:
+            raise RuntimeError("Session-scoped clear requires an attached daemon session")
+        return await self.request(
+            "approval.clear_remembered",
+            {"scope": scope, "session_id": self.attached_session_id or ""},
         )
 
     async def execute_direct_tool(self, tool_name: str, args: dict) -> dict:

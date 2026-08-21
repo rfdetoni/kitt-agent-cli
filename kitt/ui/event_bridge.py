@@ -187,6 +187,11 @@ class TurnEventBridge:
             raise RuntimeError("Daemon approval authority is not active")
         return await self._daemon_bridge.remember_approval(tool_name, scope)
 
+    async def clear_remembered(self, scope: str = "session") -> dict:
+        if not self._daemon_bridge:
+            raise RuntimeError("Daemon approval authority is not active")
+        return await self._daemon_bridge.clear_remembered(scope)
+
     async def execute_direct_tool(self, tool_name: str, args: dict) -> dict:
         if not self._daemon_bridge:
             raise RuntimeError("Daemon tool authority is not active")

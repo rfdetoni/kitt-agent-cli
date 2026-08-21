@@ -488,14 +488,11 @@ class KittUIApp:
             if arg:
                 try:
                     val = max(0, min(100, int(arg.replace("%", "").strip())))
-                    self.state.reasoning_effort = val
-                    if hasattr(self.runtime, "processor"):
-                        self.runtime.processor.reasoning_effort = val
-                    if await self._ensure_daemon_management():
-                        await self.bridge.set_reasoning(val)
-                    blocks = int(val / 10)
+                    await self._set_reasoning_effort(val, notify=False)
+                    effective = self.state.reasoning_effort
+                    blocks = int(effective / 10)
                     bar = "█" * blocks + "░" * (10 - blocks)
-                    self._show_result(f"Reasoning effort definido para {val}% [{bar}] (Modelo: {self.state.large_model})")
+                    self._show_result(f"Reasoning effort definido para {effective}% [{bar}] (Modelo: {self.state.large_model})")
                 except ValueError:
                     self._show_result("Uso: /reasoning <0-100> (ex: /reasoning 80)")
             else:
@@ -503,31 +500,22 @@ class KittUIApp:
                 bar = "█" * blocks + "░" * (10 - blocks)
                 self._show_result(f"Reasoning atual: {self.state.reasoning_effort}% [{bar}]\nModelo em uso: {self.state.large_model}\n\nUse Ctrl+← / Ctrl+→ para alterar em tempo de execução, ou /reasoning <0-100>.")
         elif found.id in {"autonomy", "permissions"}:
-            store = getattr(self.runtime, "autonomy_store", None)
             if not arg:
                 self.open_overlay("autonomy_control", self.autonomy_control)
             else:
                 level = arg.strip().lower()
                 preset_map = {
-                    "always_allow": "balanced",
-                    "always": "balanced",
-                    "files_free": "balanced",
-                    "1": "supervised",
-                    "2": "balanced",
-                    "3": "autonomous",
-                    "read_only": "read_only",
-                    "supervised": "supervised",
-                    "balanced": "balanced",
-                    "autonomous": "autonomous",
+                    "always_allow": "balanced", "always": "balanced",
+                    "files_free": "balanced", "1": "supervised",
+                    "2": "balanced", "3": "autonomous",
+                    "read_only": "read_only", "supervised": "supervised",
+                    "balanced": "balanced", "autonomous": "autonomous",
                 }
                 target = preset_map.get(level, level)
                 try:
-                    new_policy = store.set_preset(target) if store else None
-                    if new_policy and hasattr(self.runtime.processor.registry, "policy"):
-                        self.runtime.processor.registry.policy.autonomy = new_policy
-                    if await self._ensure_daemon_management():
-                        await self.bridge.set_autonomy(target)
-                    self._show_result(f"Perfil de Autonomia alterado para: [{target.upper()}]")
+                    await self._set_autonomy_profile(target, notify=False)
+                    effective = self.runtime.autonomy_store.get().level
+                    self._show_result(f"Perfil de Autonomia alterado para: [{effective.upper()}]")
                 except ValueError as err:
                     self.state.add_toast(f"Erro de autonomia: {err}")
                     self._show_result(f"Perfil inválido: {err}")
@@ -552,7 +540,11 @@ class KittUIApp:
                     if result.get("reverted") else "No changeset to revert."
                 )
             else:
-                changeset = await self._run_blocking(self.runtime.processor.diff_applier.tracker.revert_last_changeset)
+                conversation = self.runtime.history.get_or_create_active()
+                changeset = await self._run_blocking(
+                    self.runtime.processor.diff_applier.tracker.revert_last_changeset,
+                    conversation["id"], self.runtime.workspace_id,
+                )
                 self._show_result(f"Reverted changeset {changeset.id}." if changeset else "No changeset to revert.")
         elif found.id == "workspace":
             if not arg:
@@ -1549,6 +1541,55 @@ class KittUIApp:
             self.bridge = TurnEventBridge(new_runtime, self._on_event, self.application.invalidate)
         self._show_result(f"Switched workspace: {new_runtime.canonical_root}")
 
+    async def _set_reasoning_effort(self, value: int, *, notify: bool = True) -> None:
+        value = max(0, min(100, int(value)))
+        if await self._ensure_daemon_management():
+            response = await self.bridge.set_reasoning(value)
+            value = max(0, min(100, int(response.get("value", value))))
+        self.state.reasoning_effort = value
+        if hasattr(self.runtime, "processor"):
+            self.runtime.processor.reasoning_effort = value
+        if notify:
+            blocks = int(value / 10)
+            bar = "█" * blocks + "░" * (10 - blocks)
+            model_name = self.state.large_model or "execution"
+            self.state.add_toast(f"🧠 Reasoning: {value}% [{bar}] ({model_name})", duration=2.0)
+        if self.application:
+            self.application.invalidate()
+
+    async def _set_autonomy_profile(self, preset: str, *, notify: bool = True) -> None:
+        effective = preset
+        if await self._ensure_daemon_management():
+            response = await self.bridge.set_autonomy(preset)
+            effective = str(response.get("preset") or preset)
+        store = getattr(self.runtime, "autonomy_store", None)
+        policy = store.set_preset(effective) if store else None
+        if policy is not None and hasattr(self.runtime.processor.registry, "policy"):
+            self.runtime.processor.registry.policy.autonomy = policy
+        if notify:
+            self.state.add_toast(f"Perfil de autonomia: {effective}")
+        if self.application:
+            self.application.invalidate()
+
+    async def _clear_remembered_approvals(self, scope: str = "session") -> None:
+        conv = self.runtime.history.get_or_create_active()
+        if await self._ensure_daemon_management():
+            result = await self.bridge.clear_remembered(scope)
+            removed = int(result.get("removed", 0))
+            try:
+                self.runtime.approval.clear_remembered(
+                    scope=scope, conversation_id=conv["id"] if scope == "session" else None
+                )
+            except Exception:
+                pass
+        else:
+            removed = self.runtime.approval.clear_remembered(
+                scope=scope, conversation_id=conv["id"] if scope == "session" else None
+            )
+        self.state.add_toast(f"Regras removidas: {removed}")
+        if self.application:
+            self.application.invalidate()
+
     async def resolve_approval(self, mode: str | bool = "once") -> None:
         pending = self.state.pending_approval
         if not pending:
@@ -1613,7 +1654,10 @@ class KittUIApp:
 
         if remember_scope:
             tool_name = pending.get("tool_name", "apply_patch")
-            self.runtime.approval.remember(tool_name, "**", "allow", remember_scope)
+            self.runtime.approval.remember(
+                tool_name, "**", "allow", remember_scope,
+                conversation_id=pending.get("conversation_id") if remember_scope == "session" else None,
+            )
             if remember_scope == "workspace":
                 self.runtime.autonomy_store.set_preset("balanced")
                 self.runtime.processor.registry.policy.autonomy = self.runtime.autonomy_store.get()
@@ -1774,32 +1818,14 @@ class KittUIApp:
         @kb.add("c-right", filter=~model_setup & ~palette)
         @kb.add("c-x", "right")
         def increase_reasoning(event):
-            self.state.reasoning_effort = min(100, self.state.reasoning_effort + 10)
-            if hasattr(self.runtime, "processor"):
-                self.runtime.processor.reasoning_effort = self.state.reasoning_effort
-            if self.bridge and self.bridge.daemon_mode:
-                asyncio.create_task(self.bridge.set_reasoning(self.state.reasoning_effort))
-            blocks = int(self.state.reasoning_effort / 10)
-            bar = "█" * blocks + "░" * (10 - blocks)
-            model_name = self.state.large_model or "execution"
-            self.state.add_toast(f"🧠 Reasoning: {self.state.reasoning_effort}% [{bar}] ({model_name})", duration=2.0)
-            if self.application:
-                self.application.invalidate()
+            target = min(100, self.state.reasoning_effort + 10)
+            asyncio.create_task(self._set_reasoning_effort(target))
 
         @kb.add("c-left", filter=~model_setup & ~palette)
         @kb.add("c-x", "left")
         def decrease_reasoning(event):
-            self.state.reasoning_effort = max(0, self.state.reasoning_effort - 10)
-            if hasattr(self.runtime, "processor"):
-                self.runtime.processor.reasoning_effort = self.state.reasoning_effort
-            if self.bridge and self.bridge.daemon_mode:
-                asyncio.create_task(self.bridge.set_reasoning(self.state.reasoning_effort))
-            blocks = int(self.state.reasoning_effort / 10)
-            bar = "█" * blocks + "░" * (10 - blocks)
-            model_name = self.state.large_model or "execution"
-            self.state.add_toast(f"🧠 Reasoning: {self.state.reasoning_effort}% [{bar}] ({model_name})", duration=2.0)
-            if self.application:
-                self.application.invalidate()
+            target = max(0, self.state.reasoning_effort - 10)
+            asyncio.create_task(self._set_reasoning_effort(target))
 
         @kb.add("down", filter=session_picker)
         @kb.add("c-n", filter=session_picker)
@@ -2121,31 +2147,19 @@ class KittUIApp:
 
         @kb.add("1", filter=autonomy_cond)
         def _(event):
-            self.runtime.autonomy_store.set_preset("supervised")
-            self.runtime.processor.registry.policy.autonomy = self.runtime.autonomy_store.get()
-            self.state.add_toast("Perfil ativado: Supervisionado Estrito")
-            if self.application: self.application.invalidate()
+            asyncio.create_task(self._set_autonomy_profile("supervised"))
 
         @kb.add("2", filter=autonomy_cond)
         def _(event):
-            self.runtime.autonomy_store.set_preset("balanced")
-            self.runtime.processor.registry.policy.autonomy = self.runtime.autonomy_store.get()
-            self.state.add_toast("Perfil ativado: Edição Livre de Arquivos (Always Allow)")
-            if self.application: self.application.invalidate()
+            asyncio.create_task(self._set_autonomy_profile("balanced"))
 
         @kb.add("3", filter=autonomy_cond)
         def _(event):
-            self.runtime.autonomy_store.set_preset("autonomous")
-            self.runtime.processor.registry.policy.autonomy = self.runtime.autonomy_store.get()
-            self.state.add_toast("Perfil ativado: Autonomia Total")
-            if self.application: self.application.invalidate()
+            asyncio.create_task(self._set_autonomy_profile("autonomous"))
 
         @kb.add("r", filter=autonomy_cond)
         def _(event):
-            if hasattr(self.runtime.approval, "remembered_rules"):
-                self.runtime.approval.remembered_rules.clear()
-            self.state.add_toast("Regras salvas limpas.")
-            if self.application: self.application.invalidate()
+            asyncio.create_task(self._clear_remembered_approvals("all"))
 
         @kb.add("escape", filter=autonomy_cond)
         def _(event):

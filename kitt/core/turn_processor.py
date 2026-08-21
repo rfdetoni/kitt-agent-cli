@@ -24,7 +24,6 @@ from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.edit_format.parser import SearchReplaceParser
-from kitt.edit_format.applier import DiffApplier
 from kitt.tools.build_detector import BuildDetector
 from kitt.tools.log_reducer import LogReducer
 from kitt.tools.registry import ToolRegistry
@@ -94,10 +93,10 @@ class TurnProcessor:
         )
         self.context_resolver = ContextResolver(root_dir=root_dir)
         self.diff_parser = SearchReplaceParser()
-        self.diff_applier = DiffApplier()
         self.build_detector = BuildDetector(root_dir=root_dir)
         self.log_reducer = LogReducer()
         self.registry = registry or ToolRegistry(root_dir=root_dir)
+        self.diff_applier = self.registry.applier
         self.surface_selector = ToolSurfaceSelector(config=self.config)
         self.session_state = SessionState()
         self.pending_actions: Dict[str, PendingAction] = {}
@@ -1068,7 +1067,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         if blocks:
             args = {"patch": full_response}
             action_hash = self.registry.policy.generate_action_hash("apply_patch", args)
-            perm = self.registry.policy.evaluate_tool("apply_patch", args)
+            perm = self.registry.policy.evaluate_tool(
+                "apply_patch", args, conversation_id=cmd.conversation_id
+            )
 
             if perm == 'ASK':
                 pa_ws = workspace_id
@@ -1124,7 +1125,11 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
 
             # ALLOW
-            edit_result = self.diff_applier.apply(blocks, root_dir=str(self.root_path), allow_overwrite_existing=True)
+            edit_result = self.diff_applier.apply(
+                blocks, root_dir=str(self.root_path), allow_overwrite_existing=True,
+                workspace_id=workspace_id, conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+            )
             if edit_result.success:
                 self.session_state.last_changeset = edit_result.changeset
                 self.working_set.touch_paths(

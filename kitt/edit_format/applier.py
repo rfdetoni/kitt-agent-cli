@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
-from kitt.domain.entities import EditBlock, EditResult
+from kitt.domain.entities import EditBlock, EditResult, FileSnapshot
 from kitt.edit_format.changeset import ChangeSetTracker
+from kitt.edit_format.transaction import workspace_mutation_lock
 from kitt.security.workspace_fs import DEFAULT_MAX_FILE_BYTES, WorkspaceFileSystem
 from kitt.tools.path_policy import WorkspacePathPolicy
 
 
+_MAX_CHANGESET_FILES = 128
+_MAX_CHANGESET_JOURNAL_BYTES = 32 * 1024 * 1024
+
+
 class DiffApplier:
-    """Transactional-ish SEARCH/REPLACE applier with race-resistant final IO."""
+    """Atomic-at-workspace-boundary SEARCH/REPLACE applier.
+
+    Every file is prepared first, optimistic preconditions are checked at the
+    write boundary, each path is mutated only once, and a failed multi-file
+    commit rolls back already-applied paths using post-write hashes.
+    """
 
     def __init__(self, changeset_tracker: ChangeSetTracker = None):
         self.tracker = changeset_tracker or ChangeSetTracker()
@@ -21,6 +32,7 @@ class DiffApplier:
         search_content: str,
     ) -> Tuple[bool, str, int]:
         import difflib
+
         if not search_content:
             return False, "", 0
         count = current_content.count(search_content)
@@ -58,11 +70,148 @@ class DiffApplier:
             raise ValueError(error or f"Access denied to path '{file_path}'.")
         return full_path
 
+    @staticmethod
+    def _text_hash(content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def _prepare(
+        self,
+        blocks: List[EditBlock],
+        fs: WorkspaceFileSystem,
+        allow_overwrite_existing: bool,
+    ) -> tuple[list[dict], list[FileSnapshot], list[str]]:
+        grouped: Dict[str, list[EditBlock]] = {}
+        order: list[str] = []
+        errors: list[str] = []
+
+        for block in blocks:
+            try:
+                self.validate_and_resolve_path(block.file_path, Path(fs.root))
+                rel = fs.relative(block.file_path)
+            except Exception as exc:
+                errors.append(f"Validation error for '{block.file_path}': {exc}")
+                continue
+            if rel not in grouped:
+                grouped[rel] = []
+                order.append(rel)
+            grouped[rel].append(block)
+
+        prepared: list[dict] = []
+        snapshots: list[FileSnapshot] = []
+        if errors:
+            return prepared, snapshots, errors
+
+        for rel in order:
+            path_blocks = grouped[rel]
+            try:
+                try:
+                    current_data = fs.read(rel)
+                    initial_exists = True
+                    initial_content = current_data.content.decode("utf-8")
+                    initial_hash = current_data.sha256
+                except FileNotFoundError:
+                    initial_exists = False
+                    initial_content = ""
+                    initial_hash = None
+
+                snapshots.append(
+                    FileSnapshot(
+                        relative_path=rel,
+                        existed=initial_exists,
+                        content=initial_content if initial_exists else None,
+                    )
+                )
+                working_exists = initial_exists
+                working = initial_content
+
+                for index, block in enumerate(path_blocks):
+                    if block.is_deletion:
+                        if not working_exists:
+                            raise ValueError(f"File '{rel}' does not exist for deletion")
+                        if index != len(path_blocks) - 1:
+                            raise ValueError(f"Deletion for '{rel}' must be the final block for that path")
+                        working_exists = False
+                        working = ""
+                        continue
+
+                    if block.is_new_file:
+                        if working_exists and not allow_overwrite_existing:
+                            raise ValueError(
+                                f"Cannot overwrite existing file '{rel}' with is_new_file=True"
+                            )
+                        working_exists = True
+                        working = block.replace_content
+                        continue
+
+                    if not working_exists:
+                        raise ValueError(f"File '{rel}' does not exist and is_new_file=False")
+                    if not block.search_content:
+                        raise ValueError(f"SEARCH block is empty for existing file '{rel}'")
+                    found, target, count = self._find_fuzzy_replacement(
+                        working, block.search_content
+                    )
+                    if not found:
+                        raise ValueError(f"SEARCH block mismatch in '{rel}'")
+                    if count > 1:
+                        raise ValueError(
+                            f"Ambiguous SEARCH block in '{rel}': matched {count} occurrences"
+                        )
+                    working = working.replace(target, block.replace_content, 1)
+
+                prepared.append(
+                    {
+                        "rel": rel,
+                        "initial_exists": initial_exists,
+                        "initial_content": initial_content,
+                        "initial_hash": initial_hash,
+                        "final_exists": working_exists,
+                        "final_content": working,
+                        "final_hash": self._text_hash(working) if working_exists else None,
+                    }
+                )
+            except Exception as exc:
+                errors.append(str(exc))
+
+        return prepared, snapshots, errors
+
+    @staticmethod
+    def _verify_initial(fs: WorkspaceFileSystem, item: dict) -> None:
+        rel = item["rel"]
+        try:
+            current = fs.read(rel)
+            exists = True
+        except FileNotFoundError:
+            current = None
+            exists = False
+        if exists != item["initial_exists"]:
+            raise RuntimeError(f"File '{rel}' existence changed during patch preparation")
+        if exists and current and current.sha256 != item["initial_hash"]:
+            raise RuntimeError(f"File '{rel}' changed during patch preparation")
+
+    @staticmethod
+    def _rollback_one(fs: WorkspaceFileSystem, item: dict) -> None:
+        rel = item["rel"]
+        final_exists = item["final_exists"]
+        final_hash = item["final_hash"]
+        if item["initial_exists"]:
+            fs.atomic_write(
+                rel,
+                item["initial_content"],
+                expected_exists=final_exists,
+                expected_sha256=final_hash if final_exists else None,
+            )
+        elif final_exists:
+            fs.unlink(rel, expected_exists=True, expected_sha256=final_hash)
+
     def apply(
         self,
         blocks: List[EditBlock],
         root_dir: str = ".",
         allow_overwrite_existing: bool = False,
+        *,
+        workspace_id: str = "",
+        conversation_id: str = "",
+        turn_id: str = "",
     ) -> EditResult:
         root = Path(root_dir).resolve()
         fs = WorkspaceFileSystem(root, max_file_bytes=DEFAULT_MAX_FILE_BYTES)
@@ -70,119 +219,112 @@ class DiffApplier:
         if not blocks:
             return EditResult(success=False, errors=["No valid SEARCH/REPLACE blocks found."])
 
-        prepared: list[dict] = []
-        errors: list[str] = []
-        snapshots = []
-
-        for block in blocks:
-            try:
-                try:
-                    rel = fs.relative(block.file_path)
-                except PermissionError as exc:
-                    message = str(exc)
-                    if "Parent traversal" in message:
-                        raise ValueError(f"Path containment violation: {message}") from exc
-                    raise ValueError(f"Access denied: {message}") from exc
-                # Preserve existing ChangeSet API, but never use this snapshot as
-                # authority for the subsequent write.
-                snapshots.append(self.tracker.create_snapshot(rel))
-                try:
-                    current_data = fs.read(rel)
-                    exists = True
-                    current = current_data.content.decode("utf-8", errors="ignore")
-                    current_hash = current_data.sha256
-                except FileNotFoundError:
-                    exists = False
-                    current = ""
-                    current_hash = None
-
-                if block.is_new_file and exists and not allow_overwrite_existing:
-                    errors.append(f"Cannot overwrite existing file '{rel}' with is_new_file=True.")
-                    continue
-                if not block.is_new_file and not exists:
-                    errors.append(f"File '{rel}' does not exist and is_new_file=False.")
-                    continue
-
-                target = ""
-                if exists and not block.is_new_file and not block.is_deletion:
-                    if not block.search_content:
-                        errors.append(f"SEARCH block is empty for existing file '{rel}'.")
-                        continue
-                    found, target, count = self._find_fuzzy_replacement(current, block.search_content)
-                    if not found:
-                        errors.append(f"SEARCH block mismatch in '{rel}'.")
-                        continue
-                    if count > 1:
-                        errors.append(f"Ambiguous SEARCH block in '{rel}': matched {count} occurrences.")
-                        continue
-
-                prepared.append({
-                    "block": block,
-                    "rel": rel,
-                    "exists": exists,
-                    "current": current,
-                    "current_hash": current_hash,
-                    "target": target,
-                })
-            except Exception as exc:
-                errors.append(f"Validation error for '{block.file_path}': {exc}")
-
-        if errors:
-            return EditResult(success=False, errors=errors)
-
-        applied_files: list[str] = []
-        created_files: list[str] = []
-        deleted_files: list[str] = []
-
-        # Revalidate exact content hash at the write boundary. If another
-        # process changes a file after validation, the entire operation stops.
-        try:
-            for item in prepared:
-                block = item["block"]
-                rel = item["rel"]
-                if block.is_deletion:
-                    if item["exists"]:
-                        latest = fs.read(rel)
-                        if latest.sha256 != item["current_hash"]:
-                            raise RuntimeError(f"File '{rel}' changed during patch application")
-                        fs.unlink(rel)
-                        deleted_files.append(rel)
-                    continue
-
-                if not item["exists"] or block.is_new_file:
-                    fs.atomic_write(
-                        rel,
-                        block.replace_content,
-                        expected_sha256=item["current_hash"] if item["exists"] else None,
-                    )
-                    (applied_files if item["exists"] else created_files).append(rel)
-                    continue
-
-                updated = item["current"].replace(item["target"], block.replace_content, 1)
-                fs.atomic_write(
-                    rel,
-                    updated,
-                    expected_sha256=item["current_hash"],
+        mutation_lock = workspace_mutation_lock(root)
+        with mutation_lock:
+            prepared, snapshots, errors = self._prepare(
+                blocks, fs, allow_overwrite_existing
+            )
+            if errors:
+                return EditResult(success=False, errors=errors)
+            if len(prepared) > _MAX_CHANGESET_FILES:
+                return EditResult(
+                    success=False,
+                    errors=[f"Patch exceeds {_MAX_CHANGESET_FILES} files per changeset"],
                 )
-                applied_files.append(rel)
-        except Exception as exc:
+            journal_bytes = sum(
+                len(item["initial_content"].encode("utf-8"))
+                + (len(item["final_content"].encode("utf-8")) if item["final_exists"] else 0)
+                for item in prepared
+            )
+            if journal_bytes > _MAX_CHANGESET_JOURNAL_BYTES:
+                return EditResult(
+                    success=False,
+                    errors=[f"Patch undo journal exceeds {_MAX_CHANGESET_JOURNAL_BYTES} bytes"],
+                )
+
+            # Validate every path before performing the first mutation.
+            try:
+                for item in prepared:
+                    self._verify_initial(fs, item)
+            except Exception as exc:
+                return EditResult(success=False, errors=[f"Patch precondition failed: {exc}"])
+
+            applied_items: list[dict] = []
+            applied_files: list[str] = []
+            created_files: list[str] = []
+            deleted_files: list[str] = []
+            try:
+                for item in prepared:
+                    rel = item["rel"]
+                    if item["final_exists"]:
+                        fs.atomic_write(
+                            rel,
+                            item["final_content"],
+                            expected_exists=item["initial_exists"],
+                            expected_sha256=(
+                                item["initial_hash"] if item["initial_exists"] else None
+                            ),
+                        )
+                        if item["initial_exists"]:
+                            applied_files.append(rel)
+                        else:
+                            created_files.append(rel)
+                    elif item["initial_exists"]:
+                        fs.unlink(
+                            rel,
+                            expected_exists=True,
+                            expected_sha256=item["initial_hash"],
+                        )
+                        deleted_files.append(rel)
+                    applied_items.append(item)
+            except Exception as exc:
+                rollback_errors: list[str] = []
+                for applied in reversed(applied_items):
+                    try:
+                        self._rollback_one(fs, applied)
+                    except Exception as rb_exc:
+                        rollback_errors.append(f"{applied['rel']}: {rb_exc}")
+                suffix = (
+                    f"; rollback failures: {'; '.join(rollback_errors)}"
+                    if rollback_errors
+                    else "; all earlier mutations rolled back"
+                )
+                return EditResult(
+                    success=False,
+                    errors=[f"Patch application stopped: {exc}{suffix}"],
+                )
+
+            post_hashes = {item["rel"]: item["final_hash"] for item in prepared}
+            post_exists = {item["rel"]: item["final_exists"] for item in prepared}
+            post_contents = {
+                item["rel"]: item["final_content"] if item["final_exists"] else None
+                for item in prepared
+            }
+            try:
+                changeset = self.tracker.record_changeset(
+                    description=f"Applied {len(blocks)} edit block(s)",
+                    snapshots=snapshots,
+                    workspace_id=workspace_id,
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    post_hashes=post_hashes,
+                    post_exists=post_exists,
+                    post_contents=post_contents,
+                )
+            except Exception as exc:
+                rollback_errors: list[str] = []
+                for applied in reversed(applied_items):
+                    try:
+                        self._rollback_one(fs, applied)
+                    except Exception as rb_exc:
+                        rollback_errors.append(f"{applied['rel']}: {rb_exc}")
+                suffix = f"; rollback failures: {'; '.join(rollback_errors)}" if rollback_errors else "; file changes rolled back"
+                return EditResult(success=False, errors=[f"Undo journal persistence failed: {exc}{suffix}"])
             return EditResult(
-                success=False,
+                success=True,
                 applied_files=applied_files,
                 created_files=created_files,
                 deleted_files=deleted_files,
-                errors=[f"Patch application stopped: {exc}"],
+                errors=[],
+                changeset=changeset,
             )
-
-        changeset = self.tracker.record_changeset(
-            description=f"Applied {len(blocks)} edit block(s)",
-            snapshots=snapshots,
-        )
-        return EditResult(
-            success=True,
-            applied_files=applied_files,
-            created_files=created_files,
-            deleted_files=deleted_files,
-            errors=[],
-            changeset=changeset,
-        )
