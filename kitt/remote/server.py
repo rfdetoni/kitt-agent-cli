@@ -88,7 +88,7 @@ class _RemoteHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, address, handler, app: "RemoteServer"):
         self.app = app
-        self._request_slots = threading.BoundedSemaphore(64)
+        self._request_slots = threading.BoundedSemaphore(128)
         super().__init__(address, handler)
 
     def process_request(self, request, client_address):

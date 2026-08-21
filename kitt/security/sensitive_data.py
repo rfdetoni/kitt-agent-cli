@@ -8,7 +8,7 @@ from typing import Tuple, List, Dict
 
 
 SENSITIVE_PATTERNS = [
-    ("PEM_PRIVATE_KEY", re.compile(r'-----BEGIN (?:RSA|EC|OPENSSH|DSA|PRIVATE) KEY-----[\s\S]+?-----END \w+ KEY-----')),
+    ("PEM_PRIVATE_KEY", re.compile(r'-----BEGIN (?:RSA|EC|OPENSSH|DSA|PRIVATE) KEY-----[a-zA-Z0-9+/=\s]{16,8192}-----END \w+ KEY-----')),
     ("API_KEY_PREFIX", re.compile(r'\b(?:sk-[a-zA-Z0-9_\-]{16,}|ghp_[a-zA-Z0-9]{36}|xoxb-[a-zA-Z0-9\-]+|glpat-[a-zA-Z0-9\-]{20,})\b')),
     ("AWS_KEY", re.compile(r'\bAKIA[0-9A-Z]{16}\b')),
     ("AUTHORIZATION_HEADER", re.compile(r'(?i)\bBearer\s+[a-zA-Z0-9._\-]{15,}')),

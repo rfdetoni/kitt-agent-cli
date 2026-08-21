@@ -341,13 +341,28 @@ class TurnEventBridge:
     async def shutdown(self, timeout=3.0):
         self._closed.set()
         if self._pending_invalidate:
-            self._pending_invalidate.cancel()
+            try:
+                self._pending_invalidate.cancel()
+            except Exception:
+                pass
         if self._daemon_bridge:
             # Detach only. Never stop daemon/background work on TUI shutdown.
-            await self._daemon_bridge.close()
+            try:
+                await self._daemon_bridge.close()
+            except Exception:
+                pass
             self._daemon_bridge = None
             self._active_turn_id = None
-            self._executor.shutdown(wait=False, cancel_futures=True)
+            try:
+                self._executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
             return
-        await self.cancel("UI shutdown")
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        try:
+            await self.cancel("UI shutdown")
+        except Exception:
+            pass
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
