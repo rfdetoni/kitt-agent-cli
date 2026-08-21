@@ -69,6 +69,13 @@ class TestTUIRemoteCommands(unittest.IsolatedAsyncioTestCase):
             await self.ui._execute_command("/remote status")
             self.assertIn("DESATIVADO", self.ui.state.transcript[-1].text)
 
+    async def test_remote_daemon_start_failure(self):
+        with patch("kitt.ui.remote_commands.start_daemon_detached", return_value={"status": "error", "error": "Daemon test failure"}):
+            await self.ui._execute_command("/remote 8767")
+            self.assertIsNone(self.ui._remote_server)
+            self.assertIn("Falha ao iniciar daemon", self.ui.state.transcript[-1].text)
+            self.assertIn("Daemon test failure", self.ui.state.transcript[-1].text)
+
     async def test_remote_lan_flag(self):
         with patch("kitt.ui.remote_commands.start_daemon_detached", return_value={"status": "ok", "pid": 1234}):
             await self.ui._execute_command("/remote lan 8766")
@@ -80,3 +87,5 @@ class TestTUIRemoteCommands(unittest.IsolatedAsyncioTestCase):
                 if self.ui._remote_server:
                     self.ui._remote_server.stop()
                     self.ui._remote_server = None
+
+

@@ -238,6 +238,7 @@ class KittUIApp:
         self.auth_login_help_control = FormattedTextControl(self._auth_login_help_text)
         self.help_control = FormattedTextControl(self._help_text, focusable=True)
         self.toast_control = FormattedTextControl(self._toast_text)
+        self._remote_server = None
 
     def build_application(self):
         from prompt_toolkit.application import Application

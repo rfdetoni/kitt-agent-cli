@@ -104,7 +104,7 @@ async def handle_remote_command(app: KittUIApp, arg: str) -> None:
 
     daemon_res = start_daemon_detached(workspace_root)
     if daemon_res.get("status") != "ok":
-        app._show_result(f"Falha ao iniciar daemon K.I.T.T.: {daemon_res.get(error)}")
+        app._show_result(f"Falha ao iniciar daemon K.I.T.T.: {daemon_res.get('error')}")
         return
 
     try:
