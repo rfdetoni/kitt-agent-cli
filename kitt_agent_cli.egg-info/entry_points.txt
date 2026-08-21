@@ -1,2 +1,0 @@
-[console_scripts]
-kitt = kitt.cli.main:main

@@ -22,6 +22,8 @@ node_modules/
 dist/
 dist*/
 build/
+*.egg-info/
+egg-info/
 web/dist/
 target/
 __pycache__/
@@ -47,3 +49,17 @@ temp_reference/
 .kitt-prime-backup/
 .kitt-remediation-backup/
 .kitt-hardening-backup/
+.kitt-prime-patch-manifest.json
+*.patch-manifest.json
+teste_*.py
+teste_cmd.py
+
+# IDEs & Editors
+.idea/
+.vscode/
+.codex/
+*.swp
+*.swo
+*~
+.DS_Store
+
