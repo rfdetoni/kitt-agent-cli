@@ -161,6 +161,8 @@ class ProcessRunner:
             stderr=subprocess.PIPE,
             text=False,
             shell=False,
+            close_fds=True,
+            restore_signals=True,
             env=sanitized_subprocess_env(env),
         )
         if os.name != "nt":

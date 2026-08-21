@@ -662,6 +662,17 @@ MIGRATIONS.append(Migration(
     )
 ))
 
+MIGRATIONS.append(Migration(
+    version=15,
+    name="query_performance_and_compound_indexes_v15",
+    statements=(
+        "CREATE INDEX IF NOT EXISTS idx_daemon_events_session_seq ON daemon_events(session_id, id ASC);",
+        "CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at DESC, id DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_approval_ws_state_req ON approval_requests(workspace_id, state, conversation_id, requested_at DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_pending_actions_app_req ON pending_actions(approval_request_id, state);",
+    )
+))
+
 class MigrationRunner:
     def __init__(self, migrations: list[Migration] = None):
         if migrations is None:

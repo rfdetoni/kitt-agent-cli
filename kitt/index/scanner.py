@@ -64,15 +64,19 @@ class RepositoryScanner:
                 return True
         return False
 
-    def detect_modules(self) -> List[Dict[str, str]]:
-        """Find module roots by manifest files."""
+    def detect_modules(self, max_depth: int = 4) -> List[Dict[str, str]]:
+        """Find module roots by manifest files with bounded scan depth."""
         modules = []
         for path, dirs, files in os.walk(self.root_path):
-            dirs[:] = [d for d in dirs if not self._is_ignored(str((Path(path) / d).relative_to(self.root_path)))]
+            rel = Path(path).relative_to(self.root_path)
+            if len(rel.parts) >= max_depth:
+                dirs.clear()
+            else:
+                dirs[:] = [d for d in dirs if not self._is_ignored(str((Path(path) / d).relative_to(self.root_path)))]
             for file in files:
                 kind = MANIFEST_NAMES.get(file) or MANIFEST_SUFFIXES.get(Path(file).suffix)
                 if kind:
-                    rel_dir = str(Path(path).relative_to(self.root_path))
+                    rel_dir = str(rel)
                     modules.append({
                         "root_path": "." if rel_dir == "." else rel_dir,
                         "kind": kind,

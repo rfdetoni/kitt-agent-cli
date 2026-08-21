@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 from typing import Optional
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class _FileConnection(sqlite3.Connection):
@@ -284,9 +284,7 @@ class HistoryDatabase:
             return _InMemoryConnectionContext(self._mem_conn, self._mem_lock)
         conn = sqlite3.connect(str(self.db_path), timeout=10.0, factory=_FileConnection)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute("PRAGMA busy_timeout = 5000;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.executescript("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;")
         return conn
 
     def _init_db(self):

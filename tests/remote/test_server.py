@@ -150,6 +150,18 @@ class RemoteServerTests(unittest.TestCase):
         )
         self.assertEqual(status, 403)
 
+    def test_sse_stream_concurrency_limit(self):
+        cookie, _ = self.pair()
+        # Fake active streams count reached
+        with self.server._sse_lock:
+            self.server._active_sse_by_session["s1"] = 4
+        try:
+            status, _, _ = self.request("GET", "/api/sessions/s1/events", headers={"Cookie": cookie})
+            self.assertEqual(status, 429)
+        finally:
+            with self.server._sse_lock:
+                self.server._active_sse_by_session.pop("s1", None)
+
 
 if __name__ == "__main__":
     unittest.main()

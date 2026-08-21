@@ -469,62 +469,85 @@ class RemoteRequestHandler(BaseHTTPRequestHandler):
         self._error(HTTPStatus.NOT_FOUND, "Not found")
 
     def _serve_sse(self, session_id: str, query: str) -> None:
-        params = parse_qs(query)
-        after = 0
-        try:
-            after = max(after, int((params.get("after") or [0])[0]))
-        except (TypeError, ValueError):
-            pass
-        try:
-            after = max(after, int(self.headers.get("Last-Event-ID", "0") or 0))
-        except ValueError:
-            pass
+        if not self.app.sse_limiter.acquire(blocking=False):
+            self._error(HTTPStatus.TOO_MANY_REQUESTS, "Server event stream capacity reached")
+            return
 
-        self.send_response(HTTPStatus.OK)
-        for name, value in self._base_headers().items():
-            self.send_header(name, value)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-        self.wfile.write(b"retry: 2000\n\n")
-        self.wfile.flush()
-        stop = threading.Event()
-        write_lock = threading.Lock()
-
-        def emit(evt: DaemonEvent) -> None:
-            if stop.is_set():
+        with self.app._sse_lock:
+            count = self.app._active_sse_by_session.get(session_id, 0)
+            if count >= 4:
+                self.app.sse_limiter.release()
+                self._error(HTTPStatus.TOO_MANY_REQUESTS, "Too many concurrent event streams for session")
                 return
-            payload = json.dumps(evt.to_dict(), ensure_ascii=False, separators=(",", ":"))
-            frame = (
-                f"id: {int(evt.sequence_id)}\n"
-                f"event: kitt\n"
-                f"data: {payload}\n\n"
-            ).encode("utf-8")
-            try:
-                with write_lock:
-                    self.wfile.write(frame)
-                    self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                stop.set()
+            self.app._active_sse_by_session[session_id] = count + 1
 
-        def heartbeat() -> None:
-            if stop.is_set():
-                return
-            try:
-                with write_lock:
-                    self.wfile.write(b": ping\n\n")
-                    self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                stop.set()
-
+        sse_slot_acquired = True
         try:
-            self.app.gateway.stream_events(session_id, after, emit, heartbeat, stop)
-        except (ConnectionError, RuntimeError, OSError):
-            stop.set()
+            params = parse_qs(query)
+            after = 0
+            try:
+                after = max(after, int((params.get("after") or [0])[0]))
+            except (TypeError, ValueError):
+                pass
+            try:
+                after = max(after, int(self.headers.get("Last-Event-ID", "0") or 0))
+            except ValueError:
+                pass
+
+            self.send_response(HTTPStatus.OK)
+            for name, value in self._base_headers().items():
+                self.send_header(name, value)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            self.wfile.write(b"retry: 2000\n\n")
+            self.wfile.flush()
+            stop = threading.Event()
+            write_lock = threading.Lock()
+
+            def emit(evt: DaemonEvent) -> None:
+                if stop.is_set():
+                    return
+                payload = json.dumps(evt.to_dict(), ensure_ascii=False, separators=(",", ":"))
+                frame = (
+                    f"id: {int(evt.sequence_id)}\n"
+                    f"event: kitt\n"
+                    f"data: {payload}\n\n"
+                ).encode("utf-8")
+                try:
+                    with write_lock:
+                        self.wfile.write(frame)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    stop.set()
+
+            def heartbeat() -> None:
+                if stop.is_set():
+                    return
+                try:
+                    with write_lock:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    stop.set()
+
+            try:
+                self.app.gateway.stream_events(session_id, after, emit, heartbeat, stop)
+            except (ConnectionError, RuntimeError, OSError):
+                stop.set()
+            finally:
+                self.close_connection = True
         finally:
-            self.close_connection = True
+            if sse_slot_acquired:
+                with self.app._sse_lock:
+                    remaining = max(0, self.app._active_sse_by_session.get(session_id, 1) - 1)
+                    if remaining == 0:
+                        self.app._active_sse_by_session.pop(session_id, None)
+                    else:
+                        self.app._active_sse_by_session[session_id] = remaining
+                self.app.sse_limiter.release()
 
 
 class RemoteServer:
@@ -537,6 +560,9 @@ class RemoteServer:
         )
         self.pair_limiter = SlidingWindowLimiter(limit=8, window_seconds=60.0)
         self.mutation_limiter = SlidingWindowLimiter(limit=120, window_seconds=60.0)
+        self.sse_limiter = threading.BoundedSemaphore(48)
+        self._active_sse_by_session: dict[str, int] = {}
+        self._sse_lock = threading.Lock()
         self.static_root = Path(__file__).resolve().parent / "static"
         self._httpd: _RemoteHTTPServer | None = None
         self.uses_tls = bool(self.config.tls_cert and self.config.tls_key)
