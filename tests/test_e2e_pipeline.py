@@ -248,7 +248,7 @@ class TestE2EPipeline(unittest.TestCase):
         from kitt.core.turn_command import TurnCommand
         list(processor.run_turn(TurnCommand("conv-context", "Crie um HTML explicando este projeto.")))
         self.assertEqual(len(context.calls), 1)
-        self.assertIn("## Context v1", captured["system_prompt"])
+        self.assertIn("## Context v2", captured["system_prompt"])
         self.assertIn("return 'ok'", captured["system_prompt"])
         self.assertIn("Projeto de exemplo", captured["system_prompt"])
         self.assertNotIn("python_compute", captured["system_prompt"])

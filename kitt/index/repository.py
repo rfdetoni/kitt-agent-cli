@@ -17,6 +17,7 @@ from kitt.index.schema import INDEX_SCHEMA_SQL, setup_fts5_tables
 from kitt.index.scanner import RepositoryScanner
 from kitt.index.graph import RepositoryGraph
 from kitt.index.parser_registry import ParserRegistry
+from kitt.security.workspace_fs import WorkspaceFileData, WorkspaceFileSystem
 
 INDEX_SCHEMA_VERSION = "2"
 
@@ -37,6 +38,9 @@ class RepositoryIndex:
         self.max_files = max_files
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
+        self.workspace_fs = WorkspaceFileSystem(
+            self.root_path, max_file_bytes=max(max_file_bytes, 8 * 1024 * 1024)
+        )
 
         if self.in_memory:
             self.db_path = ":memory:"
@@ -123,7 +127,7 @@ class RepositoryIndex:
     def build_or_update(self) -> Dict[str, int]:
         """Incremental index update based on mtime_ns, size, and content_hash."""
         scanner = RepositoryScanner(self.root_path)
-        files = scanner.scan_files(
+        files = scanner.scan_relative_files(
             max_files=self.max_files,
             max_file_bytes=self.max_file_bytes,
             max_total_bytes=self.max_total_bytes,
@@ -135,30 +139,36 @@ class RepositoryIndex:
             self._index_modules_locked(scanner.detect_modules())
             modules = self._module_rows_locked()
             self._conn.execute("UPDATE index_meta SET value='BOOTSTRAP' WHERE key='state'")
-            for p in files:
-                rel_path = str(p.relative_to(self.root_path))
+            for rel_path in files:
+                try:
+                    file_data = self.workspace_fs.read(
+                        rel_path, max_bytes=self.max_file_bytes
+                    )
+                except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
+                    continue
                 seen_paths.add(rel_path)
-                stat = p.stat()
 
                 row = self._conn.execute(
                     "SELECT file_id, mtime_ns, size_bytes, content_hash FROM files WHERE path=?", (rel_path,)
                 ).fetchone()
 
-                if row and row["mtime_ns"] == stat.st_mtime_ns and row["size_bytes"] == stat.st_size:
+                if row and row["mtime_ns"] == file_data.mtime_ns and row["size_bytes"] == file_data.size:
                     continue
 
                 # mtime can change during checkout/copy without changing bytes.
                 # Hash first; reparsing is the expensive part of incremental update.
-                if row and row["size_bytes"] == stat.st_size:
-                    content_hash = self._file_hash(p)
+                if row and row["size_bytes"] == file_data.size:
+                    content_hash = file_data.sha256
                     if content_hash == row["content_hash"]:
                         self._conn.execute(
                             "UPDATE files SET mtime_ns=?, indexed_at=? WHERE file_id=?",
-                            (stat.st_mtime_ns, str(time.time()), row["file_id"]),
+                            (file_data.mtime_ns, str(time.time()), row["file_id"]),
                         )
                         continue
 
-                self._index_file_locked(p, rel_path, modules)
+                self._index_file_locked(
+                    self.root_path / rel_path, rel_path, modules, file_data=file_data
+                )
                 updated_count += 1
             if seen_paths:
                 stale = self._conn.execute(
@@ -196,13 +206,11 @@ class RepositoryIndex:
             "schema_version": meta.get("schema_version", ""),
         }
 
-    @staticmethod
-    def _file_hash(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for block in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(block)
-        return digest.hexdigest()
+    def _file_hash(self, path: Path) -> str:
+        rel_path = str(path.relative_to(self.root_path))
+        return self.workspace_fs.read(
+            rel_path, max_bytes=self.max_file_bytes
+        ).sha256
 
     def bootstrap_then_background(self, paths: List[str] | None = None) -> Dict[str, int]:
         """Index explicit/recent paths now and schedule full indexing in background."""
@@ -281,29 +289,37 @@ class RepositoryIndex:
         updated = deleted = 0
         with self._lock, self._conn:
             modules = self._module_rows_locked()
-            for rel_path in dict.fromkeys(path for path in paths if path and not os.path.isabs(path)):
-                path = (self.root_path / rel_path).resolve()
-                if self.root_path not in path.parents and path != self.root_path:
+            for raw_rel_path in dict.fromkeys(path for path in paths if path and not os.path.isabs(path)):
+                try:
+                    rel_path = self.workspace_fs.relative(raw_rel_path)
+                    if rel_path == ".":
+                        continue
+                except PermissionError:
                     continue
                 row = self._conn.execute(
                     "SELECT file_id, mtime_ns, size_bytes, content_hash FROM files WHERE path=?",
                     (rel_path,),
                 ).fetchone()
-                if not path.is_file():
+                try:
+                    file_data = self.workspace_fs.read(
+                        rel_path, max_bytes=self.max_file_bytes
+                    )
+                except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
                     if row:
                         self._delete_file_locked(row["file_id"])
                         deleted += 1
                     continue
-                stat = path.stat()
-                if row and row["mtime_ns"] == stat.st_mtime_ns and row["size_bytes"] == stat.st_size:
+                if row and row["mtime_ns"] == file_data.mtime_ns and row["size_bytes"] == file_data.size:
                     continue
-                if row and row["size_bytes"] == stat.st_size and self._file_hash(path) == row["content_hash"]:
+                if row and row["size_bytes"] == file_data.size and file_data.sha256 == row["content_hash"]:
                     self._conn.execute(
                         "UPDATE files SET mtime_ns=?, indexed_at=? WHERE file_id=?",
-                        (stat.st_mtime_ns, str(time.time()), row["file_id"]),
+                        (file_data.mtime_ns, str(time.time()), row["file_id"]),
                     )
                     continue
-                self._index_file_locked(path, rel_path, modules)
+                self._index_file_locked(
+                    self.root_path / rel_path, rel_path, modules, file_data=file_data
+                )
                 updated += 1
             if updated or deleted:
                 self._rebuild_reference_edges_locked()
@@ -339,12 +355,12 @@ class RepositoryIndex:
             manifest = module.get("manifest_path")
             digest = ""
             if manifest:
-                path = self.root_path / manifest
-                if path.exists():
-                    try:
-                        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                    except OSError:
-                        digest = ""
+                try:
+                    digest = self.workspace_fs.read(
+                        manifest, max_bytes=self.max_file_bytes
+                    ).sha256
+                except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
+                    digest = ""
             self._conn.execute(
                 """
                 INSERT INTO modules (root_path, kind, manifest_path, content_hash)
@@ -364,13 +380,19 @@ class RepositoryIndex:
     def _module_rows_locked(self) -> List[sqlite3.Row]:
         return self._conn.execute("SELECT module_id, root_path FROM modules ORDER BY length(root_path) DESC").fetchall()
 
-    def _index_file_locked(self, path: Path, rel_path: str, modules: List[sqlite3.Row]) -> None:
-        stat = path.stat()
-        try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            content = ""
-        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    def _index_file_locked(
+        self,
+        path: Path,
+        rel_path: str,
+        modules: List[sqlite3.Row],
+        *,
+        file_data: WorkspaceFileData | None = None,
+    ) -> None:
+        file_data = file_data or self.workspace_fs.read(
+            rel_path, max_bytes=self.max_file_bytes
+        )
+        content = file_data.content.decode("utf-8", errors="ignore")
+        content_hash = file_data.sha256
         module_id = self._module_id_for_path(rel_path, modules)
         self._conn.execute(
             """
@@ -388,8 +410,8 @@ class RepositoryIndex:
                 rel_path,
                 module_id,
                 path.suffix.lstrip("."),
-                stat.st_size,
-                stat.st_mtime_ns,
+                file_data.size,
+                file_data.mtime_ns,
                 content_hash,
                 self.parser_registry.adapter_for(path).version,
                 str(time.time()),
@@ -635,19 +657,15 @@ class RepositoryIndex:
             return results
 
     def _read_line_range(self, rel_path: str, start_line: int, end_line: int) -> str:
-        """Read only indexed symbol range; never load unrelated file body."""
+        """Read only an indexed symbol range through the workspace boundary."""
         try:
-            with (self.root_path / rel_path).open("r", encoding="utf-8", errors="ignore") as handle:
-                lines = []
-                for number, line in enumerate(handle, 1):
-                    if number < start_line:
-                        continue
-                    if number > end_line:
-                        break
-                    lines.append(line.rstrip("\n"))
-                return "\n".join(lines)
-        except OSError:
+            data = self.workspace_fs.read(rel_path, max_bytes=self.max_file_bytes)
+        except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
             return ""
+        lines = data.content.decode("utf-8", errors="ignore").splitlines()
+        start = max(1, int(start_line)) - 1
+        end = max(start, int(end_line))
+        return "\n".join(lines[start:end])
 
     def find_symbol_location(self, symbol: str, path: str | None = None) -> Optional[Dict[str, Any]]:
         """Return first indexed definition location for symbol, optionally constrained to path."""

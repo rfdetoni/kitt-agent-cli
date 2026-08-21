@@ -7,7 +7,7 @@ name = "kitt-agent-cli"
 version = "0.3.0"
 description = "K.I.T.T. autonomous AI coding agent CLI"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 dependencies = [
     "prompt-toolkit>=3.0.52,<4",
@@ -36,5 +36,5 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py312"
 line-length = 100

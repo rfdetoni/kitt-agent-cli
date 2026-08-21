@@ -209,12 +209,13 @@ class RemoteRequestHandler(BaseHTTPRequestHandler):
 
     def _require_auth(self, *, csrf: bool = False) -> str | None:
         token = self._cookie_token()
-        if not self.app.auth.authenticate(token):
+        client_ip = str(self.client_address[0])
+        if not self.app.auth.authenticate(token, client_ip):
             self._error(HTTPStatus.UNAUTHORIZED, "Authentication required")
             return None
         if csrf:
             supplied = self.headers.get("X-KITT-CSRF", "")
-            if not self.app.auth.validate_csrf(token, supplied):
+            if not self.app.auth.validate_csrf(token, supplied, client_ip):
                 self._error(HTTPStatus.FORBIDDEN, "Invalid CSRF token")
                 return None
         return token
@@ -300,8 +301,9 @@ class RemoteRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             if path == "/api/me":
-                csrf = self.app.auth.refresh_csrf(token)
-                session = self.app.auth.authenticate(token)
+                client_ip = str(self.client_address[0])
+                csrf = self.app.auth.refresh_csrf(token, client_ip)
+                session = self.app.auth.authenticate(token, client_ip)
                 if not csrf or not session:
                     self._error(HTTPStatus.UNAUTHORIZED, "Session expired")
                     return

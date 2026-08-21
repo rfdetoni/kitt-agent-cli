@@ -359,7 +359,7 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertIs(engine.index, index)
             self.assertTrue(blocks)
             self.assertIn("useful_symbol", blocks[0].content)
-            self.assertIn("## Context v1", blocks[0].content)
+            self.assertIn("## Context v2", blocks[0].content)
             self.assertEqual(engine.last_compiled_context.selected_count, 1)
             self.assertFalse((Path(tmpdir) / ".kitt" / "cache" / "index_cache.json").exists())
             index.close()

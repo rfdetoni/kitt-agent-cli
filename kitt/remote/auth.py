@@ -18,13 +18,12 @@ class RemoteSession:
 
 
 class PairingAuth:
-    """Ephemeral, in-memory auth for the LAN web interface.
+    """Ephemeral, one-time pairing auth for the LAN web interface.
 
-    The browser never receives the daemon token. Remote session tokens are
-    stored only as SHA-256 digests and are discarded when the remote server
-    exits. CSRF values are deterministically derived from the raw browser
-    session token with a server-only HMAC secret, so multiple tabs can safely
-    call ``/api/me`` without invalidating each other.
+    Browser session tokens are stored only as SHA-256 digests. Pairing codes are
+    rotated immediately after successful use, preventing replay during the
+    remaining TTL. HTTP callers may bind authentication and CSRF checks to the
+    original client IP by supplying ``client_ip``.
     """
 
     def __init__(
@@ -46,8 +45,6 @@ class PairingAuth:
 
     @staticmethod
     def _new_pairing_code() -> str:
-        # Eight numeric digits are easy to type on a phone while still making
-        # online guessing impractical behind the request limiter.
         return f"{secrets.randbelow(100_000_000):08d}"
 
     @staticmethod
@@ -77,6 +74,10 @@ class PairingAuth:
             self._pairing_expires_at = self._clock() + self._pairing_ttl
             return self._pairing_code
 
+    def _rotate_pairing_code_unlocked(self, now: float) -> None:
+        self._pairing_code = self._new_pairing_code()
+        self._pairing_expires_at = now + self._pairing_ttl
+
     def _prune_unlocked(self) -> None:
         now = self._clock()
         for token_hash, session in list(self._sessions.items()):
@@ -93,9 +94,9 @@ class PairingAuth:
                 return None
 
             if len(self._sessions) >= self._max_sessions:
-                # Drop the oldest session rather than allowing unbounded state.
                 oldest = min(
-                    self._sessions.items(), key=lambda item: item[1].created_at
+                    self._sessions.items(),
+                    key=lambda item: item[1].created_at,
                 )[0]
                 self._sessions.pop(oldest, None)
 
@@ -108,30 +109,46 @@ class PairingAuth:
                 expires_at=expires_at,
                 client_ip=str(client_ip or ""),
             )
+            # The code that created this session is consumed. A fresh code is
+            # available for explicit display/rotation flows, but the old code
+            # cannot pair a second device.
+            self._rotate_pairing_code_unlocked(now)
             return token, self._csrf_for(token), expires_at
 
-    def authenticate(self, token: str) -> Optional[RemoteSession]:
+    def authenticate(
+        self,
+        token: str,
+        client_ip: str | None = None,
+    ) -> Optional[RemoteSession]:
         if not token:
             return None
         token_hash = self._digest(token)
         with self._lock:
             self._prune_unlocked()
-            return self._sessions.get(token_hash)
+            session = self._sessions.get(token_hash)
+            if not session:
+                return None
+            if client_ip is not None and session.client_ip:
+                if not hmac.compare_digest(session.client_ip, str(client_ip)):
+                    return None
+            return session
 
-    def csrf_token(self, token: str) -> Optional[str]:
-        if not self.authenticate(token):
+    def csrf_token(self, token: str, client_ip: str | None = None) -> Optional[str]:
+        if not self.authenticate(token, client_ip):
             return None
         return self._csrf_for(token)
 
-    # Compatibility alias used by the HTTP handler. This no longer rotates and
-    # therefore does not invalidate other tabs sharing the same cookie.
     refresh_csrf = csrf_token
 
-    def validate_csrf(self, token: str, csrf: str) -> bool:
-        if not csrf or not self.authenticate(token):
+    def validate_csrf(
+        self,
+        token: str,
+        csrf: str,
+        client_ip: str | None = None,
+    ) -> bool:
+        if not csrf or not self.authenticate(token, client_ip):
             return False
-        expected = self._csrf_for(token)
-        return hmac.compare_digest(expected, str(csrf))
+        return hmac.compare_digest(self._csrf_for(token), str(csrf))
 
     def logout(self, token: str) -> bool:
         if not token:

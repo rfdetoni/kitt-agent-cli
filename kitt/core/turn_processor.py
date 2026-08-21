@@ -47,6 +47,7 @@ from kitt.core.turn_events import (
 )
 from kitt.core.pending_action import PendingAction
 from kitt.core.runtime_config import RuntimeConfig
+from kitt.core.turn_execution_guard import TurnExecutionGuard
 from kitt.security.context import ExecutionSecurityContext
 from kitt.security.capabilities import capabilities_for_tools, READ_ONLY_CAPABILITIES, CAP_REPO_WRITE
 from kitt.metrics.models import TurnMetrics
@@ -101,6 +102,7 @@ class TurnProcessor:
         self.session_state = SessionState()
         self.pending_actions: Dict[str, PendingAction] = {}
         self.cancelled_turns: set[str] = set()
+        self.turn_guard = TurnExecutionGuard(self.cancelled_turns)
         self.reasoning_effort: int = 50
         self._closed = False
 
@@ -127,6 +129,15 @@ class TurnProcessor:
     def close(self):
         self._closed = True
 
+    def _cancel_requested(self, turn_id: str) -> bool:
+        guard = getattr(self, "turn_guard", None)
+        return bool(guard and guard.is_cancelled(turn_id))
+
+    def _mark_cancelled(self, turn_id: str) -> None:
+        guard = getattr(self, "turn_guard", None)
+        if guard is not None:
+            guard.cancel(turn_id)
+
     def _emit(self, event_name: str, payload: Dict[str, Any]):
         if self.event_callback and not self._closed:
             self.event_callback(event_name, payload)
@@ -151,22 +162,27 @@ class TurnProcessor:
         wrapper_prefix: str = "",
         wrapper_suffix: str = "",
     ) -> str:
-        max_allowed = max(500, profile.context_window - profile.max_output_tokens)
+        prompt_budget = PromptBudget(profile.context_window, profile.max_output_tokens)
+        max_allowed = prompt_budget.max_input_tokens
         used = (
             TokenCounter.count_tokens(system_prompt)
             + sum(TokenCounter.count_tokens(m.get("content", "")) for m in messages)
             + TokenCounter.count_tokens(wrapper_prefix + wrapper_suffix)
         )
-        remaining = max(64, max_allowed - used - 80)
+        remaining = max(0, max_allowed - used - 80)
+        if remaining <= 0:
+            return ""
         if TokenCounter.count_tokens(output) <= remaining:
             return output
-        return PromptBudget(profile.context_window, profile.max_output_tokens)._truncate_to_tokens(output, remaining)
+        return prompt_budget._truncate_to_tokens(output, remaining)
 
     def _rebudget_execution_messages(
         self, messages: List[Dict[str, str]], system_prompt: str, profile
     ) -> None:
         """Keep each follow-up request inside provider input budget."""
-        available = max(256, profile.context_window - profile.max_output_tokens)
+        available = PromptBudget(
+            profile.context_window, profile.max_output_tokens
+        ).max_input_tokens
         used = TokenCounter.count_tokens(system_prompt) + TokenCounter.count_messages(messages).count
         if used <= available:
             return
@@ -262,7 +278,11 @@ class TurnProcessor:
                     break
                 yield item
         finally:
+            if producer.is_alive():
+                self._mark_cancelled(cmd.turn_id)
             stop.set()
+            if producer.is_alive():
+                await _asyncio.to_thread(producer.join, 2.0)
 
     def _history_context(self, conversation_id: str, max_messages: int = 12,
                          exclude_prompt: Optional[str] = None) -> str:
@@ -296,7 +316,7 @@ To call the safe runtime, respond with exactly:
 Supported operations: repo.read, repo.search, repo.inspect_symbol, repo.read_symbol, repo.references, repo.edit_symbol, patch.apply, process.run, artifacts.store, artifacts.read, children.spawn, children.send, children.inspect, goal.inspect, goal.update, memory.query, memory.correct, memory.concept, memory.link, state.get, state.set, state.list, handles.resolve.
 RULES:
 1. Focus strictly on user request.
-2. Put reasoning inside <think>...</think> before tool call.
+2. Do not expose chain-of-thought. Emit the tool call directly when action is needed.
 3. Once fulfilled, STOP calling tools and answer directly.
 """.strip()
 
@@ -309,7 +329,7 @@ For a host tool, respond with exactly:
 RULES:
 1. Focus strictly on the user's explicit request. Do not make unrequested changes or edits to other files.
 2. Exact Path Adherence: When the user references a file (e.g. `@apresentacao.html` or `apresentacao.html`) or when files are provided in context, you MUST use the EXACT relative file path specified. NEVER invent new directory structures (such as `src/`, `src/html/`, `html/`, `app/`) and NEVER duplicate the file under a new directory.
-3. If you need to plan or reason, put your reasoning inside <think>...</think> before calling the tool.
+3. Reason internally. Never emit chain-of-thought or <think>/<thought> blocks.
 4. Once the requested task is fulfilled, STOP calling tools and answer directly with a concise summary.
 5. ACTION MANDATE: If the user asks to edit, update, modify, fix, or create a file, you MUST emit a tool call (`write_file` or `apply_patch`). NEVER output the updated file content as plain chat text or markdown without a tool call; call the tool directly so K.I.T.T. writes the changes to disk.
 """
@@ -358,7 +378,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return ""
         # The compiled context pack is already selected by value/token. Calling
         # a small model here would spend tokens to summarize a bounded package.
-        if "## Context v1" in context_map and TokenCounter.count_tokens(context_map) <= 4096:
+        if "## Context v" in context_map and TokenCounter.count_tokens(context_map) <= 4096:
             return context_map
         profile = getattr(client, "profile", None)
         cache_key = hashlib.sha256(
@@ -469,7 +489,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         TAG_OPENERS = ("<kitt-python-compute>", "<kitt-tool>", "<think>", "<thought>", "</think>", "</thought>", "</kitt-tool>", "</kitt-python-compute>")
 
         for chunk in client.chat_stream(messages, system_prompt=system_prompt):
-            if turn_id and turn_id in self.cancelled_turns:
+            if turn_id and self._cancel_requested(turn_id):
                 break
             full_response += chunk
 
@@ -610,8 +630,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return None, None, routing_decision, reason
         exe_profile_name = routing_decision.selected_profile
         exe_profile = self.router.config.profiles.get(exe_profile_name, configured_exe)
-        if exe_profile and exe_profile.max_output_tokens < 4096:
-            exe_profile = replace(exe_profile, max_output_tokens=4096)
+        if exe_profile:
+            desired_output = max(
+                exe_profile.max_output_tokens,
+                min(4096, max(1024, exe_profile.context_window // 2)),
+            )
+            safe_output = min(
+                desired_output,
+                exe_profile.context_window - PromptBudget.MIN_INPUT_TOKENS,
+            )
+            exe_profile = replace(exe_profile, max_output_tokens=max(64, safe_output))
         return exe_profile_name, exe_profile, routing_decision, None
 
     def _build_context(self, cmd: TurnCommand, task: SemanticTask, plan: ContextPlan, exe_profile: ModelProfile, sf_client: LLMClient) -> tuple:
@@ -760,13 +788,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         reasoning_instruction = ""
         if plan.enabled_tools:
             if self.reasoning_effort <= 0:
-                reasoning_instruction = "\n\nReasoning Policy: 0% effort (Fast/Direct). Skip chain of thought reasoning entirely. Do not produce <think> tags. Output your response or tool call directly."
+                effort_label = "fast/direct"
             elif self.reasoning_effort < 40:
-                reasoning_instruction = f"\n\nReasoning Policy: {self.reasoning_effort}% effort (Low). Keep chain of thought brief and concise (1-3 sentences) inside <think>...</think> before acting. Never exhaust your token budget inside <think>."
+                effort_label = "low"
             elif self.reasoning_effort <= 75:
-                reasoning_instruction = f"\n\nReasoning Policy: {self.reasoning_effort}% effort (Medium). Provide brief, concise step-by-step reasoning inside <think>...</think> (under 100 words), then immediately emit your tool call or code modification."
+                effort_label = "medium"
             else:
-                reasoning_instruction = f"\n\nReasoning Policy: {self.reasoning_effort}% effort (Deep/Max). Perform thorough step-by-step reasoning inside <think>...</think>, and always conclude with your tool call or code edit."
+                effort_label = "deep"
+            reasoning_instruction = (
+                f"\n\nReasoning Policy: use {effort_label} internal reasoning "
+                f"({self.reasoning_effort}% effort). Do not expose chain-of-thought, "
+                "scratchpad text, or <think>/<thought> blocks. Emit only the next tool "
+                "call or the concise final answer."
+            )
 
         if cmd.mode == "plan":
             planning_instruction = (
@@ -927,16 +961,21 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     return
                 python_calls += 1
             call_id = uuid.uuid4().hex[:8]
+            if not self.turn_guard.begin(cmd.turn_id):
+                return
             yield ToolStarted(tool_name=tool_name, args=tool_args, call_id=call_id), None, None
-            tool_result = self.registry.execute_tool(
-                tool_name,
-                tool_args,
-                turn_id=cmd.turn_id,
-                conversation_id=cmd.conversation_id,
-                workspace_id=workspace_id,
-                enabled_tools=request.enabled_tools,
-                security_context=security_context,
-            )
+            try:
+                tool_result = self.registry.execute_tool(
+                    tool_name,
+                    tool_args,
+                    turn_id=cmd.turn_id,
+                    conversation_id=cmd.conversation_id,
+                    workspace_id=workspace_id,
+                    enabled_tools=request.enabled_tools,
+                    security_context=security_context,
+                )
+            finally:
+                self.turn_guard.end(cmd.turn_id)
             if tool_result.requires_approval:
                 hist_svc = self.history_service
                 pa_ws = workspace_id
@@ -1122,12 +1161,18 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 yield TurnFailed(error="Execution denied by PolicyEngine for apply_patch.")
                 return
 
-            # ALLOW
-            edit_result = self.diff_applier.apply(
-                blocks, root_dir=str(self.root_path), allow_overwrite_existing=True,
-                workspace_id=workspace_id, conversation_id=cmd.conversation_id,
-                turn_id=cmd.turn_id,
-            )
+            # ALLOW. Establish mutation-start ordering against cancellation.
+            if not self.turn_guard.begin(cmd.turn_id):
+                yield TurnCancelled(reason="Turn cancelled before patch mutation")
+                return
+            try:
+                edit_result = self.diff_applier.apply(
+                    blocks, root_dir=str(self.root_path), allow_overwrite_existing=True,
+                    workspace_id=workspace_id, conversation_id=cmd.conversation_id,
+                    turn_id=cmd.turn_id,
+                )
+            finally:
+                self.turn_guard.end(cmd.turn_id)
             if edit_result.success:
                 self.session_state.last_changeset = edit_result.changeset
                 self.working_set.touch_paths(
@@ -1400,12 +1445,18 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return
         sec_ctx = ExecutionSecurityContext.from_dict(pa.security_context)
         sec_ctx.assert_scope(pa.workspace_id, pa.conversation_id)
-        res = self.registry.execute_tool(
-            pa.tool_name, pa.normalized_args, turn_id=turn_id,
-            conversation_id=pa.conversation_id, workspace_id=pa.workspace_id,
-            grant=grant, expected_approval_id=pa.approval_request_id,
-            security_context=sec_ctx.with_turn(turn_id),
-        )
+        if not self.turn_guard.begin(turn_id):
+            yield TurnCancelled(reason="Turn cancelled before approved action execution")
+            return
+        try:
+            res = self.registry.execute_tool(
+                pa.tool_name, pa.normalized_args, turn_id=turn_id,
+                conversation_id=pa.conversation_id, workspace_id=pa.workspace_id,
+                grant=grant, expected_approval_id=pa.approval_request_id,
+                security_context=sec_ctx.with_turn(turn_id),
+            )
+        finally:
+            self.turn_guard.end(turn_id)
 
         if res.success:
             self.working_set.touch_paths(
@@ -1438,7 +1489,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         reason: str,
         conversation_id: Optional[str] = None,
     ) -> Iterator[TurnEvent]:
-        self.cancelled_turns.add(turn_id)
+        self._mark_cancelled(turn_id)
         pa = self.pending_actions.pop(turn_id, None)
         if pa and self.history_service and hasattr(pa, "id"):
             self.history_service.repo.cancel_pending_action(pa.id)

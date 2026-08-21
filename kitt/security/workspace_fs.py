@@ -1,16 +1,23 @@
-"""Race-resistant workspace file IO for tool writes and reads."""
+"""Race-resistant workspace file I/O shared by tools, indexing and context retrieval."""
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import secrets
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 FORBIDDEN_PARTS = frozenset({".git", ".env"})
 DEFAULT_MAX_FILE_BYTES = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class WorkspaceFileStat:
+    rel_path: str
+    size: int
+    mtime_ns: int
 
 
 @dataclass(frozen=True)
@@ -20,9 +27,17 @@ class WorkspaceFileData:
     size: int
     mtime_ns: int
     sha256: str
+    complete: bool = True
 
 
 class WorkspaceFileSystem:
+    """Single filesystem trust boundary for a KITT workspace.
+
+    Relative paths only are accepted. Reads and mutations refuse parent traversal,
+    protected path components, symlinks/reparse traversal and non-regular files.
+    POSIX operations use ``dir_fd`` + ``O_NOFOLLOW`` to reduce TOCTOU exposure.
+    """
+
     def __init__(self, root_dir: str | Path, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES):
         self.root = Path(root_dir).expanduser().resolve()
         self.max_file_bytes = max(1024, int(max_file_bytes))
@@ -34,8 +49,6 @@ class WorkspaceFileSystem:
         if path.is_absolute():
             raise PermissionError("Absolute workspace paths are forbidden")
         parts = tuple(part for part in path.parts if part not in {"", "."})
-        if not parts:
-            return ()
         if any(part == ".." for part in parts):
             raise PermissionError("Parent traversal is forbidden")
         for part in parts:
@@ -47,9 +60,12 @@ class WorkspaceFileSystem:
         parts = self._normalize(rel)
         return "/".join(parts) if parts else "."
 
+    def absolute_lexical(self, rel: str | Path) -> Path:
+        """Return a lexical workspace path after normalization, without following it."""
+        return self.root.joinpath(*self._normalize(rel))
+
     def _windows_path(self, parts: tuple[str, ...], *, allow_missing: bool = False) -> Path:
         target = self.root.joinpath(*parts)
-        # Check every existing component without following a final reparse/symlink.
         current = self.root
         for part in parts:
             current = current / part
@@ -84,6 +100,10 @@ class WorkspaceFileSystem:
                         raise
                     os.mkdir(component, 0o755, dir_fd=fd)
                     next_fd = os.open(component, flags, dir_fd=fd)
+                except OSError as exc:
+                    if exc.errno in (getattr(errno, "ELOOP", 40), getattr(errno, "EMLINK", 31)):
+                        raise PermissionError(f"Workspace symlink traversal refused: {component}") from exc
+                    raise
                 st = os.fstat(next_fd)
                 if not stat.S_ISDIR(st.st_mode):
                     os.close(next_fd)
@@ -95,73 +115,135 @@ class WorkspaceFileSystem:
             os.close(fd)
             raise
 
+    def _open_regular_posix(self, parts: tuple[str, ...], *, nonblocking: bool = False) -> tuple[int, int]:
+        parent_fd, name = self._open_parent_posix(parts, create=False)
+        flags = os.O_RDONLY | int(getattr(os, "O_NOFOLLOW", 0)) | int(getattr(os, "O_CLOEXEC", 0))
+        if nonblocking:
+            flags |= int(getattr(os, "O_NONBLOCK", 0))
+        try:
+            fd = os.open(name, flags, dir_fd=parent_fd)
+        except OSError as exc:
+            os.close(parent_fd)
+            if exc.errno in (getattr(errno, "ELOOP", 40), getattr(errno, "EMLINK", 31)):
+                raise PermissionError(f"Workspace symlink traversal refused: {name}") from exc
+            raise
+        except Exception:
+            os.close(parent_fd)
+            raise
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            os.close(fd)
+            os.close(parent_fd)
+            raise PermissionError("Workspace target must be a regular file")
+        return parent_fd, fd
+
     @staticmethod
-    def _read_fd(fd: int, max_bytes: int) -> bytes:
+    def _read_fd(fd: int, max_bytes: int, *, allow_prefix: bool = False) -> bytes:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise PermissionError("Workspace target must be a regular file")
-        if st.st_size > max_bytes:
+        if not allow_prefix and st.st_size > max_bytes:
             raise ValueError(f"Workspace file exceeds {max_bytes} bytes")
         chunks: list[bytes] = []
         total = 0
-        while True:
-            chunk = os.read(fd, min(64 * 1024, max_bytes + 1 - total))
+        target = min(st.st_size, max_bytes) if allow_prefix else st.st_size
+        while total < target:
+            chunk = os.read(fd, min(64 * 1024, target - total))
             if not chunk:
                 break
-            total += len(chunk)
-            if total > max_bytes:
-                raise ValueError(f"Workspace file exceeds {max_bytes} bytes")
             chunks.append(chunk)
+            total += len(chunk)
+        if not allow_prefix and total > max_bytes:
+            raise ValueError(f"Workspace file exceeds {max_bytes} bytes")
         return b"".join(chunks)
 
-    def read(self, rel: str | Path, *, max_bytes: int | None = None) -> WorkspaceFileData:
+    def stat_regular(self, rel: str | Path) -> WorkspaceFileStat:
         parts = self._normalize(rel)
-        limit = min(self.max_file_bytes, max_bytes or self.max_file_bytes)
+        rel_path = "/".join(parts)
         if os.name == "nt":
             target = self._windows_path(parts)
             st = target.lstat()
             if not stat.S_ISREG(st.st_mode):
                 raise PermissionError("Workspace target must be a regular file")
+            return WorkspaceFileStat(rel_path=rel_path, size=st.st_size, mtime_ns=st.st_mtime_ns)
+
+        parent_fd, fd = self._open_regular_posix(parts)
+        try:
+            st = os.fstat(fd)
+            return WorkspaceFileStat(rel_path=rel_path, size=st.st_size, mtime_ns=st.st_mtime_ns)
+        finally:
+            os.close(fd)
+            os.close(parent_fd)
+
+    def _read_common(self, rel: str | Path, limit: int, *, allow_prefix: bool) -> WorkspaceFileData:
+        parts = self._normalize(rel)
+        rel_path = "/".join(parts)
+        if os.name == "nt":
+            target = self._windows_path(parts)
+            before = target.lstat()
+            if not stat.S_ISREG(before.st_mode):
+                raise PermissionError("Workspace target must be a regular file")
+            if not allow_prefix and before.st_size > limit:
+                raise ValueError(f"Workspace file exceeds {limit} bytes")
             with target.open("rb") as handle:
-                content = handle.read(limit + 1)
-            if len(content) > limit:
+                content = handle.read(limit if allow_prefix else limit + 1)
+            if not allow_prefix and len(content) > limit:
                 raise ValueError(f"Workspace file exceeds {limit} bytes")
             after = target.lstat()
-            if (st.st_size, st.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise PermissionError("Workspace file changed while reading")
+            st = after
         else:
-            parent_fd, name = self._open_parent_posix(parts, create=False)
+            parent_fd, fd = self._open_regular_posix(parts, nonblocking=True)
             try:
-                flags = os.O_RDONLY | int(getattr(os, "O_NOFOLLOW", 0))
-                flags |= int(getattr(os, "O_NONBLOCK", 0)) | int(getattr(os, "O_CLOEXEC", 0))
-                fd = os.open(name, flags, dir_fd=parent_fd)
-                try:
-                    st = os.fstat(fd)
-                    content = self._read_fd(fd, limit)
-                    after = os.fstat(fd)
-                    if (
-                        st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
-                    ) != (
-                        after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
-                    ):
-                        raise PermissionError("Workspace file changed while reading")
-                finally:
-                    os.close(fd)
+                before = os.fstat(fd)
+                content = self._read_fd(fd, limit, allow_prefix=allow_prefix)
+                after = os.fstat(fd)
+                if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_size,
+                    after.st_mtime_ns,
+                ):
+                    raise PermissionError("Workspace file changed while reading")
+                st = after
             finally:
+                os.close(fd)
                 os.close(parent_fd)
+
+        complete = len(content) >= st.st_size
         return WorkspaceFileData(
-            rel_path="/".join(parts),
+            rel_path=rel_path,
             content=content,
             size=st.st_size,
             mtime_ns=st.st_mtime_ns,
             sha256=hashlib.sha256(content).hexdigest(),
+            complete=complete,
         )
+
+    def read(self, rel: str | Path, *, max_bytes: int | None = None) -> WorkspaceFileData:
+        limit = min(self.max_file_bytes, max_bytes or self.max_file_bytes)
+        return self._read_common(rel, limit, allow_prefix=False)
+
+    def read_prefix(self, rel: str | Path, *, max_bytes: int) -> WorkspaceFileData:
+        limit = max(1, min(self.max_file_bytes, int(max_bytes)))
+        return self._read_common(rel, limit, allow_prefix=True)
+
+    def read_text(
+        self,
+        rel: str | Path,
+        *,
+        max_bytes: int | None = None,
+        errors: str = "ignore",
+    ) -> tuple[str, WorkspaceFileData]:
+        data = self.read(rel, max_bytes=max_bytes)
+        return data.content.decode("utf-8", errors=errors), data
 
     def exists_regular(self, rel: str | Path) -> bool:
         try:
-            self.read(rel, max_bytes=self.max_file_bytes)
+            self.stat_regular(rel)
             return True
-        except (FileNotFoundError, IsADirectoryError):
+        except (FileNotFoundError, IsADirectoryError, PermissionError, OSError):
             return False
 
     def atomic_write(
@@ -183,7 +265,6 @@ class WorkspaceFileSystem:
         if os.name == "nt":
             target = self._windows_path(parts, allow_missing=True)
             target.parent.mkdir(parents=True, exist_ok=True)
-            # Revalidate parent after creation.
             self._windows_path(parts, allow_missing=True)
             target_exists = target.exists() or target.is_symlink()
             if expected_exists is True and not target_exists:
@@ -193,10 +274,8 @@ class WorkspaceFileSystem:
             if target_exists:
                 if target.is_symlink() or not target.is_file():
                     raise PermissionError("Refusing unsafe workspace write target")
-                if expected_sha256 is not None:
-                    current = self.read(rel).sha256
-                    if current != expected_sha256:
-                        raise ValueError("expected_content_hash mismatch")
+                if expected_sha256 is not None and self.read(rel).sha256 != expected_sha256:
+                    raise ValueError("expected_content_hash mismatch")
             elif expected_sha256 is not None:
                 raise ValueError("expected_content_hash mismatch")
             tmp = target.parent / f".{target.name}.{secrets.token_hex(8)}.tmp"
@@ -206,7 +285,6 @@ class WorkspaceFileSystem:
                     handle.flush()
                     os.fsync(handle.fileno())
                 if expected_exists is False:
-                    # Atomic no-overwrite create on Windows.
                     os.rename(tmp, target)
                 else:
                     os.replace(tmp, target)
@@ -264,7 +342,6 @@ class WorkspaceFileSystem:
             os.close(temp_fd)
             temp_fd = -1
 
-            # Revalidate final target immediately before replace.
             try:
                 final_st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
             except FileNotFoundError:
@@ -272,7 +349,6 @@ class WorkspaceFileSystem:
             if final_st is not None and not stat.S_ISREG(final_st.st_mode):
                 raise PermissionError("Refusing unsafe workspace replace target")
             if expected_exists is False:
-                # Atomic no-replace create: link fails with EEXIST if target appeared.
                 os.link(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
                 os.unlink(temp_name, dir_fd=parent_fd)
             else:
@@ -318,7 +394,8 @@ class WorkspaceFileSystem:
         try:
             try:
                 fd = os.open(
-                    name, os.O_RDONLY | int(getattr(os, "O_NOFOLLOW", 0)) | int(getattr(os, "O_CLOEXEC", 0)),
+                    name,
+                    os.O_RDONLY | int(getattr(os, "O_NOFOLLOW", 0)) | int(getattr(os, "O_CLOEXEC", 0)),
                     dir_fd=parent_fd,
                 )
             except FileNotFoundError:
@@ -364,8 +441,8 @@ class WorkspaceFileSystem:
             for component in parts:
                 next_fd = os.open(
                     component,
-                    os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0)) |
-                    int(getattr(os, "O_NOFOLLOW", 0)) | int(getattr(os, "O_CLOEXEC", 0)),
+                    os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0))
+                    | int(getattr(os, "O_NOFOLLOW", 0)) | int(getattr(os, "O_CLOEXEC", 0)),
                     dir_fd=fd,
                 )
                 os.close(fd)
