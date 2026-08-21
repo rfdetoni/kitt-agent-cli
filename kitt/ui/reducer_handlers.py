@@ -47,10 +47,6 @@ def handle_thinking_completed(state: UIState, event: ThinkingCompleted) -> None:
             block.status = "done"
             block.duration_ms = event.duration_ms
             block.tokens = event.tokens
-            thought_str = getattr(event, "thought", "")
-            if thought_str:
-                block.collapsed = True
-                block.metadata["full_output"] = safe_text(thought_str)
             break
     state.status_text = "DEVELOPING"
     core_task = next((t for t in state.active_tasks if t.id == "core" or t.kind == "core_agent"), None)

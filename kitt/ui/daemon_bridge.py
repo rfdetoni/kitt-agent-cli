@@ -28,7 +28,6 @@ def map_daemon_event_to_turn_event(event: DaemonEvent) -> Any:
         return None
     if cls is te.FilterCompleted:
         # The semantic filter object is intentionally not rehydrated across IPC.
-        # ContextResolved/ContextBuildCompleted carry the useful UI telemetry.
         return te.FilterCompleted(filter_res=None)
     payload = event.payload or {}
     allowed = {f.name for f in fields(cls) if f.init and f.name != "timestamp"}
@@ -60,11 +59,20 @@ class DaemonUIBridge:
         self._connected = await self.client.connect()
         return self._connected
 
-    async def create_session(self, title: str = "New Session") -> Optional[str]:
+    async def request(self, action: str, params: Optional[dict] = None, timeout: float = 30.0) -> dict:
         if not self.client:
-            return None
-        res = await self.client.send_request("create_session", {"title": title})
-        return res.get("session_id") if res.get("status") == "ok" else None
+            raise RuntimeError("Daemon UI bridge is not connected")
+        payload = {"workspace": self.workspace_dir}
+        if params:
+            payload.update(params)
+        response = await self.client.send_request(action, payload, timeout=timeout)
+        if response.get("status") != "ok":
+            raise RuntimeError(str(response.get("error") or f"Daemon action {action} failed"))
+        return response
+
+    async def create_session(self, title: str = "New Session") -> Optional[str]:
+        res = await self.request("create_session", {"title": title})
+        return res.get("session_id")
 
     def _on_wire_event(self, event: DaemonEvent) -> None:
         self.last_sequence_id = max(self.last_sequence_id, event.sequence_id)
@@ -107,30 +115,101 @@ class DaemonUIBridge:
         self, text: str, *, mode: str = "auto",
         explicit_files=None, no_history: bool = False,
     ) -> Optional[str]:
-        if not self.client or not self.attached_session_id:
+        if not self.attached_session_id:
             return None
-        res = await self.client.submit_turn(
-            self.attached_session_id,
-            text,
-            mode=mode,
-            explicit_files=list(explicit_files or ()),
-            no_history=no_history,
+        res = await self.request(
+            "send_input",
+            {
+                "session_id": self.attached_session_id,
+                "text": text,
+                "mode": mode,
+                "explicit_files": list(explicit_files or ()),
+                "no_history": no_history,
+            },
         )
-        return res.get("turn_id") if res.get("status") == "ok" else None
+        return res.get("turn_id")
 
     async def send_input(self, text: str) -> bool:
         return bool(await self.submit_turn(text))
 
     async def continue_turn(self, grant) -> bool:
-        if not self.client or not self.attached_session_id:
+        # Compatibility path for explicitly local approval brokers. Normal TUI
+        # approval uses approval_action() so the grant nonce never leaves daemon.
+        if not self.attached_session_id:
             return False
-        res = await self.client.continue_turn(self.attached_session_id, grant)
+        res = await self.request(
+            "continue_turn",
+            {
+                "session_id": self.attached_session_id,
+                "grant": {
+                    "approval_id": grant.approval_id,
+                    "turn_id": grant.turn_id,
+                    "conversation_id": grant.conversation_id,
+                    "workspace_id": grant.workspace_id,
+                    "action_hash": grant.action_hash,
+                    "granted_at": grant.granted_at,
+                    "expires_at": grant.expires_at,
+                    "nonce": grant.nonce,
+                },
+            },
+        )
         return res.get("status") == "ok"
 
+    async def approval_action(self, approval_id: str, allow: bool) -> dict:
+        if not self.attached_session_id:
+            raise RuntimeError("No daemon session is attached")
+        return await self.request(
+            "approval.approve" if allow else "approval.deny",
+            {
+                "approval_id": approval_id,
+                "session_id": self.attached_session_id,
+            },
+        )
+
+    async def list_approvals(self) -> list[dict]:
+        params = {"session_id": self.attached_session_id} if self.attached_session_id else {}
+        return (await self.request("approval.list", params)).get("approvals", [])
+
+    async def remember_approval(self, tool_name: str, scope: str) -> dict:
+        return await self.request(
+            "approval.remember",
+            {
+                "tool_name": tool_name,
+                "scope": scope,
+                "decision": "allow",
+                "path_glob": "**",
+            },
+        )
+
+    async def execute_direct_tool(self, tool_name: str, args: dict) -> dict:
+        if not self.attached_session_id:
+            raise RuntimeError("No daemon session is attached")
+        return await self.request(
+            "ui.tool.execute",
+            {
+                "session_id": self.attached_session_id,
+                "tool_name": tool_name,
+                "args": dict(args or {}),
+            },
+            timeout=180.0,
+        )
+
+    async def undo(self) -> dict:
+        return await self.request("ui.undo", {"session_id": self.attached_session_id or ""})
+
+    async def set_reasoning(self, value: int) -> dict:
+        return await self.request("runtime.set_reasoning", {"value": max(0, min(100, int(value)))})
+
+    async def set_autonomy(self, preset: str) -> dict:
+        return await self.request("runtime.set_autonomy", {"preset": str(preset)})
+
+    async def reload_router(self) -> dict:
+        return await self.request("runtime.reload_router")
+
     async def cancel_turn(self, turn_id: str = "") -> bool:
-        if not self.client or not self.attached_session_id:
+        if not self.attached_session_id:
             return False
-        res = await self.client.send_request(
+        res = await self.request(
             "cancel_turn",
             {"session_id": self.attached_session_id, "turn_id": turn_id},
         )

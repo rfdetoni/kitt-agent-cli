@@ -73,6 +73,9 @@ class RuntimeConfig:
     daemon_enabled: bool = True
     daemon_auto_start: bool = True
     daemon_local_fallback: bool = False
+    # Frontend facades may read shared state/config but must not start a second
+    # scheduler/extensions lifecycle when the daemon owns execution.
+    frontend_only: bool = False
     retained_agents_enabled: bool = True
     executable_skills_enabled: bool = True
     scheduler_enabled: bool = True

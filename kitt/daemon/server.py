@@ -5,20 +5,25 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import secrets
 import stat
 import sys
 import time
 import threading
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from kitt.core.runtime import KittRuntime
 from kitt.core.turn_command import TurnCommand
 from kitt.daemon.protocol import DaemonEvent, decode_line, encode_message
+from kitt.daemon.redaction import sanitize_public_event_payload
 from kitt.daemon.transport import IPCTransport
 from kitt.history.database import HistoryDatabase
 from kitt.tools.approval import ApprovalGrant
+from kitt.security.capabilities import capabilities_for_tools
+from kitt.security.context import ExecutionSecurityContext
 
 logger = logging.getLogger("kitt.daemon.server")
 
@@ -70,6 +75,9 @@ class DaemonServer:
         self._session_locks = {}
         self._workspace_locks = {}
         self._runtimes = {}
+        self._runtime_event_unsubscribers = {}
+        self._active_turns: Dict[str, str] = {}
+        self._direct_pending: Dict[str, dict[str, Any]] = {}
         self._instance_lock_fd = None
 
     def _ensure_token(self) -> str:
@@ -94,9 +102,45 @@ class DaemonServer:
             if self.execution_client is not None:
                 rt.processor.execution_client = self.execution_client
             self._runtimes[root] = rt
+            self._attach_runtime_event_bridge(root, rt)
         rt = self._runtimes[root]
         await rt.start()
         return rt
+
+    def _attach_runtime_event_bridge(self, root: str, rt) -> None:
+        loop = asyncio.get_running_loop()
+        public_child_events = {
+            "ChildAgentSpawned",
+            "ChildAgentProgress",
+            "ChildAgentFinished",
+            "ChildAgentApprovalContinued",
+        }
+
+        def on_event(event_name: str, payload: dict[str, Any]) -> None:
+            if event_name not in public_child_events:
+                return
+            child_id = str((payload or {}).get("child_id") or "")
+            if not child_id:
+                return
+            child = rt.children.repo.get(child_id)
+            if not child:
+                return
+            session_id = str(child.parent_conversation_id or "")
+            if not session_id:
+                return
+            try:
+                loop.call_soon_threadsafe(
+                    self.record_event,
+                    rt.database,
+                    session_id,
+                    event_name,
+                    dict(payload or {}),
+                )
+            except RuntimeError:
+                # Daemon loop is shutting down; persisted runtime shutdown wins.
+                return
+
+        self._runtime_event_unsubscribers[root] = rt.events.subscribe("*", on_event)
 
     async def start(self):
         self._instance_lock_fd = self.transport.acquire_instance_lock()
@@ -132,6 +176,12 @@ class DaemonServer:
                         exc_info=True,
                     )
                 self._server = None
+            for unsubscribe in list(self._runtime_event_unsubscribers.values()):
+                try:
+                    unsubscribe()
+                except Exception:
+                    pass
+            self._runtime_event_unsubscribers.clear()
             for runtime in list(self._runtimes.values()):
                 try:
                     await runtime.aclose()
@@ -164,12 +214,20 @@ class DaemonServer:
                 await writer.wait_closed()
             except Exception:
                 pass
+        for unsubscribe in list(self._runtime_event_unsubscribers.values()):
+            try:
+                unsubscribe()
+            except Exception:
+                pass
+        self._runtime_event_unsubscribers.clear()
         for rt in list(self._runtimes.values()):
             try:
                 await rt.aclose()
             except Exception:
                 logger.exception("Runtime shutdown failure")
         self._runtimes.clear()
+        self._active_turns.clear()
+        self._direct_pending.clear()
         self.transport.cleanup()
         self.transport.release_instance_lock(self._instance_lock_fd)
         self._instance_lock_fd = None
@@ -376,6 +434,180 @@ class DaemonServer:
             raise ValueError("Cross-workspace session access blocked")
         return conv
 
+    @staticmethod
+    def _encode_message_cursor(created_at: float, row_id: str) -> str:
+        return f"{float(created_at):.17g}:{row_id}"
+
+    @staticmethod
+    def _decode_message_cursor(value: Any) -> Optional[tuple[float, str]]:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            created, row_id = raw.rsplit(":", 1)
+            created_at = float(created)
+        except (TypeError, ValueError):
+            raise ValueError("Invalid message cursor")
+        if not row_id or len(row_id) > 128 or not re.fullmatch(r"[A-Za-z0-9_-]+", row_id):
+            raise ValueError("Invalid message cursor")
+        return created_at, row_id
+
+    def _require_active_turn(self, session_id: str, turn_id: str) -> None:
+        sid = str(session_id or "").strip()
+        tid = str(turn_id or "").strip()
+        if not sid or not tid:
+            raise ValueError("session_id and turn_id are required")
+        if self._active_turns.get(tid) != sid:
+            raise ValueError("Turn is not active in the requested session")
+
+    def _prune_direct_pending(self, rt) -> None:
+        now = time.time()
+        expired = [
+            approval_id
+            for approval_id, item in self._direct_pending.items()
+            if float(item.get("expires_at", 0)) <= now
+        ]
+        for approval_id in expired:
+            self._direct_pending.pop(approval_id, None)
+            try:
+                rt.approval.deny(approval_id, "Direct UI approval expired")
+            except Exception:
+                pass
+        if len(self._direct_pending) > 64:
+            oldest = sorted(
+                self._direct_pending.items(),
+                key=lambda pair: float(pair[1].get("created_at", 0)),
+            )[: len(self._direct_pending) - 64]
+            for approval_id, _ in oldest:
+                self._direct_pending.pop(approval_id, None)
+                try:
+                    rt.approval.deny(approval_id, "Direct UI approval capacity exceeded")
+                except Exception:
+                    pass
+
+    async def _ui_tool_execute(self, rt, session_id: str, tool_name: str, args: dict) -> dict[str, Any]:
+        self._require_session(rt, session_id)
+        allowed = {"run_command", "child_spawn"}
+        tool_name = str(tool_name or "").strip()
+        if tool_name not in allowed:
+            raise ValueError(f"Direct UI tool '{tool_name}' is not allowed")
+        if not isinstance(args, dict):
+            raise ValueError("Direct UI tool args must be an object")
+        turn_id = f"ui_{uuid.uuid4().hex}"
+        security_context = ExecutionSecurityContext.create_user_context(
+            workspace_id=rt.workspace_id,
+            conversation_id=session_id,
+            turn_id=turn_id,
+            capabilities=capabilities_for_tools([tool_name], strict=True),
+        )
+        self.record_event(
+            rt.database, session_id, "ToolStarted",
+            {"tool_name": tool_name, "args": self._safe_json_preview(args), "call_id": turn_id},
+        )
+        result = await asyncio.to_thread(
+            rt.registry.execute_tool,
+            tool_name, args, turn_id, session_id, rt.workspace_id,
+            None, None, None, "USER", security_context,
+        )
+        if result.requires_approval:
+            self._prune_direct_pending(rt)
+            if len(self._direct_pending) >= 64:
+                raise RuntimeError("Too many pending direct UI approvals")
+            action_hash = rt.policy.generate_action_hash(tool_name, args)
+            approval_id = f"req_{turn_id}_{action_hash[:8]}"
+            request = rt.approval.register_request(
+                turn_id, session_id, rt.workspace_id, action_hash, approval_id,
+                tool_name=tool_name, summary=f"Direct UI {tool_name}",
+            )
+            self._direct_pending[approval_id] = {
+                "approval_id": approval_id,
+                "turn_id": turn_id,
+                "conversation_id": session_id,
+                "workspace_id": rt.workspace_id,
+                "tool_name": tool_name,
+                "args": dict(args),
+                "action_hash": action_hash,
+                "security_context": security_context,
+                "created_at": time.time(),
+                "expires_at": float(request.expires_at),
+            }
+            self.record_event(
+                rt.database, session_id, "ApprovalRequired",
+                {
+                    "turn_id": turn_id,
+                    "conversation_id": session_id,
+                    "tool_name": tool_name,
+                    "args": self._safe_json_preview(args),
+                    "action_hash": action_hash,
+                    "approval_request_id": approval_id,
+                    "workspace_id": rt.workspace_id,
+                },
+            )
+            return {
+                "success": False,
+                "requires_approval": True,
+                "approval_id": approval_id,
+                "turn_id": turn_id,
+            }
+        self.record_event(
+            rt.database, session_id, "ToolCompleted",
+            {
+                "tool_name": tool_name,
+                "success": bool(result.success),
+                "output": str(result.output or "")[:64 * 1024],
+                "error": result.error,
+                "call_id": turn_id,
+            },
+        )
+        return {
+            "success": bool(result.success),
+            "requires_approval": False,
+            "output": str(result.output or "")[:64 * 1024],
+            "error": result.error,
+        }
+
+    async def _resolve_direct_approval(self, rt, item: dict[str, Any], allow: bool) -> dict[str, Any]:
+        approval_id = str(item["approval_id"])
+        session_id = str(item["conversation_id"])
+        turn_id = str(item["turn_id"])
+        if not allow:
+            rt.approval.deny(approval_id, "Denied via daemon UI")
+            self._direct_pending.pop(approval_id, None)
+            self.record_event(
+                rt.database, session_id, "ToolCompleted",
+                {
+                    "tool_name": item["tool_name"], "success": False,
+                    "output": "", "error": "Approval denied", "call_id": turn_id,
+                },
+            )
+            return {"decision": "denied", "approval_id": approval_id, "session_id": session_id, "turn_id": turn_id}
+        grant = rt.approval.issue_grant(
+            turn_id=turn_id, conversation_id=session_id, workspace_id=rt.workspace_id,
+            action_hash=str(item["action_hash"]), approval_id=approval_id,
+        )
+        if grant is None:
+            raise RuntimeError("Direct UI approval could not be granted")
+        result = await asyncio.to_thread(
+            rt.registry.execute_tool,
+            item["tool_name"], item["args"], turn_id, session_id, rt.workspace_id,
+            None, grant, approval_id, "USER", item["security_context"],
+        )
+        self._direct_pending.pop(approval_id, None)
+        self.record_event(
+            rt.database, session_id, "ToolCompleted",
+            {
+                "tool_name": item["tool_name"], "success": bool(result.success),
+                "output": str(result.output or "")[:64 * 1024], "error": result.error,
+                "call_id": turn_id,
+            },
+        )
+        return {
+            "decision": "approved", "approval_id": approval_id,
+            "session_id": session_id, "turn_id": turn_id,
+            "success": bool(result.success), "output": str(result.output or "")[:64 * 1024],
+            "error": result.error,
+        }
+
     def _approval_payloads(
         self,
         rt,
@@ -438,63 +670,137 @@ class DaemonServer:
                     "affected_paths": [str(p) for p in affected_paths[:100]],
                 }
             )
-        return result
+        self._prune_direct_pending(rt)
+        for item in self._direct_pending.values():
+            if session_id and item.get("conversation_id") != session_id:
+                continue
+            if approval_id and item.get("approval_id") != approval_id:
+                continue
+            result.append({
+                "approval_id": item["approval_id"],
+                "conversation_id": item["conversation_id"],
+                "turn_id": item["turn_id"],
+                "workspace_id": item["workspace_id"],
+                "tool_name": item["tool_name"],
+                "action_hash": item["action_hash"],
+                "risk_level": "MEDIUM",
+                "requested_at": item["created_at"],
+                "expires_at": item["expires_at"],
+                "arguments": self._safe_json_preview(item["args"]),
+                "affected_paths": [],
+                "direct_ui": True,
+            })
+        result.sort(key=lambda row: float(row.get("requested_at", 0)), reverse=True)
+        return result[: max(1, min(int(limit), 100))]
 
-    def _session_detail(self, rt, session_id: str) -> dict[str, Any]:
+    def _session_detail(
+        self,
+        rt,
+        session_id: str,
+        *,
+        message_limit: int = 50,
+        before: Any = None,
+        include_events: bool = True,
+        event_limit: int = 40,
+    ) -> dict[str, Any]:
         conv = self._require_session(rt, session_id)
+        message_limit = max(1, min(int(message_limit), 100))
+        event_limit = max(1, min(int(event_limit), 80))
+        cursor = self._decode_message_cursor(before)
+        message_params: list[Any] = [session_id]
+        cursor_sql = ""
+        if cursor:
+            cursor_sql = " AND (created_at < ? OR (created_at = ? AND id < ?))"
+            message_params.extend([cursor[0], cursor[0], cursor[1]])
+        message_params.append(message_limit + 1)
         with rt.database.get_connection() as conn:
             message_rows = conn.execute(
-                """SELECT role,content,created_at,turn_id
-                   FROM messages WHERE conversation_id=?
-                   ORDER BY created_at DESC,id DESC LIMIT 200""",
-                (session_id,),
+                f"""SELECT id,role,content,created_at,turn_id
+                    FROM messages WHERE conversation_id=?{cursor_sql}
+                    ORDER BY created_at DESC,id DESC LIMIT ?""",
+                tuple(message_params),
             ).fetchall()
             sequence_row = conn.execute(
                 "SELECT COALESCE(MAX(id),0) AS seq FROM daemon_events WHERE session_id=?",
                 (session_id,),
             ).fetchone()
-            event_rows = conn.execute(
-                """SELECT id,session_id,event_type,payload_json,created_at
-                   FROM daemon_events WHERE session_id=?
-                   ORDER BY id DESC LIMIT 80""",
-                (session_id,),
-            ).fetchall()
-        messages = [
-            {
-                "role": row["role"],
-                "content": row["content"],
-                "created_at": row["created_at"],
-                "turn_id": row["turn_id"],
-            }
-            for row in reversed(message_rows)
-        ]
+            event_rows = (
+                conn.execute(
+                    """SELECT id,session_id,event_type,payload_json,created_at
+                       FROM daemon_events WHERE session_id=?
+                       ORDER BY id DESC LIMIT ?""",
+                    (session_id, event_limit + 1),
+                ).fetchall()
+                if include_events else []
+            )
+
+        message_budget = 512 * 1024
+        used_message_bytes = 0
+        selected_messages = []
+        budget_truncated = False
+        raw_messages = list(message_rows[:message_limit])
+        for row in raw_messages:
+            content = str(row["content"] or "")
+            encoded = content.encode("utf-8", errors="replace")
+            if len(encoded) > 64 * 1024:
+                encoded = encoded[: 64 * 1024]
+                content = encoded.decode("utf-8", errors="replace") + "…[truncated]"
+            cost = len(encoded) + 512
+            if selected_messages and used_message_bytes + cost > message_budget:
+                budget_truncated = True
+                break
+            used_message_bytes += cost
+            selected_messages.append(
+                {
+                    "id": row["id"], "role": row["role"], "content": content,
+                    "created_at": row["created_at"], "turn_id": row["turn_id"],
+                }
+            )
+        messages_has_more = len(message_rows) > message_limit or budget_truncated
+        next_before = (
+            self._encode_message_cursor(
+                selected_messages[-1]["created_at"], selected_messages[-1]["id"]
+            )
+            if messages_has_more and selected_messages else ""
+        )
+        messages = list(reversed(selected_messages))
+
         recent_events = []
-        for row in reversed(event_rows):
+        event_budget = 384 * 1024
+        used_event_bytes = 0
+        for row in reversed(event_rows[:event_limit]):
             try:
                 payload = json.loads(row["payload_json"] or "{}")
             except Exception:
                 payload = {}
+            payload = sanitize_public_event_payload(row["event_type"], payload)
+            payload = self._safe_json_preview(payload, max_chars=12_000)
+            encoded_size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) + 256
+            if recent_events and used_event_bytes + encoded_size > event_budget:
+                break
+            used_event_bytes += encoded_size
             recent_events.append(
                 {
                     "sequence_id": int(row["id"]),
                     "session_id": row["session_id"],
                     "event_type": row["event_type"],
-                    "payload": self._safe_json_preview(payload),
+                    "payload": payload,
                     "created_at": row["created_at"],
                 }
             )
         return {
             "conversation": {
-                "id": conv.get("id"),
-                "title": conv.get("title"),
-                "status": conv.get("status"),
-                "created_at": conv.get("created_at"),
+                "id": conv.get("id"), "title": conv.get("title"),
+                "status": conv.get("status"), "created_at": conv.get("created_at"),
                 "updated_at": conv.get("updated_at"),
             },
             "messages": messages,
+            "messages_has_more": messages_has_more,
+            "messages_next_before": next_before,
+            "messages_budget_truncated": budget_truncated,
             "recent_events": recent_events,
             "last_sequence": int(sequence_row["seq"] if sequence_row else 0),
-            "approvals": self._approval_payloads(rt, session_id=session_id),
+            "approvals": self._approval_payloads(rt, session_id=session_id) if include_events else [],
         }
 
     @staticmethod
@@ -606,6 +912,14 @@ class DaemonServer:
         approval_id = str(approval_id or "").strip()
         if not approval_id:
             raise ValueError("approval_id is required")
+        self._prune_direct_pending(rt)
+        direct = self._direct_pending.get(approval_id)
+        if direct is not None:
+            if session_id and str(direct.get("conversation_id")) != str(session_id):
+                raise ValueError("Approval does not belong to requested session")
+            return await self._resolve_direct_approval(
+                rt, direct, action == "approval.approve"
+            )
         pending = self._approval_payloads(
             rt,
             session_id=session_id,
@@ -639,9 +953,12 @@ class DaemonServer:
             if not rt.approval.deny(approval_id, "Denied via KITT remote web"):
                 raise RuntimeError("Approval could not be denied")
             for event in rt.processor.cancel_turn(
-                str(item["turn_id"]), "Denied via KITT remote web"
+                str(item["turn_id"]),
+                "Denied via KITT remote web",
+                conversation_id=sid,
             ):
                 self._record_turn_event(rt.database, sid, event)
+            self._active_turns.pop(str(item["turn_id"]), None)
             return {
                 "approval_id": approval_id,
                 "session_id": sid,
@@ -761,7 +1078,14 @@ class DaemonServer:
                     }))
                 elif action == "get_session":
                     try:
-                        payload = self._session_detail(rt, str(msg.get("session_id", "")))
+                        payload = self._session_detail(
+                            rt,
+                            str(msg.get("session_id", "")),
+                            message_limit=max(1, min(int(msg.get("message_limit", 50)), 100)),
+                            before=msg.get("before"),
+                            include_events=bool(msg.get("include_events", True)),
+                            event_limit=max(1, min(int(msg.get("event_limit", 40)), 80)),
+                        )
                     except Exception as exc:
                         await q.put(encode_message({
                             "type": "RESPONSE", "request_id": req_id,
@@ -870,6 +1194,88 @@ class DaemonServer:
                         "type": "RESPONSE", "request_id": req_id,
                         "status": "ok", "action": action, **payload,
                     }))
+                elif action == "ui.tool.execute":
+                    try:
+                        payload = await self._ui_tool_execute(
+                            rt, str(msg.get("session_id", "")),
+                            str(msg.get("tool_name", "")), msg.get("args") or {},
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok", **payload,
+                    }))
+                elif action == "ui.undo":
+                    sid = str(msg.get("session_id", ""))
+                    try:
+                        self._require_session(rt, sid)
+                        changeset = await asyncio.to_thread(
+                            rt.processor.diff_applier.tracker.revert_last_changeset
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                        "reverted": changeset is not None,
+                        "changeset_id": getattr(changeset, "id", None),
+                    }))
+                elif action == "runtime.set_reasoning":
+                    value = max(0, min(100, int(msg.get("value", 50))))
+                    rt.processor.reasoning_effort = value
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok", "value": value,
+                    }))
+                elif action == "runtime.set_autonomy":
+                    try:
+                        policy = rt.autonomy_store.set_preset(str(msg.get("preset", "supervised")))
+                        rt.processor.registry.policy.autonomy = policy
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id, "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                        "preset": policy.level,
+                    }))
+                elif action == "runtime.reload_router":
+                    rt.processor.router.config = rt.processor.router.load_config(str(self.workspace_root))
+                    if hasattr(rt.processor.registry, "register_custom_provider"):
+                        for custom in getattr(rt.processor.router.config, "custom_providers", []) or []:
+                            rt.processor.registry.register_custom_provider(
+                                provider_id=custom.get("name", ""),
+                                name=custom.get("name", ""),
+                                protocol=custom.get("protocol", "openai-chat-completions"),
+                                base_url=custom.get("base_url", ""),
+                            )
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                    }))
+                elif action == "approval.remember":
+                    try:
+                        decision = str(msg.get("decision", "allow"))
+                        scope = str(msg.get("scope", "session"))
+                        rt.approval.remember(
+                            str(msg.get("tool_name", "")),
+                            str(msg.get("path_glob", "**")),
+                            decision, scope,
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id, "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                    }))
                 elif action == "list_sessions":
                     convs = rt.history.list_history(limit=50)
                     active = rt.history.get_active_read_only()
@@ -924,6 +1330,7 @@ class DaemonServer:
                         explicit_files=set(msg.get("explicit_files") or ()),
                         no_history=bool(msg.get("no_history", False)),
                     )
+                    self._active_turns[cmd.turn_id] = sid
                     asyncio.create_task(self._execute_turn(rt, cmd))
                     await q.put(encode_message({
                         "type": "RESPONSE", "request_id": req_id, "status": "ok",
@@ -946,13 +1353,35 @@ class DaemonServer:
                     except Exception as exc:
                         await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "error", "error": f"Invalid grant: {exc}"}))
                         continue
+                    try:
+                        if grant.conversation_id != sid:
+                            raise ValueError("Grant does not belong to requested session")
+                        self._require_active_turn(sid, grant.turn_id)
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
                     asyncio.create_task(self._continue_turn(rt, sid, grant))
                     await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok"}))
                 elif action == "cancel_turn":
                     sid = str(msg.get("session_id", ""))
                     turn_id = str(msg.get("turn_id", ""))
-                    for event in rt.processor.cancel_turn(turn_id, "Cancelled via daemon IPC"):
+                    try:
+                        self._require_session(rt, sid)
+                        self._require_active_turn(sid, turn_id)
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    for event in rt.processor.cancel_turn(
+                        turn_id, "Cancelled via daemon IPC", conversation_id=sid
+                    ):
                         self._record_turn_event(rt.database, sid, event)
+                    self._active_turns.pop(turn_id, None)
                     await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok"}))
                 elif action == "stop":
                     await q.put(encode_message({"type": "RESPONSE", "request_id": req_id, "status": "ok"}))
@@ -1042,7 +1471,9 @@ class DaemonServer:
             evt = DaemonEvent(
                 sequence_id=r["id"], session_id=r["session_id"],
                 event_type=r["event_type"],
-                payload=json.loads(r["payload_json"] or "{}"),
+                payload=sanitize_public_event_payload(
+                    r["event_type"], json.loads(r["payload_json"] or "{}")
+                ),
                 created_at=r["created_at"],
             )
             events.append(evt)
@@ -1051,7 +1482,7 @@ class DaemonServer:
 
     def record_event(self, db, session_id, event_type, payload):
         now = time.time()
-        payload = _jsonable(payload)
+        payload = sanitize_public_event_payload(event_type, _jsonable(payload))
         with db.get_connection() as conn:
             cur = conn.execute(
                 "INSERT INTO daemon_events(session_id,event_type,payload_json,created_at) VALUES(?,?,?,?)",
@@ -1090,6 +1521,7 @@ class DaemonServer:
     async def _execute_turn(self, rt, cmd):
         lock = self._session_locks.setdefault(cmd.conversation_id, asyncio.Lock())
         async with lock:
+            paused_for_approval = False
             if not cmd.no_history:
                 try:
                     rt.history.repo.save_message(cmd.conversation_id, cmd.turn_id, "user", cmd.prompt)
@@ -1097,8 +1529,13 @@ class DaemonServer:
                     logger.exception("Failed persisting daemon user message")
             try:
                 async for event in rt.processor.arun_turn(cmd):
+                    event_name = type(event).__name__
                     self._record_turn_event(rt.database, cmd.conversation_id, event)
-                    if type(event).__name__ == "TurnCompleted" and not cmd.no_history:
+                    if event_name == "ApprovalRequired":
+                        paused_for_approval = True
+                    if event_name in {"TurnCompleted", "TurnFailed", "TurnCancelled", "TurnBlocked"}:
+                        self._active_turns.pop(cmd.turn_id, None)
+                    if event_name == "TurnCompleted" and not cmd.no_history:
                         response = getattr(event, "response", "")
                         if response:
                             try:
@@ -1106,16 +1543,31 @@ class DaemonServer:
                             except Exception:
                                 logger.exception("Failed persisting daemon assistant response")
             except Exception as exc:
+                self._active_turns.pop(cmd.turn_id, None)
                 self.record_event(rt.database, cmd.conversation_id, "TurnFailed", {"error": str(exc)})
+            finally:
+                if not paused_for_approval:
+                    self._active_turns.pop(cmd.turn_id, None)
 
     async def _continue_turn(self, rt, session_id, grant):
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
+            self._active_turns[grant.turn_id] = session_id
+            paused_for_approval = False
             try:
                 async for event in self._astream_blocking(
                     lambda: rt.processor.continue_turn(grant.turn_id, grant),
                     f"kitt-continue-{grant.turn_id[:8]}",
                 ):
+                    event_name = type(event).__name__
                     self._record_turn_event(rt.database, session_id, event)
+                    if event_name == "ApprovalRequired":
+                        paused_for_approval = True
+                    if event_name in {"TurnCompleted", "TurnFailed", "TurnCancelled", "TurnBlocked"}:
+                        self._active_turns.pop(grant.turn_id, None)
             except Exception as exc:
+                self._active_turns.pop(grant.turn_id, None)
                 self.record_event(rt.database, session_id, "TurnFailed", {"error": str(exc)})
+            finally:
+                if not paused_for_approval:
+                    self._active_turns.pop(grant.turn_id, None)

@@ -454,7 +454,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
             thought_text = thought_match.group(1).strip() if thought_match else ""
             dur_ms = int((time.time() - (started_at or time.time())) * 1000)
-            yield raw_text, ThinkingCompleted(duration_ms=dur_ms, tokens=TokenCounter.count_tokens(thought_text), thought=thought_text)
+            yield raw_text, ThinkingCompleted(duration_ms=dur_ms, tokens=TokenCounter.count_tokens(thought_text))
             full_response = self._visible_lfm_response(raw_text)
             if full_response:
                 yield full_response, TextDelta(delta=full_response)
@@ -488,7 +488,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                         yield full_response, ThinkingCompleted(
                             duration_ms=dur_ms,
                             tokens=TokenCounter.count_tokens(thought_text),
-                            thought=thought_text,
                         )
                         buffer = parts[1]
                     else:
@@ -499,7 +498,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 else:
                     thinking_completed = True
                     dur_ms = int((time.time() - (started_at or time.time())) * 1000)
-                    yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=0, thought="")
+                    yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=0)
                     buffer = full_response
             else:
                 buffer += chunk
@@ -568,7 +567,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             m = re.search(r"<(?:think|thought)>(.*?)(?:</(?:think|thought)>|$)", full_response, re.DOTALL)
             if m:
                 thought_text = m.group(1).strip()
-            yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=TokenCounter.count_tokens(thought_text), thought=thought_text)
+            yield full_response, ThinkingCompleted(duration_ms=dur_ms, tokens=TokenCounter.count_tokens(thought_text))
 
         if not tool_detected and buffer:
             clean = self._clean_visible_text(buffer)
@@ -847,7 +846,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             if not thinking_completed:
                 thinking_completed = True
                 dur_ms = int((time.time() - thinking_started_at) * 1000)
-                yield ThinkingCompleted(duration_ms=dur_ms, tokens=0, thought=""), None, None
+                yield ThinkingCompleted(duration_ms=dur_ms, tokens=0), None, None
 
             if cmd.turn_id in self.cancelled_turns:
                 self.cancelled_turns.discard(cmd.turn_id)
@@ -1441,14 +1440,24 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         if turn_id in self.pending_actions:
             del self.pending_actions[turn_id]
 
-    def cancel_turn(self, turn_id: str, reason: str) -> Iterator[TurnEvent]:
+    def cancel_turn(
+        self,
+        turn_id: str,
+        reason: str,
+        conversation_id: Optional[str] = None,
+    ) -> Iterator[TurnEvent]:
         self.cancelled_turns.add(turn_id)
         pa = self.pending_actions.pop(turn_id, None)
-        if pa and self.history_service:
+        if pa and self.history_service and hasattr(pa, "id"):
             self.history_service.repo.cancel_pending_action(pa.id)
-        if hasattr(self, "child_manager") and self.child_manager:
+        owning_conversation = conversation_id or (getattr(pa, "conversation_id", None) if pa else None)
+        if owning_conversation and hasattr(self, "child_manager") and self.child_manager:
             try:
-                self.child_manager.shutdown_all()
+                self.child_manager.cancel_for_turn(
+                    owning_conversation,
+                    turn_id,
+                    workspace_id=self.workspace_id,
+                )
             except Exception:
                 pass
         yield TurnCancelled(reason=reason)

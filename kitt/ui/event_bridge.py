@@ -103,6 +103,13 @@ class TurnEventBridge:
             raise RuntimeError(f"Daemon refused session attach: {conversation_id}")
         self._daemon_bridge = bridge
         self._daemon_terminal = asyncio.Event()
+        # Sync frontend-selected reasoning before the first daemon turn.
+        try:
+            await self._daemon_bridge.set_reasoning(
+                int(getattr(self.runtime.processor, "reasoning_effort", 50))
+            )
+        except Exception:
+            pass
         return True
 
     async def start(self, prompt, conversation_id, explicit_files=frozenset(),
@@ -162,6 +169,49 @@ class TurnEventBridge:
             self.runtime.processor.continue_turn(turn_id, grant)
         )
 
+    async def ensure_daemon(self, conversation_id: str) -> bool:
+        return await self._ensure_daemon(conversation_id)
+
+    async def resolve_approval(self, approval_id: str, allow: bool) -> dict:
+        if not self._daemon_bridge:
+            raise RuntimeError("Daemon approval authority is not active")
+        return await self._daemon_bridge.approval_action(approval_id, allow)
+
+    async def list_approvals(self) -> list[dict]:
+        if not self._daemon_bridge:
+            return []
+        return await self._daemon_bridge.list_approvals()
+
+    async def remember_approval(self, tool_name: str, scope: str) -> dict:
+        if not self._daemon_bridge:
+            raise RuntimeError("Daemon approval authority is not active")
+        return await self._daemon_bridge.remember_approval(tool_name, scope)
+
+    async def execute_direct_tool(self, tool_name: str, args: dict) -> dict:
+        if not self._daemon_bridge:
+            raise RuntimeError("Daemon tool authority is not active")
+        return await self._daemon_bridge.execute_direct_tool(tool_name, args)
+
+    async def undo(self) -> dict:
+        if not self._daemon_bridge:
+            raise RuntimeError("Daemon authority is not active")
+        return await self._daemon_bridge.undo()
+
+    async def set_reasoning(self, value: int) -> dict:
+        if not self._daemon_bridge:
+            raise RuntimeError("Daemon authority is not active")
+        return await self._daemon_bridge.set_reasoning(value)
+
+    async def set_autonomy(self, preset: str) -> dict:
+        if not self._daemon_bridge:
+            raise RuntimeError("Daemon authority is not active")
+        return await self._daemon_bridge.set_autonomy(preset)
+
+    async def reload_router(self) -> dict:
+        if not self._daemon_bridge:
+            raise RuntimeError("Daemon authority is not active")
+        return await self._daemon_bridge.reload_router()
+
     async def attach_session(self, session_id: str) -> bool:
         if not self._daemon_bridge:
             return await self._ensure_daemon(session_id)
@@ -182,7 +232,9 @@ class TurnEventBridge:
         self._turn_generation += 1
         self._active_turn_id = None
         if turn_id:
-            for event in self.runtime.processor.cancel_turn(turn_id, reason):
+            for event in self.runtime.processor.cancel_turn(
+                turn_id, reason, conversation_id=self._active_conversation_id
+            ):
                 self._deliver(event)
         else:
             self._deliver(TurnCancelled(reason=reason))

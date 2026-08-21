@@ -35,7 +35,7 @@ class TestStreamTagCleaner(unittest.TestCase):
 
         thought_events = [ev for ev in events if isinstance(ev, ThinkingCompleted)]
         self.assertTrue(len(thought_events) >= 1)
-        self.assertEqual(thought_events[0].thought, "Planejando codigo...")
+        self.assertGreaterEqual(thought_events[0].tokens, 1)
 
     def test_normal_text_with_think_block(self):
         chunks = ["<think>Pensando...</think>", "Aqui ", "está ", "a resposta."]

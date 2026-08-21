@@ -18,7 +18,10 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         Path(self.temp.name, "sample.txt").write_text("sample", encoding="utf-8")
-        self.runtime = KittRuntime.build(self.temp.name, RuntimeConfig(history_enabled=True, persistence_enabled=True))
+        self.runtime = KittRuntime.build(
+            self.temp.name,
+            RuntimeConfig(history_enabled=True, persistence_enabled=True, daemon_local_fallback=True),
+        )
         self.input_cm = create_pipe_input()
         self.pipe = self.input_cm.__enter__()
         self.ui = KittUIApp(self.runtime, "tui", input=self.pipe, output=DummyOutput(), no_animation=True)

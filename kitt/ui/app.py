@@ -79,6 +79,20 @@ class KittUIApp:
         call = functools.partial(func, *args, **kwargs)
         return await loop.run_in_executor(self._blocking_executor, call)
 
+    async def _ensure_daemon_management(self) -> bool:
+        bridge = getattr(self, "bridge", None)
+        config = getattr(self.runtime, "config", None)
+        if (
+            bridge is None
+            or config is None
+            or not getattr(config, "daemon_enabled", False)
+            or not getattr(config, "history_enabled", False)
+            or not getattr(config, "persistence_enabled", False)
+        ):
+            return False
+        conversation = self.runtime.history.get_or_create_active()
+        return await bridge.ensure_daemon(conversation["id"])
+
     def _init_models_from_runtime(self) -> None:
         try:
             router = getattr(self.runtime.processor, "router", None)
@@ -432,8 +446,15 @@ class KittUIApp:
             profiles = getattr(getattr(router, "config", None), "profiles", {})
             self._show_result("\n".join(f"{n}: {p.backend}/{p.model}" for n, p in profiles.items()) or "Router configuration unavailable.")
         elif found.id == "approvals":
-            pending = self.runtime.approval.list_pending(self.runtime.workspace_id)
-            self._show_result("\n".join(f"{r.approval_id[:8]} {r.tool_name} ({r.turn_id[:8]})\n  summary: {r.summary}" for r in pending) or "No approval requests.")
+            if await self._ensure_daemon_management():
+                pending = await self.bridge.list_approvals()
+                self._show_result("\n".join(
+                    f"{str(r.get('approval_id',''))[:8]} {r.get('tool_name','')} ({str(r.get('turn_id',''))[:8]})"
+                    for r in pending
+                ) or "No approval requests.")
+            else:
+                pending = self.runtime.approval.list_pending(self.runtime.workspace_id)
+                self._show_result("\n".join(f"{r.approval_id[:8]} {r.tool_name} ({r.turn_id[:8]})\n  summary: {r.summary}" for r in pending) or "No approval requests.")
         elif found.id == "compact":
             await handle_compact_command(self, arg)
         elif found.id == "child":
@@ -441,11 +462,14 @@ class KittUIApp:
                 self._show_result("Usage: /child <task description>")
             else:
                 conversation = self.runtime.history.get_or_create_active()
-                child = await self._run_blocking(
-                    self.runtime.children.spawn,
-                    parent_conversation_id=conversation["id"], parent_turn_id="ui", task=arg,
-                )
-                self._show_result(f"Spawned child: {child.id} ({child.state})")
+                if await self._ensure_daemon_management():
+                    await self._execute_direct_tool("child_spawn", {"task": arg})
+                else:
+                    child = await self._run_blocking(
+                        self.runtime.children.spawn,
+                        parent_conversation_id=conversation["id"], parent_turn_id="ui", task=arg,
+                    )
+                    self._show_result(f"Spawned child: {child.id} ({child.state})")
         elif found.id == "tasks":
             if not self.state.active_tasks:
                 self._show_result("Nenhum agente ou sub-tarefa ativo no momento.")
@@ -467,6 +491,8 @@ class KittUIApp:
                     self.state.reasoning_effort = val
                     if hasattr(self.runtime, "processor"):
                         self.runtime.processor.reasoning_effort = val
+                    if await self._ensure_daemon_management():
+                        await self.bridge.set_reasoning(val)
                     blocks = int(val / 10)
                     bar = "█" * blocks + "░" * (10 - blocks)
                     self._show_result(f"Reasoning effort definido para {val}% [{bar}] (Modelo: {self.state.large_model})")
@@ -499,6 +525,8 @@ class KittUIApp:
                     new_policy = store.set_preset(target) if store else None
                     if new_policy and hasattr(self.runtime.processor.registry, "policy"):
                         self.runtime.processor.registry.policy.autonomy = new_policy
+                    if await self._ensure_daemon_management():
+                        await self.bridge.set_autonomy(target)
                     self._show_result(f"Perfil de Autonomia alterado para: [{target.upper()}]")
                 except ValueError as err:
                     self.state.add_toast(f"Erro de autonomia: {err}")
@@ -517,8 +545,15 @@ class KittUIApp:
             else:
                 self._show_result(f"Usage: /{found.id} <prompt>")
         elif found.id == "undo":
-            changeset = await self._run_blocking(self.runtime.processor.diff_applier.tracker.revert_last_changeset)
-            self._show_result(f"Reverted changeset {changeset.id}." if changeset else "No changeset to revert.")
+            if await self._ensure_daemon_management():
+                result = await self.bridge.undo()
+                self._show_result(
+                    f"Reverted changeset {result.get('changeset_id')}."
+                    if result.get("reverted") else "No changeset to revert."
+                )
+            else:
+                changeset = await self._run_blocking(self.runtime.processor.diff_applier.tracker.revert_last_changeset)
+                self._show_result(f"Reverted changeset {changeset.id}." if changeset else "No changeset to revert.")
         elif found.id == "workspace":
             if not arg:
                 self._show_result(str(self.runtime.canonical_root))
@@ -678,6 +713,8 @@ class KittUIApp:
         for task in tasks:
             router.config.routing[task] = profile_name
         await self._run_blocking(router.save_config, self.state.workspace_path)
+        if await self._ensure_daemon_management():
+            await self.bridge.reload_router()
         self._init_models_from_runtime()
         self.state.add_toast(f"{role.title()} model: {provider}/{model}")
 
@@ -1002,6 +1039,8 @@ class KittUIApp:
                             base_url=cp.get("base_url", ""),
                         )
                 await self._run_blocking(router.save_config, self.state.workspace_path)
+                if await self._ensure_daemon_management():
+                    await self.bridge.reload_router()
         except Exception as err:
             self.state.add_toast(f"Aviso: falha ao persistir provedores: {err}")
 
@@ -1442,6 +1481,23 @@ class KittUIApp:
     async def _execute_direct_tool(self, tool_name: str, args: dict) -> None:
         conversation = self.runtime.history.get_or_create_active()
         self.state.active_conversation_id = conversation["id"]
+        if await self._ensure_daemon_management():
+            try:
+                response = await self.bridge.execute_direct_tool(tool_name, args)
+            except Exception as exc:
+                self._show_result(f"Error: {exc}")
+                return
+            if response.get("requires_approval"):
+                # ApprovalRequired is journaled and delivered by daemon exactly once.
+                self.state.status_text = "APPROVAL"
+                return
+            self._show_result(
+                str(response.get("output") or "")
+                if response.get("success", False)
+                else f"Error: {response.get('error') or response.get('output') or 'tool failed'}"
+            )
+            return
+
         turn_id = f"ui-{uuid.uuid4().hex[:12]}"
         workspace_id = self.runtime.workspace_id
         result = await self._run_blocking(
@@ -1498,38 +1554,71 @@ class KittUIApp:
         if not pending:
             return
 
+        remember_scope = None
         if mode is True or mode == "once":
             allow = True
         elif mode is False or mode == "deny":
             allow = False
         elif mode in {"always_workspace", "always", "A"}:
             allow = True
-            tool_name = pending.get("tool_name", "apply_patch")
-            self.runtime.approval.remember(tool_name, "**", "allow", "workspace")
-            self.runtime.autonomy_store.set_preset("balanced")
-            self.runtime.processor.registry.policy.autonomy = self.runtime.autonomy_store.get()
-            self.state.add_toast(f"Sempre permitir {tool_name} ativado para este workspace.")
+            remember_scope = "workspace"
         elif mode in {"always_session", "session", "s"}:
             allow = True
-            tool_name = pending.get("tool_name", "apply_patch")
-            self.runtime.approval.remember(tool_name, "**", "allow", "session")
-            self.state.add_toast(f"Sempre permitir {tool_name} nesta sessão.")
+            remember_scope = "session"
         elif mode == "deny_all":
-            allow = False
-            for req in list(self.state.pending_approvals):
-                try:
-                    self.runtime.approval.deny(req["approval_id"], "Denied all in queue")
-                except Exception:
-                    pass
+            if self.bridge and self.bridge.daemon_mode:
+                for req in list(self.state.pending_approvals):
+                    try:
+                        await self.bridge.resolve_approval(req["approval_id"], False)
+                    except Exception:
+                        pass
+            else:
+                for req in list(self.state.pending_approvals):
+                    try:
+                        self.runtime.approval.deny(req["approval_id"], "Denied all in queue")
+                    except Exception:
+                        pass
             self.state.pending_approvals.clear()
             self.close_overlay()
-            await self.bridge.cancel("Denied all in queue")
-            if self.application: self.application.invalidate()
+            if self.bridge and self.bridge.is_active:
+                await self.bridge.cancel("Denied all in queue")
+            if self.application:
+                self.application.invalidate()
             return
         else:
             allow = bool(mode)
 
         self.state.status_text = "APPROVING" if allow else "DENYING"
+        if self.bridge and self.bridge.daemon_mode:
+            try:
+                tool_name = pending.get("tool_name", "apply_patch")
+                if remember_scope:
+                    await self.bridge.remember_approval(tool_name, remember_scope)
+                    if remember_scope == "workspace":
+                        await self.bridge.set_autonomy("balanced")
+                    self.state.add_toast(
+                        f"Sempre permitir {tool_name} ativado para este {remember_scope}."
+                    )
+                await self.bridge.resolve_approval(pending["approval_id"], allow)
+                if self.state.pending_approvals:
+                    self.state.pending_approvals.pop(0)
+                self.close_overlay()
+                self.state.status_text = "PROCESSING" if allow else "SYSTEM ONLINE"
+            except Exception as exc:
+                self.state.add_toast(f"Approval failed: {exc}", persistent=True)
+                self.state.status_text = "ERROR"
+            if self.application:
+                self.application.invalidate()
+            return
+
+        if remember_scope:
+            tool_name = pending.get("tool_name", "apply_patch")
+            self.runtime.approval.remember(tool_name, "**", "allow", remember_scope)
+            if remember_scope == "workspace":
+                self.runtime.autonomy_store.set_preset("balanced")
+                self.runtime.processor.registry.policy.autonomy = self.runtime.autonomy_store.get()
+            self.state.add_toast(f"Sempre permitir {tool_name} ativado para este {remember_scope}.")
+
         if allow:
             try:
                 grant = self.runtime.approval.issue_grant(
@@ -1688,6 +1777,8 @@ class KittUIApp:
             self.state.reasoning_effort = min(100, self.state.reasoning_effort + 10)
             if hasattr(self.runtime, "processor"):
                 self.runtime.processor.reasoning_effort = self.state.reasoning_effort
+            if self.bridge and self.bridge.daemon_mode:
+                asyncio.create_task(self.bridge.set_reasoning(self.state.reasoning_effort))
             blocks = int(self.state.reasoning_effort / 10)
             bar = "█" * blocks + "░" * (10 - blocks)
             model_name = self.state.large_model or "execution"
@@ -1701,6 +1792,8 @@ class KittUIApp:
             self.state.reasoning_effort = max(0, self.state.reasoning_effort - 10)
             if hasattr(self.runtime, "processor"):
                 self.runtime.processor.reasoning_effort = self.state.reasoning_effort
+            if self.bridge and self.bridge.daemon_mode:
+                asyncio.create_task(self.bridge.set_reasoning(self.state.reasoning_effort))
             blocks = int(self.state.reasoning_effort / 10)
             bar = "█" * blocks + "░" * (10 - blocks)
             model_name = self.state.large_model or "execution"

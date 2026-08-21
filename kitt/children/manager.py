@@ -546,6 +546,26 @@ class ChildAgentManager:
             self.coordinator.abandon_child(child_id, preserve_worktree=True)
         return True
 
+    def cancel_for_turn(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        *,
+        workspace_id: Optional[str] = None,
+    ) -> int:
+        """Cancel only children owned by one parent conversation+turn."""
+        cancelled = 0
+        for child in self.repo.list(conversation_id, 100):
+            if child.parent_turn_id != turn_id:
+                continue
+            if self.cancel(
+                child.id,
+                conversation_id=conversation_id,
+                workspace_id=workspace_id or self.workspace_id,
+            ):
+                cancelled += 1
+        return cancelled
+
     def wait(self, child_id, timeout=60.0):
         deadline = time.monotonic() + max(0.1, timeout)
         while time.monotonic() < deadline:

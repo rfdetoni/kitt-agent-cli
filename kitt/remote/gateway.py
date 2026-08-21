@@ -39,8 +39,25 @@ class DaemonGateway:
     def create_session(self, title: str) -> dict:
         return self.request("create_session", {"title": title})
 
-    def get_session(self, session_id: str) -> dict:
-        return self.request("get_session", {"session_id": session_id})
+    def get_session(
+        self,
+        session_id: str,
+        *,
+        before: str = "",
+        message_limit: int = 50,
+        include_events: bool = True,
+        event_limit: int = 40,
+    ) -> dict:
+        return self.request(
+            "get_session",
+            {
+                "session_id": session_id,
+                "before": before,
+                "message_limit": max(1, min(int(message_limit), 100)),
+                "include_events": bool(include_events),
+                "event_limit": max(1, min(int(event_limit), 80)),
+            },
+        )
 
     def send_input(self, session_id: str, text: str, mode: str = "auto") -> dict:
         return self.request(

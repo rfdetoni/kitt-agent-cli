@@ -16,6 +16,8 @@ const state = {
   extensions: {},
   artifacts: [],
   diff: {loaded: false, available: false, content: ""},
+  messagesNextBefore: "",
+  messagesHasMore: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -145,6 +147,8 @@ async function selectSession(sessionId) {
   state.children.clear();
   state.artifacts = [];
   state.diff = {loaded: false, available: false, content: ""};
+  state.messagesNextBefore = "";
+  state.messagesHasMore = false;
   clearConversation();
   renderSessions();
   try {
@@ -153,6 +157,9 @@ async function selectSession(sessionId) {
     els.sessionName.textContent = state.sessionTitle;
     state.lastSequence = Number(detail.last_sequence || 0);
     for (const message of detail.messages || []) renderHistoryMessage(message);
+    state.messagesNextBefore = detail.messages_next_before || "";
+    state.messagesHasMore = Boolean(detail.messages_has_more);
+    renderLoadOlderButton();
     for (const evt of detail.recent_events || []) hydrateHistoricalEvent(evt);
     for (const approval of detail.approvals || []) state.approvals.set(approval.approval_id, approval);
     renderApprovalsInConversation();
@@ -165,14 +172,44 @@ async function selectSession(sessionId) {
   }
 }
 
-function renderHistoryMessage(message) {
+function renderHistoryMessage(message, prepend = false) {
   const role = message.role === "user" ? "user" : "assistant";
   const card = node("article", `message ${role}`);
   const head = node("div", "message-head");
   head.append(node("span", "message-role", role === "user" ? "YOU" : "K.I.T.T."), node("span", "message-time", formatTime(message.created_at)));
   const body = node("div", "message-body", message.content || "");
   card.append(head, body);
-  els.conversation.append(card);
+  if (prepend) els.conversation.prepend(card);
+  else els.conversation.append(card);
+}
+
+function renderLoadOlderButton() {
+  document.getElementById("loadOlderMessages")?.remove();
+  if (!state.messagesHasMore || !state.messagesNextBefore) return;
+  const button = node("button", "small-button load-older", "LOAD OLDER MESSAGES");
+  button.id = "loadOlderMessages";
+  button.type = "button";
+  button.addEventListener("click", loadOlderMessages);
+  els.conversation.prepend(button);
+}
+
+async function loadOlderMessages() {
+  if (!state.sessionId || !state.messagesNextBefore) return;
+  const button = document.getElementById("loadOlderMessages");
+  if (button) button.disabled = true;
+  try {
+    const detail = await api(
+      `/api/sessions/${encodeURIComponent(state.sessionId)}?before=${encodeURIComponent(state.messagesNextBefore)}&limit=50&include_events=0`
+    );
+    const older = detail.messages || [];
+    for (const message of [...older].reverse()) renderHistoryMessage(message, true);
+    state.messagesNextBefore = detail.messages_next_before || "";
+    state.messagesHasMore = Boolean(detail.messages_has_more);
+    renderLoadOlderButton();
+  } catch (err) {
+    toast(err.message, "bad");
+    if (button) button.disabled = false;
+  }
 }
 
 function appendAssistantDelta(delta) {

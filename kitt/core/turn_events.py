@@ -76,9 +76,9 @@ class ThinkingStarted(TurnEvent):
 
 @dataclass
 class ThinkingCompleted(TurnEvent):
+    # Public aggregate metadata only. Never carry model chain-of-thought.
     duration_ms: int = 0
     tokens: int = 0
-    thought: str = ""
 
 @dataclass
 class ToolStarted(TurnEvent):

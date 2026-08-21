@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from dataclasses import replace
 
 from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
@@ -87,7 +88,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def async_main(args) -> int:
-    config = RuntimeConfig(history_enabled=not args.no_history, persistence_enabled=not args.no_history)
+    base_config = RuntimeConfig.from_env()
+    persistent = not args.no_history
+    daemon_authoritative = bool(base_config.daemon_enabled and persistent)
+    config = replace(
+        base_config,
+        history_enabled=persistent,
+        persistence_enabled=persistent,
+        frontend_only=daemon_authoritative,
+    )
     runtime = KittRuntime.build(args.root, config=config)
     backend = HeadlessUI(runtime, args.prompt) if args.prompt is not None else create_backend(
         runtime, "plain" if args.plain else args.ui, no_animation=args.no_animation,

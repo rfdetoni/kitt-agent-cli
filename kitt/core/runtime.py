@@ -356,6 +356,13 @@ class KittRuntime:
                 return
             self._lifecycle_loop = asyncio.get_running_loop()
 
+        if self.config.frontend_only:
+            # UI facade only: database/history/config objects remain available,
+            # but daemon is the sole owner of schedulers, extensions and tools.
+            with self._close_lock:
+                self._started = True
+            return
+
         started_goal_scheduler = False
         try:
             if self.extensions is not None:

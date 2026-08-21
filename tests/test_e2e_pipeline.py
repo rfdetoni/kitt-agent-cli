@@ -277,7 +277,8 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertEqual(deltas[0].delta, "Final answer")
         from kitt.core.turn_events import ThinkingCompleted
         thinks = [ev for _, ev in events if isinstance(ev, ThinkingCompleted)]
-        self.assertEqual(thinks[0].thought, "hidden reasoning")
+        self.assertEqual(len(thinks), 1)
+        self.assertGreaterEqual(thinks[0].tokens, 1)
 
     def test_incomplete_lfm_thinking_is_not_used_as_context(self):
         self.assertEqual(self.processor._without_thinking("<think>unfinished"), "")

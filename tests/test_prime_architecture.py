@@ -316,6 +316,7 @@ class TestDaemonServerClient(unittest.IsolatedAsyncioTestCase):
             self.tmp.cleanup()
             self.skipTest(f"Sandbox blocks unix socket bind: {exc}")
         self.client = DaemonClient(
+            workspace_root=str(self.root),
             socket_path=self.socket_path,
             token_path=self.token_path,
         )

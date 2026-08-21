@@ -111,6 +111,10 @@ class _RemoteHTTPServer(ThreadingHTTPServer):
             self._request_slots.release()
 
 
+class _RemoteHTTPServerV6(_RemoteHTTPServer):
+    address_family = socket.AF_INET6
+
+
 class RemoteRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "KITT-Remote/1"
@@ -347,7 +351,20 @@ class RemoteRequestHandler(BaseHTTPRequestHandler):
                 return
             match = _SESSION_RE.match(path)
             if match:
-                self._json(HTTPStatus.OK, self.app.gateway.get_session(match.group(1)))
+                params = parse_qs(parsed.query)
+                before = (params.get("before") or [""])[0]
+                try:
+                    message_limit = max(1, min(int((params.get("limit") or [50])[0]), 100))
+                except (TypeError, ValueError):
+                    message_limit = 50
+                include_events = str((params.get("include_events") or ["1"])[0]).lower() not in {"0", "false", "no"}
+                self._json(
+                    HTTPStatus.OK,
+                    self.app.gateway.get_session(
+                        match.group(1), before=before, message_limit=message_limit,
+                        include_events=include_events, event_limit=40,
+                    ),
+                )
                 return
             match = _EVENTS_RE.match(path)
             if match:
@@ -534,7 +551,13 @@ class RemoteServer:
     def start(self) -> None:
         if self._httpd is not None:
             raise RuntimeError("Remote server is already started")
-        httpd = _RemoteHTTPServer((self.config.host, self.config.port), RemoteRequestHandler, self)
+        host_for_ip = self.config.host.split("%", 1)[0]
+        try:
+            bind_ip = ipaddress.ip_address(host_for_ip)
+        except ValueError:
+            bind_ip = None
+        server_class = _RemoteHTTPServerV6 if bind_ip and bind_ip.version == 6 else _RemoteHTTPServer
+        httpd = server_class((self.config.host, self.config.port), RemoteRequestHandler, self)
         if self.uses_tls:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -554,19 +577,28 @@ class RemoteServer:
             httpd.shutdown()
             httpd.server_close()
 
+    @staticmethod
+    def _url_host(address: str) -> str:
+        return f"[{address}]" if ":" in address and not address.startswith("[") else address
+
     def display_urls(self) -> list[str]:
         scheme = "https" if self.uses_tls else "http"
         host, port = self.address
         if host not in {"0.0.0.0", "::"}:
-            return [f"{scheme}://{host}:{port}"]
+            return [f"{scheme}://{self._url_host(host)}:{port}"]
         addresses: set[str] = set()
         try:
-            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
+            for info in socket.getaddrinfo(
+                socket.gethostname(), None, socket.AF_UNSPEC, socket.SOCK_STREAM
+            ):
                 address = info[4][0]
-                if is_private_client(address) and not address.startswith("127."):
+                if is_private_client(address) and address not in {"127.0.0.1", "::1"}:
                     addresses.add(address)
         except OSError:
             pass
         if not addresses:
-            addresses.add("127.0.0.1")
-        return [f"{scheme}://{address}:{port}" for address in sorted(addresses)]
+            addresses.add("::1" if host == "::" else "127.0.0.1")
+        return [
+            f"{scheme}://{self._url_host(address)}:{port}"
+            for address in sorted(addresses)
+        ]
