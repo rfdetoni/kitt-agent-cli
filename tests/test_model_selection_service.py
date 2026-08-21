@@ -13,21 +13,28 @@ from kitt.llm.selection import (
 from kitt.router.router import TaskRouter
 
 
+import tempfile
+
 class TestModelSelectionService(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.workspace_path = self.tmp_dir.name
         self.auth_service = ProviderAuthService()
         self.registry = ProviderRegistry(auth_service=self.auth_service)
-        self.router = TaskRouter(root_dir="/tmp/kitt_test_selection")
+        self.router = TaskRouter(root_dir=self.workspace_path)
         self.router.config = RouterConfig(
             profiles={"principal": ModelProfile(backend="ollama", model="qwen")},
             routing={"execute": "principal"},
         )
         self.service = ModelSelectionService(
-            workspace_path="/tmp/kitt_test_selection",
+            workspace_path=self.workspace_path,
             registry=self.registry,
             router=self.router,
         )
+
+    async def asyncTearDown(self):
+        self.tmp_dir.cleanup()
 
     async def test_select_local_provider_succeeds_without_auth_interaction(self):
         result = await self.service.select(

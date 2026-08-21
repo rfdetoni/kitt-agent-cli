@@ -580,7 +580,7 @@ def handle_attach_command(session_id: str, root_dir: str = ".") -> int:
         if res.get("status") == "ok":
             print(f"\033[32m✓ Attached to session {session_id}. Replaying past events:\033[0m")
             for e in res.get("events", []):
-                print(f"  [{e.get('event_type')}] {e.get('payload')}")
+                print(f"  [{e.event_type}] {e.payload}")
             print("\033[90mListening for events... Press Ctrl+C to detach.\033[0m")
             try:
                 while True:

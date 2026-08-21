@@ -9,6 +9,7 @@ import secrets
 import stat
 import sys
 import time
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -352,6 +353,353 @@ class DaemonServer:
             return {"resources": resources}
         raise ValueError(f"Unknown MCP action '{action}'")
 
+    @staticmethod
+    def _safe_json_preview(value: Any, max_chars: int = 24_000) -> Any:
+        """Bound payloads exposed through management/remote-control APIs."""
+        value = _jsonable(value)
+        try:
+            raw = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            return str(value)[:max_chars]
+        if len(raw) <= max_chars:
+            return value
+        return {"_truncated": True, "preview": raw[:max_chars]}
+
+    def _require_session(self, rt, session_id: str) -> dict[str, Any]:
+        sid = str(session_id or "").strip()
+        if not sid:
+            raise ValueError("session_id is required")
+        conv = rt.history.repo.get_conversation(sid)
+        if not conv:
+            raise ValueError(f"Unknown session '{sid}'")
+        if conv.get("workspace_id") != rt.workspace_id:
+            raise ValueError("Cross-workspace session access blocked")
+        return conv
+
+    def _approval_payloads(
+        self,
+        rt,
+        session_id: Optional[str] = None,
+        approval_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        now = time.time()
+        clauses = [
+            "a.workspace_id=?",
+            "a.state='PENDING'",
+            "CAST(a.expires_at AS REAL)>?",
+            "p.id IS NOT NULL",
+        ]
+        params: list[Any] = [rt.workspace_id, now]
+        if session_id:
+            self._require_session(rt, session_id)
+            clauses.append("a.conversation_id=?")
+            params.append(str(session_id))
+        if approval_id:
+            clauses.append("a.approval_id=?")
+            params.append(str(approval_id))
+        params.append(max(1, min(int(limit), 100)))
+        sql = f"""
+            SELECT
+                a.approval_id,a.conversation_id,a.turn_id,a.workspace_id,
+                a.tool_name,a.arguments_hash,a.risk_level,a.requested_at,a.expires_at,
+                p.normalized_args_json,p.affected_paths_json,p.action_hash
+            FROM approval_requests a
+            LEFT JOIN pending_actions p
+              ON p.approval_request_id=a.approval_id AND p.state='pending'
+            WHERE {' AND '.join(clauses)}
+            ORDER BY CAST(a.requested_at AS REAL) DESC
+            LIMIT ?
+        """
+        with rt.database.get_connection() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                arguments = json.loads(row["normalized_args_json"] or "{}")
+            except Exception:
+                arguments = {}
+            try:
+                affected_paths = json.loads(row["affected_paths_json"] or "[]")
+            except Exception:
+                affected_paths = []
+            result.append(
+                {
+                    "approval_id": row["approval_id"],
+                    "conversation_id": row["conversation_id"],
+                    "turn_id": row["turn_id"],
+                    "workspace_id": row["workspace_id"],
+                    "tool_name": row["tool_name"],
+                    "action_hash": row["action_hash"] or row["arguments_hash"],
+                    "risk_level": row["risk_level"],
+                    "requested_at": float(row["requested_at"] or 0),
+                    "expires_at": float(row["expires_at"] or 0),
+                    "arguments": self._safe_json_preview(arguments),
+                    "affected_paths": [str(p) for p in affected_paths[:100]],
+                }
+            )
+        return result
+
+    def _session_detail(self, rt, session_id: str) -> dict[str, Any]:
+        conv = self._require_session(rt, session_id)
+        with rt.database.get_connection() as conn:
+            message_rows = conn.execute(
+                """SELECT role,content,created_at,turn_id
+                   FROM messages WHERE conversation_id=?
+                   ORDER BY created_at DESC,id DESC LIMIT 200""",
+                (session_id,),
+            ).fetchall()
+            sequence_row = conn.execute(
+                "SELECT COALESCE(MAX(id),0) AS seq FROM daemon_events WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            event_rows = conn.execute(
+                """SELECT id,session_id,event_type,payload_json,created_at
+                   FROM daemon_events WHERE session_id=?
+                   ORDER BY id DESC LIMIT 80""",
+                (session_id,),
+            ).fetchall()
+        messages = [
+            {
+                "role": row["role"],
+                "content": row["content"],
+                "created_at": row["created_at"],
+                "turn_id": row["turn_id"],
+            }
+            for row in reversed(message_rows)
+        ]
+        recent_events = []
+        for row in reversed(event_rows):
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except Exception:
+                payload = {}
+            recent_events.append(
+                {
+                    "sequence_id": int(row["id"]),
+                    "session_id": row["session_id"],
+                    "event_type": row["event_type"],
+                    "payload": self._safe_json_preview(payload),
+                    "created_at": row["created_at"],
+                }
+            )
+        return {
+            "conversation": {
+                "id": conv.get("id"),
+                "title": conv.get("title"),
+                "status": conv.get("status"),
+                "created_at": conv.get("created_at"),
+                "updated_at": conv.get("updated_at"),
+            },
+            "messages": messages,
+            "recent_events": recent_events,
+            "last_sequence": int(sequence_row["seq"] if sequence_row else 0),
+            "approvals": self._approval_payloads(rt, session_id=session_id),
+        }
+
+    @staticmethod
+    def _artifact_metadata(artifact) -> dict[str, Any]:
+        return {
+            "id": artifact.id,
+            "conversation_id": artifact.conversation_id,
+            "turn_id": artifact.turn_id,
+            "artifact_type": artifact.artifact_type,
+            "summary": artifact.summary,
+            "content_hash": artifact.content_hash,
+            "size_bytes": artifact.size_bytes,
+            "sensitivity": artifact.sensitivity,
+            "created_at": artifact.created_at,
+            "expires_at": artifact.expires_at,
+            "pinned": artifact.pinned,
+            "metadata": DaemonServer._safe_json_preview(artifact.metadata),
+        }
+
+    def _artifact_list(self, rt, session_id: str) -> list[dict[str, Any]]:
+        self._require_session(rt, session_id)
+        artifacts = rt.artifacts.list(
+            conversation_id=session_id,
+            workspace_id=rt.workspace_id,
+            limit=50,
+        )
+        return [self._artifact_metadata(item) for item in artifacts]
+
+    def _artifact_read(
+        self,
+        rt,
+        session_id: str,
+        artifact_id: str,
+        offset: int,
+    ) -> dict[str, Any]:
+        self._require_session(rt, session_id)
+        artifact = rt.artifacts.get(str(artifact_id or ""))
+        if (
+            artifact is None
+            or artifact.workspace_id != rt.workspace_id
+            or artifact.conversation_id != session_id
+        ):
+            raise ValueError("Artifact not found in this session")
+        page = rt.artifacts.read_text_page(
+            artifact.id,
+            offset=max(0, int(offset)),
+            max_bytes=min(32 * 1024, rt.artifacts.page_bytes),
+        )
+        return {"artifact": self._artifact_metadata(artifact), **page}
+
+    def _workspace_diff(self) -> dict[str, Any]:
+        """Return a bounded, read-only Git diff using a fixed argv."""
+        import subprocess
+        from kitt.tools.process_runner import sanitized_subprocess_env
+
+        commands = [
+            [
+                "git", "-C", str(self.workspace_root), "diff",
+                "--no-ext-diff", "--no-color", "HEAD", "--",
+            ],
+            [
+                "git", "-C", str(self.workspace_root), "diff",
+                "--no-ext-diff", "--no-color", "--",
+            ],
+        ]
+        last_error = ""
+        for command in commands:
+            try:
+                completed = subprocess.run(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=sanitized_subprocess_env(),
+                    timeout=5.0,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                last_error = str(exc)
+                continue
+            if completed.returncode != 0:
+                last_error = completed.stderr.decode("utf-8", errors="replace")[:4096]
+                continue
+            raw = completed.stdout
+            max_bytes = 256 * 1024
+            truncated = len(raw) > max_bytes
+            if truncated:
+                raw = raw[:max_bytes]
+            return {
+                "available": True,
+                "content": raw.decode("utf-8", errors="replace"),
+                "truncated": truncated,
+                "bytes_returned": len(raw),
+            }
+        return {
+            "available": False,
+            "content": "",
+            "truncated": False,
+            "error": last_error or "Git diff unavailable",
+        }
+
+    async def _approval_action(
+        self,
+        rt,
+        action: str,
+        approval_id: str,
+        session_id: Optional[str],
+    ) -> dict[str, Any]:
+        approval_id = str(approval_id or "").strip()
+        if not approval_id:
+            raise ValueError("approval_id is required")
+        pending = self._approval_payloads(
+            rt,
+            session_id=session_id,
+            approval_id=approval_id,
+            limit=1,
+        )
+        if not pending:
+            raise ValueError("Approval is unknown, expired, or no longer pending")
+        item = pending[0]
+        sid = str(item["conversation_id"])
+        if action == "approval.approve":
+            grant = rt.approval.issue_grant(
+                turn_id=str(item["turn_id"]),
+                conversation_id=sid,
+                workspace_id=str(item["workspace_id"]),
+                action_hash=str(item["action_hash"]),
+                approval_id=approval_id,
+            )
+            if grant is None:
+                raise RuntimeError("Approval could not be granted; it may have changed concurrently")
+            # The grant nonce stays inside the daemon and is never exposed to
+            # the HTTP/browser boundary.
+            asyncio.create_task(self._continue_turn(rt, sid, grant))
+            return {
+                "approval_id": approval_id,
+                "session_id": sid,
+                "turn_id": item["turn_id"],
+                "decision": "approved",
+            }
+        if action == "approval.deny":
+            if not rt.approval.deny(approval_id, "Denied via KITT remote web"):
+                raise RuntimeError("Approval could not be denied")
+            for event in rt.processor.cancel_turn(
+                str(item["turn_id"]), "Denied via KITT remote web"
+            ):
+                self._record_turn_event(rt.database, sid, event)
+            return {
+                "approval_id": approval_id,
+                "session_id": sid,
+                "turn_id": item["turn_id"],
+                "decision": "denied",
+            }
+        raise ValueError(f"Unsupported approval action '{action}'")
+
+    async def _astream_blocking(self, iterator_factory, thread_name: str):
+        """Bridge a synchronous event iterator without blocking the daemon loop."""
+        loop = asyncio.get_running_loop()
+        q: asyncio.Queue = asyncio.Queue(maxsize=128)
+        stop = threading.Event()
+
+        def put(kind: str, value: Any = None, timeout: float = 30.0) -> bool:
+            if stop.is_set():
+                return False
+            future = asyncio.run_coroutine_threadsafe(q.put((kind, value)), loop)
+            try:
+                future.result(timeout=timeout)
+                return True
+            except Exception:
+                future.cancel()
+                return False
+
+        def produce() -> None:
+            iterator = None
+            try:
+                iterator = iterator_factory()
+                for event in iterator:
+                    if stop.is_set() or not put("event", event):
+                        break
+            except BaseException as exc:
+                if not stop.is_set():
+                    put("error", exc, timeout=5.0)
+            finally:
+                if iterator is not None and hasattr(iterator, "close"):
+                    try:
+                        iterator.close()
+                    except Exception:
+                        pass
+                if not stop.is_set():
+                    put("done", None, timeout=5.0)
+
+        threading.Thread(target=produce, name=thread_name, daemon=True).start()
+        try:
+            while True:
+                kind, value = await q.get()
+                if kind == "done":
+                    break
+                if kind == "error":
+                    if isinstance(value, Exception):
+                        raise value
+                    raise RuntimeError(str(value))
+                yield value
+        finally:
+            stop.set()
+
     async def _handle_client(self, reader, writer):
         authenticated = False
         attached_session = None
@@ -399,10 +747,135 @@ class DaemonServer:
                     str(self.workspace_root)
                 )
 
-                if action == "list_sessions":
+                if action == "runtime.status":
+                    snapshot = rt.snapshot()
+                    await q.put(encode_message({
+                        "type": "RESPONSE",
+                        "request_id": req_id,
+                        "status": "ok",
+                        "action": action,
+                        "workspace_root": str(self.workspace_root),
+                        "workspace_id": rt.workspace_id,
+                        "snapshot": _jsonable(snapshot),
+                        "pending_approvals": len(self._approval_payloads(rt)),
+                    }))
+                elif action == "get_session":
+                    try:
+                        payload = self._session_detail(rt, str(msg.get("session_id", "")))
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id,
+                        "status": "ok", "action": action, **payload,
+                    }))
+                elif action == "events_since":
+                    sid = str(msg.get("session_id", ""))
+                    try:
+                        self._require_session(rt, sid)
+                        last_sequence = max(0, int(msg.get("last_sequence", 0)))
+                        limit = max(1, min(int(msg.get("limit", 200)), 500))
+                        events, more, next_seq = self._get_events_since(
+                            rt.database, sid, last_sequence, limit=limit
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id,
+                        "status": "ok", "action": action,
+                        "session_id": sid,
+                        "events": [e.to_dict() for e in events],
+                        "has_more": more,
+                        "next_sequence": next_seq,
+                    }))
+                elif action == "artifact.list":
+                    try:
+                        artifacts = self._artifact_list(
+                            rt, str(msg.get("session_id", ""))
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id,
+                        "status": "ok", "action": action,
+                        "artifacts": artifacts,
+                    }))
+                elif action == "artifact.read":
+                    try:
+                        payload = self._artifact_read(
+                            rt,
+                            str(msg.get("session_id", "")),
+                            str(msg.get("artifact_id", "")),
+                            max(0, int(msg.get("offset", 0))),
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id,
+                        "status": "ok", "action": action, **payload,
+                    }))
+                elif action == "workspace.diff":
+                    payload = self._workspace_diff()
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id,
+                        "status": "ok", "action": action, **payload,
+                    }))
+                elif action == "approval.list":
+                    try:
+                        approvals = self._approval_payloads(
+                            rt,
+                            session_id=(str(msg.get("session_id", "")).strip() or None),
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id,
+                        "status": "ok", "action": action,
+                        "approvals": approvals,
+                    }))
+                elif action in {"approval.approve", "approval.deny"}:
+                    try:
+                        payload = await self._approval_action(
+                            rt,
+                            action,
+                            str(msg.get("approval_id", "")),
+                            (str(msg.get("session_id", "")).strip() or None),
+                        )
+                    except Exception as exc:
+                        await q.put(encode_message({
+                            "type": "RESPONSE", "request_id": req_id,
+                            "status": "error", "error": str(exc),
+                        }))
+                        continue
+                    await q.put(encode_message({
+                        "type": "RESPONSE", "request_id": req_id,
+                        "status": "ok", "action": action, **payload,
+                    }))
+                elif action == "list_sessions":
                     convs = rt.history.list_history(limit=50)
+                    active = rt.history.get_active_read_only()
                     await q.put(encode_message({
                         "type": "RESPONSE", "request_id": req_id, "status": "ok",
+                        "active_session_id": active.get("id") if active else "",
                         "sessions": [{"id": c.get("id"), "title": c.get("title"), "status": c.get("status")} for c in convs],
                     }))
                 elif action == "create_session":
@@ -639,7 +1112,10 @@ class DaemonServer:
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             try:
-                for event in rt.processor.continue_turn(grant.turn_id, grant):
+                async for event in self._astream_blocking(
+                    lambda: rt.processor.continue_turn(grant.turn_id, grant),
+                    f"kitt-continue-{grant.turn_id[:8]}",
+                ):
                     self._record_turn_event(rt.database, session_id, event)
             except Exception as exc:
                 self.record_event(rt.database, session_id, "TurnFailed", {"error": str(exc)})

@@ -50,12 +50,7 @@ Before merging broader behavior:
 python3 -m unittest discover -s tests -v
 ```
 
-Use the project wrapper when available:
-
-```bash
-rtk proxy .venv/bin/python3.14 -m compileall -q kitt tests
-rtk proxy .venv/bin/python3.14 -m unittest discover -s tests -v
-```
+Use KITT-owned tooling and the Python/Rust commands shipped by this repository; do not require external command-proxy binaries for validation.
 
 ## Mandatory Ruthless Security & Performance Review
 

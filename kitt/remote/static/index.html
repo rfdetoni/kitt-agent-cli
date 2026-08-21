@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>K.I.T.T. Remote Control</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="app" class="app-shell" aria-live="polite">
+    <header class="topbar">
+      <button id="navToggle" class="icon-button mobile-only" aria-label="Abrir sessões">☰</button>
+      <div class="brand">
+        <div class="brand-mark">K.I.T.T.</div>
+        <div class="brand-subtitle">REMOTE CONTROL</div>
+      </div>
+      <div class="status-strip">
+        <span id="connectionDot" class="dot offline"></span>
+        <span id="connectionText">OFFLINE</span>
+        <span class="separator"></span>
+        <span class="muted">SESSION</span>
+        <strong id="sessionName">—</strong>
+        <span class="separator desktop-only"></span>
+        <span class="muted desktop-only">MODEL</span>
+        <strong id="modelName" class="desktop-only">—</strong>
+        <span class="separator desktop-only"></span>
+        <span class="muted desktop-only">CONTEXT</span>
+        <strong id="contextValue" class="desktop-only">—</strong>
+      </div>
+      <button id="inspectorToggle" class="icon-button compact-only" aria-label="Abrir detalhes">▣</button>
+      <button id="logoutButton" class="icon-button" aria-label="Sair">↪</button>
+    </header>
+
+    <aside id="sidebar" class="sidebar">
+      <div class="panel-heading">
+        <span>SESSIONS</span>
+        <button id="newSessionButton" class="small-button">+ NEW</button>
+      </div>
+      <div id="sessions" class="session-list"></div>
+
+      <div class="panel-heading secondary"><span>CHILD AGENTS</span></div>
+      <div id="children" class="child-list empty-state">Nenhum child ativo</div>
+
+      <div class="panel-heading secondary"><span>WORKSPACE</span></div>
+      <div class="workspace-card">
+        <div id="workspacePath" class="workspace-path">—</div>
+        <div class="workspace-meta"><span>daemon</span><span id="daemonState" class="good">connected</span></div>
+      </div>
+
+      <div class="panel-heading secondary"><span>ACTIVITY</span></div>
+      <div id="activity" class="activity-list"></div>
+    </aside>
+
+    <main class="conversation-column">
+      <div class="section-title">CONVERSATION</div>
+      <div id="conversation" class="conversation"></div>
+      <form id="composer" class="composer">
+        <textarea id="promptInput" rows="1" maxlength="131072" placeholder="Pergunte algo para o K.I.T.T…" autocomplete="off"></textarea>
+        <button id="cancelButton" type="button" class="cancel-button hidden" aria-label="Cancelar turno">■</button>
+        <button id="sendButton" type="submit" class="send-button" aria-label="Enviar">➤</button>
+        <div class="composer-hint">Shift + Enter para nova linha</div>
+      </form>
+    </main>
+
+    <aside class="inspector">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="events">EVENTS</button>
+        <button class="tab" data-tab="output">OUTPUT</button>
+        <button class="tab" data-tab="approvals">APPROVALS</button>
+        <button class="tab" data-tab="diff">DIFF</button>
+        <button class="tab" data-tab="artifacts">ARTIFACTS</button>
+        <button class="tab" data-tab="status">STATUS</button>
+      </div>
+      <div id="inspectorContent" class="inspector-content"></div>
+    </aside>
+  </div>
+
+  <div id="pairingOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pairTitle">
+    <form id="pairingForm" class="pair-card">
+      <div class="scanner"></div>
+      <div class="brand-mark large">K.I.T.T.</div>
+      <h1 id="pairTitle">Remote pairing</h1>
+      <p>Digite o código exibido no terminal onde <code>kitt remote</code> está rodando.</p>
+      <input id="pairingCode" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="one-time-code" placeholder="00000000" required>
+      <button type="submit" class="primary-button">CONECTAR</button>
+      <div id="pairingError" class="error-text"></div>
+    </form>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

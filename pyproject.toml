@@ -27,3 +27,6 @@ kitt = "kitt.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["kitt*"]
+
+[tool.setuptools.package-data]
+"kitt.remote" = ["static/*.html", "static/*.css", "static/*.js"]

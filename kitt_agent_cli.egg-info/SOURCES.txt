@@ -169,6 +169,15 @@ kitt/queueing/__init__.py
 kitt/queueing/models.py
 kitt/queueing/repository.py
 kitt/queueing/service.py
+kitt/remote/__init__.py
+kitt/remote/auth.py
+kitt/remote/cli.py
+kitt/remote/gateway.py
+kitt/remote/security.py
+kitt/remote/server.py
+kitt/remote/static/app.css
+kitt/remote/static/app.js
+kitt/remote/static/index.html
 kitt/router/classifier.py
 kitt/router/escalation.py
 kitt/router/features.py
