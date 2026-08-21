@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -31,8 +31,8 @@ jobs:
       - name: Prime architecture suite
         run: python -m unittest discover -s tests/prime_architecture -v
       - name: 1k repository benchmark smoke
-        if: runner.os == 'Linux' && matrix.python == '3.12'
+        if: runner.os == 'Linux'
         run: python benchmarks/scale_benchmark.py --files 1000
       - name: Safe runtime schema benchmark
-        if: runner.os == 'Linux' && matrix.python == '3.12'
+        if: runner.os == 'Linux'
         run: python benchmarks/safe_runtime_benchmark.py

@@ -12,19 +12,18 @@ K.I.T.T. Agent CLI is a Python local-first coding agent. It supports local and O
 - Standard Library first.
 - SQLite via `sqlite3`; no ORM.
 - Terminal UI uses `prompt_toolkit`.
-- Tests use `unittest`.
+- Tests use `pytest` (compatible with `unittest.TestCase`).
 
 ## Repository Map
 
 - `kitt/core/` - runtime, turn processor, session state.
-- `kitt/context_engine/` - compatibility facade for context retrieval.
-- `kitt/context/` - candidates, retrieval, token estimator.
+- `kitt/context/` - candidates, retrieval, compiler, token estimator.
 - `kitt/index/` - SQLite repository index, scanner, graph.
 - `kitt/context_filter/` - semantic filter, prompt budget, context planning.
 - `kitt/tools/` - tool registry, policy, approvals, process runner.
 - `kitt/ui/` - terminal UI, reducer, event bridge, components.
 - `kitt/history/`, `kitt/memory/`, `kitt/metrics/` - persistence and telemetry.
-- `tests/` - unittest suite.
+- `tests/` - test suite executed with pytest.
 
 ## Work Style
 
@@ -41,13 +40,15 @@ Run smallest useful checks first:
 
 ```bash
 python3 -m compileall -q kitt tests
-python3 -m unittest -v tests.test_name
+pytest -q tests/test_name.py
 ```
 
 Before merging broader behavior:
 
 ```bash
-python3 -m unittest discover -s tests -v
+pytest -q
+cargo test --workspace --all-features
+python3 packaging/verify_cleanroom.py
 ```
 
 Use KITT-owned tooling and the Python/Rust commands shipped by this repository; do not require external command-proxy binaries for validation.
