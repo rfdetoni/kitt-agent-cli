@@ -1,5 +1,5 @@
 use kitt_native_engine::model::{EditRequest, SearchOptions};
-use kitt_native_engine::{compress_process_output, NativeEngine};
+use kitt_native_engine::{NativeEngine, compress_process_output};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

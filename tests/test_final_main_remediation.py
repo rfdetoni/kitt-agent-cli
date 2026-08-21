@@ -10,7 +10,7 @@ from kitt.core.turn_processor import TurnProcessor
 from kitt.daemon.redaction import sanitize_public_event_payload
 from kitt.domain.entities import EditBlock
 from kitt.edit_format.applier import DiffApplier
-from kitt.edit_format.changeset import ChangeSetTracker
+from kitt.edit_format.changeset import ChangeSetTracker, FileSnapshot
 from kitt.history.database import HistoryDatabase
 from kitt.index.scanner import RepositoryScanner
 from kitt.security.workspace_fs import WorkspaceFileSystem
@@ -274,6 +274,86 @@ class FinalMainRemediationTests(unittest.TestCase):
             cols = {row[1] for row in conn.execute("PRAGMA table_info(edit_change_snapshots)")}
         self.assertIn("post_content", cols)
         db.close()
+
+    def test_workspace_remembered_write_does_not_enable_apply_patch(self):
+        approval_manager = ApprovalManager()
+        policy = PolicyEngine(approval_manager=approval_manager)
+        self.assertEqual(policy.autonomy.level, "supervised")
+        policy.approval_manager.remember("write_file", "**", "allow", "workspace")
+        self.assertEqual(policy.evaluate_tool("write_file", {"path": "a.txt"}), "ALLOW")
+        self.assertEqual(policy.evaluate_tool("apply_patch", {"patch": "diff"}), "ASK")
+        self.assertEqual(policy.autonomy.level, "supervised")
+
+    def test_clear_remembered_does_not_mutate_autonomy(self):
+        approval_manager = ApprovalManager()
+        policy = PolicyEngine(approval_manager=approval_manager)
+        policy.approval_manager.remember("write_file", "**", "allow", "workspace")
+        policy.approval_manager.clear_remembered(scope="workspace")
+        self.assertEqual(policy.autonomy.level, "supervised")
+        self.assertEqual(policy.evaluate_tool("write_file", {"path": "a.txt"}), "ASK")
+
+    def test_session_remember_does_not_mutate_autonomy(self):
+        approval_manager = ApprovalManager()
+        policy = PolicyEngine(approval_manager=approval_manager)
+        policy.approval_manager.remember("write_file", "**", "allow", "session", conversation_id="s1")
+        self.assertEqual(policy.autonomy.level, "supervised")
+        self.assertEqual(policy.evaluate_tool("write_file", {"path": "a.txt"}, conversation_id="s1"), "ALLOW")
+        self.assertEqual(policy.evaluate_tool("write_file", {"path": "a.txt"}, conversation_id="s2"), "ASK")
+
+    def test_redacts_secret_fields_inside_serialized_json(self):
+        json_str = '{"api_key": "sk-1234567890abcdef", "name": "test"}'
+        clean = sanitize_public_event_payload("ToolCompleted", {"output": json_str})
+        self.assertNotIn("sk-1234567890abcdef", str(clean))
+        self.assertIn("[REDACTED", str(clean))
+
+    def test_redacts_nested_serialized_json(self):
+        nested = '{"payload": "{\\"refresh_token\\": \\"very-secret-token-value\\"}"}'
+        clean = sanitize_public_event_payload("ToolCompleted", {"data": nested})
+        self.assertNotIn("very-secret-token-value", str(clean))
+
+    def test_redacts_query_string_credentials(self):
+        url = "https://example.com/api?api_key=secret-key-123&action=query"
+        clean = sanitize_public_event_payload("ToolCompleted", {"url": url})
+        self.assertNotIn("secret-key-123", str(clean))
+
+    def test_redacts_yaml_like_credentials(self):
+        yaml_text = "api_key: secret-api-value-456\nenv: production"
+        clean = sanitize_public_event_payload("ToolCompleted", {"yaml": yaml_text})
+        self.assertNotIn("secret-api-value-456", str(clean))
+        self.assertIn("env: production", str(clean))
+
+    def test_token_telemetry_is_not_redacted(self):
+        payload = {"tokens": 120, "input_tokens": 80, "output_tokens": 40, "max_tokens": 4096}
+        clean = sanitize_public_event_payload("ToolCompleted", payload)
+        self.assertEqual(clean["tokens"], 120)
+        self.assertEqual(clean["input_tokens"], 80)
+        self.assertEqual(clean["output_tokens"], 40)
+        self.assertEqual(clean["max_tokens"], 4096)
+
+    def test_redaction_is_bounded_against_large_hostile_strings(self):
+        large = "A" * (128 * 1024)
+        clean = sanitize_public_event_payload("ToolCompleted", {"huge": large})
+        self.assertTrue(len(clean["huge"]) <= 65 * 1024)
+        self.assertIn("[truncated]", clean["huge"])
+
+    def test_undo_retention_prunes_old_and_excess_changesets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = HistoryDatabase(in_memory=True)
+            tracker = ChangeSetTracker(tmp, db=db, workspace_id="ws")
+            tracker.max_changesets_per_session = 5
+            for i in range(10):
+                fs_snap = FileSnapshot(f"f{i}.txt", False, None)
+                tracker.record_changeset(
+                    f"edit {i}", [fs_snap],
+                    workspace_id="ws", conversation_id="s1", turn_id=f"t{i}",
+                    post_hashes={f"f{i}.txt": "h"},
+                    post_exists={f"f{i}.txt": True},
+                    post_contents={f"f{i}.txt": f"c{i}"},
+                )
+            with db.get_connection() as conn:
+                count = conn.execute("SELECT COUNT(*) FROM edit_changesets WHERE workspace_id='ws' AND conversation_id='s1'").fetchone()[0]
+            self.assertLessEqual(count, 5)
+            db.close()
 
 
 if __name__ == "__main__":

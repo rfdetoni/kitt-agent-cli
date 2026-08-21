@@ -106,3 +106,19 @@ class PendingAction:
             security = dict(self.security_context or {})
             security["approval_integrity"] = manifest
             object.__setattr__(self, "security_context", security)
+
+    def get_preconditions(self) -> list:
+        from kitt.security.mutation_preconditions import MutationPrecondition
+        raw = self.security_context.get("mutation_preconditions") if isinstance(self.security_context, dict) else None
+        if isinstance(raw, list):
+            return [MutationPrecondition.from_dict(item) for item in raw if isinstance(item, dict)]
+        preconditions = []
+        for path, digest in self.before_hashes.items():
+            preconditions.append(
+                MutationPrecondition(
+                    path=path,
+                    expected_exists=(digest is not None),
+                    expected_sha256=digest,
+                )
+            )
+        return preconditions

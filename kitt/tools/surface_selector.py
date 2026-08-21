@@ -57,16 +57,11 @@ class ToolSurfaceSelector:
     ) -> List[str]:
         if not plan.enabled_tools:
             return []
-
-        mode = runtime_mode_override or self.config.tool_runtime_mode
-        if mode not in {"legacy", "safe_runtime", "auto"}:
-            raise ValueError(f"Invalid tool runtime mode: {mode}")
-
-        if mode == "legacy" or not self.config.safe_runtime_enabled:
+        mode = runtime_mode_override or getattr(self.config, "tool_runtime_mode", "safe_runtime")
+        if mode == "legacy":
             return list(plan.enabled_tools)
         if mode == "safe_runtime":
             return ["kitt_runtime"]
-
         return (
             ["kitt_runtime"]
             if self._prefer_safe_runtime(model_capabilities)

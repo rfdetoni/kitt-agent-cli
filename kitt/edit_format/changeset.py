@@ -38,12 +38,66 @@ class ChangeSetTracker:
         self._tracked: dict[str, _TrackedState] = {}
         self.db = db
         self.workspace_id = str(workspace_id or "")
+        self.max_changesets_per_session = 50
+        self.max_total_bytes_per_workspace = 512 * 1024 * 1024
+        self.ttl_days = 30
         self._lock = threading.RLock()
 
     def attach_db(self, db, workspace_id: str = "") -> None:
         self.db = db
         if workspace_id:
             self.workspace_id = str(workspace_id)
+
+    def prune_retention(
+        self,
+        workspace_id: str = "",
+        conversation_id: str = "",
+    ) -> int:
+        if not self.db:
+            return 0
+        ws = str(workspace_id or self.workspace_id or "").strip()
+        if not ws:
+            return 0
+        deleted_count = 0
+        cutoff_time = time.time() - (self.ttl_days * 86400.0)
+
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # 1. Delete changesets older than TTL
+                res = conn.execute(
+                    "DELETE FROM edit_changesets WHERE workspace_id=? AND created_at < ?",
+                    (ws, cutoff_time),
+                )
+                deleted_count += res.rowcount or 0
+
+                # 2. Delete excess REVERTED changesets (keep max 10 per session)
+                if conversation_id:
+                    reverted_rows = conn.execute(
+                        "SELECT id FROM edit_changesets WHERE workspace_id=? AND conversation_id=? AND state='REVERTED' ORDER BY created_at DESC",
+                        (ws, conversation_id),
+                    ).fetchall()
+                    if len(reverted_rows) > 10:
+                        to_drop = [r[0] for r in reverted_rows[10:]]
+                        conn.executemany("DELETE FROM edit_changesets WHERE id=?", [(i,) for i in to_drop])
+                        deleted_count += len(to_drop)
+
+                # 3. Delete APPLIED changesets beyond max_changesets_per_session
+                if conversation_id:
+                    applied_rows = conn.execute(
+                        "SELECT id FROM edit_changesets WHERE workspace_id=? AND conversation_id=? AND state='APPLIED' ORDER BY created_at DESC",
+                        (ws, conversation_id),
+                    ).fetchall()
+                    if len(applied_rows) > self.max_changesets_per_session:
+                        to_drop = [r[0] for r in applied_rows[self.max_changesets_per_session:]]
+                        conn.executemany("DELETE FROM edit_changesets WHERE id=?", [(i,) for i in to_drop])
+                        deleted_count += len(to_drop)
+
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return deleted_count
 
     def create_snapshot(self, relative_path: str) -> FileSnapshot:
         fs = WorkspaceFileSystem(self.root_dir)
@@ -157,6 +211,10 @@ class ChangeSetTracker:
             except Exception:
                 conn.rollback()
                 raise
+        try:
+            self.prune_retention(tracked.workspace_id, tracked.conversation_id)
+        except Exception:
+            pass
 
     def _load_latest(self, workspace_id: str, conversation_id: str) -> Optional[_TrackedState]:
         if not self.db:

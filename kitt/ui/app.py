@@ -1462,13 +1462,25 @@ class KittUIApp:
         messages = await self._run_blocking(self.runtime.history.repo.get_messages_for_conversation, conversation["id"])
         self._show_result("\n\n".join(f"{message['role'].upper()}: {message['content']}" for message in messages) or "No messages in active conversation.")
 
-    async def _load_conversation(self, conversation: dict) -> None:
-        messages = await self._run_blocking(self.runtime.history.repo.get_messages_for_conversation, conversation["id"])
-        self.state.active_conversation_id = conversation["id"]
+    async def _load_conversation(self, conversation: dict) -> bool:
+        if self.state.status_text in {"STREAMING", "THINKING", "PROCESSING"}:
+            self.state.add_toast("Cannot switch conversation while a turn is active.")
+            return False
+        conv_id = str(conversation.get("id", ""))
+        if not conv_id:
+            return False
+        if self.bridge and self.bridge.daemon_mode:
+            ok = await self.bridge.attach(conv_id)
+            if not ok:
+                self.state.add_toast(f"Failed to attach daemon to session '{conversation.get('title', conv_id)}'")
+                return False
+        messages = await self._run_blocking(self.runtime.history.repo.get_messages_for_conversation, conv_id)
+        self.state.active_conversation_id = conv_id
         self.state.route = "session"
         self.state.transcript.clear()
         for message in messages[-500:]:
             self.state.append_message(message.get("role", "system"), message.get("content", ""))
+        return True
 
     async def _execute_direct_tool(self, tool_name: str, args: dict) -> None:
         conversation = self.runtime.history.get_or_create_active()
@@ -1536,7 +1548,12 @@ class KittUIApp:
         self._init_models_from_runtime()
         self.session_picker_model = SessionPickerModel(new_runtime)
         self.timeline_model = TimelineModel(new_runtime)
-        self.diff_model = DiffViewerModel(str(new_runtime.canonical_root))
+        old_bridge = self.bridge
+        if old_bridge:
+            try:
+                await old_bridge.shutdown()
+            except Exception:
+                pass
         if self.application:
             self.bridge = TurnEventBridge(new_runtime, self._on_event, self.application.invalidate)
         self._show_result(f"Switched workspace: {new_runtime.canonical_root}")
@@ -1635,8 +1652,6 @@ class KittUIApp:
                 tool_name = pending.get("tool_name", "apply_patch")
                 if remember_scope:
                     await self.bridge.remember_approval(tool_name, remember_scope)
-                    if remember_scope == "workspace":
-                        await self.bridge.set_autonomy("balanced")
                     self.state.add_toast(
                         f"Sempre permitir {tool_name} ativado para este {remember_scope}."
                     )
@@ -1658,9 +1673,6 @@ class KittUIApp:
                 tool_name, "**", "allow", remember_scope,
                 conversation_id=pending.get("conversation_id") if remember_scope == "session" else None,
             )
-            if remember_scope == "workspace":
-                self.runtime.autonomy_store.set_preset("balanced")
-                self.runtime.processor.registry.policy.autonomy = self.runtime.autonomy_store.get()
             self.state.add_toast(f"Sempre permitir {tool_name} ativado para este {remember_scope}.")
 
         if allow:

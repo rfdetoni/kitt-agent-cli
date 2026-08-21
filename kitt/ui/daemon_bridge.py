@@ -86,6 +86,8 @@ class DaemonUIBridge:
                 self._last_sequence_by_session.get(sid, 0), event.sequence_id
             )
         if self.event_sink:
+            if sid and self.attached_session_id and sid != self.attached_session_id:
+                return
             mapped = map_daemon_event_to_turn_event(event)
             if mapped is not None:
                 self.event_sink(mapped)

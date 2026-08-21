@@ -24,8 +24,9 @@ class TestSmoke(unittest.TestCase):
         import kitt.tools.policy_engine
         import kitt.tools.agent_loop
         import kitt.tools.build_detector
-        import kitt.tools.log_reducer
-        import kitt.cli.repl
+        import kitt.ui.app
+        import kitt.daemon.server
+        import kitt.remote.server
         import kitt.cli.main
         self.assertTrue(True)
 

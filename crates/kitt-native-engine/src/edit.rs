@@ -1,7 +1,7 @@
 use crate::language::{grammar, identify};
 use crate::model::{EditRequest, EditResponse};
 use crate::symbols::read_symbol;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;

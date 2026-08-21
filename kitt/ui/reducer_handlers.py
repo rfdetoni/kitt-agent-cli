@@ -157,15 +157,23 @@ def handle_tool_completed(state: UIState, event: ToolCompleted) -> None:
 
 
 def handle_approval_required(state: UIState, event: ApprovalRequired) -> None:
+    conv_id = str(event.conversation_id or "").strip()
+    if not conv_id:
+        return
     state.status_text = "APPROVAL"
     args_dict = event.args if isinstance(event.args, dict) else {}
     patch = args_dict.get("patch", "")
     affected = [args_dict.get("path")] if "path" in args_dict and args_dict.get("path") else ([args_dict.get("file")] if "file" in args_dict and args_dict.get("file") else [])
     state.pending_approvals.append({
-        "turn_id": event.turn_id, "conversation_id": event.conversation_id or state.active_conversation_id,
-        "approval_id": event.approval_request_id, "workspace_id": event.workspace_id,
-        "tool_name": event.tool_name, "args": event.args, "action_hash": event.action_hash,
-        "affected_paths": affected, "diff_preview": patch,
+        "turn_id": event.turn_id,
+        "conversation_id": conv_id,
+        "approval_id": event.approval_request_id,
+        "workspace_id": event.workspace_id,
+        "tool_name": event.tool_name,
+        "args": event.args,
+        "action_hash": event.action_hash,
+        "affected_paths": affected,
+        "diff_preview": patch,
     })
     state.push_overlay("permission")
 

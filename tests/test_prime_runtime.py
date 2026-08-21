@@ -183,51 +183,41 @@ class TestPrimeRuntime(unittest.TestCase):
         self.assertEqual(received, [{"msg": "hello"}])
 
 
-class TestLegacyMigrations(unittest.TestCase):
-    def test_v1_database_upgrades_to_v4(self):
+class TestCanonicalSchemaV1(unittest.TestCase):
+    def test_new_database_creates_schema_v1(self):
         with tempfile.TemporaryDirectory() as root:
-            path=Path(root)/".kitt"/"history"; path.mkdir(parents=True)
-            db_path=path/"history.sqlite3"
-            conn = sqlite3.connect(db_path)
-            try:
-                conn.executescript(CREATE_TABLES_SQL)
-                conn.execute("INSERT INTO schema_info(version) VALUES(1)")
-                conn.commit()
-            finally:
-                conn.close()
-            db=HistoryDatabase(root)
+            db = HistoryDatabase(root)
             try:
                 with db.get_connection() as conn:
-                    cols={r[1] for r in conn.execute("PRAGMA table_info(conversations)")}
-                    version=conn.execute("SELECT MAX(version) FROM schema_info").fetchone()[0]
-                    tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                    version = conn.execute("SELECT MAX(version) FROM schema_info").fetchone()[0]
+                    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                    fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+                    integrity = conn.execute("PRAGMA integrity_check").fetchall()
             finally:
                 db.close()
-            self.assertGreaterEqual(version, 4)
-            self.assertIn("active_entry_id",cols)
-            self.assertIn("child_sessions",tables)
+            self.assertEqual(version, 1)
+            self.assertIn("conversations", tables)
+            self.assertIn("child_sessions", tables)
+            self.assertIn("harness_entries", tables)
+            self.assertEqual(len(fk), 0)
+            self.assertEqual(integrity[0][0], "ok")
 
-    def test_partially_marked_v5_database_is_repaired(self):
+    def test_incompatible_database_version_is_rejected(self):
+        from kitt.history.migrations import IncompatibleSchemaError
         with tempfile.TemporaryDirectory() as root:
-            path=Path(root)/".kitt"/"history"; path.mkdir(parents=True)
-            db_path=path/"history.sqlite3"
+            path = Path(root) / ".kitt" / "history"
+            path.mkdir(parents=True)
+            db_path = path / "history.sqlite3"
             conn = sqlite3.connect(db_path)
             try:
-                conn.executescript(CREATE_TABLES_SQL)
-                conn.execute("INSERT INTO schema_info(version) VALUES(5)")
+                conn.execute("CREATE TABLE schema_info (version INTEGER PRIMARY KEY);")
+                conn.execute("INSERT INTO schema_info (version) VALUES (16);")
                 conn.commit()
             finally:
                 conn.close()
-            db=HistoryDatabase(root)
-            try:
-                with db.get_connection() as conn:
-                    version=conn.execute("SELECT MAX(version) FROM schema_info").fetchone()[0]
-                    tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            finally:
-                db.close()
-            self.assertGreaterEqual(version, 6)
-            self.assertIn("harness_entries",tables)
-            self.assertIn("child_sessions",tables)
+
+            with self.assertRaises(IncompatibleSchemaError):
+                HistoryDatabase(root)
 
 
 if __name__=="__main__":

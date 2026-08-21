@@ -82,9 +82,6 @@ class RuntimeConfig:
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
-        mode = os.getenv("KITT_TOOL_RUNTIME_MODE", "auto").strip().lower()
-        if mode not in {"legacy", "safe_runtime", "auto"}:
-            mode = "auto"
         return cls(
             safe_runtime_enabled=_env_bool("KITT_SAFE_RUNTIME", True),
             daemon_enabled=_env_bool("KITT_DAEMON", True),
@@ -93,7 +90,6 @@ class RuntimeConfig:
             retained_agents_enabled=_env_bool("KITT_RETAINED_AGENTS", True),
             executable_skills_enabled=_env_bool("KITT_EXECUTABLE_SKILLS", True),
             scheduler_enabled=_env_bool("KITT_SCHEDULER", True),
-            tool_runtime_mode=mode,
         )
 
     @property

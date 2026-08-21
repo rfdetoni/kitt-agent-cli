@@ -616,3 +616,30 @@ def handle_detach_command(root_dir: str = ".") -> int:
 def handle_resume_command(session_id: str, root_dir: str = ".") -> int:
     # Resuming validates session, restores execution context, and attaches
     return handle_attach_command(session_id, root_dir=root_dir)
+
+
+def handle_doctor_command(root_dir: str = ".", reset_state: bool = False) -> int:
+    from kitt.cli.doctor import DoctorCheck
+    doc = DoctorCheck(root_dir=root_dir)
+    if reset_state:
+        msg = doc.reset_state(backup=True)
+        print(f"\033[32m✓ {msg}\033[0m")
+        return 0
+
+    results = doc.run_diagnostics()
+    print("\n\033[1;36m=== K.I.T.T. System Diagnostics ===\033[0m")
+    has_fail = False
+    for r in results:
+        status = r["status"]
+        if status == "PASS":
+            badge = "\033[32m[PASS]\033[0m"
+        elif status == "WARN":
+            badge = "\033[33m[WARN]\033[0m"
+        elif status == "FAIL":
+            badge = "\033[31m[FAIL]\033[0m"
+            has_fail = True
+        else:
+            badge = "\033[90m[INFO]\033[0m"
+        print(f"  {badge} \033[1m{r['name']}\033[0m: {r['detail']}")
+    print()
+    return 1 if has_fail else 0

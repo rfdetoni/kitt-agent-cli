@@ -5,7 +5,7 @@ mod output;
 mod search;
 mod symbols;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use model::{
     CompressionResponse, EditRequest, EditResponse, SearchOptions, SearchResponse, Symbol,
     SymbolRead, SymbolReference,

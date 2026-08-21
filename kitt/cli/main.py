@@ -77,6 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser = subparsers.add_parser("resume", help="Resume an existing KITT session")
     resume_parser.add_argument("session", help="Session ID to resume")
 
+    # 'doctor' subcommand
+    doctor_parser = subparsers.add_parser("doctor", help="Run system diagnostics and manage local state")
+    doctor_parser.add_argument("--reset-state", action="store_true", help="Explicitly reset incompatible SQLite database state to Schema V1")
+
     # Default flags
     parser.add_argument("-p", "--print", dest="prompt", help="Print one response and exit")
     parser.add_argument("--root", default=".", help="Workspace root")
@@ -171,6 +175,10 @@ def main(argv=None) -> int:
     if args.subcommand == "resume":
         from kitt.cli.commands import handle_resume_command
         return handle_resume_command(session_id=args.session, root_dir=getattr(args, "root", "."))
+
+    if args.subcommand == "doctor":
+        from kitt.cli.commands import handle_doctor_command
+        return handle_doctor_command(root_dir=getattr(args, "root", "."), reset_state=bool(getattr(args, "reset_state", False)))
 
     try:
         return asyncio.run(async_main(args))

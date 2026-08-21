@@ -4,3 +4,27 @@ members = [
   "crates/kitt-native-engine",
   "crates/kitt-native-python",
 ]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1"
+ignore = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3"
+tree-sitter = "0.25"
+tree-sitter-python = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-go = "0.23"
+pretty_assertions = "1"
+pyo3 = { version = "0.23", features = ["extension-module", "abi3"] }

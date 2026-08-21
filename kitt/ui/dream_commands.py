@@ -8,19 +8,19 @@ if TYPE_CHECKING:
     from kitt.ui.app import KittUIApp
 
 
-async def handle_dream_command(app: KittUIApp, arg: str) -> None:
-    """Handles /dream, /dream --commit, /dream --dry-run, /dream --status, /dream --cancel, /dream --help."""
-    parts = arg.strip().split()
+def execute_dream_command(runtime, command_str: str) -> str:
+    """Synchronous execution of dreaming commands for headless and tests."""
+    arg = command_str.replace("/dream", "").strip()
+    parts = arg.split()
     flag = parts[0].lower() if parts else ""
 
-    if not app.runtime.dream_service:
-        app._show_result("Dreaming Mode is not initialized.")
-        return
+    if not runtime.dream_service:
+        return "Dreaming Mode is not initialized."
 
-    ws_id = app.runtime.workspace_id
+    ws_id = getattr(runtime, "workspace_id", "local")
 
     if flag in ("--help", "-h", "help"):
-        app._show_result(
+        return (
             "Dreaming Mode\n\n"
             "/dream\n"
             "    Analyze and preview memory consolidation without writing changes.\n\n"
@@ -36,30 +36,30 @@ async def handle_dream_command(app: KittUIApp, arg: str) -> None:
             "    Show this help."
         )
 
-    elif flag in ("--status", "-s", "status"):
-        mem_repo = app.runtime.memory_repo
+    if flag in ("--status", "-s", "status"):
+        mem_repo = runtime.memory_repo
         last_run = mem_repo.get_last_dream_run(ws_id) if mem_repo else None
         active = mem_repo.get_all_memories(ws_id, status="ACTIVE") if mem_repo else []
         candidates = mem_repo.get_all_memories(ws_id, status="CANDIDATE") if mem_repo else []
         superseded = mem_repo.get_all_memories(ws_id, status="SUPERSEDED") if mem_repo else []
         archived = mem_repo.get_all_memories(ws_id, status="ARCHIVED") if mem_repo else []
 
-        is_eligible = app.runtime.dream_scheduler.should_run(ws_id) if app.runtime.dream_scheduler else False
-        is_running = app.runtime.dream_scheduler.is_dreaming if app.runtime.dream_scheduler else False
+        is_eligible = runtime.dream_scheduler.should_run(ws_id) if runtime.dream_scheduler else False
+        is_running = runtime.dream_scheduler.is_dreaming if runtime.dream_scheduler else False
 
         last_str = "None"
         if last_run and last_run.finished_at:
             elapsed_hrs = (time.time() - last_run.finished_at) / 3600.0
             last_str = f"{elapsed_hrs:.1f}h ago ({time.strftime('%Y-%m-%d %H:%M', time.localtime(last_run.finished_at))})"
 
-        model_name = getattr(app.runtime.dream_service.consolidate_phase, "model_name", "deterministic")
-        model_role = getattr(app.runtime.config, "dream_model_role", "context")
+        model_name = getattr(runtime.dream_service.consolidate_phase, "model_name", "deterministic")
+        model_role = getattr(runtime.config, "dream_model_role", "context")
 
-        app._show_result(
+        return (
             f"=== Dreaming Mode Status ===\n\n"
-            f"  Dreaming enabled     : {'Yes' if getattr(app.runtime.config, 'dream_enabled', True) else 'No'}\n"
-            f"  Auto dreaming enabled: {'Yes' if getattr(app.runtime.config, 'dream_auto_enabled', False) else 'No'}\n"
-            f"  Auto commit          : {'Yes' if getattr(app.runtime.config, 'dream_auto_commit', False) else 'No'}\n"
+            f"  Dreaming enabled     : {'Yes' if getattr(runtime.config, 'dream_enabled', True) else 'No'}\n"
+            f"  Auto dreaming enabled: {'Yes' if getattr(runtime.config, 'dream_auto_enabled', False) else 'No'}\n"
+            f"  Auto commit          : {'Yes' if getattr(runtime.config, 'dream_auto_commit', False) else 'No'}\n"
             f"  Dream model role     : {model_role}\n"
             f"  Dream model          : {model_name}\n"
             f"  Fallback             : deterministic\n"
@@ -73,78 +73,75 @@ async def handle_dream_command(app: KittUIApp, arg: str) -> None:
             f"  Archived memories    : {len(archived)}\n"
         )
 
-    elif flag in ("--cancel", "cancel"):
-        if app.runtime.dream_scheduler:
-            app.runtime.dream_scheduler.cancel()
+    if flag in ("--cancel", "cancel"):
+        if runtime.dream_scheduler:
+            runtime.dream_scheduler.cancel()
         else:
-            app.runtime.dream_service.cancel()
-        app._show_result("Dreaming Mode cancellation signal sent.")
+            runtime.dream_service.cancel()
+        return "Dreaming Mode cancellation signal sent."
 
-    elif flag in ("--commit", "-c", "run"):
-        app._show_result("Executing Dreaming Mode consolidation & commit...")
-        try:
-            if app.runtime.dream_scheduler:
-                result = await app._run_blocking(app.runtime.dream_scheduler.run_manual, ws_id, dry_run=False)
-            else:
-                result = await app._run_blocking(app.runtime.dream_service.dream, ws_id, dry_run=False)
+    if flag in ("--commit", "-c", "run"):
+        if runtime.dream_scheduler:
+            result = runtime.dream_scheduler.run_manual(ws_id, dry_run=False)
+        else:
+            result = runtime.dream_service.dream(ws_id, dry_run=False)
 
-            model_name = getattr(app.runtime.dream_service.consolidate_phase, "model_name", "deterministic")
-            model_role = getattr(app.runtime.config, "dream_model_role", "context")
+        model_name = getattr(runtime.dream_service.consolidate_phase, "model_name", "deterministic")
+        model_role = getattr(runtime.config, "dream_model_role", "context")
 
-            app._show_result(
-                f"K.I.T.T. Dreaming Mode — Consolidation Complete\n\n"
-                f"  Model role           : {model_role}\n"
-                f"  Model                : {model_name}\n"
-                f"  Sessions scanned     : {result.run.sessions_scanned}\n"
-                f"  Entries scanned      : {result.run.entries_scanned}\n"
-                f"  Signals found        : {result.run.signals_found}\n\n"
-                f"  Memories added       : {result.run.memories_added}\n"
-                f"  Memories merged      : {result.run.memories_merged}\n"
-                f"  Memories superseded  : {result.run.memories_superseded}\n"
-                f"  Memories archived    : {result.run.memories_archived}\n\n"
-                f"  MEMORY.md            : rebuilt\n"
-                f"  Database             : committed"
-            )
-        except Exception as exc:
-            app._show_result(f"Dream execution failed: {exc}")
+        return (
+            f"K.I.T.T. Dreaming Mode — Consolidation Complete\n\n"
+            f"  Model role           : {model_role}\n"
+            f"  Model                : {model_name}\n"
+            f"  Sessions scanned     : {result.run.sessions_scanned}\n"
+            f"  Entries scanned      : {result.run.entries_scanned}\n"
+            f"  Signals found        : {result.run.signals_found}\n\n"
+            f"  Memories added       : {result.run.memories_added}\n"
+            f"  Memories merged      : {result.run.memories_merged}\n"
+            f"  Memories superseded  : {result.run.memories_superseded}\n"
+            f"  Memories archived    : {result.run.memories_archived}\n\n"
+            f"  MEMORY.md            : rebuilt\n"
+            f"  Database             : committed"
+        )
 
+    # Default dry run preview
+    if runtime.dream_scheduler:
+        result = runtime.dream_scheduler.run_manual(ws_id, dry_run=True)
     else:
-        # Default is dry-run preview
-        app._show_result("Analyzing and previewing memory consolidation (dry-run)...")
-        try:
-            if app.runtime.dream_scheduler:
-                result = await app._run_blocking(app.runtime.dream_scheduler.run_manual, ws_id, dry_run=True)
-            else:
-                result = await app._run_blocking(app.runtime.dream_service.dream, ws_id, dry_run=True)
+        result = runtime.dream_service.dream(ws_id, dry_run=True)
 
-            model_name = getattr(app.runtime.dream_service.consolidate_phase, "model_name", "deterministic")
-            model_role = getattr(app.runtime.config, "dream_model_role", "context")
+    model_name = getattr(runtime.dream_service.consolidate_phase, "model_name", "deterministic")
+    model_role = getattr(runtime.config, "dream_model_role", "context")
 
-            op_counts = {"ADD": 0, "MERGE": 0, "SUPERSEDE": 0, "ARCHIVE": 0, "IGNORE": 0}
-            for op in result.accepted_operations:
-                op_type = getattr(op, "operation", "ADD")
-                op_counts[op_type] = op_counts.get(op_type, 0) + 1
-            for _op, _reason in result.rejected_operations:
-                op_counts["IGNORE"] = op_counts.get("IGNORE", 0) + 1
+    op_counts = {"ADD": 0, "MERGE": 0, "SUPERSEDE": 0, "ARCHIVE": 0, "IGNORE": 0}
+    for op in result.accepted_operations:
+        op_type = getattr(op, "operation", "ADD")
+        op_counts[op_type] = op_counts.get(op_type, 0) + 1
+    for _op, _reason in result.rejected_operations:
+        op_counts["IGNORE"] = op_counts.get("IGNORE", 0) + 1
 
-            app._show_result(
-                f"K.I.T.T. Dreaming Mode — Preview\n\n"
-                f"  Model role           : {model_role}\n"
-                f"  Model                : {model_name}\n"
-                f"  Sessions scanned     : {result.run.sessions_scanned}\n"
-                f"  Entries scanned      : {result.run.entries_scanned}\n"
-                f"  Signals found        : {result.run.signals_found}\n\n"
-                f"  Proposed:\n"
-                f"    Add                : {op_counts.get('ADD', 0)}\n"
-                f"    Merge              : {op_counts.get('MERGE', 0)}\n"
-                f"    Supersede          : {op_counts.get('SUPERSEDE', 0)}\n"
-                f"    Archive            : {op_counts.get('ARCHIVE', 0)}\n"
-                f"    Ignore             : {op_counts.get('IGNORE', 0)}\n\n"
-                f"  Persistent changes   : NO\n\n"
-                f"  Use /dream --commit to apply this consolidation."
-            )
-        except Exception as exc:
-            app._show_result(f"Dream preview failed: {exc}")
+    return (
+        f"K.I.T.T. Dreaming Mode — Preview\n\n"
+        f"  Model role           : {model_role}\n"
+        f"  Model                : {model_name}\n"
+        f"  Sessions scanned     : {result.run.sessions_scanned}\n"
+        f"  Entries scanned      : {result.run.entries_scanned}\n"
+        f"  Signals found        : {result.run.signals_found}\n\n"
+        f"  Proposed:\n"
+        f"    Add                : {op_counts.get('ADD', 0)}\n"
+        f"    Merge              : {op_counts.get('MERGE', 0)}\n"
+        f"    Supersede          : {op_counts.get('SUPERSEDE', 0)}\n"
+        f"    Archive            : {op_counts.get('ARCHIVE', 0)}\n"
+        f"    Ignore             : {op_counts.get('IGNORE', 0)}\n\n"
+        f"  Persistent changes   : NO\n\n"
+        f"  Use /dream --commit to apply this consolidation."
+    )
+
+
+async def handle_dream_command(app: KittUIApp, arg: str) -> None:
+    """Handles /dream, /dream --commit, /dream --dry-run, /dream --status, /dream --cancel, /dream --help."""
+    res = await app._run_blocking(execute_dream_command, app.runtime, arg)
+    app._show_result(res)
 
 
 async def handle_memory_extended_command(app: KittUIApp, arg: str) -> None:

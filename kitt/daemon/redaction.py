@@ -59,15 +59,47 @@ def _is_reasoning_event(event_type: str) -> bool:
     return normalized.startswith("thinking") or normalized.startswith("reasoning")
 
 
-def _redact_text(value: str) -> str:
-    """Apply both KITT secret redactors before any public persistence/output."""
+_SERIALIZED_SECRET_PATTERNS = [
+    # JSON string key-value: "api_key": "secret123"
+    re.compile(r'(?i)(["\'](?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|private[_-]?key|pairing[_-]?token|daemon[_-]?token|session[_-]?token|csrf[_-]?token|secret)["\']\s*:\s*["\'])([^"\']+)(["\'])'),
+    # Query params: ?api_key=secret123 or &token=secret123
+    re.compile(r'(?i)([?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|auth[_-]?token|secret)=)([^& \t\r\n\'"]+)'),
+    # YAML / headers / env key-value: api_key: secret123 or API_KEY=secret123
+    re.compile(r'(?i)(^[ \t]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|auth[_-]?token|private[_-]?key|secret)\s*[:=]\s*["\']?)([^ \t\r\n\'",;]+)(["\']?)', re.MULTILINE),
+]
+
+
+def _redact_text(value: str, *, depth: int = 0) -> str:
+    """Apply both KITT secret redactors, JSON unpackers and pattern redactors before any public persistence/output."""
     if not value:
         return value
+    if len(value) > _MAX_STRING_CHARS:
+        value = value[:_MAX_STRING_CHARS] + "…[truncated]"
+
+    stripped = value.strip()
+    # Try parsing as JSON string if it appears to be a serialized JSON payload
+    if depth < 4 and len(stripped) >= 2 and (
+        (stripped.startswith("{") and stripped.endswith("}")) or
+        (stripped.startswith("[") and stripped.endswith("]"))
+    ):
+        try:
+            import json
+            parsed = json.loads(stripped)
+            sanitized = _bounded(parsed, strip_reasoning=False, depth=depth + 1)
+            return json.dumps(sanitized, separators=(",", ":"), ensure_ascii=False)
+        except Exception:
+            pass
+
     cleaned = SensitiveDataScanner.scan_and_redact(value).clean_text
     cleaned = redact_history_secrets(cleaned)
-    if len(cleaned) <= _MAX_STRING_CHARS:
-        return cleaned
-    return cleaned[:_MAX_STRING_CHARS] + "…[truncated]"
+
+    for pattern in _SERIALIZED_SECRET_PATTERNS:
+        if pattern.groups == 3:
+            cleaned = pattern.sub(r"\1[REDACTED]\3", cleaned)
+        elif pattern.groups == 2:
+            cleaned = pattern.sub(r"\1[REDACTED]", cleaned)
+
+    return cleaned
 
 
 def _bounded(value: Any, *, strip_reasoning: bool, depth: int = 0) -> Any:

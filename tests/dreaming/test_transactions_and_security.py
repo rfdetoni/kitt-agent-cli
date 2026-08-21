@@ -257,56 +257,40 @@ class TestDreamTransactionsAndSecurity(unittest.TestCase):
         self.assertFalse(scheduler.should_run(self.workspace_id))
         scheduler.close()
 
-    def test_repl_dream_command_dispatch(self):
-        import io
-        from unittest.mock import patch
-        from kitt.cli.repl import KittREPL
+    def test_dream_slash_command_dispatch(self):
+        from kitt.core.runtime import KittRuntime
+        from kitt.ui.dream_commands import execute_dream_command
 
-        repl = KittREPL(root_dir=str(self.root), ui_mode="plain")
+        runtime = KittRuntime.build(str(self.root))
         try:
             # Test /dream --help
-            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
-                handled = repl._handle_slash_command("/dream --help")
-                self.assertFalse(handled)
-                output = mock_out.getvalue()
-                self.assertIn("Dreaming Mode", output)
-                self.assertIn("/dream --commit", output)
+            res = execute_dream_command(runtime, "/dream --help")
+            self.assertIn("Dreaming Mode", res)
+            self.assertIn("/dream --commit", res)
 
             # Test /dream --status
-            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
-                handled = repl._handle_slash_command("/dream --status")
-                self.assertFalse(handled)
-                output = mock_out.getvalue()
-                self.assertIn("Dreaming Mode Status", output)
-                self.assertIn("Dream model role", output)
-                self.assertIn("context", output)
+            res = execute_dream_command(runtime, "/dream --status")
+            self.assertIn("Dreaming Mode Status", res)
+            self.assertIn("Dream model role", res)
+            self.assertIn("context", res)
 
             # Test /dream (preview dry-run default)
-            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
-                handled = repl._handle_slash_command("/dream")
-                self.assertFalse(handled)
-                output = mock_out.getvalue()
-                self.assertIn("Dreaming Mode — Preview", output)
-                self.assertIn("Persistent changes", output)
-                self.assertIn("NO", output)
+            res = execute_dream_command(runtime, "/dream")
+            self.assertIn("Dreaming Mode — Preview", res)
+            self.assertIn("Persistent changes", res)
+            self.assertIn("NO", res)
 
             # Test /dream --commit
-            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
-                handled = repl._handle_slash_command("/dream --commit")
-                self.assertFalse(handled)
-                output = mock_out.getvalue()
-                self.assertIn("Dreaming Mode — Consolidation Complete", output)
-                self.assertIn("MEMORY.md", output)
-                self.assertIn("rebuilt", output)
+            res = execute_dream_command(runtime, "/dream --commit")
+            self.assertIn("Dreaming Mode — Consolidation Complete", res)
+            self.assertIn("MEMORY.md", res)
+            self.assertIn("rebuilt", res)
 
             # Test /dream --cancel
-            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
-                handled = repl._handle_slash_command("/dream --cancel")
-                self.assertFalse(handled)
-                output = mock_out.getvalue()
-                self.assertIn("cancellation signal sent", output)
+            res = execute_dream_command(runtime, "/dream --cancel")
+            self.assertIn("cancellation signal sent", res)
         finally:
-            repl.runtime.close()
+            runtime.close()
 
 
 if __name__ == "__main__":

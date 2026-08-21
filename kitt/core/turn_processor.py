@@ -947,20 +947,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 action_hash = self.registry.policy.generate_action_hash(approval_action, approval_payload)
                 approval_id = f"req_{cmd.turn_id}_{hashlib.sha256(action_hash.encode()).hexdigest()[:8]}"
                 self.registry.approval_manager.register_request(
-                    cmd.turn_id, cmd.conversation_id, pa_ws, action_hash, approval_id, tool_name=approval_action)
+                    cmd.turn_id, cmd.conversation_id, pa_ws, action_hash, approval_id, tool_name=approval_action
+                )
                 now = time.time()
-                affected = []
-                before = {}
-                if tool_name == "apply_patch":
-                    affected = [b.file_path for b in self.diff_parser.parse(str(tool_args.get("patch", "")))]
-                    for rel in affected:
-                        target = (self.root_path / rel).resolve()
-                        if target.exists() and self.root_path in target.parents:
-                            before[rel] = hashlib.sha256(target.read_bytes()).hexdigest()
+                from kitt.security.mutation_preconditions import capture_preconditions
+                preconditions = capture_preconditions(self.root_path, tool_name, tool_args)
+                affected = [p.path for p in preconditions]
+                before = {p.path: p.expected_sha256 for p in preconditions}
+                sec_dict = security_context.to_dict()
+                sec_dict["mutation_preconditions"] = [p.to_dict() for p in preconditions]
                 pa = PendingAction(f"pa_{cmd.turn_id}", approval_id, cmd.turn_id,
                                    cmd.conversation_id, pa_ws, tool_name, tool_args, action_hash,
                                    self._args_digest(tool_args), affected, before, now, now + self.config.approval_ttl_seconds, "pending",
-                                   security_context=security_context.to_dict())
+                                   security_context=sec_dict)
                 self.pending_actions[cmd.turn_id] = pa
                 if hist_svc:
                     hist_svc.repo.save_pending_action(pa)
@@ -1074,18 +1073,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             if perm == 'ASK':
                 pa_ws = workspace_id
                 now = time.time()
-                affected_paths = [b.file_path for b in blocks]
-                before_hashes = {}
-                for rel in affected_paths:
-                    target = (self.root_path / rel).resolve()
-                    if target.exists() and self.root_path in target.parents:
-                        before_hashes[rel] = hashlib.sha256(target.read_bytes()).hexdigest()
-                    else:
-                        before_hashes[rel] = None
+                from kitt.security.mutation_preconditions import capture_preconditions
+                preconditions = capture_preconditions(self.root_path, "apply_patch", args)
+                affected_paths = [p.path for p in preconditions]
+                before_hashes = {p.path: p.expected_sha256 for p in preconditions}
                 approval_id = f"req_{cmd.turn_id}_{hashlib.sha256(action_hash.encode()).hexdigest()[:8]}"
                 self.registry.approval_manager.register_request(
                     cmd.turn_id, cmd.conversation_id, pa_ws, action_hash, approval_id, tool_name="apply_patch"
                 )
+                sec_dict = security_context.to_dict()
+                sec_dict["mutation_preconditions"] = [p.to_dict() for p in preconditions]
                 pa = PendingAction(
                     id=f"pa_{cmd.turn_id}",
                     approval_request_id=approval_id,
@@ -1101,7 +1098,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     created_at=now,
                     expires_at=now + self.config.approval_ttl_seconds,
                     state="pending",
-                    security_context=security_context.to_dict(),
+                    security_context=sec_dict,
                 )
 
                 if self.history_service:
@@ -1113,6 +1110,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 self.pending_actions[cmd.turn_id] = pa
                 yield ApprovalRequired(
                     turn_id=cmd.turn_id,
+                    conversation_id=cmd.conversation_id,
                     tool_name="apply_patch",
                     args=args,
                     action_hash=action_hash,
@@ -1386,22 +1384,11 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             yield TurnFailed(error="Pending action source integrity check failed.")
             return
 
-        import pathlib
-        for path_str, expected_hash in pa.before_hashes.items():
-            p = pathlib.Path(self.root_path) / path_str
-            if expected_hash is None:
-                if p.exists():
-                    yield TurnFailed(error=f"File {path_str} was created after approval request.")
-                    return
-                continue
-            if p.exists():
-                curr_hash = hashlib.sha256(p.read_bytes()).hexdigest()
-                if curr_hash != expected_hash:
-                    yield TurnFailed(error=f"File {path_str} was modified after approval request.")
-                    return
-            else:
-                yield TurnFailed(error=f"File {path_str} was removed after approval request.")
-                return
+        from kitt.security.mutation_preconditions import validate_preconditions
+        valid, prec_error = validate_preconditions(self.root_path, pa.get_preconditions())
+        if not valid:
+            yield TurnFailed(error=prec_error or "Approval precondition verification failed.")
+            return
 
         # Validated inside execute_tool by registry
         # Execute exactly the approved action by delegating to registry, avoiding raw invocation

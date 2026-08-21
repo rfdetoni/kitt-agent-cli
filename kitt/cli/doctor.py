@@ -101,3 +101,30 @@ class DoctorCheck:
             results.append({"name": "Local Ollama Endpoint", "status": "INFO", "detail": "Not running on 127.0.0.1:11434"})
 
         return results
+
+    def reset_state(self, backup: bool = True) -> str:
+        """Explicitly reset incompatible SQLite database state with optional backup."""
+        import time
+        import sqlite3
+        from kitt.history.database import HistoryDatabase
+
+        db_path = self.root_path / ".kitt" / "history" / "history.sqlite3"
+        backup_path = None
+        if db_path.exists():
+            if backup:
+                ts = int(time.time())
+                backup_path = db_path.parent / f"history.sqlite3.pre-modernization.{ts}"
+                shutil.copy2(db_path, backup_path)
+            # Remove existing DB and WAL/SHM files
+            for p in (db_path, db_path.with_name("history.sqlite3-wal"), db_path.with_name("history.sqlite3-shm")):
+                if p.exists():
+                    p.unlink()
+
+        # Re-initialize clean Schema V1
+        db = HistoryDatabase(root_dir=str(self.root_path))
+        db.close()
+
+        msg = "SQLite database state successfully reset to Schema V1."
+        if backup_path:
+            msg += f" (Backup saved to {backup_path.name})"
+        return msg
