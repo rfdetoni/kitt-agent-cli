@@ -687,11 +687,21 @@ class KittUIApp:
         provider = provider or fallback.backend
         same_provider = fallback.backend == provider
         default_url, _ = self._provider_defaults(provider)
+        custom_entry = None
         if hasattr(self, "model_setup_model"):
             custom_entry = next((cp for cp in self.model_setup_model.custom_providers if cp["name"] == provider), None)
-            if custom_entry and custom_entry.get("base_url"):
-                default_url = custom_entry["base_url"]
-        target_url = base_url or (fallback.base_url if fallback.backend == provider else default_url)
+        if not custom_entry:
+            custom_entry = next((cp for cp in getattr(router.config, "custom_providers", []) if cp.get("name") == provider), None)
+        if custom_entry and custom_entry.get("base_url"):
+            default_url = custom_entry["base_url"]
+        if base_url:
+            target_url = base_url
+        elif custom_entry and custom_entry.get("base_url"):
+            target_url = custom_entry["base_url"]
+        elif fallback.backend == provider:
+            target_url = fallback.base_url
+        else:
+            target_url = default_url
         if target_url and not target_url.startswith(("http://", "https://")):
             target_url = f"http://{target_url}"
         protocol = "ollama-chat" if (":11434" in (target_url or "") or "ollama" in (provider or "").lower()) else fallback.protocol
