@@ -14,8 +14,9 @@ IGNORED_DIRS = {
     'coverage', '.venv', 'venv', '.idea', '.vscode'
 }
 
+
 class ContextEngine:
-    """Incremental Context Engine facade with mtime/hash caching and PageRank symbol graph integration."""
+    """Incremental Context Engine facade with hybrid Code-RAG retrieval."""
 
     def __init__(self, repository_index=None, persistence_enabled: bool = True, cache: ContextCache | None = None):
         self.parser = SymbolParser()
@@ -61,7 +62,9 @@ class ContextEngine:
             stats = self.index.update_paths(bootstrap_paths)
         else:
             stats = self.index.ready_stats() if self.index.index_generation() else self.index.build_or_update()
-        selected, rejected, plan = HybridRetrievalPipeline(self.index).retrieve_with_rejections(
+
+        retrieval = HybridRetrievalPipeline(self.index)
+        selected, rejected, plan = retrieval.retrieve_with_rejections(
             task_description,
             explicit_files=set(plan.exact_paths),
             max_tokens=max_tokens,
@@ -85,6 +88,9 @@ class ContextEngine:
             "tokens": compiled.total_tokens,
             "coverage": compiled.quality.coverage,
             "degraded": compiled.quality.degraded,
+            # Keep retrieval internals nested so existing flat stats consumers
+            # remain backward compatible.
+            "retrieval": retrieval.last_retrieval_stats,
         }
         if not compiled.text:
             return []

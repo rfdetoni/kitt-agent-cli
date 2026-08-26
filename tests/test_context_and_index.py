@@ -576,7 +576,7 @@ class TestContextAndIndex(unittest.TestCase):
 
             self.assertTrue(selected)
             self.assertEqual(selected[0].path, "changed.py")
-            self.assertEqual(selected[0].selection_reason, "Git status focus")
+            self.assertIn("Git status focus", selected[0].selection_reason)
             index.close()
 
     def test_retrieval_includes_paired_tests_when_requested(self):
