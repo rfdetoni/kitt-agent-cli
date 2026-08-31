@@ -1,6 +1,7 @@
 """Protocol-v1 client for shared KITT memory owned by kittd."""
 from __future__ import annotations
 
+import ipaddress
 import os
 import socket
 import sys
@@ -86,13 +87,36 @@ class SharedMemoryClient:
         return token
 
     def _split_address(self) -> tuple[str, int]:
+        raw = self.address.strip()
         try:
-            host, port_text = self.address.rsplit(":", 1)
+            if raw.startswith("["):
+                closing = raw.find("]")
+                if closing <= 1 or closing + 1 >= len(raw) or raw[closing + 1] != ":":
+                    raise ValueError("invalid bracketed IPv6 address")
+                host = raw[1:closing]
+                port_text = raw[closing + 2 :]
+            else:
+                host, port_text = raw.rsplit(":", 1)
             port = int(port_text)
         except (ValueError, TypeError) as exc:
             raise SharedMemoryUnavailable(f"invalid KITT_DAEMON_ADDR: {self.address!r}") from exc
         if not host or not 1 <= port <= 65535:
             raise SharedMemoryUnavailable(f"invalid KITT_DAEMON_ADDR: {self.address!r}")
+
+        # The daemon auth token is equivalent to a local capability. Never send
+        # it to an address that is not loopback, even if KITT_DAEMON_ADDR was
+        # supplied by a poisoned environment or wrapper script.
+        if host.lower() != "localhost":
+            try:
+                ip = ipaddress.ip_address(host.split("%", 1)[0])
+            except ValueError as exc:
+                raise SharedMemoryUnavailable(
+                    "KITT_DAEMON_ADDR must use localhost or a loopback IP"
+                ) from exc
+            if not ip.is_loopback:
+                raise SharedMemoryUnavailable(
+                    "KITT_DAEMON_ADDR must use localhost or a loopback IP"
+                )
         return host, port
 
     @staticmethod

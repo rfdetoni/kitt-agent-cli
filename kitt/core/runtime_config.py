@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from kitt.settings.control_center import runtime_overrides
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -82,15 +84,18 @@ class RuntimeConfig:
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
-        return cls(
-            safe_runtime_enabled=_env_bool("KITT_SAFE_RUNTIME", True),
-            daemon_enabled=_env_bool("KITT_DAEMON", True),
-            daemon_auto_start=_env_bool("KITT_DAEMON_AUTO_START", True),
-            daemon_local_fallback=_env_bool("KITT_DAEMON_LOCAL_FALLBACK", False),
-            retained_agents_enabled=_env_bool("KITT_RETAINED_AGENTS", True),
-            executable_skills_enabled=_env_bool("KITT_EXECUTABLE_SKILLS", True),
-            scheduler_enabled=_env_bool("KITT_SCHEDULER", True),
+        allowed = set(cls.__dataclass_fields__)
+        values = runtime_overrides(allowed)
+        values.update(
+            safe_runtime_enabled=_env_bool("KITT_SAFE_RUNTIME", values.get("safe_runtime_enabled", True)),
+            daemon_enabled=_env_bool("KITT_DAEMON", values.get("daemon_enabled", True)),
+            daemon_auto_start=_env_bool("KITT_DAEMON_AUTO_START", values.get("daemon_auto_start", True)),
+            daemon_local_fallback=_env_bool("KITT_DAEMON_LOCAL_FALLBACK", values.get("daemon_local_fallback", False)),
+            retained_agents_enabled=_env_bool("KITT_RETAINED_AGENTS", values.get("retained_agents_enabled", True)),
+            executable_skills_enabled=_env_bool("KITT_EXECUTABLE_SKILLS", values.get("executable_skills_enabled", True)),
+            scheduler_enabled=_env_bool("KITT_SCHEDULER", values.get("scheduler_enabled", True)),
         )
+        return cls(**values)
 
     @property
     def ephemeral(self) -> bool:

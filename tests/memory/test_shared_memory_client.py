@@ -65,6 +65,21 @@ class SharedClientTest(unittest.TestCase):
             with self.assertRaises(SharedMemoryUnavailable):
                 client.recall("ws", "rule")
 
+    def test_remote_daemon_address_is_rejected_before_token_egress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            token = Path(tmp) / "token"
+            token.write_text("a" * 64)
+            client = SharedMemoryClient("192.0.2.10:41827", token, 1.0)
+            with self.assertRaisesRegex(SharedMemoryUnavailable, "loopback"):
+                client._split_address()
+
+    def test_bracketed_ipv6_loopback_is_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            token = Path(tmp) / "token"
+            token.write_text("a" * 64)
+            client = SharedMemoryClient("[::1]:41827", token, 1.0)
+            self.assertEqual(("::1", 41827), client._split_address())
+
 
 if __name__ == "__main__":
     unittest.main()
