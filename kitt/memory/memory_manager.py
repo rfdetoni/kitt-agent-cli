@@ -1,4 +1,4 @@
-"""Manages persistent project and global memory with structured MemoryItem retrieval."""
+"""Manages persistent project and global memory with structured MemoryItem retrieval and optional shared KITT memory."""
 from __future__ import annotations
 
 import re
@@ -6,6 +6,14 @@ from pathlib import Path
 from typing import List, Literal, Optional, Any
 from dataclasses import dataclass, field
 from kitt.context_filter.prompt_budget import TokenCounter
+
+try:
+    from kitt.memory.shared_client import SharedMemoryClient, SharedMemoryUnavailable
+except ImportError:
+    SharedMemoryClient = None  # type: ignore
+    class SharedMemoryUnavailable(RuntimeError):
+        pass
+
 
 @dataclass
 class MemoryItem:
@@ -25,11 +33,13 @@ class MemoryManager:
         persistence_enabled: bool = True,
         memory_repo: Optional[Any] = None,
         workspace_id: Optional[str] = None,
+        shared_client: Optional[Any] = None,
     ):
         self.root_dir = Path(root_dir).resolve()
         self.persistence_enabled = persistence_enabled
         self.memory_repo = memory_repo
         self.workspace_id = workspace_id or "default"
+        self.shared_client = shared_client if shared_client is not None else (SharedMemoryClient() if SharedMemoryClient is not None else None)
         self.project_mem_path = self.root_dir / ".kitt" / "memory" / "project_memory.md"
         self.global_mem_path = Path.home() / ".kitt" / "global_memory.md"
 
@@ -55,7 +65,14 @@ class MemoryManager:
             except Exception:
                 pass
 
-        # 2. Update local markdown file
+        # 2. Update optional shared KITT memory backend (best-effort)
+        if self.shared_client and self.workspace_id:
+            try:
+                self.shared_client.remember(self.workspace_id, note, kind=kind, pinned=pinned)
+            except (SharedMemoryUnavailable, Exception):
+                pass
+
+        # 3. Update local markdown file
         content = self.project_mem_path.read_text(encoding='utf-8', errors='ignore') if self.project_mem_path.exists() else ""
         updated = content.rstrip() + f"\n- {note}\n"
         self.project_mem_path.write_text(updated, encoding='utf-8')
@@ -107,6 +124,20 @@ class MemoryManager:
     def get_relevant_memories(self, prompt: str) -> List[MemoryItem]:
         words = set(re.findall(r"[a-zA-Z0-9_+-]{4,}", prompt.lower()))
         all_items = self.get_items()
+        seen_texts = {item.text for item in all_items}
+
+        # 4. Augment with optional shared KITT memory backend if available
+        if self.shared_client and self.workspace_id and prompt:
+            try:
+                for rec in self.shared_client.recall(self.workspace_id, prompt, limit=8):
+                    content = str(rec.get("content", "")).strip()
+                    if content and content not in seen_texts:
+                        seen_texts.add(content)
+                        prio = 3 if rec.get("pinned") else 2
+                        all_items.append(MemoryItem(text=content, scope='PROJECT', priority=prio))
+            except (SharedMemoryUnavailable, Exception):
+                pass
+
         if not words:
             return sorted(all_items, key=lambda item: item.priority, reverse=True)[:5]
 
