@@ -241,10 +241,8 @@ class _InMemoryConnectionContext:
                 except Exception:
                     pass
             else:
-                try:
-                    self._conn.commit()
-                except Exception:
-                    pass
+                # Commit failure means the transaction failed; never report success.
+                self._conn.commit()
         finally:
             self._lock.release()
         return False

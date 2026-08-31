@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from typing import Sequence
 
@@ -11,12 +12,7 @@ from kitt.native.bridge import NativeCodeEngine
 
 
 class NativeLexicalRetriever:
-    """Use the Rust search engine as the repository lexical-discovery layer.
-
-    Importantly, this class does *not* invoke NativeCodeEngine's Python scanner
-    fallback. If the compiled Rust extension is unavailable, the caller should
-    use KITT's existing indexed FTS path instead.
-    """
+    """Use Rust as the lexical discovery layer; never call its Python scanner fallback."""
 
     def __init__(self, engine: NativeCodeEngine) -> None:
         self.engine = engine
@@ -51,7 +47,7 @@ class NativeLexicalRetriever:
                 context_lines=context_lines,
                 token_budget=token_budget,
             )
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, TypeError, ValueError):
             return []
 
         hits = response.get("hits", []) if isinstance(response, dict) else []
@@ -59,17 +55,24 @@ class NativeLexicalRetriever:
         for idx, hit in enumerate(hits):
             if not isinstance(hit, dict) or not hit.get("path"):
                 continue
-            path = str(hit["path"]).replace("\\", "/")
-            line = max(1, int(hit.get("line") or 1))
-            before = [str(item) for item in hit.get("before", [])]
-            after = [str(item) for item in hit.get("after", [])]
-            body = "\n".join([*before, str(hit.get("text", "")), *after]).strip()
+            try:
+                path = str(hit["path"]).replace("\\", "/")
+                line = max(1, int(hit.get("line") or 1))
+                raw_before = hit.get("before", [])
+                raw_after = hit.get("after", [])
+                before = [str(item) for item in raw_before] if isinstance(raw_before, list) else []
+                after = [str(item) for item in raw_after] if isinstance(raw_after, list) else []
+                body = "\n".join([*before, str(hit.get("text", "")), *after]).strip()
+                native_score = float(hit.get("score") or 0.0)
+            except (TypeError, ValueError):
+                continue
             if not body:
                 continue
+            if not math.isfinite(native_score):
+                native_score = 0.0
             start_line = max(1, line - len(before))
             end_line = line + len(after)
             digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-            native_score = float(hit.get("score") or 0.0)
             working_boost = 0.08 if path in working_set_paths else 0.0
             candidates.append(
                 ContextCandidate(
@@ -92,8 +95,7 @@ class NativeLexicalRetriever:
                     content=body,
                 )
             )
-        # The native scan order is deterministic but not a relevance ranking.
-        # Re-score cheaply using query term coverage and working-set locality.
+
         terms = self._terms(plan)
         candidates.sort(
             key=lambda candidate: (
@@ -117,7 +119,7 @@ class NativeLexicalRetriever:
         if not terms:
             return ""
         escaped: list[str] = []
-        length = 4  # non-capturing group wrapper
+        length = 4
         for term in terms[:10]:
             value = re.escape(term)
             added = len(value) + (1 if escaped else 0)
@@ -125,21 +127,24 @@ class NativeLexicalRetriever:
                 break
             escaped.append(value)
             length += added
-        if not escaped:
-            return ""
-        return "(?:" + "|".join(escaped) + ")"
+        return "(?:" + "|".join(escaped) + ")" if escaped else ""
 
     @staticmethod
     def _terms(plan: QueryPlan) -> list[str]:
         result: list[str] = []
+        seen: set[str] = set()
         for value in (*plan.exact_symbols, *plan.lexical_terms):
             value = str(value).strip()
-            if len(value) < 3 or value.lower() in {item.lower() for item in result}:
+            lowered = value.lower()
+            if len(value) < 3 or lowered in seen:
                 continue
+            seen.add(lowered)
             result.append(value)
         for diagnostic in plan.diagnostics:
             for value in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", diagnostic):
-                if value.lower() not in {item.lower() for item in result}:
+                lowered = value.lower()
+                if lowered not in seen:
+                    seen.add(lowered)
                     result.append(value)
                 if len(result) >= 10:
                     return result

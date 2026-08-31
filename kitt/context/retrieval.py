@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import subprocess
 from pathlib import Path
 from typing import List, Set
@@ -50,6 +51,16 @@ class HybridRetrievalPipeline:
         self.native_engine = native_engine or NativeCodeEngine(str(index.root_path))
         self.native_retriever = NativeLexicalRetriever(self.native_engine)
         self.embedding_provider = embedding_provider or self._build_embedding_provider()
+        self.semantic_reranker = (
+            SemanticCandidateReranker(
+                self.embedding_provider,
+                max_candidates=self.rag_config.semantic_candidate_limit,
+                max_chars=self.rag_config.max_embedding_chars,
+                cache_size=self.rag_config.embedding_cache_size,
+            )
+            if self.embedding_provider is not None
+            else None
+        )
         self.last_retrieval_stats: dict[str, object] = {}
 
     def _build_embedding_provider(self) -> EmbeddingProvider | None:
@@ -63,6 +74,7 @@ class HybridRetrievalPipeline:
                 model=config.embedding_model,
                 base_url=config.ollama_base_url,
                 timeout_seconds=config.embedding_timeout_seconds,
+                total_timeout_seconds=config.embedding_total_timeout_seconds,
                 batch_size=config.embedding_batch_size,
             )
         except (TypeError, ValueError):
@@ -192,14 +204,17 @@ class HybridRetrievalPipeline:
         # pool from the *existing SQLite index* (never from another file scan).
         semantic_seed_candidates: list[ContextCandidate] = []
         non_mandatory_count = sum(1 for candidate in deterministic_pool if not candidate.mandatory)
-        if self.embedding_provider is not None and non_mandatory_count < 4:
-            semantic_seed_candidates = self._semantic_seed_candidates(
-                already={candidate.path for candidate in deterministic_pool if candidate.path},
-                limit=min(
-                    96,
-                    max(12, self.rag_config.semantic_candidate_limit * 2),
-                ),
-            )
+        if self.semantic_reranker is not None and non_mandatory_count < 4:
+            try:
+                semantic_seed_candidates = self._semantic_seed_candidates(
+                    already={candidate.path for candidate in deterministic_pool if candidate.path},
+                    limit=min(
+                        96,
+                        max(12, self.rag_config.semantic_candidate_limit * 2),
+                    ),
+                )
+            except (sqlite3.Error, OSError, RuntimeError, ValueError):
+                semantic_seed_candidates = []
             if semantic_seed_candidates:
                 sources.append(RankedSource("semantic_seed", semantic_seed_candidates, 0.35))
                 deterministic_pool.extend(semantic_seed_candidates)
@@ -213,12 +228,8 @@ class HybridRetrievalPipeline:
         semantic_degraded = False
         semantic_reason = "disabled"
         semantic_count = 0
-        if self.embedding_provider is not None and deterministic_fused:
-            semantic = SemanticCandidateReranker(
-                self.embedding_provider,
-                max_candidates=self.rag_config.semantic_candidate_limit,
-                max_chars=self.rag_config.max_embedding_chars,
-            ).rank(prompt, deterministic_fused)
+        if self.semantic_reranker is not None and deterministic_fused:
+            semantic = self.semantic_reranker.rank(prompt, deterministic_fused)
             semantic_degraded = semantic.degraded
             semantic_reason = semantic.reason or "ok"
             semantic_count = len(semantic.candidates)
@@ -261,12 +272,18 @@ class HybridRetrievalPipeline:
         self, plan: QueryPlan, max_tokens: int
     ) -> list[ContextCandidate]:
         candidates: list[ContextCandidate] = []
-        for requested in plan.exact_paths:
+        remaining_tokens = max(0, int(max_tokens))
+        requests = list(plan.exact_paths)
+        for position, requested in enumerate(requests):
+            if remaining_tokens <= 0:
+                break
+            remaining_files = max(1, len(requests) - position)
+            fair_tokens = max(1, remaining_tokens // remaining_files)
             try:
                 rel = self.workspace_fs.relative(requested)
                 if rel == ".":
                     continue
-                char_limit = max(1, max_tokens * 4)
+                char_limit = max(1, fair_tokens * 4)
                 data = self.workspace_fs.read_prefix(
                     rel,
                     max_bytes=min(self.workspace_fs.max_file_bytes, char_limit + 4),
@@ -284,7 +301,9 @@ class HybridRetrievalPipeline:
                 suffix = "\n... [truncated explicit file]"
                 text = text[: max(0, char_limit - len(suffix))] + suffix
                 representation = "TARGETED_SLICE"
-                reason = "Explicit file requested by user; truncated to fit budget"
+                reason = "Explicit file requested by user; truncated to shared budget"
+            estimated = max(1, min(fair_tokens, len(text) // 4 or 1))
+            remaining_tokens = max(0, remaining_tokens - estimated)
             candidates.append(
                 ContextCandidate(
                     candidate_id=f"file:{rel}",
@@ -293,7 +312,7 @@ class HybridRetrievalPipeline:
                     start_line=1,
                     end_line=len(text.splitlines()),
                     content_hash=digest,
-                    estimated_tokens=max(1, len(text) // 4),
+                    estimated_tokens=estimated,
                     relevance=1.0,
                     confidence=1.0,
                     freshness=1.0,
@@ -685,20 +704,20 @@ class HybridRetrievalPipeline:
     def _first_chunk(self, path: str):
         try:
             safe_path = self.workspace_fs.relative(path)
-        except PermissionError:
+            with self.index._lock:
+                return self.index._conn.execute(
+                    """
+                    SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
+                    FROM files f
+                    JOIN chunks c ON c.file_id = f.file_id
+                    WHERE f.path = ?
+                    ORDER BY c.start_line
+                    LIMIT 1
+                    """,
+                    (safe_path,),
+                ).fetchone()
+        except (PermissionError, sqlite3.Error, RuntimeError):
             return None
-        with self.index._lock:
-            return self.index._conn.execute(
-                """
-                SELECT f.path, c.content, c.start_line, c.end_line, c.content_hash
-                FROM files f
-                JOIN chunks c ON c.file_id = f.file_id
-                WHERE f.path = ?
-                ORDER BY c.start_line
-                LIMIT 1
-                """,
-                (safe_path,),
-            ).fetchone()
 
     def _paired_test_paths(self, source_path: str) -> List[str]:
         path = Path(source_path)

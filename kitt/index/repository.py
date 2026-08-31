@@ -88,6 +88,8 @@ class RepositoryIndex:
                 self._conn.execute("INSERT OR IGNORE INTO index_meta (key, value) VALUES ('state', 'EMPTY')")
                 self._set_meta_locked("workspace_identity", hashlib.sha256(str(self.root_path).encode("utf-8")).hexdigest()[:16])
                 self._set_meta_locked("capabilities", json.dumps(self._capabilities(), sort_keys=True))
+                self._ensure_fts_consistency_locked()
+                self._restore_graph_locked()
 
     def _capabilities(self) -> Dict[str, bool]:
         return {
@@ -114,15 +116,18 @@ class RepositoryIndex:
             return int(row["value"]) if row else 0
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         thread = self._background_thread
         if thread and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=2.0)
+            # Never close SQLite while the background builder can still use it.
+            thread.join()
         try:
             with self._lock:
                 self._conn.close()
-        except Exception:
-            pass
+        finally:
+            self._finalizer.detach()
 
     def build_or_update(self) -> Dict[str, int]:
         """Incremental index update based on mtime_ns, size, and content_hash."""
@@ -149,17 +154,23 @@ class RepositoryIndex:
                 seen_paths.add(rel_path)
 
                 row = self._conn.execute(
-                    "SELECT file_id, mtime_ns, size_bytes, content_hash FROM files WHERE path=?", (rel_path,)
+                    "SELECT file_id, mtime_ns, size_bytes, content_hash, parser_version FROM files WHERE path=?", (rel_path,)
                 ).fetchone()
 
-                if row and row["mtime_ns"] == file_data.mtime_ns and row["size_bytes"] == file_data.size:
+                adapter_version = self.parser_registry.adapter_for(self.root_path / rel_path).version
+                if (
+                    row
+                    and row["mtime_ns"] == file_data.mtime_ns
+                    and row["size_bytes"] == file_data.size
+                    and row["parser_version"] == adapter_version
+                ):
                     continue
 
                 # mtime can change during checkout/copy without changing bytes.
                 # Hash first; reparsing is the expensive part of incremental update.
                 if row and row["size_bytes"] == file_data.size:
                     content_hash = file_data.sha256
-                    if content_hash == row["content_hash"]:
+                    if content_hash == row["content_hash"] and row["parser_version"] == adapter_version:
                         self._conn.execute(
                             "UPDATE files SET mtime_ns=?, indexed_at=? WHERE file_id=?",
                             (file_data.mtime_ns, str(time.time()), row["file_id"]),
@@ -297,7 +308,7 @@ class RepositoryIndex:
                 except PermissionError:
                     continue
                 row = self._conn.execute(
-                    "SELECT file_id, mtime_ns, size_bytes, content_hash FROM files WHERE path=?",
+                    "SELECT file_id, mtime_ns, size_bytes, content_hash, parser_version FROM files WHERE path=?",
                     (rel_path,),
                 ).fetchone()
                 try:
@@ -309,9 +320,20 @@ class RepositoryIndex:
                         self._delete_file_locked(row["file_id"])
                         deleted += 1
                     continue
-                if row and row["mtime_ns"] == file_data.mtime_ns and row["size_bytes"] == file_data.size:
+                adapter_version = self.parser_registry.adapter_for(self.root_path / rel_path).version
+                if (
+                    row
+                    and row["mtime_ns"] == file_data.mtime_ns
+                    and row["size_bytes"] == file_data.size
+                    and row["parser_version"] == adapter_version
+                ):
                     continue
-                if row and row["size_bytes"] == file_data.size and file_data.sha256 == row["content_hash"]:
+                if (
+                    row
+                    and row["size_bytes"] == file_data.size
+                    and file_data.sha256 == row["content_hash"]
+                    and row["parser_version"] == adapter_version
+                ):
                     self._conn.execute(
                         "UPDATE files SET mtime_ns=?, indexed_at=? WHERE file_id=?",
                         (file_data.mtime_ns, str(time.time()), row["file_id"]),
@@ -514,6 +536,23 @@ class RepositoryIndex:
             if root == "." or rel_path == root or rel_path.startswith(root.rstrip("/") + "/"):
                 return module["module_id"]
         return None
+
+    def _restore_graph_locked(self) -> None:
+        """Restore the in-memory graph from persisted SQLite edges."""
+        graph = RepositoryGraph()
+        rows = self._conn.execute(
+            """
+            SELECT sf.path AS source_path, tf.path AS target_path, e.weight, e.kind
+            FROM edges e
+            JOIN files sf ON sf.file_id = e.source_file_id
+            JOIN files tf ON tf.file_id = e.target_file_id
+            """
+        ).fetchall()
+        for row in rows:
+            graph.add_edge(
+                row["source_path"], row["target_path"], row["weight"], row["kind"]
+            )
+        self.graph = graph
 
     def _rebuild_reference_edges(self) -> None:
         with self._lock, self._conn:
