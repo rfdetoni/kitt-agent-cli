@@ -13,12 +13,12 @@ from kitt.ui.app import KittUIApp
 
 class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.runtime = KittRuntime.build(self.tmp.name, RuntimeConfig(history_enabled=False, persistence_enabled=False))
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.runtime = KittRuntime.build(self.temp.name, RuntimeConfig(history_enabled=False, persistence_enabled=False))
 
     async def asyncTearDown(self):
         await self.runtime.aclose()
-        self.tmp.cleanup()
+        self.temp.cleanup()
 
     async def test_full_screen_palette_focus_and_clean_exit(self):
         with create_pipe_input() as pipe:

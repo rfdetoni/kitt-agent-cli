@@ -2324,7 +2324,7 @@ class KittUIApp:
                         closer()
                     except Exception:
                         pass
-        self._blocking_executor.shutdown(wait=False, cancel_futures=True)
+        self._blocking_executor.shutdown(wait=True, cancel_futures=True)
 
     def _home_text(self):
         scanner = DEFAULT_THEME.scanner_frame(self.state.scanner_step, 36)

@@ -21,7 +21,7 @@ from kitt.ui.state import UIState
 
 class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.runtime = KittRuntime.build(self.tmp.name, RuntimeConfig(history_enabled=True, persistence_enabled=True))
 
     async def asyncTearDown(self):

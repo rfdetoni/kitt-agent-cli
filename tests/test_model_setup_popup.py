@@ -13,7 +13,7 @@ from kitt.ui.overlay_models import ModelSetupModel
 
 class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.runtime = KittRuntime.build(self.temp.name, RuntimeConfig(history_enabled=True, persistence_enabled=True))
         self.input_cm = create_pipe_input()
         self.pipe = self.input_cm.__enter__()

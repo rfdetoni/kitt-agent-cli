@@ -363,6 +363,6 @@ class TurnEventBridge:
         except Exception:
             pass
         try:
-            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor.shutdown(wait=True, cancel_futures=True)
         except Exception:
             pass

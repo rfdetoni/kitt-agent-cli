@@ -69,6 +69,18 @@ class RepositoryIndex:
     def _finalize_conn(conn: sqlite3.Connection, lock: threading.RLock) -> None:
         try:
             with lock:
+                try:
+                    conn.interrupt()
+                except Exception:
+                    pass
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except Exception:
+                    pass
                 conn.close()
         except Exception:
             pass

@@ -12,7 +12,7 @@ from prompt_toolkit.output import DummyOutput
 
 class TestSkillCompletions(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp_dir.name)
         
         # Create a mock skill directory with main skill and subskills

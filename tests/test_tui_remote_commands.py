@@ -15,7 +15,7 @@ from kitt.ui.commands import CommandRegistry
 
 class TestTUIRemoteCommands(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         Path(self.temp.name, "sample.txt").write_text("sample", encoding="utf-8")
         self.runtime = KittRuntime.build(
             self.temp.name,
