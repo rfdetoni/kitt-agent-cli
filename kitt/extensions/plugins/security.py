@@ -418,24 +418,32 @@ def _secure_read_plugin_file(
             chunks.append(chunk)
 
         after = os.fstat(fd)
-        fingerprint_before = (
-            getattr(before, "st_dev", None),
-            getattr(before, "st_ino", None),
-            before.st_size,
-            getattr(before, "st_mtime_ns", None),
-            getattr(before, "st_ctime_ns", None),
-        )
-        fingerprint_after = (
-            getattr(after, "st_dev", None),
-            getattr(after, "st_ino", None),
-            after.st_size,
-            getattr(after, "st_mtime_ns", None),
-            getattr(after, "st_ctime_ns", None),
-        )
-        if (
-            fingerprint_before != fingerprint_after
-            or total != before.st_size
-        ):
+        if os.name == "nt":
+            changed = (
+                before.st_size != after.st_size
+                or getattr(before, "st_mtime_ns", None) != getattr(after, "st_mtime_ns", None)
+                or total != before.st_size
+            )
+        else:
+            fingerprint_before = (
+                getattr(before, "st_dev", None),
+                getattr(before, "st_ino", None),
+                before.st_size,
+                getattr(before, "st_mtime_ns", None),
+                getattr(before, "st_ctime_ns", None),
+            )
+            fingerprint_after = (
+                getattr(after, "st_dev", None),
+                getattr(after, "st_ino", None),
+                after.st_size,
+                getattr(after, "st_mtime_ns", None),
+                getattr(after, "st_ctime_ns", None),
+            )
+            changed = (
+                fingerprint_before != fingerprint_after
+                or total != before.st_size
+            )
+        if changed:
             raise PluginLoadError(
                 f"Plugin file changed while being read: {candidate}"
             )
