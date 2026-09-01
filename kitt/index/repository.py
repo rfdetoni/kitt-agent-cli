@@ -59,6 +59,8 @@ class RepositoryIndex:
         self._lock = threading.RLock()
         self.last_search_error = ""
         self._background_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.Lock()
         self._closed = False
         self._finalizer = weakref.finalize(self, self._finalize_conn, self._conn, self._lock)
         self._init_db()
@@ -116,19 +118,44 @@ class RepositoryIndex:
             return int(row["value"]) if row else 0
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        thread = self._background_thread
-        if thread and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=2.0)
-        try:
-            with self._lock:
-                self._conn.close()
-        except Exception:
-            pass
-        finally:
+        # Lifecycle state must not use the SQLite lock: the background builder
+        # can hold that lock while it is the very operation we need to cancel.
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._stop_event.set()
+            thread = self._background_thread
+
+        current = threading.current_thread()
+        if thread and thread.is_alive() and thread is not current:
+            # Scanner subprocesses are already bounded; cooperative cancellation
+            # normally makes this return immediately. The timeout is only a
+            # final guard against a pathological parser/OS stall.
+            thread.join(timeout=8.0)
+
+        if thread and thread.is_alive():
+            # Never close SQLite while the background builder can still touch it.
+            # Detach the weakref finalizer and transfer ownership to a tiny daemon
+            # closer that waits for the worker without blocking application exit.
             self._finalizer.detach()
+            threading.Thread(
+                target=self._close_connection_after_thread,
+                args=(thread, self._conn, self._lock),
+                name="kitt-index-deferred-close",
+                daemon=True,
+            ).start()
+            return
+
+        self._finalize_conn(self._conn, self._lock)
+        self._finalizer.detach()
+
+    @staticmethod
+    def _close_connection_after_thread(
+        thread: threading.Thread, conn: sqlite3.Connection, lock: threading.RLock
+    ) -> None:
+        thread.join()
+        RepositoryIndex._finalize_conn(conn, lock)
 
     def build_or_update(self) -> Dict[str, int]:
         """Incremental index update based on mtime_ns, size, and content_hash."""
@@ -137,15 +164,25 @@ class RepositoryIndex:
             max_files=self.max_files,
             max_file_bytes=self.max_file_bytes,
             max_total_bytes=self.max_total_bytes,
+            should_stop=self._stop_event.is_set,
         )
+        if self._stop_event.is_set():
+            return self.ready_stats()
+
+        modules_found = scanner.detect_modules(should_stop=self._stop_event.is_set)
+        if self._stop_event.is_set():
+            return self.ready_stats()
+
         updated_count = 0
         seen_paths = set()
 
         with self._lock, self._conn:
-            self._index_modules_locked(scanner.detect_modules())
+            self._index_modules_locked(modules_found)
             modules = self._module_rows_locked()
             self._conn.execute("UPDATE index_meta SET value='BOOTSTRAP' WHERE key='state'")
             for rel_path in files:
+                if self._stop_event.is_set():
+                    break
                 try:
                     file_data = self.workspace_fs.read(
                         rel_path, max_bytes=self.max_file_bytes
@@ -182,6 +219,12 @@ class RepositoryIndex:
                     self.root_path / rel_path, rel_path, modules, file_data=file_data
                 )
                 updated_count += 1
+
+            if self._stop_event.is_set():
+                return self._build_stats_locked(
+                    scanned=len(seen_paths), updated=updated_count, deleted=0
+                )
+
             if seen_paths:
                 stale = self._conn.execute(
                     "SELECT file_id, path FROM files WHERE path NOT IN (%s)" % ",".join("?" for _ in seen_paths),
@@ -213,6 +256,23 @@ class RepositoryIndex:
             "deleted": len(stale),
             "generation": generation,
             "state": meta["state"],
+            "freshness": meta.get("last_scan_at", ""),
+            "partial_reason": meta.get("partial_reason", ""),
+            "schema_version": meta.get("schema_version", ""),
+        }
+
+    def _build_stats_locked(self, scanned: int, updated: int, deleted: int) -> Dict[str, Any]:
+        generation_row = self._conn.execute(
+            "SELECT value FROM index_meta WHERE key='index_generation'"
+        ).fetchone()
+        meta_rows = self._conn.execute("SELECT key, value FROM index_meta").fetchall()
+        meta = {row["key"]: row["value"] for row in meta_rows}
+        return {
+            "scanned": scanned,
+            "updated": updated,
+            "deleted": deleted,
+            "generation": int(generation_row["value"]) if generation_row else 0,
+            "state": meta.get("state", "PARTIAL"),
             "freshness": meta.get("last_scan_at", ""),
             "partial_reason": meta.get("partial_reason", ""),
             "schema_version": meta.get("schema_version", ""),
@@ -262,11 +322,17 @@ class RepositoryIndex:
             thread.join(timeout=timeout)
 
     def _start_background_update(self) -> None:
-        thread = self._background_thread
-        if thread and thread.is_alive():
-            return
-        self._background_thread = threading.Thread(target=self._background_build, name="kitt-index-build", daemon=True)
-        self._background_thread.start()
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            thread = self._background_thread
+            if thread and thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._background_thread = threading.Thread(
+                target=self._background_build, name="kitt-index-build", daemon=True
+            )
+            self._background_thread.start()
 
     def _background_build(self) -> None:
         if self._closed:

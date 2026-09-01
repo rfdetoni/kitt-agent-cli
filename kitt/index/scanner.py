@@ -5,7 +5,7 @@ import fnmatch
 import os
 import subprocess
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Callable, Dict, Iterable, List
 
 from kitt.security.workspace_fs import WorkspaceFileStat, WorkspaceFileSystem
 
@@ -116,14 +116,22 @@ class RepositoryScanner:
         max_depth: int | None = None,
         max_manifests: int = 2000,
         max_directories: int = 50_000,
+        should_stop: Callable[[], bool] | None = None,
     ) -> List[Dict[str, str]]:
         modules: list[Dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
+        stopping = should_stop or (lambda: False)
+        if stopping():
+            return []
 
         git_files = self._git_files()
+        if stopping():
+            return []
         if git_files is not None:
             candidates: Iterable[str] = sorted(git_files)
             for rel_file in candidates:
+                if stopping():
+                    break
                 if len(modules) >= max_manifests or self._is_ignored(rel_file):
                     continue
                 if self._safe_stat_regular(rel_file) is None:
@@ -149,11 +157,15 @@ class RepositoryScanner:
         else:
             visited = 0
             for path, dirs, files in os.walk(self.root_path, followlinks=False):
+                if stopping():
+                    break
                 visited += 1
                 if visited > max_directories or len(modules) >= max_manifests:
                     break
                 safe_dirs = []
                 for directory in sorted(dirs):
+                    if stopping():
+                        break
                     candidate = Path(path) / directory
                     try:
                         rel_dir = candidate.relative_to(self.root_path).as_posix()
@@ -170,6 +182,8 @@ class RepositoryScanner:
                 if max_depth is not None and len(rel_obj.parts) >= max(0, int(max_depth)):
                     dirs.clear()
                 for filename in sorted(files):
+                    if stopping():
+                        break
                     kind = self._manifest_kind(filename)
                     if not kind:
                         continue
@@ -192,6 +206,8 @@ class RepositoryScanner:
                     if len(modules) >= max_manifests:
                         break
 
+        if stopping():
+            return []
         modules.sort(key=lambda item: (item["root_path"], item["manifest_path"] or ""))
         if not modules:
             modules.append({"root_path": ".", "kind": "generic", "manifest_path": None})
@@ -202,12 +218,16 @@ class RepositoryScanner:
         max_files: int = 20000,
         max_file_bytes: int = 512 * 1024,
         max_total_bytes: int = 256 * 1024 * 1024,
+        should_stop: Callable[[], bool] | None = None,
     ) -> List[str]:
         total_bytes = 0
         results: list[str] = []
+        stopping = should_stop or (lambda: False)
 
         def accept(rel_path: str) -> bool:
             nonlocal total_bytes
+            if stopping():
+                return False
             path = Path(rel_path)
             if path.suffix in IGNORED_EXTS or self._is_ignored(rel_path):
                 return False
@@ -228,9 +248,15 @@ class RepositoryScanner:
             total_bytes += file_stat.size
             return True
 
+        if stopping():
+            return []
         git_files = self._git_files()
+        if stopping():
+            return results
         if git_files is not None:
             for rel in git_files:
+                if stopping():
+                    break
                 if accept(rel):
                     results.append(rel)
                     if len(results) >= max_files:
@@ -238,8 +264,12 @@ class RepositoryScanner:
             return results
 
         for root, dirs, filenames in os.walk(self.root_path, followlinks=False):
+            if stopping():
+                break
             safe_dirs = []
             for directory in sorted(dirs):
+                if stopping():
+                    break
                 candidate = Path(root) / directory
                 try:
                     rel_dir = candidate.relative_to(self.root_path).as_posix()
@@ -252,6 +282,8 @@ class RepositoryScanner:
             dirs[:] = safe_dirs
 
             for filename in sorted(filenames):
+                if stopping():
+                    break
                 rel = (Path(root) / filename).relative_to(self.root_path).as_posix()
                 if accept(rel):
                     results.append(rel)
