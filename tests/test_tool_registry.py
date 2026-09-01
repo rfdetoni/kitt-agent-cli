@@ -8,11 +8,12 @@ from kitt.tools.registry import ToolRegistry
 
 class TestToolRegistry(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root_path = Path(self.tmp_dir.name).resolve()
         self.registry = ToolRegistry(root_dir=self.tmp_dir.name)
 
     def tearDown(self):
+        self.registry.close()
         self.tmp_dir.cleanup()
 
     def test_tool_definitions_filtering(self):

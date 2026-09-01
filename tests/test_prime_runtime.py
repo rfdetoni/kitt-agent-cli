@@ -23,7 +23,7 @@ class FakeClient:
 
 class TestPrimeRuntime(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory(); self.root=Path(self.tmp.name)
+        self.tmp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); self.root=Path(self.tmp.name)
         self.runtime=KittRuntime.build(self.tmp.name)
         self.conv=self.runtime.history.new_conversation("Prime")
     def tearDown(self):

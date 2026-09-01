@@ -43,7 +43,7 @@ from kitt.skills.executable import (
 
 class TestPrimeArchitecture(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.config = RuntimeConfig(history_enabled=True, persistence_enabled=True)
         self.runtime = KittRuntime.build(str(self.root), config=self.config)

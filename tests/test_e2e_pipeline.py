@@ -8,7 +8,7 @@ from kitt.domain.entities import EditBlock
 
 class TestE2EPipeline(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root_path = Path(self.tmp_dir.name).resolve()
         self.processor = TurnProcessor(root_dir=self.tmp_dir.name)
         self.applier = DiffApplier()

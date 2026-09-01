@@ -107,6 +107,13 @@ class ToolRegistry:
             "harness_remember": HarnessRememberHandler(),
         }
 
+    def close(self) -> None:
+        if self.context_engine is not None:
+            try:
+                self.context_engine.close()
+            except Exception:
+                pass
+
     def register(
         self,
         tool_name: str,

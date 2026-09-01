@@ -11,7 +11,7 @@ from tests.test_fake_llm_e2e import FakeLLMClient
 
 class TestPhase1Pipeline(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root_path = Path(self.tmp_dir.name).resolve()
 
         filter_json = '{"intent": "DEBUG", "confidence": 0.95, "constraints": [{"text": "no breaking changes", "kind": "MANDATORY"}]}'

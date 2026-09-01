@@ -14,7 +14,7 @@ from kitt.history.session_tree import SessionTreeRepository
 
 class TestDreamOrient(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.db = HistoryDatabase(str(self.root), in_memory=True)
         self.identity = resolve_workspace_identity(self.db, str(self.root))

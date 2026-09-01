@@ -11,7 +11,7 @@ from kitt.dreaming.retriever import MemoryRetriever
 
 class TestDreamE2E(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.config = RuntimeConfig(
             dream_enabled=True,
