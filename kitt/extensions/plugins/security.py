@@ -75,7 +75,7 @@ def _state_path(value: str | Path) -> Path:
 
 
 def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
-    flags = os.O_RDONLY
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_NONBLOCK"):
@@ -153,7 +153,7 @@ class _InterprocessLock:
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         _set_private_permissions(self.path.parent)
-        flags = os.O_RDWR | os.O_CREAT
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
@@ -368,7 +368,7 @@ def _secure_read_plugin_file(
             f"Plugin '{manifest_name}' contains a symlink: {candidate}"
         )
 
-    flags = os.O_RDONLY
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_NONBLOCK"):
