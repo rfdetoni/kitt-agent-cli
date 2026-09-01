@@ -30,6 +30,24 @@ PROVIDER_DEFAULT_ENV_VARS: Dict[str, str] = {
 
 _SESSION_CREDENTIALS: Dict[str, str] = {}
 
+# Multiple CredentialStore instances can target the same auth.json inside one
+# process.  Serialize those read-modify-write cycles before taking the
+# cross-process file lock.  This is especially important on Windows, where
+# concurrent replacement/open operations on the same file can fail with
+# PermissionError even though the lock file itself is correct.
+_CREDENTIAL_THREAD_LOCKS_GUARD = threading.Lock()
+_CREDENTIAL_THREAD_LOCKS: Dict[str, threading.RLock] = {}
+
+
+def _credential_thread_lock_for(path: Path) -> threading.RLock:
+    key = os.path.normcase(os.path.abspath(os.fspath(path)))
+    with _CREDENTIAL_THREAD_LOCKS_GUARD:
+        lock = _CREDENTIAL_THREAD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _CREDENTIAL_THREAD_LOCKS[key] = lock
+        return lock
+
 
 @dataclass(frozen=True)
 class ProviderAuthState:
@@ -161,7 +179,7 @@ class CredentialStore:
         self.lock_file = self.auth_file.with_suffix(
             self.auth_file.suffix + ".lock"
         )
-        self._thread_lock = threading.RLock()
+        self._thread_lock = _credential_thread_lock_for(self.auth_file)
 
     @staticmethod
     def _absolute_unresolved(path: str | Path) -> Path:

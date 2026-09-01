@@ -20,7 +20,12 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         Path(self.temp.name, "sample.txt").write_text("sample", encoding="utf-8")
         self.runtime = KittRuntime.build(
             self.temp.name,
-            RuntimeConfig(history_enabled=True, persistence_enabled=True, daemon_local_fallback=True),
+            RuntimeConfig(
+                history_enabled=True,
+                persistence_enabled=True,
+                daemon_enabled=False,
+                daemon_local_fallback=False,
+            ),
         )
         self.input_cm = create_pipe_input()
         self.pipe = self.input_cm.__enter__()

@@ -25,6 +25,7 @@ from kitt.extensions.plugins.security import (
 from kitt.goals.scheduler import GoalScheduler
 from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_WRITE
 from kitt.security.context import ExecutionSecurityContext
+from kitt.tools.process_runner import sanitized_subprocess_env
 
 
 class TestGoalFencePropagation(unittest.TestCase):
@@ -413,6 +414,22 @@ class TestPluginSnapshotAndStores(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(disabled, set())
             self.assertIn("one", enabled)
             self.assertIn("two", enabled)
+
+
+class TestSubprocessEnvironmentHardening(unittest.TestCase):
+    def test_extra_overrides_cannot_reintroduce_dangerous_prefixes(self):
+        for key in (
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "DYLD_INSERT_LIBRARIES",
+        ):
+            with self.subTest(key=key):
+                with self.assertRaises(PermissionError):
+                    sanitized_subprocess_env({key: "attacker-controlled"})
+
+    def test_benign_extra_override_is_allowed(self):
+        env = sanitized_subprocess_env({"KITT_TEST_SAFE_VALUE": "ok"})
+        self.assertEqual(env["KITT_TEST_SAFE_VALUE"], "ok")
 
 
 if __name__ == "__main__":

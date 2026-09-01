@@ -64,7 +64,11 @@ def sanitized_subprocess_env(extra: Optional[dict[str, str]] = None) -> dict[str
             if not isinstance(key, str) or not isinstance(value, str):
                 raise ValueError("Process environment overrides must be strings")
             upper = key.upper()
-            if _SECRET_ENV_RE.search(upper) or upper in _DANGEROUS_ENV_NAMES:
+            if (
+                _SECRET_ENV_RE.search(upper)
+                or upper in _DANGEROUS_ENV_NAMES
+                or any(upper.startswith(prefix) for prefix in _DANGEROUS_ENV_PREFIXES)
+            ):
                 raise PermissionError(f"Refusing secret/injection environment variable: {key}")
             result[key] = value
     return result
