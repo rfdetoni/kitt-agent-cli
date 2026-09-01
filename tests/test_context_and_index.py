@@ -291,7 +291,7 @@ class TestContextAndIndex(unittest.TestCase):
 
     def test_repository_scanner_respects_kittignore(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".kittignore").write_text("ignored.py\nsecret_dir\n", encoding="utf-8")
             (root / "kept.py").write_text("def kept(): pass\n", encoding="utf-8")
             (root / "ignored.py").write_text("def ignored(): pass\n", encoding="utf-8")
@@ -306,7 +306,7 @@ class TestContextAndIndex(unittest.TestCase):
 
     def test_repository_scanner_skips_binary_files_by_sample(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / "text.txt").write_text("useful text\n", encoding="utf-8")
             (root / "binary.txt").write_bytes(b"abc\0def")
 
@@ -317,7 +317,7 @@ class TestContextAndIndex(unittest.TestCase):
 
     def test_repository_scanner_detects_extended_module_manifests(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / "go.work").write_text("go 1.22\n", encoding="utf-8")
             service = root / "service"
             service.mkdir()
@@ -335,7 +335,7 @@ class TestContextAndIndex(unittest.TestCase):
 
     def test_repository_index_respects_file_size_limit(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / "small.py").write_text("def small_symbol(): pass\n", encoding="utf-8")
             (root / "large.py").write_text("def large_symbol():\n    pass\n" + ("x = 1\n" * 200), encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True, max_file_bytes=64)

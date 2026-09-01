@@ -217,8 +217,12 @@ class CredentialStore:
             cls._ensure_private_dir(candidate.parent)
             return candidate
 
-        home = Path.home().resolve()
-        preferred_parent = home / ".kitt"
+        configured = os.environ.get("KITT_HOME")
+        if configured:
+            preferred_parent = cls._absolute_unresolved(configured)
+        else:
+            home = Path.home().resolve()
+            preferred_parent = home / ".kitt"
         preferred = preferred_parent / "auth.json"
         try:
             cls._ensure_private_dir(preferred_parent)

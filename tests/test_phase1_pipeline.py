@@ -27,6 +27,7 @@ class TestPhase1Pipeline(unittest.TestCase):
         )
 
     def tearDown(self):
+        self.processor.close()
         self.tmp_dir.cleanup()
 
     def test_run_turn_generator_events(self):

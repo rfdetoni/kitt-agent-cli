@@ -121,11 +121,12 @@ class RepositoryIndex:
         self._closed = True
         thread = self._background_thread
         if thread and thread.is_alive() and thread is not threading.current_thread():
-            # Never close SQLite while the background builder can still use it.
-            thread.join()
+            thread.join(timeout=2.0)
         try:
             with self._lock:
                 self._conn.close()
+        except Exception:
+            pass
         finally:
             self._finalizer.detach()
 
@@ -273,9 +274,14 @@ class RepositoryIndex:
         try:
             self.build_or_update()
         except Exception as exc:
-            with self._lock, self._conn:
-                self._set_meta_locked("state", "DEGRADED")
-                self._set_meta_locked("partial_reason", f"background index failed: {exc}")
+            if self._closed:
+                return
+            try:
+                with self._lock, self._conn:
+                    self._set_meta_locked("state", "DEGRADED")
+                    self._set_meta_locked("partial_reason", f"background index failed: {exc}")
+            except Exception:
+                pass
 
     def _mark_bootstrap_partial(self, reason: str) -> Dict[str, int]:
         with self._lock, self._conn:

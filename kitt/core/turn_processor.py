@@ -87,7 +87,9 @@ class TurnProcessor:
             root_dir=root_dir, persistence_enabled=self.config.persistence_enabled)
         self.skill_manager = skill_manager or SkillManager(
             root_dir=root_dir, persistence_enabled=self.config.persistence_enabled)
-        self.context_engine = context_engine or ContextEngine()
+        self.context_engine = context_engine or ContextEngine(
+            persistence_enabled=self.config.persistence_enabled
+        )
         self.working_set = working_set or ConversationWorkingSetStore(
             root_dir=root_dir,
             persistence_enabled=self.config.persistence_enabled,
@@ -126,8 +128,24 @@ class TurnProcessor:
             return self.history_service.workspace_id
         return "local"
 
+    def __enter__(self) -> "TurnProcessor":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def close(self):
         self._closed = True
+        if hasattr(self, "context_engine") and self.context_engine:
+            try:
+                self.context_engine.close()
+            except Exception:
+                pass
+        if hasattr(self, "working_set") and self.working_set:
+            try:
+                self.working_set.close()
+            except Exception:
+                pass
 
     def _cancel_requested(self, turn_id: str) -> bool:
         guard = getattr(self, "turn_guard", None)

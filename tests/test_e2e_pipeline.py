@@ -14,6 +14,7 @@ class TestE2EPipeline(unittest.TestCase):
         self.applier = DiffApplier()
 
     def tearDown(self):
+        self.processor.close()
         self.tmp_dir.cleanup()
 
     def test_turn_processor_e2e(self):
@@ -245,14 +246,17 @@ class TestE2EPipeline(unittest.TestCase):
         processor = TurnProcessor(
             root_dir=self.tmp_dir.name, context_client=context, execution_client=PrincipalClient(), enable_context_summary=True,
         )
-        from kitt.core.turn_command import TurnCommand
-        list(processor.run_turn(TurnCommand("conv-context", "Crie um HTML explicando este projeto.")))
-        self.assertEqual(len(context.calls), 1)
-        self.assertIn("## Context v2", captured["system_prompt"])
-        self.assertIn("return 'ok'", captured["system_prompt"])
-        self.assertIn("Projeto de exemplo", captured["system_prompt"])
-        self.assertNotIn("python_compute", captured["system_prompt"])
-        self.assertFalse((self.root_path / ".kitt" / "context" / "latest.md").exists())
+        try:
+            from kitt.core.turn_command import TurnCommand
+            list(processor.run_turn(TurnCommand("conv-context", "Crie um HTML explicando este projeto.")))
+            self.assertEqual(len(context.calls), 1)
+            self.assertIn("## Context v2", captured["system_prompt"])
+            self.assertIn("return 'ok'", captured["system_prompt"])
+            self.assertIn("Projeto de exemplo", captured["system_prompt"])
+            self.assertNotIn("python_compute", captured["system_prompt"])
+            self.assertFalse((self.root_path / ".kitt" / "context" / "latest.md").exists())
+        finally:
+            processor.close()
 
     def test_kitt_mention_enables_agent_identity_prompt(self):
         captured = {}
@@ -311,9 +315,12 @@ class TestE2EPipeline(unittest.TestCase):
             def chat(self, *args, **kwargs): raise RuntimeError("unavailable")
 
         processor = TurnProcessor(root_dir=self.tmp_dir.name, enable_context_summary=True)
-        summary = processor._summarize_project_context(UnavailableContext(), "Explain project", "stable structural context")
-        self.assertEqual(summary, "stable structural context")
-        self.assertFalse((self.root_path / ".kitt" / "context" / "latest.md").exists())
+        try:
+            summary = processor._summarize_project_context(UnavailableContext(), "Explain project", "stable structural context")
+            self.assertEqual(summary, "stable structural context")
+            self.assertFalse((self.root_path / ".kitt" / "context" / "latest.md").exists())
+        finally:
+            processor.close()
 
 if __name__ == '__main__':
     unittest.main()

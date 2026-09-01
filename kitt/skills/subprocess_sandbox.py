@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 import json
 import os
-import selectors
+import queue
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional, Set
@@ -119,9 +118,20 @@ class SubprocessSkillSandbox:
             start_new_session=(sys.platform != "win32"),
             preexec_fn=self._unix_resource_limits(),
         )
-        selector = selectors.DefaultSelector()
-        selector.register(process.stdout, selectors.EVENT_READ, data="stdout")
-        selector.register(process.stderr, selectors.EVENT_READ, data="stderr")
+        msg_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+
+        def reader(stream, stream_name: str):
+            try:
+                for line in iter(stream.readline, ""):
+                    msg_queue.put((stream_name, line))
+            except Exception:
+                pass
+
+        t_out = threading.Thread(target=reader, args=(process.stdout, "stdout"), daemon=True)
+        t_err = threading.Thread(target=reader, args=(process.stderr, "stderr"), daemon=True)
+        t_out.start()
+        t_err.start()
+
         stderr_tail = ""
         deadline = time.monotonic() + self.timeout
         try:
@@ -131,45 +141,46 @@ class SubprocessSkillSandbox:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError(f"Skill '{skill_name}' timed out")
-                if process.poll() is not None and not selector.select(timeout=0):
-                    break
-                for key, _ in selector.select(timeout=min(0.2, remaining)):
-                    line = key.fileobj.readline(_MAX_LINE_CHARS + 1)
-                    if not line:
-                        continue
-                    if len(line) > _MAX_LINE_CHARS:
-                        raise RuntimeError("Skill worker emitted an oversized line")
-                    if key.data == "stderr":
-                        stderr_tail = (stderr_tail + line)[-_MAX_STDERR_CHARS:]
-                        continue
-                    try:
-                        message = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(message, dict):
-                        continue
-                    if message.get("type") == "RESULT":
-                        return SkillResult(
-                            success=bool(message.get("success")),
-                            data=message.get("data"),
-                            error=message.get("error"),
-                            duration_ms=(time.perf_counter() - start) * 1000,
-                        )
-                    if message.get("type") == "RPC_CALL":
-                        response = self._handle_rpc(
-                            message.get("method", ""),
-                            message.get("params", {}),
-                            capabilities,
-                            security_context,
-                        )
-                        encoded = json.dumps(response, ensure_ascii=False) + "\n"
-                        if len(encoded.encode("utf-8")) > _MAX_REQUEST_BYTES:
-                            encoded = json.dumps({
-                                "success": False,
-                                "error": "RPC response exceeds size limit",
-                            }) + "\n"
-                        process.stdin.write(encoded)
-                        process.stdin.flush()
+                try:
+                    stream_name, line = msg_queue.get(timeout=min(0.2, remaining))
+                except queue.Empty:
+                    if process.poll() is not None and msg_queue.empty():
+                        break
+                    continue
+
+                if len(line) > _MAX_LINE_CHARS:
+                    raise RuntimeError("Skill worker emitted an oversized line")
+                if stream_name == "stderr":
+                    stderr_tail = (stderr_tail + line)[-_MAX_STDERR_CHARS:]
+                    continue
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                if message.get("type") == "RESULT":
+                    return SkillResult(
+                        success=bool(message.get("success")),
+                        data=message.get("data"),
+                        error=message.get("error"),
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
+                if message.get("type") == "RPC_CALL":
+                    response = self._handle_rpc(
+                        message.get("method", ""),
+                        message.get("params", {}),
+                        capabilities,
+                        security_context,
+                    )
+                    encoded = json.dumps(response, ensure_ascii=False) + "\n"
+                    if len(encoded.encode("utf-8")) > _MAX_REQUEST_BYTES:
+                        encoded = json.dumps({
+                            "success": False,
+                            "error": "RPC response exceeds size limit",
+                        }) + "\n"
+                    process.stdin.write(encoded)
+                    process.stdin.flush()
             return SkillResult(
                 False,
                 error=f"Skill worker exited without result: {stderr_tail}",
@@ -182,7 +193,6 @@ class SubprocessSkillSandbox:
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
         finally:
-            selector.close()
             self._kill_tree(process)
             try:
                 process.wait(timeout=1)

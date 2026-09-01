@@ -135,9 +135,10 @@ class RepositoryScanner:
                 kind = self._manifest_kind(rel_file)
                 if not kind:
                     continue
-                rel_dir = str(Path(rel_file).parent)
+                rel_dir = Path(rel_file).parent.as_posix()
                 root = "." if rel_dir in {"", "."} else rel_dir
-                manifest_path = os.path.join(root, Path(rel_file).name)
+                filename = Path(rel_file).name
+                manifest_path = f"./{filename}" if root == "." else f"{root}/{filename}"
                 key = (root, rel_file)
                 if key in seen:
                     continue
@@ -155,7 +156,7 @@ class RepositoryScanner:
                 for directory in sorted(dirs):
                     candidate = Path(path) / directory
                     try:
-                        rel_dir = str(candidate.relative_to(self.root_path))
+                        rel_dir = candidate.relative_to(self.root_path).as_posix()
                     except ValueError:
                         continue
                     if not self.workspace_fs.is_safe_directory(rel_dir):
@@ -164,26 +165,28 @@ class RepositoryScanner:
                         safe_dirs.append(directory)
                 dirs[:] = safe_dirs
 
-                rel = Path(path).relative_to(self.root_path)
-                if max_depth is not None and len(rel.parts) >= max(0, int(max_depth)):
+                rel_obj = Path(path).relative_to(self.root_path)
+                rel = rel_obj.as_posix()
+                if max_depth is not None and len(rel_obj.parts) >= max(0, int(max_depth)):
                     dirs.clear()
                 for filename in sorted(files):
                     kind = self._manifest_kind(filename)
                     if not kind:
                         continue
-                    rel_file = str(rel / filename) if str(rel) != "." else filename
+                    rel_file = f"{rel}/{filename}" if rel != "." else filename
                     if self._is_ignored(rel_file) or self._safe_stat_regular(rel_file) is None:
                         continue
-                    root = "." if str(rel) == "." else str(rel)
+                    root = "." if rel == "." else rel
                     key = (root, rel_file)
                     if key in seen:
                         continue
                     seen.add(key)
+                    manifest_path = f"./{filename}" if root == "." else f"{root}/{filename}"
                     modules.append(
                         {
                             "root_path": root,
                             "kind": kind,
-                            "manifest_path": os.path.join(root, filename),
+                            "manifest_path": manifest_path,
                         }
                     )
                     if len(modules) >= max_manifests:
@@ -239,7 +242,7 @@ class RepositoryScanner:
             for directory in sorted(dirs):
                 candidate = Path(root) / directory
                 try:
-                    rel_dir = str(candidate.relative_to(self.root_path))
+                    rel_dir = candidate.relative_to(self.root_path).as_posix()
                 except ValueError:
                     continue
                 if not self.workspace_fs.is_safe_directory(rel_dir):
@@ -249,7 +252,7 @@ class RepositoryScanner:
             dirs[:] = safe_dirs
 
             for filename in sorted(filenames):
-                rel = str((Path(root) / filename).relative_to(self.root_path))
+                rel = (Path(root) / filename).relative_to(self.root_path).as_posix()
                 if accept(rel):
                     results.append(rel)
                     if len(results) >= max_files:
