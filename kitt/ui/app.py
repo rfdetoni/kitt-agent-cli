@@ -245,6 +245,16 @@ class KittUIApp:
         from prompt_toolkit.cursor_shapes import CursorShape
         from prompt_toolkit.filters import Condition
         from prompt_toolkit.layout import Layout
+        from prompt_toolkit.output import DummyOutput
+        from prompt_toolkit.output.defaults import create_output
+
+        output = self.output
+        if output is None:
+            try:
+                output = create_output()
+            except Exception:
+                output = DummyOutput()
+
         root = build_root_container(self)
         self.application = Application(
             layout=Layout(root, focused_element=self.prompt_control),
@@ -256,7 +266,7 @@ class KittUIApp:
             refresh_interval=None,
             min_redraw_interval=1 / 30,
             input=self.input,
-            output=self.output,
+            output=output,
             before_render=self._before_render,
         )
         self.bridge = TurnEventBridge(self.runtime, self._on_event, self.application.invalidate)
