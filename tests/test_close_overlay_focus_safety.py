@@ -9,9 +9,9 @@ class TestCloseOverlayFocusSafety(unittest.TestCase):
     def test_close_overlay_handles_layout_focus_value_error_safely(self):
         async def run_test():
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = KittRuntime.build(root_dir=tmp_dir)
-                app = KittUIApp(runtime=runtime)
-                app.build_application()
+                with KittRuntime.build(root_dir=tmp_dir) as runtime:
+                    app = KittUIApp(runtime=runtime)
+                    app.build_application()
 
                 app.open_overlay("help", app.help_control)
                 self.assertEqual(app.state.active_overlay, "help")

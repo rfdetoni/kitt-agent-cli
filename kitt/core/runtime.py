@@ -462,6 +462,38 @@ class KittRuntime:
         if errors:
             raise RuntimeError("Runtime shutdown errors: " + "; ".join(errors))
 
+    def _close_sync_fallback(self) -> None:
+        with self._close_lock:
+            if self._closed or self._closing:
+                return
+            self._closing = True
+            self._closed = True
+            self._started = False
+
+        errors = []
+        for name, close_sync in (
+            ("goal_scheduler", getattr(self.goal_scheduler, "stop", None)),
+            ("dream_scheduler", getattr(self.dream_scheduler, "close", None)),
+            ("children", getattr(self.children, "close", None)),
+            ("processor", getattr(self.processor, "close", None)),
+            ("metrics", getattr(self.metrics, "close", None)),
+            ("artifacts", getattr(self.artifacts, "close", None)),
+            ("events", getattr(self.events, "close", None)),
+            ("repository_index", getattr(self.repository_index, "close", None)),
+            ("database", getattr(self.database, "close", None)),
+        ):
+            try:
+                if close_sync is not None:
+                    close_sync()
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+
+        with self._close_lock:
+            self._closing = False
+            self._lifecycle_loop = None
+        if errors:
+            raise RuntimeError("Runtime shutdown errors: " + "; ".join(errors))
+
     def close(self):
         """Synchronous compatibility wrapper for runtime shutdown."""
         try:
@@ -469,9 +501,12 @@ class KittRuntime:
         except RuntimeError:
             loop = None
         if loop is not None and loop.is_running():
-            raise RuntimeError(
-                "KittRuntime.close() cannot run inside an active event loop; await aclose()."
-            )
+            if self._started:
+                raise RuntimeError(
+                    "KittRuntime.close() cannot run inside an active event loop; await aclose()."
+                )
+            self._close_sync_fallback()
+            return
         asyncio.run(self.aclose())
 
     async def aswitch_workspace(self, new_root: str) -> KittRuntime:

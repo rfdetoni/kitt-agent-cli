@@ -10,9 +10,9 @@ class TestLiveStreamingAndScroll(unittest.TestCase):
     def test_on_event_triggers_invalidate(self):
         async def run_test():
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = KittRuntime.build(root_dir=tmp_dir)
-                app = KittUIApp(runtime=runtime)
-                app.build_application()
+                with KittRuntime.build(root_dir=tmp_dir) as runtime:
+                    app = KittUIApp(runtime=runtime)
+                    app.build_application()
 
                 app.application.invalidate = MagicMock()
 

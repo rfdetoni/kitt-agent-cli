@@ -16,9 +16,9 @@ class TestNoticePopupDismissal(unittest.TestCase):
 
     def test_toast_rendering_text(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            runtime = KittRuntime.build(root_dir=tmp_dir)
-            app = KittUIApp(runtime=runtime)
-            app.state.add_toast("Aviso de teste")
+            with KittRuntime.build(root_dir=tmp_dir) as runtime:
+                app = KittUIApp(runtime=runtime)
+                app.state.add_toast("Aviso de teste")
 
             text = app._toast_text()
             self.assertIn("Aviso de teste", text)

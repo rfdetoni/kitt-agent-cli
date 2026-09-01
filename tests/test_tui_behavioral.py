@@ -20,12 +20,12 @@ from kitt.ui.state import UIState
 
 
 class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.runtime = KittRuntime.build(self.tmp.name, RuntimeConfig(history_enabled=True, persistence_enabled=True))
 
-    def tearDown(self):
-        self.runtime.close()
+    async def asyncTearDown(self):
+        await self.runtime.aclose()
         self.tmp.cleanup()
 
     async def test_01_assistant_response_persisted_once(self):
