@@ -18,7 +18,7 @@ class TestCredentialsSecurity(unittest.TestCase):
         self.assertEqual(ref.resolve(), "session_secret_999")
 
     def test_atomic_write_secure_permissions(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             target = Path(tmpdir) / "secure_sub" / "config.json"
             atomic_write_secure(target, '{"secret_ref": "env:KEY"}')
             self.assertTrue(target.exists())

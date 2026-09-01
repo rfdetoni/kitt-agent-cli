@@ -27,7 +27,7 @@ class TestApprovalCenter(unittest.TestCase):
         self.assertIn("(1 de 3 na fila)", card_output)
 
     def test_remembered_approval_rules_and_persistence(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             db_path = Path(tmp_dir) / "kitt.db"
             db = HistoryDatabase(str(db_path))
 

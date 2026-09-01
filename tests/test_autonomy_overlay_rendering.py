@@ -6,7 +6,7 @@ from kitt.ui.app import KittUIApp
 
 class TestAutonomyOverlayRendering(unittest.TestCase):
     def test_autonomy_overlay_opens_and_renders(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
                 app = KittUIApp(runtime=runtime)
 

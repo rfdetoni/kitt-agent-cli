@@ -34,7 +34,7 @@ class TestPluginDigestTOCTOUHardening(unittest.TestCase):
     def test_secure_reader_rejects_symlink_even_if_iterator_was_bypassed(
         self,
     ):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             target = root / "target.py"
             target.write_text("print('external')\n", encoding="utf-8")
@@ -45,7 +45,7 @@ class TestPluginDigestTOCTOUHardening(unittest.TestCase):
                 _secure_read_plugin_file(link, "demo")
 
     def test_secure_reader_rejects_hardlink(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             original = root / "original.py"
             original.write_text("print('x')\n", encoding="utf-8")
@@ -56,7 +56,7 @@ class TestPluginDigestTOCTOUHardening(unittest.TestCase):
                 _secure_read_plugin_file(linked, "demo")
 
     def test_digest_rejects_workspace_plugins_ancestor_symlink(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             workspace = base / "workspace"
             external_plugins = base / "external-plugins"
@@ -83,7 +83,7 @@ class TestPluginDigestTOCTOUHardening(unittest.TestCase):
                 plugin_content_digest(manifest, workspace)
 
     def test_trust_grant_rechecks_workspace_path_boundary(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             workspace = base / "workspace"
             external_plugins = base / "external-plugins"

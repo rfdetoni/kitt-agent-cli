@@ -25,7 +25,7 @@ class TestSecurityStateSymlinks(unittest.TestCase):
         path.symlink_to(target)
 
     def test_mcp_trust_store_rejects_final_symlink(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             link = root / "state" / "mcp-trust.json"
             self._symlink(link)
@@ -35,7 +35,7 @@ class TestSecurityStateSymlinks(unittest.TestCase):
                 store._data()
 
     def test_plugin_trust_store_rejects_final_symlink(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             link = root / "state" / "plugin-trust.json"
             self._symlink(link)
@@ -45,7 +45,7 @@ class TestSecurityStateSymlinks(unittest.TestCase):
                 store._data()
 
     def test_plugin_state_store_rejects_final_symlink(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             link = root / "state" / "plugin-state.json"
             self._symlink(link)
@@ -55,7 +55,7 @@ class TestSecurityStateSymlinks(unittest.TestCase):
                 store._data()
 
     def test_mcp_trust_store_rejects_world_readable_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             path = root / "mcp-trust.json"
             path.write_text(
@@ -68,7 +68,7 @@ class TestSecurityStateSymlinks(unittest.TestCase):
                 store._data()
 
     def test_plugin_trust_store_rejects_world_readable_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             path = root / "plugin-trust.json"
             path.write_text(
@@ -81,7 +81,7 @@ class TestSecurityStateSymlinks(unittest.TestCase):
                 store._data()
 
     def test_plugin_state_store_rejects_world_readable_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             path = root / "plugin-state.json"
             path.write_text(

@@ -6,7 +6,7 @@ from kitt.core.autonomy_store import AutonomyStore
 
 class TestAlwaysAllowPermissions(unittest.TestCase):
     def test_remembered_approval_rule_allows_file_write(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             approval = ApprovalManager()
             policy = PolicyEngine(root_dir=tmp_dir, approval_manager=approval)
 
@@ -23,7 +23,7 @@ class TestAlwaysAllowPermissions(unittest.TestCase):
             self.assertEqual(policy.evaluate_tool("write_file", {"path": "page.html"}), "ALLOW")
 
     def test_autonomy_preset_files_free_allows_file_writes(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             store = AutonomyStore(root_dir=tmp_dir, persistence_enabled=False)
             policy = PolicyEngine(root_dir=tmp_dir, autonomy=store.get())
 

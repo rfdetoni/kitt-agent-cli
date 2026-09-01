@@ -6,7 +6,7 @@ from kitt.ui.app import KittUIApp
 
 class TestAutoScrollOnNewMessage(unittest.TestCase):
     def test_cursor_position_updates_with_transcript_growth(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
                 app = KittUIApp(runtime=runtime)
 

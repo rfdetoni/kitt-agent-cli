@@ -41,7 +41,7 @@ class TestSecurityAndPolicies(unittest.TestCase):
         self.assertIn("[REDACTED", res.clean_text)
 
     def test_path_policy(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             policy = PathPolicy(tmpdir)
             ok, target, err = policy.validate_path("app.py")
             self.assertTrue(ok)

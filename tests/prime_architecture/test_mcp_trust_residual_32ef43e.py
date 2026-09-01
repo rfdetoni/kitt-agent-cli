@@ -45,7 +45,7 @@ class TestMCPTrustResidual(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_enabling_server_invalidates_disabled_config_trust(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             store = self._store(root)
 
@@ -61,7 +61,7 @@ class TestMCPTrustResidual(unittest.IsolatedAsyncioTestCase):
                 await second.connect("demo")
 
     async def test_disabling_server_also_changes_approved_digest(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             store = self._store(root)
 
@@ -76,7 +76,7 @@ class TestMCPTrustResidual(unittest.IsolatedAsyncioTestCase):
     def test_trust_store_symlink_is_rejected(self):
         if os.name == "nt":
             self.skipTest("symlink semantics vary on Windows")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             private = root / ".private"
             private.mkdir()

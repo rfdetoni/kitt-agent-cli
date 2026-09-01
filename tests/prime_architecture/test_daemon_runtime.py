@@ -25,7 +25,7 @@ class TestDaemonRuntime(unittest.IsolatedAsyncioTestCase):
     """End-to-end integration tests for persistent DaemonServer and multiplexed DaemonClient."""
 
     async def asyncSetUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp_dir.name).resolve()
         (self.root / "src").mkdir(parents=True, exist_ok=True)
         (self.root / "src" / "main.py").write_text("def hello(): pass\n", encoding="utf-8")

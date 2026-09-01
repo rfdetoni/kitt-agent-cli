@@ -8,7 +8,7 @@ from kitt.goals.scheduler import GoalScheduler
 
 class TestGoalSchedulerExecution(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp_dir.name).resolve()
         self.runtime = KittRuntime.build(str(self.root))
         self.conv = self.runtime.history.new_conversation("Goal Scheduler Main")

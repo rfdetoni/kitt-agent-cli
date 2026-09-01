@@ -15,7 +15,7 @@ from kitt.settings.control_center import (
 
 class ControlCenterOverlayTest(unittest.TestCase):
     def test_reads_section_and_filters_runtime(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             path = Path(tmp) / "overrides.json"
             path.write_text(
                 json.dumps(
@@ -38,7 +38,7 @@ class ControlCenterOverlayTest(unittest.TestCase):
             )
 
     def test_rejects_wrong_schema(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             path = Path(tmp) / "overrides.json"
             path.write_text('{"schema_version":99,"components":{}}')
             with self.assertRaises(ValueError):

@@ -14,7 +14,7 @@ from tests.test_fake_llm_e2e import FakeLLMClient
 
 class TestSemanticCompiler(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root_path = Path(self.tmp_dir.name).resolve()
         self.extractor = DeterministicExtractor()
         self.planner = ContextPlanner()
@@ -184,6 +184,7 @@ class TestSemanticCompiler(unittest.TestCase):
         cmd = TurnCommand(conversation_id=conv["id"], prompt=orig_prompt)
         history.repo.save_message(conv["id"], cmd.turn_id, "user", orig_prompt)
         events = list(processor.run_turn(cmd))
+        processor.close()
         
         self.assertTrue(any(isinstance(e, TurnCompleted) for e in events))
         self.assertEqual(len(captured_requests), 1)
@@ -234,6 +235,7 @@ class TestSemanticCompiler(unittest.TestCase):
 
         cmd = TurnCommand(conversation_id="conv-low-conf", prompt=orig_prompt)
         list(processor.run_turn(cmd))
+        processor.close()
         
         self.assertEqual(len(captured_requests), 1)
         user_content = captured_requests[0]["messages"][0]["content"]
@@ -314,6 +316,7 @@ class TestSemanticCompiler(unittest.TestCase):
         )
         # Context engine last query was constructed with original prompt included
         self.assertIn("kitt/history/database.py", task.paths)
+        processor.close()
 
 
 if __name__ == "__main__":

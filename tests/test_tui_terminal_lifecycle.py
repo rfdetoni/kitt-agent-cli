@@ -17,7 +17,7 @@ class TestTUITerminalLifecycle(unittest.TestCase):
 
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             env = dict(os.environ, TERM="xterm-256color")
             process = None
             output = bytearray()

@@ -14,7 +14,7 @@ from kitt.index.scanner import RepositoryScanner
 
 class Round3RepositoryLifecycleTests(unittest.TestCase):
     def test_scanner_honors_immediate_cancellation(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             for idx in range(20):
                 (root / f"file_{idx}.py").write_text("def value(): return 1\n", encoding="utf-8")
@@ -24,7 +24,7 @@ class Round3RepositoryLifecycleTests(unittest.TestCase):
             self.assertEqual(scanner.detect_modules(should_stop=lambda: True), [])
 
     def test_close_cancels_background_before_closing_sqlite(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "app.py").write_text("def app(): return 1\n", encoding="utf-8")
             index = RepositoryIndex(root, in_memory=False)
@@ -61,7 +61,7 @@ class Round3RepositoryLifecycleTests(unittest.TestCase):
             index.close()
 
     def test_close_signals_cancellation_while_database_lock_is_busy(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "app.py").write_text("def app(): return 1\n", encoding="utf-8")
             index = RepositoryIndex(root, in_memory=True)

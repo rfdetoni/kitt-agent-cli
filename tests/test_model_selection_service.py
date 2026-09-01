@@ -18,7 +18,7 @@ import tempfile
 class TestModelSelectionService(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.workspace_path = self.tmp_dir.name
         self.auth_service = ProviderAuthService()
         self.registry = ProviderRegistry(auth_service=self.auth_service)

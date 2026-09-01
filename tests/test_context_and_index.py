@@ -99,7 +99,7 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertAlmostEqual(sum(scores.values()), 1.0, places=6)
 
     def test_repository_index_incremental_update_and_search(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text("def hello():\n    print('Hello World')\n", encoding="utf-8")
 
@@ -114,7 +114,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_records_versioned_metadata_and_capabilities(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             (Path(tmpdir) / ".kittignore").write_text("ignored.py\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
 
@@ -131,7 +131,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_uses_parser_registry_adapter_version(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text("def registry_symbol():\n    return 1\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -144,7 +144,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_fts_handles_natural_language_and_tail_content(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text(("x = 1\n" * 900) + "def target_symbol():\n    return 'tail'\n", encoding="utf-8")
 
@@ -166,7 +166,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_records_python_qualified_names_and_end_lines(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text(
                 "class Service:\n"
@@ -188,7 +188,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_symbol_search_returns_only_indexed_symbol_range(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             path = Path(tmpdir) / "app.py"
             path.write_text(
                 "header = True\n\n"
@@ -208,7 +208,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_persistent_fts_survives_reopen(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text("def persistent_symbol():\n    return 1\n", encoding="utf-8")
 
@@ -225,7 +225,7 @@ class TestContextAndIndex(unittest.TestCase):
             reopened.close()
 
     def test_repository_index_reports_fts_error_and_uses_lexical_fallback(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text("def fallback_symbol():\n    return 1\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -243,7 +243,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_update_paths_refreshes_single_changed_file(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text("def before_symbol():\n    return 1\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -258,7 +258,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_skips_reparse_when_only_mtime_changes(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             path = Path(tmpdir) / "stable.py"
             path.write_text("def stable_symbol():\n    return 1\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -273,7 +273,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_bootstraps_explicit_paths_before_background_scan(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "target.py").write_text("def target_symbol():\n    return 1\n", encoding="utf-8")
             (root / "later.py").write_text("def later_symbol():\n    return 2\n", encoding="utf-8")
@@ -290,7 +290,7 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertTrue(index.search_text("later symbol"))
 
     def test_repository_scanner_respects_kittignore(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir).resolve()
             (root / ".kittignore").write_text("ignored.py\nsecret_dir\n", encoding="utf-8")
             (root / "kept.py").write_text("def kept(): pass\n", encoding="utf-8")
@@ -305,7 +305,7 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertNotIn("secret_dir/hidden.py", paths)
 
     def test_repository_scanner_skips_binary_files_by_sample(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir).resolve()
             (root / "text.txt").write_text("useful text\n", encoding="utf-8")
             (root / "binary.txt").write_bytes(b"abc\0def")
@@ -316,7 +316,7 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertNotIn("binary.txt", paths)
 
     def test_repository_scanner_detects_extended_module_manifests(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir).resolve()
             (root / "go.work").write_text("go 1.22\n", encoding="utf-8")
             service = root / "service"
@@ -334,7 +334,7 @@ class TestContextAndIndex(unittest.TestCase):
             self.assertEqual(by_manifest["api/Api.csproj"], "dotnet")
 
     def test_repository_index_respects_file_size_limit(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir).resolve()
             (root / "small.py").write_text("def small_symbol(): pass\n", encoding="utf-8")
             (root / "large.py").write_text("def large_symbol():\n    pass\n" + ("x = 1\n" * 200), encoding="utf-8")
@@ -348,7 +348,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_context_engine_uses_shared_repository_index(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text("def useful_symbol():\n    return 42\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -365,7 +365,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_context_engine_warm_query_does_not_rescan_repository(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             path = Path(tmpdir) / "app.py"
             path.write_text("def warm_symbol():\n    return 42\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -383,7 +383,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_context_engine_without_supplied_index_uses_repository_index(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text("def lazy_symbol():\n    return 42\n", encoding="utf-8")
             engine = ContextEngine(persistence_enabled=False)
@@ -397,7 +397,7 @@ class TestContextAndIndex(unittest.TestCase):
             engine.index.close()
 
     def test_local_file_indexer_delegates_to_repository_index_without_json_cache(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "app.py"
             p.write_text("def adapter_symbol():\n    return 42\n", encoding="utf-8")
             indexer = LocalFileIndexer(tmpdir, persistence_enabled=False)
@@ -456,7 +456,7 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertTrue(plan.diagnostics)
 
     def test_repository_index_removes_deleted_files(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             p = Path(tmpdir) / "gone.py"
             p.write_text("def removed_symbol():\n    return 1\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -472,7 +472,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_repository_index_links_modules_and_reference_edges(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
             (root / "controller.py").write_text(
@@ -496,7 +496,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_retrieval_expands_graph_neighbors(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "controller.py").write_text(
                 "from service import UserService\nclass Controller:\n    def run(self):\n        return UserService()\n",
@@ -514,7 +514,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_retrieval_prefers_exact_symbol_before_lexical(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "alpha.py").write_text("def target_symbol():\n    return 1\n", encoding="utf-8")
             (root / "notes.md").write_text("target_symbol mentioned in prose\n", encoding="utf-8")
@@ -528,7 +528,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_retrieval_keeps_large_explicit_file_as_truncated_slice(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "large.py").write_text("def target():\n    pass\n" + ("x = 1\n" * 1000), encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -547,7 +547,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_retrieval_includes_working_set_path_without_lexical_match(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "recent.py").write_text("def recent_context():\n    return 42\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=True)
@@ -565,7 +565,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_retrieval_includes_git_status_focus(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             subprocess.run(["git", "init"], cwd=tmpdir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             (root / "changed.py").write_text("def changed_context():\n    return 42\n", encoding="utf-8")
@@ -580,7 +580,7 @@ class TestContextAndIndex(unittest.TestCase):
             index.close()
 
     def test_retrieval_includes_paired_tests_when_requested(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "app.py").write_text("def calculate_total():\n    return 42\n", encoding="utf-8")
             (root / "test_app.py").write_text("def test_calculate_total():\n    assert calculate_total() == 42\n", encoding="utf-8")
@@ -603,7 +603,7 @@ class TestContextAndIndex(unittest.TestCase):
         self.assertEqual(est_default.count, 89)    # 350 / 3.9 = 89
 
     def test_update_paths_preserves_partial_state(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             root = Path(tmpdir)
             (root / "a.py").write_text("x = 1\n", encoding="utf-8")
             index = RepositoryIndex(tmpdir, in_memory=False)
@@ -617,7 +617,7 @@ class TestContextAndIndex(unittest.TestCase):
 
     def test_working_set_corrupted_json_preserves_memory(self):
         from kitt.context.working_set import ConversationWorkingSetStore
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             store = ConversationWorkingSetStore(tmpdir)
             store.touch_paths("conv1", ["a.py"], "turn1")
             self.assertEqual(len(store.paths("conv1")), 1)
@@ -672,7 +672,7 @@ class TestContextAndIndex(unittest.TestCase):
 
     def test_doctor_diagnostics_runs(self):
         from kitt.cli.doctor import DoctorCheck
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             diag = DoctorCheck(tmpdir).run_diagnostics()
             names = [d["name"] for d in diag]
             self.assertIn("Python Version", names)

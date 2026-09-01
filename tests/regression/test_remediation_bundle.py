@@ -21,7 +21,7 @@ from kitt.security.workspace_fs import WorkspaceFileSystem
 
 class RemediationRegressionTests(unittest.TestCase):
     def test_workspace_fs_rejects_traversal_and_symlink_escape(self):
-        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as outside:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root, tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as outside:
             root_path = Path(root)
             outside_file = Path(outside) / "secret.txt"
             outside_file.write_text("secret", encoding="utf-8")
@@ -38,7 +38,7 @@ class RemediationRegressionTests(unittest.TestCase):
                 fs.read("link.txt")
 
     def test_repository_index_does_not_index_external_symlink(self):
-        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as outside:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root, tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as outside:
             root_path = Path(root)
             (root_path / "safe.py").write_text("VALUE = 1\n", encoding="utf-8")
             outside_file = Path(outside) / "secret.py"

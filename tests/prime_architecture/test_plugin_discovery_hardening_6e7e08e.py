@@ -26,7 +26,7 @@ def _manifest(name: str) -> str:
 @unittest.skipIf(os.name == "nt", "POSIX symlink semantics")
 class TestPluginManifestPathHardening(unittest.TestCase):
     def test_manifest_final_symlink_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             target = root / "actual.toml"
             target.write_text(_manifest("demo"), encoding="utf-8")
@@ -37,7 +37,7 @@ class TestPluginManifestPathHardening(unittest.TestCase):
                 parse_manifest_file(link, source="workspace")
 
     def test_workspace_plugin_directory_symlink_is_ignored(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp) / "workspace"
             external = Path(tmp) / "external-plugin"
             root.mkdir()
@@ -60,7 +60,7 @@ class TestPluginManifestPathHardening(unittest.TestCase):
             self.assertEqual(loader.discover_manifests(), {})
 
     def test_workspace_kitt_symlink_is_ignored(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp) / "workspace"
             external_kitt = Path(tmp) / "external-kitt"
             root.mkdir()
@@ -83,7 +83,7 @@ class TestPluginManifestPathHardening(unittest.TestCase):
 
 class TestPluginNameCollisionBoundary(unittest.TestCase):
     def test_workspace_cannot_shadow_global_plugin(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             root = base / "workspace"
             global_dir = base / "global"

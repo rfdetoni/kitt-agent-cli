@@ -91,7 +91,7 @@ _result = {
                 self.assertTrue(execution.error)
 
     def test_cannot_read_or_write_workspace(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             sentinel = Path(temp_dir) / "secret.txt"
             sentinel.write_text("secret", encoding="utf-8")
             read_attempt = self.execute(f"_result = open({str(sentinel)!r}).read()")
@@ -148,7 +148,7 @@ _result = {
 
 class TestSafePythonRegistryIntegration(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.registry = ToolRegistry(root_dir=self.temp_dir.name)
 
     def tearDown(self):
@@ -187,7 +187,7 @@ class TestSafePythonRegistryIntegration(unittest.TestCase):
 
 class TestSafePythonTurnIntegration(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.context_client = FakeLLMClient([
             '{"intent":"ASK","confidence":0.95,"actions":["calculate"]}'
         ])

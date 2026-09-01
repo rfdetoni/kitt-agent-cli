@@ -14,7 +14,7 @@ from kitt.router.router import TaskRouter
 class TestProviderSecurityConcurrency(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root_dir = Path(self.tmp_dir.name)
         self.home_dir = self.root_dir / "home"
         self.kitt_home = self.home_dir / ".kitt"

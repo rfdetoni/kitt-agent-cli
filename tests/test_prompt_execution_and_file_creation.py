@@ -6,7 +6,7 @@ from kitt.core.turn_command import TurnCommand
 
 class TestPromptExecutionAndFileCreation(unittest.TestCase):
     def test_file_creation_tool_execution_with_autonomy(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
                 runtime.autonomy_store.set_preset("files_free")
                 runtime.processor.registry.policy.autonomy = runtime.autonomy_store.get()
@@ -24,7 +24,7 @@ class TestPromptExecutionAndFileCreation(unittest.TestCase):
                 self.assertEqual(created_path.read_text(encoding="utf-8"), "print('criado via prompt')")
 
     def test_file_creation_tool_execution_with_remembered_rule(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
                 runtime.approval.remember("write_file", "**", "allow", scope="workspace")
 
@@ -36,7 +36,7 @@ class TestPromptExecutionAndFileCreation(unittest.TestCase):
                 self.assertTrue((Path(tmp_dir) / "com_regra.py").exists())
 
     def test_turn_processor_enables_file_writing_tools_for_general_prompts(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
                 cmd = TurnCommand(conversation_id="c1", prompt="crie um arquivo index.html")
 

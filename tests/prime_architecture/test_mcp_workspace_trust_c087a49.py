@@ -41,7 +41,7 @@ class TestWorkspaceMCPTrust(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_workspace_server_is_untrusted_by_default(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self._write(root)
             manager = MCPManager(root)
@@ -53,7 +53,7 @@ class TestWorkspaceMCPTrust(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_explicit_connect_is_blocked_before_trust(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self._write(root)
             manager = MCPManager(root)
@@ -61,7 +61,7 @@ class TestWorkspaceMCPTrust(unittest.IsolatedAsyncioTestCase):
                 await manager.connect("repo_server")
 
     async def test_config_change_invalidates_trust(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self._write(root, "python")
             first = MCPManager(root, trust_store=self._trust_store(root))
@@ -72,7 +72,7 @@ class TestWorkspaceMCPTrust(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(second.is_trusted("repo_server"))
 
     async def test_untrust_revokes_exact_workspace_grant(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self._write(root)
             manager = MCPManager(root, trust_store=self._trust_store(root))
@@ -83,7 +83,7 @@ class TestWorkspaceMCPTrust(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(manager.is_trusted("repo_server"))
 
     async def test_untrust_still_revokes_after_config_is_removed(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self._write(root)
             trust_store = self._trust_store(root)
@@ -95,7 +95,7 @@ class TestWorkspaceMCPTrust(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(removed)
 
     def test_symlink_workspace_config_is_refused(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             kitt = root / ".kitt"
             kitt.mkdir(parents=True, exist_ok=True)
@@ -110,7 +110,7 @@ class TestWorkspaceMCPTrust(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(manager.list_servers(), [])
 
     def test_oversized_workspace_config_is_refused(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             kitt = root / ".kitt"
             kitt.mkdir(parents=True, exist_ok=True)
@@ -123,7 +123,7 @@ class TestWorkspaceMCPTrust(unittest.IsolatedAsyncioTestCase):
 class TestDaemonWorkspaceBoundary(unittest.TestCase):
     def test_workspace_boundary(self):
         from kitt.daemon.server import DaemonServer
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             server = DaemonServer(root)
             self.assertTrue(server._workspace_allowed(root))
@@ -159,7 +159,7 @@ class TestDaemonWorkspaceBoundary(unittest.TestCase):
             async def wait_closed(self):
                 return None
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             server = DaemonServer(root)
             server.token = "secret"

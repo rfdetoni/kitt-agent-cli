@@ -43,7 +43,7 @@ class SharedClientTest(unittest.TestCase):
             )
 
         host, port = self._server(response)
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             token = Path(tmp) / "token"
             token.write_text("a" * 64)
             client = SharedMemoryClient(f"{host}:{port}", token, 1.0)
@@ -58,7 +58,7 @@ class SharedClientTest(unittest.TestCase):
             )
 
         host, port = self._server(response)
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             token = Path(tmp) / "token"
             token.write_text("a" * 64)
             client = SharedMemoryClient(f"{host}:{port}", token, 1.0)
@@ -66,7 +66,7 @@ class SharedClientTest(unittest.TestCase):
                 client.recall("ws", "rule")
 
     def test_remote_daemon_address_is_rejected_before_token_egress(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             token = Path(tmp) / "token"
             token.write_text("a" * 64)
             client = SharedMemoryClient("192.0.2.10:41827", token, 1.0)
@@ -74,7 +74,7 @@ class SharedClientTest(unittest.TestCase):
                 client._split_address()
 
     def test_bracketed_ipv6_loopback_is_supported(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             token = Path(tmp) / "token"
             token.write_text("a" * 64)
             client = SharedMemoryClient("[::1]:41827", token, 1.0)

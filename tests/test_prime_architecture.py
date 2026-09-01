@@ -301,7 +301,7 @@ def execute(ctx, args):
 
 class TestDaemonServerClient(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.socket_path = self.root / "test_daemon.sock"
         self.token_path = self.root / "test_daemon.token"

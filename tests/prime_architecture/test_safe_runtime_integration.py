@@ -15,7 +15,7 @@ from kitt.tools.surface_selector import ToolSurfaceSelector
 
 class TestSafeRuntimeIntegration(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp_dir.name).resolve()
         self.db = HistoryDatabase(str(self.root))
         self.registry = ToolRegistry(root_dir=str(self.root))

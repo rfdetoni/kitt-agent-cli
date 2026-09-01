@@ -46,7 +46,7 @@ def _write_plugin(root: Path) -> None:
 @unittest.skipIf(os.name == "nt", "POSIX symlink/permission semantics")
 class TestTrustedSnapshotCacheBoundary(unittest.TestCase):
     def test_private_cache_dir_rejects_symlink(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             target = base / "target"
             target.mkdir()
@@ -58,7 +58,7 @@ class TestTrustedSnapshotCacheBoundary(unittest.TestCase):
                 _assert_private_cache_dir(link)
 
     def test_private_cache_dir_repairs_permissions(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             path = Path(tmp) / "cache"
             path.mkdir()
             os.chmod(path, 0o777)
@@ -71,7 +71,7 @@ class TestTrustedSnapshotCacheBoundary(unittest.TestCase):
             )
 
     def test_verify_snapshot_rejects_symlink_root(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             source = base / "source"
             _write_plugin(source)
@@ -94,7 +94,7 @@ class TestTrustedSnapshotCacheBoundary(unittest.TestCase):
     def test_prepare_replaces_existing_snapshot_symlink_without_following(
         self,
     ):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             source = base / "source"
             _write_plugin(source)

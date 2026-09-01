@@ -21,7 +21,7 @@ from kitt.tools.registry import ToolRegistry
 
 class TestSafeRuntimeNewFileApproval(unittest.TestCase):
     def test_new_file_integrity_uses_none_not_string_sentinel(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             registry = ToolRegistry(str(root))
             security = ExecutionSecurityContext.create_user_context(
@@ -70,7 +70,7 @@ class TestSafeRuntimeNewFileApproval(unittest.TestCase):
 
 class TestPluginExternalTrust(unittest.IsolatedAsyncioTestCase):
     async def test_manifest_cannot_self_grant_trust_and_hash_change_revokes(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = root / ".kitt" / "plugins" / "demo"
             plugin.mkdir(parents=True)
@@ -109,7 +109,7 @@ class TestPluginExternalTrust(unittest.IsolatedAsyncioTestCase):
                 await loader.load_async(manifest)
 
     async def test_enable_disable_state_is_persistent_and_local(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             state_path = root / "state.json"
             first = PluginStateStore(root, path=state_path)
@@ -125,7 +125,7 @@ class TestPluginExternalTrust(unittest.IsolatedAsyncioTestCase):
 
 class TestHandleFailClosed(unittest.TestCase):
     def test_direct_safe_runtime_handle_resolution_requires_principal(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             runtime = SafeRuntime(temp_dir, "ws", "conv")
             result = runtime.execute(
                 "handles.resolve",
@@ -140,7 +140,7 @@ class TestHandleFailClosed(unittest.TestCase):
 
 class TestGoalSideEffectFencing(unittest.TestCase):
     def test_stale_goal_principal_is_rejected_before_tool_execution(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             (root / "visible.txt").write_text("ok", encoding="utf-8")
             with KittRuntime.build(str(root)) as runtime:

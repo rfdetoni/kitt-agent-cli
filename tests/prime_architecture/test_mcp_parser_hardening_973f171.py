@@ -30,7 +30,7 @@ class TestMCPConfigParserHardening(unittest.TestCase):
             os.chmod(path, 0o600)
 
     def test_malformed_workspace_server_does_not_crash_manager(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self._write_workspace(
                 root,
@@ -46,7 +46,7 @@ class TestMCPConfigParserHardening(unittest.TestCase):
             self.assertEqual(manager.list_servers(), [])
 
     def test_non_boolean_enabled_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self._write_workspace(
                 root,
@@ -62,7 +62,7 @@ class TestMCPConfigParserHardening(unittest.TestCase):
             self.assertEqual(manager.list_servers(), [])
 
     def test_nan_timeout_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             config_dir = root / ".kitt"
             config_dir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +74,7 @@ class TestMCPConfigParserHardening(unittest.TestCase):
             self.assertEqual(manager.list_servers(), [])
 
     def test_negative_output_limit_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self._write_workspace(
                 root,
@@ -90,7 +90,7 @@ class TestMCPConfigParserHardening(unittest.TestCase):
             self.assertEqual(manager.list_servers(), [])
 
     def test_invalid_workspace_override_does_not_remove_global_server(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             root = base / "workspace"
             root.mkdir()
@@ -121,7 +121,7 @@ class TestMCPConfigParserHardening(unittest.TestCase):
             self.assertEqual(config.transport, "http")
 
     def test_valid_workspace_server_cannot_shadow_global_server_id(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             root = base / "workspace"
             root.mkdir()

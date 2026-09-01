@@ -74,7 +74,7 @@ class TestPythonCompatibility(unittest.TestCase):
 
 class TestCompositeApprovalIntegrity(unittest.TestCase):
     def test_safe_runtime_patch_approval_becomes_concrete_pending_action(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             target = root / "a.txt"
             target.write_text("old\n", encoding="utf-8")
@@ -190,7 +190,7 @@ class TestPathScope(unittest.TestCase):
         self.assertFalse(context.allows_path("github/workflows/ci.yml"))
 
     def test_files_and_search_respect_scope(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             (root / "allowed").mkdir()
             (root / "blocked").mkdir()
@@ -237,7 +237,7 @@ class TestPathScope(unittest.TestCase):
             self.assertNotIn("blocked/secret.txt", search.output)
 
     def test_safe_runtime_preserves_scope_when_delegating(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             (root / "allowed").mkdir()
             (root / "blocked").mkdir()
@@ -267,7 +267,7 @@ class TestPathScope(unittest.TestCase):
             self.assertFalse(denied.success)
 
     def test_mutating_handlers_fail_closed_for_scoped_principal(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             (root / "allowed").mkdir()
             (root / "blocked").mkdir()
@@ -311,13 +311,13 @@ class TestPathScope(unittest.TestCase):
 
 class TestCompositionAndScheduler(unittest.TestCase):
     def test_runtime_wires_child_manager_and_registry_observer(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             with KittRuntime.build(temp_dir) as runtime:
                 self.assertIs(runtime.processor.child_manager, runtime.children)
                 self.assertIs(runtime.registry._processor, runtime.processor)
 
     def test_approved_child_action_schedules_continuation(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             with KittRuntime.build(temp_dir) as runtime:
                 conversation = runtime.history.new_conversation("child approval")
                 child = runtime.children.spawn(
@@ -365,7 +365,7 @@ class TestCompositionAndScheduler(unittest.TestCase):
                     runtime.children._execute_worker = original
 
     def test_scheduler_renews_lease_with_owner_cas(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             with KittRuntime.build(temp_dir) as runtime:
                 conversation = runtime.history.new_conversation("scheduler")
                 goal = runtime.goals.create(

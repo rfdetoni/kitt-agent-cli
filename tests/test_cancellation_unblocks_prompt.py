@@ -9,7 +9,7 @@ from kitt.ui.state import UIState, Toast
 class TestCancellationUnblocksPrompt(unittest.TestCase):
     def test_cancellation_resets_is_thinking_clears_tasks_and_deactivates_bridge(self):
         async def run_test():
-            with tempfile.TemporaryDirectory() as tmp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
                 state = UIState()
                 with KittRuntime.build(root_dir=tmp_dir) as runtime:
                     bridge = TurnEventBridge(runtime=runtime, on_event=lambda e: reduce_ui_event(state, e), invalidate=lambda: None)

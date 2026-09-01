@@ -180,7 +180,7 @@ class TestSkillScopeInheritance(unittest.TestCase):
 
 class TestAutonomyUpdates(unittest.TestCase):
     def test_partial_override_is_not_discarded(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = AutonomyStore(temp_dir, persistence_enabled=False)
             policy = store.update(
                 allow_file_write_auto=True,
@@ -191,7 +191,7 @@ class TestAutonomyUpdates(unittest.TestCase):
             self.assertEqual(policy.level, "supervised")
 
     def test_unknown_override_fails_closed(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = AutonomyStore(temp_dir, persistence_enabled=False)
             with self.assertRaises(ValueError):
                 store.update(nonexistent_flag=True)
@@ -199,7 +199,7 @@ class TestAutonomyUpdates(unittest.TestCase):
 
 class TestPluginTrustBoundary(unittest.IsolatedAsyncioTestCase):
     async def test_untrusted_plugin_is_not_imported(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = root / ".kitt" / "plugins" / "evil"
             plugin.mkdir(parents=True)
@@ -233,7 +233,7 @@ class TestPluginTrustBoundary(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(marker.exists())
 
     async def test_trusted_async_setup_is_awaited(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = root / ".kitt" / "plugins" / "async_ok"
             plugin.mkdir(parents=True)
@@ -305,7 +305,7 @@ class TestSchedulerFencing(unittest.TestCase):
         return db, goals, goal
 
     def test_stale_worker_result_is_fenced(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             db, goals, goal = self._seed(Path(temp_dir))
             try:
                 scheduler = GoalScheduler(
@@ -337,7 +337,7 @@ class TestSchedulerFencing(unittest.TestCase):
 
 class TestGoalApprovalCheckpoint(unittest.TestCase):
     def test_registry_records_goal_approved_output_in_runtime_state(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             db = HistoryDatabase(str(root))
             try:

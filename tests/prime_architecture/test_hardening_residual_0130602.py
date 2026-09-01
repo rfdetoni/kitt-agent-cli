@@ -28,7 +28,7 @@ from kitt.security.context import ExecutionSecurityContext
 
 class TestGoalFencePropagation(unittest.TestCase):
     def test_stale_goal_blocks_derived_skill_and_child(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             (root / "visible.txt").write_text("ok", encoding="utf-8")
             with KittRuntime.build(str(root)) as runtime:
@@ -118,7 +118,7 @@ class TestGoalFencePropagation(unittest.TestCase):
         self.assertEqual(grandchild.fencing_subject_id, "goal1")
 
     def test_retained_child_persists_goal_subject(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             with KittRuntime.build(temp_dir) as runtime:
                 conversation = runtime.history.new_conversation("retained")
                 goal_ctx = ExecutionSecurityContext(
@@ -152,7 +152,7 @@ class TestGoalFencePropagation(unittest.TestCase):
 
 class TestGoalApprovalResume(unittest.TestCase):
     def test_approval_resume_clears_old_lease_and_grant_is_single_use(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             target = root / "a.txt"
             target.write_text("old\n", encoding="utf-8")
@@ -257,7 +257,7 @@ class TestGoalApprovalResume(unittest.TestCase):
 
 class TestRuntimeLifecycle(unittest.IsolatedAsyncioTestCase):
     async def test_start_and_aclose_are_idempotent(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             runtime = KittRuntime.build(temp_dir)
             await runtime.start()
             await runtime.start()
@@ -265,7 +265,7 @@ class TestRuntimeLifecycle(unittest.IsolatedAsyncioTestCase):
             await runtime.aclose()
 
     async def test_close_inside_running_loop_requires_aclose(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             runtime = KittRuntime.build(temp_dir)
             await runtime.start()
             with self.assertRaises(RuntimeError):
@@ -273,7 +273,7 @@ class TestRuntimeLifecycle(unittest.IsolatedAsyncioTestCase):
             await runtime.aclose()
 
     async def test_start_failure_rolls_back_started_flag(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             runtime = KittRuntime.build(temp_dir)
             calls = []
 
@@ -317,7 +317,7 @@ class TestPluginSnapshotAndStores(unittest.IsolatedAsyncioTestCase):
         return plugin
 
     async def test_snapshot_cache_reused_by_digest_and_mutation_blocks_load(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = self._create_plugin(root, "demo")
             manifest = parse_manifest_file(plugin / "plugin.toml")
@@ -341,7 +341,7 @@ class TestPluginSnapshotAndStores(unittest.IsolatedAsyncioTestCase):
     async def test_symlink_plugin_is_blocked(self):
         if sys.platform == "win32":
             self.skipTest("symlink permissions vary on Windows")
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = self._create_plugin(root, "linkdemo")
             target = root / "outside.txt"
@@ -353,7 +353,7 @@ class TestPluginSnapshotAndStores(unittest.IsolatedAsyncioTestCase):
                 trust.grant(manifest)
 
     def test_trust_and_state_updates_survive_concurrent_processes(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin_one = self._create_plugin(root, "one")
             plugin_two = self._create_plugin(root, "two")

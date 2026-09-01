@@ -8,7 +8,7 @@ from kitt.ui.app import KittUIApp
 class TestCloseOverlayFocusSafety(unittest.TestCase):
     def test_close_overlay_handles_layout_focus_value_error_safely(self):
         async def run_test():
-            with tempfile.TemporaryDirectory() as tmp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
                 with KittRuntime.build(root_dir=tmp_dir) as runtime:
                     app = KittUIApp(runtime=runtime)
                     app.build_application()

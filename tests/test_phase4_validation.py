@@ -6,7 +6,7 @@ from kitt.tools.log_reducer import LogReducer
 
 class TestPhase4Validation(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root_path = Path(self.tmp_dir.name).resolve()
         self.detector = BuildDetector(root_dir=self.tmp_dir.name)
         self.reducer = LogReducer()

@@ -10,7 +10,7 @@ class TestExecutableSkillsSandbox(unittest.TestCase):
     """Rigorous tests for isolated subprocess execution and security sandbox of executable skills."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp_dir.name).resolve()
         (self.root / "src").mkdir(parents=True, exist_ok=True)
         (self.root / "src" / "sample.txt").write_text("Hello from file in workspace", encoding="utf-8")

@@ -185,7 +185,7 @@ class TestPrimeRuntime(unittest.TestCase):
 
 class TestCanonicalSchemaV1(unittest.TestCase):
     def test_new_database_creates_schema_v1(self):
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             db = HistoryDatabase(root)
             try:
                 with db.get_connection() as conn:
@@ -204,7 +204,7 @@ class TestCanonicalSchemaV1(unittest.TestCase):
 
     def test_incompatible_database_version_is_rejected(self):
         from kitt.history.migrations import IncompatibleSchemaError
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             path = Path(root) / ".kitt" / "history"
             path.mkdir(parents=True)
             db_path = path / "history.sqlite3"

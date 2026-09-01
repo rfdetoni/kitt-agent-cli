@@ -12,7 +12,7 @@ from kitt.llm.auth import CredentialStore, ProviderAuthService
 class TestProviderAuthContract(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.auth_file = Path(self.tmp_dir.name) / "auth.json"
         self.store = CredentialStore(auth_file=str(self.auth_file))
         self.auth_service = ProviderAuthService(store=self.store)

@@ -11,7 +11,7 @@ from kitt.memory.shared_client import SharedMemoryUnavailable
 
 class TestContextSources(unittest.TestCase):
     def test_memory_context_uses_relevant_items_only(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             shared = MagicMock()
             shared.remember.side_effect = SharedMemoryUnavailable("offline")
             shared.recall.side_effect = SharedMemoryUnavailable("offline")
@@ -39,7 +39,7 @@ class TestContextSources(unittest.TestCase):
         self.assertNotIn("x" * 100, context)
 
     def test_working_set_tracks_recent_paths_by_conversation(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             store = ConversationWorkingSetStore(tmpdir, persistence_enabled=True)
             store.touch_paths("conv-1", ["a.py", "b.py"], "turn-1", weight=1.0, kind="read_file")
             store.touch_paths("conv-1", ["a.py"], "turn-2", weight=2.0, kind="apply_patch")

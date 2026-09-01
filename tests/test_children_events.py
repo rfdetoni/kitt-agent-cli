@@ -13,7 +13,7 @@ class TestChildrenEvents(unittest.TestCase):
         def mock_callback(name, payload):
             events_received.append((name, payload))
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             db_path = Path(tmp_dir) / "kitt.db"
             db = HistoryDatabase(str(db_path))
             repo = ChildRepository(db)

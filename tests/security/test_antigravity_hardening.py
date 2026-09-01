@@ -20,7 +20,7 @@ from kitt.tools.registry import ToolRegistry
 
 class AntigravityHardeningTests(unittest.TestCase):
     def test_precondition_capture_and_validation_write_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "existing.txt").write_text("v1", encoding="utf-8")
             
@@ -39,7 +39,7 @@ class AntigravityHardeningTests(unittest.TestCase):
             self.assertIn("was modified after approval request", err)
 
     def test_precondition_capture_and_validation_new_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             precs = capture_preconditions(tmp, "write_file", {"path": "new.txt", "content": "hello"})
             self.assertEqual(len(precs), 1)
@@ -55,7 +55,7 @@ class AntigravityHardeningTests(unittest.TestCase):
             self.assertIn("was created after approval request", err)
 
     def test_precondition_capture_and_validation_apply_patch(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "a.txt").write_text("foo", encoding="utf-8")
             patch = "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE"
@@ -72,7 +72,7 @@ class AntigravityHardeningTests(unittest.TestCase):
     def test_turn_processor_approval_fails_closed_if_file_modified_before_resume(self):
         from kitt.security.context import ExecutionSecurityContext
         from kitt.core.pending_action import canonical_args_digest
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "target.txt").write_text("original", encoding="utf-8")
             db = HistoryDatabase(in_memory=True)

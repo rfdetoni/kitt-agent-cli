@@ -39,7 +39,7 @@ from kitt.context_filter.context_planner import ContextPlan
 
 class TestPrimeHardeningSuite(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp_dir.name).resolve()
         self.db = HistoryDatabase(str(self.root))
         self.migration_runner = MigrationRunner()

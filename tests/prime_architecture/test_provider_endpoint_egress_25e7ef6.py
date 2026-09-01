@@ -71,7 +71,7 @@ class _SpyAuthService(ProviderAuthService):
 
 class TestProviderEndpointCredentialEgress(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.auth_file = self.root / "auth" / "auth.json"
         self.trust_file = self.root / "trust" / "provider-endpoints.json"
@@ -214,7 +214,7 @@ class TestProviderEndpointCredentialEgress(unittest.TestCase):
 
 class TestProviderEndpointRegistryBoundary(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         root = Path(self.tmp.name)
         self.auth = ProviderAuthService(
             CredentialStore(auth_file=str(root / "auth" / "auth.json"))
@@ -278,7 +278,7 @@ class TestProviderEndpointRegistryBoundary(unittest.TestCase):
 @unittest.skipIf(os.name == "nt", "POSIX permission semantics")
 class TestProviderEndpointTrustStoreSecurity(unittest.TestCase):
     def test_state_is_private_and_origin_normalization_is_stable(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             path = Path(tmp) / "state" / "provider-endpoints.json"
             policy = ProviderEndpointTrustStore(path)
             origin = policy.trust(
@@ -302,7 +302,7 @@ class TestProviderEndpointTrustStoreSecurity(unittest.TestCase):
             )
 
     def test_trust_file_symlink_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             target = root / "target.json"
             target.write_text('{"version":1,"providers":{}}', encoding="utf-8")

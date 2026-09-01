@@ -27,7 +27,7 @@ class TestTUIDaemonIntegration(unittest.IsolatedAsyncioTestCase):
     """Integration tests for DaemonUIBridge and Terminal UI persistence contracts."""
 
     async def asyncSetUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp_dir.name).resolve()
 
         self.server = DaemonServer(

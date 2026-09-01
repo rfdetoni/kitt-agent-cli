@@ -9,7 +9,7 @@ from kitt.core.turn_events import TurnStarted, TextDelta, TurnCompleted
 class TestLiveStreamingAndScroll(unittest.TestCase):
     def test_on_event_triggers_invalidate(self):
         async def run_test():
-            with tempfile.TemporaryDirectory() as tmp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
                 with KittRuntime.build(root_dir=tmp_dir) as runtime:
                     app = KittUIApp(runtime=runtime)
                     app.build_application()

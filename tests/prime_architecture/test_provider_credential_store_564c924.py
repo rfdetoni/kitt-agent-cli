@@ -13,7 +13,7 @@ from kitt.llm.auth import CredentialStore
 @unittest.skipIf(os.name == "nt", "POSIX file-security semantics")
 class TestProviderCredentialStoreHardening(unittest.TestCase):
     def test_final_auth_symlink_is_rejected_and_target_untouched(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             target = root / "target.json"
             target.write_text(
@@ -41,7 +41,7 @@ class TestProviderCredentialStoreHardening(unittest.TestCase):
             )
 
     def test_world_readable_auth_file_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             auth = Path(tmp) / "auth.json"
             auth.write_text(
                 '{"openai":{"type":"api_key","value_ref":"secret"}}',
@@ -56,7 +56,7 @@ class TestProviderCredentialStoreHardening(unittest.TestCase):
     def test_fifo_auth_file_is_rejected_without_blocking(self):
         if not hasattr(os, "mkfifo"):
             self.skipTest("FIFO unavailable")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             auth = Path(tmp) / "auth.json"
             os.mkfifo(auth, 0o600)
             store = CredentialStore(auth_file=str(auth))
@@ -65,7 +65,7 @@ class TestProviderCredentialStoreHardening(unittest.TestCase):
                 store.load()
 
     def test_oversized_auth_file_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             auth = Path(tmp) / "auth.json"
             with auth.open("wb") as handle:
                 handle.truncate(CredentialStore._MAX_AUTH_BYTES + 1)
@@ -76,7 +76,7 @@ class TestProviderCredentialStoreHardening(unittest.TestCase):
                 store.load()
 
     def test_parent_symlink_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             real = base / "real"
             real.mkdir()
@@ -90,7 +90,7 @@ class TestProviderCredentialStoreHardening(unittest.TestCase):
                 )
 
     def test_written_store_is_private_regular_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             auth = Path(tmp) / "auth.json"
             store = CredentialStore(auth_file=str(auth))
             store.save_credential(
@@ -110,7 +110,7 @@ class TestProviderCredentialStoreHardening(unittest.TestCase):
 
 class TestProviderCredentialStoreConcurrency(unittest.TestCase):
     def test_multiple_store_instances_do_not_lose_provider_updates(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             auth = Path(tmp) / "auth.json"
             errors: list[Exception] = []
 

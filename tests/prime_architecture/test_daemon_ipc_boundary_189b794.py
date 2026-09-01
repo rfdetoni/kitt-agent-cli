@@ -11,7 +11,7 @@ from kitt.daemon.transport import IPCTransport
 @unittest.skipIf(os.name == "nt", "POSIX filesystem semantics")
 class TestDaemonIPCBoundary(unittest.TestCase):
     def test_workspace_kitt_symlink_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             workspace = base / "workspace"
             external = base / "external"
@@ -30,7 +30,7 @@ class TestDaemonIPCBoundary(unittest.TestCase):
             self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
 
     def test_secret_symlink_is_rejected_without_reading_target(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
             transport = IPCTransport(workspace)
@@ -46,7 +46,7 @@ class TestDaemonIPCBoundary(unittest.TestCase):
     def test_secret_fifo_is_rejected_without_blocking(self):
         if not hasattr(os, "mkfifo"):
             self.skipTest("FIFO unavailable")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
             transport = IPCTransport(workspace)
@@ -58,7 +58,7 @@ class TestDaemonIPCBoundary(unittest.TestCase):
     def test_secure_write_refuses_fifo_without_truncating_or_blocking(self):
         if not hasattr(os, "mkfifo"):
             self.skipTest("FIFO unavailable")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
             transport = IPCTransport(workspace)
@@ -68,7 +68,7 @@ class TestDaemonIPCBoundary(unittest.TestCase):
                 transport.secure_write(transport.pid_file, "123")
 
     def test_endpoint_metadata_world_readable_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
             transport = IPCTransport(workspace)
@@ -83,7 +83,7 @@ class TestDaemonIPCBoundary(unittest.TestCase):
             self.assertIsNone(transport.read_endpoint_metadata())
 
     def test_endpoint_metadata_rejects_non_loopback_tcp(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
             transport = IPCTransport(workspace)
@@ -96,7 +96,7 @@ class TestDaemonIPCBoundary(unittest.TestCase):
             self.assertIsNone(transport.read_endpoint_metadata())
 
     def test_cleanup_does_not_follow_replaced_kitt_directory(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             workspace = base / "workspace"
             workspace.mkdir()
@@ -122,7 +122,7 @@ class TestDaemonIPCBoundary(unittest.TestCase):
             )
 
     def test_stale_lock_symlink_does_not_read_or_delete_target(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
             workspace = base / "workspace"
             workspace.mkdir()

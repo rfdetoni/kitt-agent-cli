@@ -19,7 +19,7 @@ from kitt.extensions.manifest import (
 class TestExtensionManifest(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp_dir.name)
 
     def tearDown(self):

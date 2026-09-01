@@ -19,7 +19,7 @@ from kitt.security.workspace_fs import WorkspaceFileSystem
 
 class Round2HardeningTests(unittest.TestCase):
     def test_scanner_rejects_intermediate_symlink_even_if_git_reports_child(self):
-        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as outside:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root, tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as outside:
             root_path = Path(root)
             outside_path = Path(outside)
             (outside_path / "secret.py").write_text("SECRET = 1\n", encoding="utf-8")
@@ -35,7 +35,7 @@ class Round2HardeningTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "POSIX dir_fd race test")
     def test_atomic_write_expected_exists_revalidates_target_before_replace(self):
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             root_path = Path(root)
             target = root_path / "state.txt"
             target.write_text("old", encoding="utf-8")
@@ -64,7 +64,7 @@ class Round2HardeningTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "POSIX inode race test")
     def test_atomic_write_rejects_changed_target_identity(self):
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             root_path = Path(root)
             target = root_path / "state.txt"
             other = root_path / "other.txt"
@@ -90,7 +90,7 @@ class Round2HardeningTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "POSIX inode race test")
     def test_unlink_rejects_changed_target_identity(self):
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             root_path = Path(root)
             target = root_path / "state.txt"
             other = root_path / "other.txt"

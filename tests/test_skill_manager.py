@@ -6,7 +6,7 @@ from kitt.skills.skill_manager import SkillManager
 
 class TestSkillManager(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.kitt_home = Path(self.tmp_dir.name) / "private-home"
         self.kitt_home.mkdir(mode=0o700)
         self.old_kitt_home = os.environ.get("KITT_HOME")

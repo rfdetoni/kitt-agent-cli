@@ -5,7 +5,7 @@ from kitt.history.service import HistoryService
 
 class TestPhase2History(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.history_service = HistoryService(root_dir=self.tmp_dir.name)
 
     def tearDown(self):

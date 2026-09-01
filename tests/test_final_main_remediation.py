@@ -95,7 +95,7 @@ class FinalMainRemediationTests(unittest.TestCase):
         self.assertIn("REDACTED", rendered)
 
     def test_atomic_write_expected_absent_refuses_overwrite(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             fs = WorkspaceFileSystem(tmp)
             fs.atomic_write("new.txt", "one", expected_exists=False)
             with self.assertRaises(ValueError):
@@ -103,7 +103,7 @@ class FinalMainRemediationTests(unittest.TestCase):
             self.assertEqual((Path(tmp) / "new.txt").read_text(), "one")
 
     def test_multifile_patch_failure_rolls_back_prior_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "a.txt").write_text("A0", encoding="utf-8")
             (root / "b.txt").write_text("B0", encoding="utf-8")
@@ -128,7 +128,7 @@ class FinalMainRemediationTests(unittest.TestCase):
             self.assertEqual((root / "b.txt").read_text(), "B0")
 
     def test_multiple_blocks_for_same_file_are_staged_then_written_once(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "a.txt").write_text("one two three", encoding="utf-8")
             applier = DiffApplier(ChangeSetTracker(tmp))
@@ -146,14 +146,14 @@ class FinalMainRemediationTests(unittest.TestCase):
             self.assertEqual((root / "a.txt").read_text(), "ONE TWO three")
 
     def test_turn_processor_and_registry_share_one_canonical_applier(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             registry = ToolRegistry(tmp)
             processor = TurnProcessor(tmp, registry=registry)
             self.assertIs(processor.diff_applier, registry.applier)
             self.assertIs(processor.diff_applier.tracker, registry.applier.tracker)
 
     def test_write_file_uses_canonical_workspace_tracker_and_is_undoable(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             db = HistoryDatabase(in_memory=True)
             registry = ToolRegistry(tmp)
@@ -173,7 +173,7 @@ class FinalMainRemediationTests(unittest.TestCase):
             db.close()
 
     def test_undo_refuses_to_overwrite_external_change(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "a.txt").write_text("A0", encoding="utf-8")
             db = HistoryDatabase(in_memory=True)
@@ -190,7 +190,7 @@ class FinalMainRemediationTests(unittest.TestCase):
             db.close()
 
     def test_undo_is_session_scoped_and_survives_tracker_restart(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "a.txt").write_text("A0", encoding="utf-8")
             (root / "b.txt").write_text("B0", encoding="utf-8")
@@ -218,7 +218,7 @@ class FinalMainRemediationTests(unittest.TestCase):
             db.close()
 
     def test_interrupted_undo_restores_post_edit_state(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "a.txt").write_text("A0", encoding="utf-8")
             (root / "b.txt").write_text("B0", encoding="utf-8")
@@ -255,7 +255,7 @@ class FinalMainRemediationTests(unittest.TestCase):
         self.assertEqual(bridge.last_sequence_id, 100)
 
     def test_deep_monorepo_manifest_is_discovered_beyond_depth_four(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             manifest = Path(tmp) / "products" / "finance" / "backend" / "services" / "payments" / "pom.xml"
             manifest.parent.mkdir(parents=True)
             manifest.write_text("<project/>", encoding="utf-8")
@@ -337,7 +337,7 @@ class FinalMainRemediationTests(unittest.TestCase):
         self.assertIn("[truncated]", clean["huge"])
 
     def test_undo_retention_prunes_old_and_excess_changesets(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db = HistoryDatabase(in_memory=True)
             tracker = ChangeSetTracker(tmp, db=db, workspace_id="ws")
             tracker.max_changesets_per_session = 5

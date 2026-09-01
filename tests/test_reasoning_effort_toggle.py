@@ -18,7 +18,7 @@ class TestReasoningEffortToggle(unittest.TestCase):
         self.assertIn("branch:main", bar)
 
     def test_read_git_branch_name_from_head_ref(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             git_dir = root / ".git"
             git_dir.mkdir()

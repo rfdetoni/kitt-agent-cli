@@ -9,7 +9,7 @@ from kitt.memory.shared_client import SharedMemoryUnavailable
 
 class TestMemoryManagerShared(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
 
     def tearDown(self):

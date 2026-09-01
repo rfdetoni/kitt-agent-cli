@@ -7,7 +7,7 @@ from kitt.core.turn_processor import TurnProcessor
 
 class TestCancellationRealStop(unittest.TestCase):
     def test_turn_cancellation_aborts_processing_immediately(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             processor = TurnProcessor(root_dir=tmp_dir)
             cmd = TurnCommand(conversation_id="conv_1", prompt="Long running task", turn_id="turn_abc")
 

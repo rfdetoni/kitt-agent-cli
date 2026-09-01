@@ -8,7 +8,7 @@ from kitt.security.private_state import workspace_state_dir
 
 class TestAutonomyStore(unittest.TestCase):
     def test_store_persistence(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             kitt_home = Path(tmp_dir) / "private-home"
             kitt_home.mkdir(mode=0o700)
             old_home = os.environ.get("KITT_HOME")

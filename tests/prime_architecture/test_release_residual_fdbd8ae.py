@@ -23,7 +23,7 @@ from kitt.extensions.plugins.security import (
 
 class TestPluginReloadCleanup(unittest.IsolatedAsyncioTestCase):
     async def test_unload_removes_digest_scoped_modules(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = root / ".kitt" / "plugins" / "demo"
             plugin.mkdir(parents=True)
@@ -125,7 +125,7 @@ class TestMCPManagerResiduals(unittest.IsolatedAsyncioTestCase):
             async def close(self):
                 calls["close"] += 1
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             manager = MCPManager(temp_dir)
             config = MCPServerConfig(
                 server_id="Demo",
@@ -210,7 +210,7 @@ class TestHTTPTransportResiduals(unittest.IsolatedAsyncioTestCase):
 
 class TestExtensionLifecycleResidual(unittest.IsolatedAsyncioTestCase):
     async def test_cleanup_error_is_not_silently_swallowed(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             manager = ExtensionManager(temp_dir)
             manager.state = manager.STATE_STARTED
             manager._started = True

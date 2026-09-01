@@ -26,7 +26,7 @@ class _IsolatedAuthService(ProviderAuthService):
 
 class TestCustomProviderSecretHardening(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.auth_file = self.root / "auth-state" / "auth.json"
         _IsolatedAuthService.auth_file = self.auth_file
@@ -154,7 +154,7 @@ class TestCustomProviderSecretHardening(unittest.TestCase):
 @unittest.skipIf(os.name != "posix", "POSIX special-file semantics")
 class TestAtomicSecureWriteBoundary(unittest.TestCase):
     def test_final_symlink_is_rejected_and_target_is_untouched(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             target = root / "victim.json"
             target.write_text("ORIGINAL", encoding="utf-8")
@@ -173,7 +173,7 @@ class TestAtomicSecureWriteBoundary(unittest.TestCase):
     def test_fifo_target_is_rejected_without_opening_it(self):
         if not hasattr(os, "mkfifo"):
             self.skipTest("FIFO unavailable")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             target = Path(tmp) / "config.json"
             os.mkfifo(target, 0o600)
 
@@ -181,7 +181,7 @@ class TestAtomicSecureWriteBoundary(unittest.TestCase):
                 atomic_write_secure(target, "{}")
 
     def test_existing_workspace_parent_mode_is_not_forcibly_changed(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             os.chmod(root, 0o755)
             target = root / "config.json"

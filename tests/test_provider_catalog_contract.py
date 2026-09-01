@@ -12,7 +12,7 @@ from kitt.llm.domain import ModelDescriptor, ProviderDescriptor
 class TestProviderCatalogContract(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.cache_dir = Path(self.tmp_dir.name)
 
     def tearDown(self):

@@ -23,7 +23,7 @@ from kitt.security.context import ExecutionSecurityContext
 
 class TestFinalGoalFencing(unittest.TestCase):
     def test_goal_fence_uses_subject_conversation_for_retained_child(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             (root / "visible.txt").write_text("ok", encoding="utf-8")
             with KittRuntime.build(str(root)) as runtime:
@@ -66,7 +66,7 @@ class TestFinalGoalFencing(unittest.TestCase):
                 self.assertTrue(result.success, result.error)
 
     def test_child_approval_continuation_does_not_resume_goal(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             (root / "visible.txt").write_text("ok", encoding="utf-8")
             with KittRuntime.build(str(root)) as runtime:
@@ -147,7 +147,7 @@ class TestFinalGoalFencing(unittest.TestCase):
 
 class TestApprovalTOCTOU(unittest.TestCase):
     def test_new_file_created_after_approval_is_denied(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             with KittRuntime.build(str(root)) as runtime:
                 conversation = runtime.history.new_conversation("approval")
@@ -231,7 +231,7 @@ class TestPluginSnapshotAndImports(unittest.IsolatedAsyncioTestCase):
         return plugin
 
     async def test_snapshot_cache_rehashes_existing_directory(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = self._create_plugin(
                 root,
@@ -254,7 +254,7 @@ class TestPluginSnapshotAndImports(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_loader_rejects_absolute_local_imports(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = self._create_plugin(
                 root,
@@ -273,7 +273,7 @@ class TestPluginSnapshotAndImports(unittest.IsolatedAsyncioTestCase):
                 await loader.load_async(manifest)
 
     async def test_loader_uses_digest_scoped_package_for_relative_imports(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             root = Path(temp_dir)
             plugin = self._create_plugin(
                 root,
@@ -297,7 +297,7 @@ class TestPluginSnapshotAndImports(unittest.IsolatedAsyncioTestCase):
 
 class TestExtensionManagerStartup(unittest.IsolatedAsyncioTestCase):
     async def test_start_failure_rolls_back_and_emits_event(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             events = []
 
             class EventBus:

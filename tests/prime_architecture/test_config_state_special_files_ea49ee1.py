@@ -15,7 +15,7 @@ from kitt.extensions.plugins.security import PluginStateStore, PluginTrustStore
 @unittest.skipIf(os.name == "nt", "POSIX file security semantics")
 class TestTrustedConfigPath(unittest.TestCase):
     def test_global_mcp_symlink_is_not_resolved_away(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             target = root / "actual.json"
             target.write_text(
@@ -44,7 +44,7 @@ class TestTrustedConfigPath(unittest.TestCase):
             self.assertEqual(manager.list_servers(), [])
 
     def test_global_mcp_world_readable_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             config = root / "global-mcp.json"
             config.write_text(
@@ -72,7 +72,7 @@ class TestTrustedConfigPath(unittest.TestCase):
     def test_global_mcp_fifo_is_rejected_without_blocking(self):
         if not hasattr(os, "mkfifo"):
             self.skipTest("FIFO unavailable")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             fifo = root / "mcp.fifo"
             os.mkfifo(fifo, 0o600)
@@ -89,7 +89,7 @@ class TestStateFilesAreRegular(unittest.TestCase):
     def test_mcp_trust_fifo_is_rejected(self):
         if not hasattr(os, "mkfifo"):
             self.skipTest("FIFO unavailable")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             fifo = root / "mcp-trust.fifo"
             os.mkfifo(fifo, 0o600)
@@ -100,7 +100,7 @@ class TestStateFilesAreRegular(unittest.TestCase):
     def test_plugin_trust_fifo_is_rejected(self):
         if not hasattr(os, "mkfifo"):
             self.skipTest("FIFO unavailable")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             fifo = root / "plugin-trust.fifo"
             os.mkfifo(fifo, 0o600)
@@ -111,7 +111,7 @@ class TestStateFilesAreRegular(unittest.TestCase):
     def test_plugin_state_fifo_is_rejected(self):
         if not hasattr(os, "mkfifo"):
             self.skipTest("FIFO unavailable")
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             fifo = root / "plugin-state.fifo"
             os.mkfifo(fifo, 0o600)

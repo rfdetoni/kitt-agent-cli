@@ -11,7 +11,7 @@ class TestRetainedAgentsLifecycle(unittest.TestCase):
     """Rigorous tests for Retained Agent state machine, task assignment, and correlated messaging."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp_dir.name).resolve()
         self.runtime = KittRuntime.build(str(self.root))
         self.conv = self.runtime.history.new_conversation("Retained Agent Main")

@@ -10,7 +10,7 @@ from kitt.index.repository import RepositoryIndex
 
 class TestConcurrentApprovals(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.db = HistoryDatabase(self.tmp.name)
         self.manager = ApprovalManager(ttl_seconds=60.0, db=self.db)
 
@@ -58,7 +58,7 @@ class TestConcurrentApprovals(unittest.TestCase):
 
 class TestConcurrentIndex(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         for i in range(10):
             (self.root / f"file_{i}.py").write_text(f"def func_{i}(): pass\n", encoding="utf-8")

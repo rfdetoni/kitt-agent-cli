@@ -290,7 +290,7 @@ class TestUXStateOfTheArt(unittest.TestCase):
         from kitt.router.router import TaskRouter
         from kitt.domain.entities import RouterConfig, ModelProfile
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             router = TaskRouter(root_dir=tmp_dir)
             router.config.custom_providers = [
                 {"name": "lan-ollama", "base_url": "http://192.168.1.100:11434", "backend": "ollama", "protocol": "ollama-chat"}

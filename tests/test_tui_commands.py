@@ -73,7 +73,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
 
     async def test_model_configuration_does_not_leak_to_new_runtime(self):
         await self.ui._execute_command("/model all openai gpt-4o-mini")
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             other = KittRuntime.build(root, RuntimeConfig(history_enabled=False, persistence_enabled=False))
             try:
                 profile = other.processor.router.resolve_profile_for_task("code-generation")[1]

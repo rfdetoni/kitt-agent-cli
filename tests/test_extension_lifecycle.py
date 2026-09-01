@@ -14,7 +14,7 @@ from kitt.tools.registry import ToolRegistry
 class TestExtensionLifecycle(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp_dir.name)
         self.ws_plugins_dir = self.root / ".kitt" / "plugins"
         self.ws_plugins_dir.mkdir(parents=True, exist_ok=True)
