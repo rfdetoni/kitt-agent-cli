@@ -464,7 +464,7 @@ def _plugin_source_root(
         os.path.abspath(
             os.path.expanduser(str(manifest.manifest_path.parent))
         )
-    )
+    ).resolve()
 
     if manifest.source == "workspace" and workspace_root is not None:
         workspace = Path(workspace_root).resolve()

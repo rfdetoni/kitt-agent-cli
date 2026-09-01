@@ -30,7 +30,7 @@ def validate_child_paths(root_dir, allowed_paths) -> list[str]:
         if not _contains(root, target):
             raise ValueError("Child path escapes workspace")
         output.append(target)
-    return [str(path.relative_to(root)) for path in _dedupe_scopes(output)]
+    return [path.relative_to(root).as_posix() for path in _dedupe_scopes(output)]
 
 
 def narrow_child_paths(
@@ -55,14 +55,14 @@ def narrow_child_paths(
         reduced = _dedupe_scopes(requested)
         if any(path == root for path in reduced):
             return []
-        return [str(path.relative_to(root)) for path in reduced]
+        return [path.relative_to(root).as_posix() for path in reduced]
 
     parents = [
         (root / path).resolve(strict=False)
         for path in validate_child_paths(root, parent_paths)
     ]
     if not requested:
-        return [str(path.relative_to(root)) for path in _dedupe_scopes(parents)]
+        return [path.relative_to(root).as_posix() for path in _dedupe_scopes(parents)]
 
     intersections: list[Path] = []
     for parent in parents:
@@ -75,4 +75,4 @@ def narrow_child_paths(
     intersections = _dedupe_scopes(intersections)
     if not intersections:
         raise PermissionError("Child requested paths outside parent path scope")
-    return [str(path.relative_to(root)) for path in intersections]
+    return [path.relative_to(root).as_posix() for path in intersections]

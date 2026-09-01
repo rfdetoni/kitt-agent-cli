@@ -374,6 +374,7 @@ class TestPluginSnapshotAndStores(unittest.IsolatedAsyncioTestCase):
                 state.set_enabled(manifest.name, True)
                 """
             )
+            env = dict(os.environ, PYTHONPATH=str(Path.cwd()))
             procs = [
                 subprocess.Popen(
                     [
@@ -384,7 +385,8 @@ class TestPluginSnapshotAndStores(unittest.IsolatedAsyncioTestCase):
                         str(plugin_one / "plugin.toml"),
                         str(trust_path),
                         str(state_path),
-                    ]
+                    ],
+                    env=env,
                 ),
                 subprocess.Popen(
                     [
@@ -395,7 +397,8 @@ class TestPluginSnapshotAndStores(unittest.IsolatedAsyncioTestCase):
                         str(plugin_two / "plugin.toml"),
                         str(trust_path),
                         str(state_path),
-                    ]
+                    ],
+                    env=env,
                 ),
             ]
             for proc in procs:

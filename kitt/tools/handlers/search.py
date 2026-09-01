@@ -102,7 +102,7 @@ class SearchHandler:
             if len(matches) >= 200:
                 break
             try:
-                relative = str(path.relative_to(ctx.registry.root_path))
+                relative = path.relative_to(ctx.registry.root_path).as_posix()
                 if not _path_allowed(ctx, relative):
                     continue
                 with path.open("r", encoding="utf-8", errors="ignore") as handle:
