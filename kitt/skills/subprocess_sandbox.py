@@ -184,6 +184,23 @@ class SubprocessSkillSandbox:
         finally:
             selector.close()
             self._kill_tree(process)
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
 
     def _handle_rpc(self, method, params, declared_caps, security_context):
         from kitt.runtime.safe_runtime import SafeRuntime

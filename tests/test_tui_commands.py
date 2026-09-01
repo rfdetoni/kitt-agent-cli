@@ -211,7 +211,12 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ui.state.active_overlay, "permission")
         with patch.object(self.ui, "open_overlay") as mock_open:
             self.pipe.send_text("a")
-            await asyncio.sleep(0.05)
+            # Python 3.14 / Windows can schedule the approval coroutine later
+            # than a fixed 50 ms sleep. Wait on the observable state instead.
+            for _ in range(40):
+                if self.ui.state.active_overlay is None:
+                    break
+                await asyncio.sleep(0.025)
             mock_open.assert_not_called()
         self.assertIsNone(self.ui.state.active_overlay)
 

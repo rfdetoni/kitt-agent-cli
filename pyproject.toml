@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 license = {text = "MIT"}
 dependencies = [
     "prompt-toolkit>=3.0.52,<4",
-    "kitt-protocol @ git+https://github.com/rfdetoni/kitt-protocol.git@main#subdirectory=sdk/python",
+    "kitt-protocol @ git+https://github.com/rfdetoni/kitt-protocol.git@90882e9a44001e96fa84bc30e235d86687e08825#subdirectory=sdk/python",
 ]
 
 [project.optional-dependencies]
