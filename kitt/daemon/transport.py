@@ -76,6 +76,9 @@ class IPCTransport:
                 f"Refusing symlink KITT state directory: {self.kitt_dir}"
             )
 
+        if sys.platform == "win32":
+            return -1
+
         flags = os.O_RDONLY
         if hasattr(os, "O_DIRECTORY"):
             flags |= os.O_DIRECTORY
@@ -121,7 +124,8 @@ class IPCTransport:
 
     def _ensure_kitt_dir(self) -> None:
         fd = self._open_kitt_dir_fd(create=True)
-        os.close(fd)
+        if fd >= 0:
+            os.close(fd)
 
     def _is_internal(self, path: Path) -> bool:
         try:
@@ -136,7 +140,9 @@ class IPCTransport:
         mode: int = 0o600,
     ) -> tuple[int, Optional[int]]:
         """Open a daemon state file relative to a validated directory FD."""
-        if not self._is_internal(path):
+        if sys.platform == "win32" or not self._is_internal(path):
+            if sys.platform == "win32":
+                self._ensure_kitt_dir()
             return os.open(str(path), flags, mode), None
 
         dir_fd = self._open_kitt_dir_fd(create=True)
@@ -145,7 +151,8 @@ class IPCTransport:
             fd = os.open(path.name, flags, mode, dir_fd=dir_fd)
             return fd, dir_fd
         except Exception:
-            os.close(dir_fd)
+            if dir_fd is not None and dir_fd >= 0:
+                os.close(dir_fd)
             raise
 
     @staticmethod
@@ -153,7 +160,7 @@ class IPCTransport:
         try:
             os.close(fd)
         finally:
-            if dir_fd is not None:
+            if dir_fd is not None and dir_fd >= 0:
                 os.close(dir_fd)
 
     @staticmethod
@@ -483,7 +490,11 @@ class IPCTransport:
 
     def _unlink_internal(self, path: Path) -> None:
         path = Path(path)
-        if not self._is_internal(path):
+        if sys.platform == "win32" or not self._is_internal(path):
+            if sys.platform == "win32" and self.kitt_dir.is_symlink():
+                raise PermissionError(
+                    f"Refusing symlink KITT state directory: {self.kitt_dir}"
+                )
             path.unlink(missing_ok=True)
             return
 
@@ -494,7 +505,8 @@ class IPCTransport:
             except FileNotFoundError:
                 pass
         finally:
-            os.close(dir_fd)
+            if dir_fd >= 0:
+                os.close(dir_fd)
 
     def release_instance_lock(self, fd: Optional[int]) -> None:
         if fd is not None:
