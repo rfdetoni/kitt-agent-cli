@@ -152,20 +152,20 @@ def build_parser() -> argparse.ArgumentParser:
         remote_parser.add_argument(
             "--port",
             type=int,
-            default=7337,
-            help="HTTP port (default: 7337; 0 chooses a free port)",
+            default=None,
+            help="HTTP port (Control Center/default: 7337; 0 chooses a free port)",
         )
         remote_parser.add_argument(
             "--pairing-ttl",
             type=float,
-            default=900.0,
-            help="Pairing-code lifetime in seconds",
+            default=None,
+            help="Pairing-code lifetime in seconds (Control Center/default: 900)",
         )
         remote_parser.add_argument(
             "--session-ttl",
             type=float,
-            default=43_200.0,
-            help="Web-session lifetime in seconds",
+            default=None,
+            help="Web-session lifetime in seconds (Control Center/default: 43200)",
         )
         remote_parser.add_argument("--tls-cert", default=None, help="PEM certificate path")
         remote_parser.add_argument("--tls-key", default=None, help="PEM private-key path")
