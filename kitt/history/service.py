@@ -30,17 +30,26 @@ class HistoryService:
             ident = resolve_workspace_identity(self.db, root_dir)
             self.workspace = ident
         self.active_conversation: Optional[Dict[str, Any]] = None
+        self._fresh_session_requested = False
 
     @property
     def workspace_id(self) -> str:
         return self.workspace.id
 
+    def begin_fresh_session(self) -> None:
+        """Start a fresh logical CLI session lazily without deleting history."""
+        self.active_conversation = None
+        self._fresh_session_requested = True
+
     def new_conversation(self, title: str = "New Conversation") -> Dict[str, Any]:
         conv = self.repo.create_conversation(self.workspace_id, title=title)
         self.active_conversation = conv
+        self._fresh_session_requested = False
         return conv
 
     def get_or_create_active(self) -> Dict[str, Any]:
+        if self._fresh_session_requested:
+            return self.new_conversation()
         if not self.active_conversation:
             convs = self.repo.list_conversations(self.workspace_id, limit=1)
             if convs:
@@ -50,6 +59,8 @@ class HistoryService:
         return self.active_conversation
 
     def get_active_read_only(self) -> Optional[Dict[str, Any]]:
+        if self._fresh_session_requested and not self.active_conversation:
+            return None
         if self.active_conversation:
             return self.active_conversation
         convs = self.repo.list_conversations(self.workspace_id, limit=1)
@@ -74,10 +85,12 @@ class HistoryService:
             idx = int(conv_id_or_index) - 1
             if 0 <= idx < len(convs):
                 self.active_conversation = convs[idx]
+                self._fresh_session_requested = False
                 return self.active_conversation
         for c in convs:
             if c["id"].startswith(conv_id_or_index):
                 self.active_conversation = c
+                self._fresh_session_requested = False
                 return c
         return None
 

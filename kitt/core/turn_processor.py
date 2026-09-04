@@ -395,7 +395,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     def _needs_project_context(task, prompt: str) -> bool:
         return task.intent != "ASK" or any(term in prompt.lower() for term in ("projeto", "project", "repositório", "repository", "código", "codebase"))
 
-    def _summarize_project_context(self, client: LLMClient, prompt: str, context_map: str) -> str:
+    def _summarize_project_context(
+        self, client: LLMClient, prompt: str, context_map: str,
+        session_key: Optional[str] = None,
+    ) -> str:
         if not context_map:
             return ""
         # The compiled context pack is already selected by value/token. Calling
@@ -424,11 +427,13 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     summary = summary_client.chat(
                         [{"role": "user", "content": user_content}],
                         system_prompt=CONTEXT_SUMMARY_PROMPT,
+                        session_key=session_key,
                     )
             else:
                 summary = client.chat(
                     [{"role": "user", "content": user_content}],
                     system_prompt=CONTEXT_SUMMARY_PROMPT,
+                    session_key=session_key,
                 )
             summary = self._without_thinking(summary)[:6000] or fallback
         except Exception:
@@ -636,7 +641,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             ctx_profile = replace(ctx_profile, max_output_tokens=1024)
         sf_client = self.context_client or LLMClient(ctx_profile)
         semantic_filter = SemanticFilter(context_profile=ctx_profile, llm_client=sf_client)
-        filter_res = semantic_filter.filter_and_plan(cmd.prompt)
+        filter_res = semantic_filter.filter_and_plan(
+            cmd.prompt, session_key=cmd.conversation_id
+        )
         task, plan = filter_res.task, filter_res.plan
         agent_addressed = self._addresses_kitt(cmd.prompt)
         if cmd.mode == "plan":
@@ -722,7 +729,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 f"Repository map:\n{context_map_str}" if context_map_str else "",
                 f"Source excerpts:\n{sources}" if sources else "",
             ) if part)
-            context_map_str = self._summarize_project_context(sf_client, cmd.prompt, context_map_str)
+            context_map_str = self._summarize_project_context(
+                sf_client, cmd.prompt, context_map_str,
+                session_key=cmd.conversation_id,
+            )
 
         working_context = self.working_set.context(cmd.conversation_id)
         if working_context:

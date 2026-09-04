@@ -2279,8 +2279,9 @@ class KittUIApp:
 
         # Notice popup dismissal keybindings
         has_toasts = Condition(lambda: bool(self.state.active_toasts()))
-        @kb.add("escape", filter=has_toasts & Condition(lambda: self.state.active_overlay is None))
-        @kb.add("enter", filter=has_toasts & Condition(lambda: not self.prompt_buffer.text.strip() and self.state.active_overlay is None))
+        notice_popup = has_toasts & Condition(lambda: self.state.active_overlay is None)
+        @kb.add("escape", filter=notice_popup, eager=True)
+        @kb.add("enter", filter=notice_popup, eager=True)
         def _(event):
             self.state.clear_toasts()
             if self.application: self.application.invalidate()

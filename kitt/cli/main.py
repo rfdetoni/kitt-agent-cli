@@ -212,6 +212,9 @@ async def async_main(args) -> int:
         frontend_only=daemon_authoritative,
     )
     runtime = KittRuntime.build(args.root, config=config)
+    # A new KITT invocation starts logically blank. Saved history remains
+    # available through explicit history/resume commands.
+    runtime.history.begin_fresh_session()
     backend = (
         HeadlessUI(runtime, args.prompt)
         if args.prompt is not None

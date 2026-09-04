@@ -63,7 +63,9 @@ class SemanticFilter:
         self.fallback_planner = DeterministicFallbackPlanner()
         self.planner = ContextPlanner()
 
-    def filter_and_plan(self, prompt: str) -> SemanticFilterResult:
+    def filter_and_plan(
+        self, prompt: str, session_key: Optional[str] = None
+    ) -> SemanticFilterResult:
         start_t = time.time()
 
         # Rule 1: Trivial prompt bypass
@@ -82,7 +84,12 @@ class SemanticFilter:
         # Rule 2: Call Context LLM
         try:
             messages = [{"role": "user", "content": prompt}]
-            response_text = self.llm_client.chat(messages, system_prompt=SYSTEM_CONTEXT_FILTER_PROMPT, response_format="json")
+            response_text = self.llm_client.chat(
+                messages,
+                system_prompt=SYSTEM_CONTEXT_FILTER_PROMPT,
+                response_format="json",
+                session_key=session_key,
+            )
 
             if len(response_text) > 16384:
                 raise ValueError("JSON response exceeded 16 KiB limit.")
