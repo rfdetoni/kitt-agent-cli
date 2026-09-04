@@ -6,6 +6,7 @@ from kitt.llm.providers.openai_responses import OpenAIResponsesAdapter
 from kitt.llm.providers.anthropic import AnthropicAdapter
 from kitt.llm.providers.gemini import GeminiAdapter
 from kitt.llm.providers.openai_compatible import OpenAICompatibleAdapter
+from kitt.llm.providers.kitt_reverse_proxy import KittReverseProxyAdapter
 
 __all__ = [
     "LLMRequest",
@@ -16,4 +17,5 @@ __all__ = [
     "AnthropicAdapter",
     "GeminiAdapter",
     "OpenAICompatibleAdapter",
+    "KittReverseProxyAdapter",
 ]

@@ -22,6 +22,7 @@ from kitt.llm.providers import (
     OpenAIChatAdapter,
     OpenAICompatibleAdapter,
     OpenAIResponsesAdapter,
+    KittReverseProxyAdapter,
     ProviderAdapter,
 )
 
@@ -52,6 +53,7 @@ class ProviderRegistry:
             "openai-chat-completions": OpenAIChatAdapter(),
             "openai-compatible": OpenAICompatibleAdapter(),
             "openai-responses": OpenAIResponsesAdapter(),
+            "kitt-reverse-proxy": KittReverseProxyAdapter(),
             "anthropic-messages": AnthropicAdapter(),
             "gemini-generate-content": GeminiAdapter(),
         }
@@ -131,6 +133,8 @@ class ProviderRegistry:
         # Legacy descriptors without protocol remain supported by deterministic
         # identity inference. Unknown declared protocols never reach this path.
         pid = (provider_id or "").strip().lower()
+        if pid in {"kitt-reverse-proxy", "kitt-proxy"}:
+            return self._adapters_by_protocol["kitt-reverse-proxy"]
         if "ollama" in pid:
             return self._adapters_by_protocol["ollama-chat"]
         if "anthropic" in pid or "claude" in pid:

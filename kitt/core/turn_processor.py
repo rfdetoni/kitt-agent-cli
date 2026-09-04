@@ -223,7 +223,7 @@ class TurnProcessor:
             excess -= max(0, current_tokens - TokenCounter.count_tokens(trimmed))
 
     def _routing_capabilities(self) -> Dict[str, ModelCapabilities]:
-        local_backends = {"ollama", "lmstudio", "antigravity", "local"}
+        local_backends = {"ollama", "lmstudio", "antigravity", "local", "kitt-reverse-proxy", "kitt-proxy"}
         caps: Dict[str, ModelCapabilities] = {}
         for name, profile in self.router.config.profiles.items():
             is_local = profile.backend in local_backends
@@ -487,11 +487,25 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             text = text.replace(tag, "")
         return text
 
-    def _stream_execution_response(self, client: LLMClient, messages: List[Dict[str, str]], system_prompt: str, turn_id: str = "", started_at: float = 0.0):
+    def _stream_execution_response(
+        self,
+        client: LLMClient,
+        messages: List[Dict[str, str]],
+        system_prompt: str,
+        turn_id: str = "",
+        started_at: float = 0.0,
+        session_key: str = "",
+    ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
+        def _invoke_chat_stream(msgs, sys_prompt):
+            try:
+                return client.chat_stream(msgs, system_prompt=sys_prompt, session_key=session_key or None)
+            except TypeError:
+                return client.chat_stream(msgs, system_prompt=sys_prompt)
+
         if "lfm" in getattr(profile, "model", "").lower():
-            raw_text = "".join(client.chat_stream(messages, system_prompt=system_prompt))
+            raw_text = "".join(_invoke_chat_stream(messages, system_prompt))
             thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
             thought_text = thought_match.group(1).strip() if thought_match else ""
             dur_ms = int((time.time() - (started_at or time.time())) * 1000)
@@ -510,7 +524,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
         TAG_OPENERS = ("<kitt-python-compute>", "<kitt-tool>", "<think>", "<thought>", "</think>", "</thought>", "</kitt-tool>", "</kitt-python-compute>")
 
-        for chunk in client.chat_stream(messages, system_prompt=system_prompt):
+        for chunk in _invoke_chat_stream(messages, system_prompt):
             if turn_id and self._cancel_requested(turn_id):
                 break
             full_response += chunk
@@ -887,7 +901,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
             self._rebudget_execution_messages(execution_messages, request.system_prompt, exe_profile)
             for streamed_response, event in self._stream_execution_response(
-                exe_client, execution_messages, request.system_prompt, turn_id=cmd.turn_id, started_at=thinking_started_at
+                exe_client,
+                execution_messages,
+                request.system_prompt,
+                turn_id=cmd.turn_id,
+                started_at=thinking_started_at,
+                session_key=cmd.conversation_id,
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)

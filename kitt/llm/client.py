@@ -5,6 +5,7 @@ import asyncio
 import concurrent.futures
 import threading
 import urllib.request
+import uuid
 from typing import Dict, Generator, List, Optional
 
 from kitt.domain.entities import ModelProfile
@@ -66,6 +67,7 @@ class LLMClient:
         endpoint_policy: Optional[ProviderEndpointTrustStore] = None,
     ):
         self.profile = profile
+        self._kitt_session_id = uuid.uuid4().hex[:32]
         self._external_executor = executor is not None
         self._executor = executor or concurrent.futures.ThreadPoolExecutor(
             max_workers=2,
@@ -126,12 +128,14 @@ class LLMClient:
         messages: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
+        session_key: Optional[str] = None,
     ) -> str:
         full_text = "".join(
             self.chat_stream(
                 messages,
                 system_prompt=system_prompt,
                 response_format=response_format,
+                session_key=session_key,
             )
         )
         if not full_text.strip():
@@ -143,6 +147,7 @@ class LLMClient:
         messages: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
+        session_key: Optional[str] = None,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
@@ -155,6 +160,7 @@ class LLMClient:
                     messages,
                     system_prompt,
                     response_format,
+                    session_key,
                 ):
                     if stop.is_set():
                         break
@@ -192,6 +198,7 @@ class LLMClient:
         messages: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
+        session_key: Optional[str] = None,
     ) -> Generator[str, None, None]:
         backend = (self.profile.backend or "").strip().lower()
         base_url = (self.profile.base_url or "").strip()
@@ -220,6 +227,22 @@ class LLMClient:
                 "openai-chat-completions"
             )
 
+        is_kitt_proxy = (
+            (self.profile.protocol or "").strip().lower() == "kitt-reverse-proxy"
+            or backend in {"kitt-reverse-proxy", "kitt-proxy"}
+        )
+        extra_headers: Dict[str, str] = {}
+        if is_kitt_proxy:
+            if session_key:
+                session_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"kitt-reverse-proxy:{session_key}",
+                ).hex[:32]
+            else:
+                session_id = self._kitt_session_id
+            extra_headers["X-Kitt-Session-Id"] = session_id
+            extra_headers["X-Kitt-Request-Id"] = uuid.uuid4().hex
+
         request = LLMRequest(
             model=self.profile.model,
             messages=messages,
@@ -232,6 +255,7 @@ class LLMClient:
             api_key=api_key,
             base_url=self.profile.base_url,
             timeout_seconds=self.profile.request_timeout_seconds,
+            extra_headers=extra_headers,
         )
         yield from self.retry_policy.execute_with_retry(
             lambda: adapter.stream(request)

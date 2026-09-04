@@ -138,8 +138,10 @@ class KittUIApp:
                     self.runtime.processor.registry.register_provider(ProviderDescriptor(
                         id="kitt-reverse-proxy",
                         name="KITT Reverse Proxy",
-                        protocol="openai-chat-completions",
+                        protocol="kitt-reverse-proxy",
                         base_url=proxy_url,
+                        env_vars=("KITT_REVERSE_PROXY_API_KEY", "KITT_REVERSE_PROXY_URL"),
+                        auth_methods=("api_key",),
                         local=True,
                     ))
         except Exception:
@@ -738,7 +740,7 @@ class KittUIApp:
         if target_url and not target_url.startswith(("http://", "https://")):
             target_url = f"http://{target_url}"
         is_kitt_proxy = "kitt-reverse-proxy" in (provider or "").lower() or "kitt-proxy" in (provider or "").lower() or ":3000" in (target_url or "")
-        protocol = "ollama-chat" if (":11434" in (target_url or "") or "ollama" in (provider or "").lower()) else ("openai-chat-completions" if is_kitt_proxy else fallback.protocol)
+        protocol = "ollama-chat" if (":11434" in (target_url or "") or "ollama" in (provider or "").lower()) else ("kitt-reverse-proxy" if is_kitt_proxy else fallback.protocol)
         router.config.profiles[profile_name] = replace(
             fallback, model=model, backend=provider,
             base_url=target_url,
