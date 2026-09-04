@@ -517,7 +517,7 @@ class ProviderAuthService:
 
     def methods(self, provider_id: str) -> List[str]:
         pid = (provider_id or "").strip().lower()
-        if pid in ("ollama", "lmstudio"):
+        if pid in ("ollama", "lmstudio", "kitt-reverse-proxy", "kitt-proxy"):
             return ["none", "api_key"]
         from kitt.llm.oauth import OAUTH_PROVIDERS
         m = ["api_key", "env", "session"]
@@ -589,7 +589,7 @@ class ProviderAuthService:
 
     def state(self, provider_id: str) -> ProviderAuthState:
         pid = (provider_id or "").strip().lower()
-        if pid in ("ollama", "lmstudio"):
+        if pid in ("ollama", "lmstudio", "kitt-reverse-proxy", "kitt-proxy"):
             return ProviderAuthState(provider_id=pid, auth_type="none", credential_ref="", is_valid=True)
         stored = self.store.load().get(pid)
         if stored:

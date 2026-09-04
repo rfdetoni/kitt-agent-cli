@@ -18,7 +18,7 @@ class KeyMap:
             "context_details": KeyBinding("context_details", ["c-x c"], "Show Context Details"),
             "timeline": KeyBinding("timeline", ["c-x g"], "Show Session Timeline"),
             "models": KeyBinding("models", ["c-x m"], "Switch Models"),
-            "agents": KeyBinding("agents", ["c-x a", "a"], "Open Agents Dashboard"),
+            "agents": KeyBinding("agents", ["c-x a"], "Open Agents Dashboard"),
             "external_editor": KeyBinding("external_editor", ["c-x e"], "Open External Editor"),
             "toggle_collapse": KeyBinding("toggle_collapse", ["c-o"], "Expandir/recolher último bloco de ferramenta"),
             "cancel": KeyBinding("cancel", ["escape", "c-c"], "Cancel Execution or Overlay"),

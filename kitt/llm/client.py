@@ -54,7 +54,7 @@ def _with_retry(fn, max_retries: int = 3, base_delay: float = 0.5):
 class LLMClient:
     """Unified client delegating requests to protocol adapters."""
 
-    LOCAL_BACKENDS = frozenset({"ollama", "lmstudio", "antigravity", "local"})
+    LOCAL_BACKENDS = frozenset({"ollama", "lmstudio", "antigravity", "local", "kitt-reverse-proxy", "kitt-proxy"})
 
     def __init__(
         self,

@@ -197,6 +197,29 @@ class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Filtrando", rendered)
         self.assertIn("sonnet", rendered.lower())
 
+    async def test_kitt_reverse_proxy_native_support(self):
+        # Verify kitt-reverse-proxy is present in default providers and favorites
+        model = ModelSetupModel()
+        self.assertIn("kitt-reverse-proxy", model.providers)
+        self.assertIn("kitt-reverse-proxy", model.favorite_providers)
+        
+        # Verify app provider defaults resolve to localhost:3000
+        base_url, api_key = self.ui._provider_defaults("kitt-reverse-proxy")
+        self.assertIn(":3000", base_url)
+        
+        # Verify is_local_or_no_auth_provider
+        self.assertTrue(self.ui._is_local_or_no_auth_provider("kitt-reverse-proxy"))
+        self.assertTrue(self.ui._is_local_or_no_auth_provider("custom", "http://127.0.0.1:3000"))
+
+    def test_keymap_no_single_letter_conflicts(self):
+        from kitt.ui.keymap import KeyMap
+        km = KeyMap()
+        # Verify no action is bound to a single un-prefixed alphabetic key
+        for action, binding in km.bindings.items():
+            for k in binding.keys:
+                self.assertFalse(k.isalpha() and len(k) == 1, f"Found single letter shortcut '{k}' in action '{action}'")
+
 
 if __name__ == "__main__":
     unittest.main()
+

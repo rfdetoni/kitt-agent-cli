@@ -95,7 +95,7 @@ class ModelSelectionService:
         has_secret = bool(self.registry.auth_service.resolve(auth_state.credential_ref, pid))
         is_authenticated = (auth_state.auth_type == "none") or has_secret
 
-        if provider.local or pid in ("ollama", "lmstudio"):
+        if provider.local or pid in ("ollama", "lmstudio", "kitt-reverse-proxy", "kitt-proxy"):
             is_authenticated = True
 
         if not is_authenticated:
@@ -165,9 +165,9 @@ class ModelSelectionService:
                 backend=pid,
                 model=mid,
                 base_url=resolved_base_url,
-                credential_ref=f"auth:{pid}" if not (provider.local or pid in ("ollama", "lmstudio")) else None,
+                credential_ref=f"auth:{pid}" if not (provider.local or pid in ("ollama", "lmstudio", "kitt-reverse-proxy", "kitt-proxy")) else None,
                 max_output_tokens=max(current_profile.max_output_tokens, 2048) if role == "principal" else max(current_profile.max_output_tokens, 1024),
-                supports_json=pid in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama"},
+                supports_json=pid in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama", "kitt-reverse-proxy", "kitt-proxy"},
             )
             self.router.config.profiles[profile_name] = updated_profile
             self.router.save_config(self.workspace_path)

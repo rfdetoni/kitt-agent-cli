@@ -44,6 +44,18 @@ BUILTIN_PROVIDERS: List[ProviderDescriptor] = [
         source="builtin",
     ),
     ProviderDescriptor(
+        id="kitt-reverse-proxy",
+        name="KITT Reverse Proxy",
+        protocol="openai-chat-completions",
+        base_url="http://127.0.0.1:3000",
+        env_vars=("KITT_REVERSE_PROXY_URL", "PROXY_URL"),
+        auth_methods=(),
+        local=True,
+        supports_model_discovery=True,
+        supports_custom_base_url=True,
+        source="builtin",
+    ),
+    ProviderDescriptor(
         id="openai",
         name="OpenAI",
         protocol="openai-chat-completions",

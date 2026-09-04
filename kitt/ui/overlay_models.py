@@ -139,7 +139,7 @@ class ModelSetupModel:
 
     roles = ("principal", "context", "validation")
     default_providers = (
-        "ollama", "lmstudio", "openai", "anthropic", "gemini", "deepseek",
+        "kitt-reverse-proxy", "ollama", "lmstudio", "openai", "anthropic", "gemini", "deepseek",
         "groq", "together", "mistral", "openrouter", "xai", "fireworks",
         "cohere", "azure", "antigravity"
     )
@@ -151,7 +151,7 @@ class ModelSetupModel:
         self.model_index = 0
         self.provider_index = 0
         self.base_url_override: str | None = None
-        self.favorite_providers: list[str] = ["ollama", "openai", "anthropic", "gemini"]
+        self.favorite_providers: list[str] = ["kitt-reverse-proxy", "ollama", "openai", "anthropic", "gemini"]
         self.custom_providers: list[dict] = []
         self.provider_popup_index: int = 1
         self.pattern_index: int = 0

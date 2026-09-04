@@ -124,6 +124,27 @@ class KittUIApp:
         except Exception:
             pass
 
+        # Autonomous detection of KITT Reverse Proxy
+        try:
+            from kitt.llm.health import ProviderHealthChecker
+            proxy_url = os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000")
+            online, _ = ProviderHealthChecker.check_kitt_reverse_proxy(proxy_url, timeout=0.8)
+            if online:
+                if hasattr(self, "model_setup_model"):
+                    if "kitt-reverse-proxy" not in self.model_setup_model.favorite_providers:
+                        self.model_setup_model.favorite_providers.insert(0, "kitt-reverse-proxy")
+                if hasattr(self.runtime.processor, "registry"):
+                    from kitt.llm.catalog import ProviderDescriptor
+                    self.runtime.processor.registry.register_provider(ProviderDescriptor(
+                        id="kitt-reverse-proxy",
+                        name="KITT Reverse Proxy",
+                        protocol="openai-chat-completions",
+                        base_url=proxy_url,
+                        local=True,
+                    ))
+        except Exception:
+            pass
+
     @property
     def dimensions(self) -> LayoutDimensions:
         return LayoutDimensions(self.state.width, self.state.height)
@@ -665,6 +686,8 @@ class KittUIApp:
             "cohere": ("https://api.cohere.com", os.environ.get("COHERE_API_KEY", "")),
             "azure": (os.environ.get("AZURE_OPENAI_ENDPOINT", "https://your-resource.openai.azure.com"), os.environ.get("AZURE_OPENAI_API_KEY", "")),
             "antigravity": ("https://api.antigravity.dev", os.environ.get("ANTIGRAVITY_API_KEY", "")),
+            "kitt-reverse-proxy": (os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000"), ""),
+            "kitt-proxy": (os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000"), ""),
         }
         if provider in defaults:
             return defaults[provider]
@@ -714,7 +737,8 @@ class KittUIApp:
             target_url = default_url
         if target_url and not target_url.startswith(("http://", "https://")):
             target_url = f"http://{target_url}"
-        protocol = "ollama-chat" if (":11434" in (target_url or "") or "ollama" in (provider or "").lower()) else fallback.protocol
+        is_kitt_proxy = "kitt-reverse-proxy" in (provider or "").lower() or "kitt-proxy" in (provider or "").lower() or ":3000" in (target_url or "")
+        protocol = "ollama-chat" if (":11434" in (target_url or "") or "ollama" in (provider or "").lower()) else ("openai-chat-completions" if is_kitt_proxy else fallback.protocol)
         router.config.profiles[profile_name] = replace(
             fallback, model=model, backend=provider,
             base_url=target_url,
@@ -724,7 +748,7 @@ class KittUIApp:
                 fallback.credential_ref if same_provider else None
             ),
             max_output_tokens=max(fallback.max_output_tokens, 2048) if role == "principal" else max(fallback.max_output_tokens, 1024),
-            supports_json=provider in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama"} or "ollama" in (provider or "").lower(),
+            supports_json=provider in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama", "kitt-reverse-proxy", "kitt-proxy"} or "ollama" in (provider or "").lower() or is_kitt_proxy,
         )
         for task in tasks:
             router.config.routing[task] = profile_name
@@ -824,6 +848,8 @@ class KittUIApp:
             "mistral": ["mistral-large-latest"],
             "openrouter": ["openrouter/auto"],
             "antigravity": ["antigravity-chat-latest"],
+            "kitt-reverse-proxy": ["chatgpt-web"],
+            "kitt-proxy": ["chatgpt-web"],
         }
         if provider in builtin_fallbacks:
             return builtin_fallbacks[provider]
@@ -1411,12 +1437,12 @@ class KittUIApp:
     def _is_local_or_no_auth_provider(self, provider: str, url: str = "") -> bool:
         p = (provider or "").strip().lower()
         u = (url or "").strip().lower()
-        if p in ("ollama", "lmstudio", "custom") or "ollama" in p or "lmstudio" in p:
+        if p in ("ollama", "lmstudio", "custom", "kitt-reverse-proxy", "kitt-proxy") or "ollama" in p or "lmstudio" in p or "kitt-reverse-proxy" in p:
             return True
         if hasattr(self, "model_setup_model") and any(cp["name"] == p for cp in self.model_setup_model.custom_providers):
             return True
         lan_markers = (
-            ":11434", ":1234", ":8000", ":8080", ":5000",
+            ":11434", ":1234", ":3000", ":8000", ":8080", ":5000",
             "localhost", "127.0.0.1", "192.168.", "10.",
             "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
             "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",

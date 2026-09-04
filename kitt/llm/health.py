@@ -43,3 +43,28 @@ class ProviderHealthChecker:
             return False, f"HTTP {err.code}: {err.reason}"
         except Exception as exc:
             return False, f"Endpoint unreachable: {exc}"
+
+    @staticmethod
+    def check_kitt_reverse_proxy(base_url: str = "http://127.0.0.1:3000", timeout: float = 1.5) -> Tuple[bool, str]:
+        url = f"{base_url.rstrip('/')}/v1/kitt/status"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "KITT-Agent-CLI"})
+            with secure_urlopen(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    model = data.get("model", "unknown")
+                    transport = data.get("transport", "unknown")
+                    return True, f"KITT Reverse Proxy online (model: {model}, transport: {transport})"
+                return False, f"HTTP {resp.status}"
+        except Exception as exc:
+            # Fallback to /healthz or /v1/models
+            try:
+                fallback_url = f"{base_url.rstrip('/')}/healthz"
+                req = urllib.request.Request(fallback_url, headers={"User-Agent": "KITT-Agent-CLI"})
+                with secure_urlopen(req, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        return True, "KITT Reverse Proxy online"
+            except Exception:
+                pass
+            return False, f"KITT Reverse Proxy unreachable: {exc}"
+

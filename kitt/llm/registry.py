@@ -214,7 +214,7 @@ class ProviderRegistry:
         if local:
             return True
         pid = (provider_id or "").strip().lower()
-        if pid in {"ollama", "lmstudio"}:
+        if pid in {"ollama", "lmstudio", "kitt-reverse-proxy", "kitt-proxy"}:
             return True
         try:
             host = (urllib.parse.urlsplit(base_url).hostname or "").strip().lower()
