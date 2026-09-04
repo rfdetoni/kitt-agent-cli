@@ -213,8 +213,18 @@ class KittUIApp:
                     except Exception:
                         pass
 
+        history_file = Path(self.runtime.canonical_root) / ".kitt" / "prompt_history"
+        try:
+            history_file.parent.mkdir(parents=True, exist_ok=True)
+            from prompt_toolkit.history import FileHistory
+            self.prompt_history = FileHistory(str(history_file))
+        except Exception:
+            from prompt_toolkit.history import InMemoryHistory
+            self.prompt_history = InMemoryHistory()
+
         self.prompt_buffer = Buffer(
             multiline=True,
+            history=self.prompt_history,
             completer=KittCompleter(),
             complete_while_typing=True,
             accept_handler=self._accept_prompt,
@@ -304,6 +314,7 @@ class KittUIApp:
         if text.endswith("\n"):
             text = text[:-1]
         if text.strip() and not self.state.is_thinking and not (self.bridge and self.bridge.is_active):
+            buffer.append_to_history()
             buffer.reset()
             asyncio.get_running_loop().create_task(self.submit(text.strip()))
         return True
@@ -2145,15 +2156,39 @@ class KittUIApp:
                 self.transcript_window.vertical_scroll = 10**9
             if self.application: self.application.invalidate()
 
-        @kb.add("up", filter=editor_focused & Condition(lambda: not self.prompt_buffer.text and self.state.active_overlay is None))
+        @kb.add("up", filter=editor_focused & Condition(lambda: self.state.active_overlay is None))
         def _(event):
+            buf = event.current_buffer
+            if buf.document.cursor_position_row == 0:
+                prev_text = buf.text
+                buf.history_backward()
+                if buf.text != prev_text:
+                    if self.application: self.application.invalidate()
+                    return
+            elif buf.document.cursor_position_row > 0:
+                buf.cursor_up()
+                if self.application: self.application.invalidate()
+                return
+
             self.state.follow_tail = False
             if hasattr(self, "transcript_window"):
                 self.transcript_window.vertical_scroll = max(0, self.transcript_window.vertical_scroll - 3)
             if self.application: self.application.invalidate()
 
-        @kb.add("down", filter=editor_focused & Condition(lambda: not self.prompt_buffer.text and self.state.active_overlay is None))
+        @kb.add("down", filter=editor_focused & Condition(lambda: self.state.active_overlay is None))
         def _(event):
+            buf = event.current_buffer
+            if buf.document.cursor_position_row == buf.document.line_count - 1:
+                prev_text = buf.text
+                buf.history_forward()
+                if buf.text != prev_text:
+                    if self.application: self.application.invalidate()
+                    return
+            elif buf.document.cursor_position_row < buf.document.line_count - 1:
+                buf.cursor_down()
+                if self.application: self.application.invalidate()
+                return
+
             if hasattr(self, "transcript_window"):
                 self.transcript_window.vertical_scroll += 3
             if self.application: self.application.invalidate()
@@ -2176,8 +2211,10 @@ class KittUIApp:
             if self.state.is_thinking or (self.bridge and self.bridge.is_active):
                 if self.state.active_overlay:
                     self.close_overlay()
-                asyncio.create_task(self.bridge.cancel())
                 self.state.is_thinking = False
+                self.state.status_text = "SYSTEM ONLINE"
+                if self.bridge:
+                    asyncio.create_task(self.bridge.cancel())
                 self.prompt_buffer.reset()
                 if self.application:
                     try:

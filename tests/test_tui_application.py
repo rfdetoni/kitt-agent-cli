@@ -74,6 +74,67 @@ class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
             stripped_line = text.lstrip("\n")
             self.assertFalse(stripped_line.startswith(" "), f"Unexpected leading spaces in '{text}'")
 
+    async def test_prompt_history_navigation(self):
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            task = asyncio.create_task(ui.run_async())
+            await asyncio.sleep(0.05)
+
+            # Insert first prompt into history
+            ui.prompt_buffer.text = "first message"
+            ui._accept_prompt(ui.prompt_buffer)
+            await asyncio.sleep(0.05)
+
+            # Insert second prompt into history
+            ui.prompt_buffer.text = "second message"
+            ui._accept_prompt(ui.prompt_buffer)
+            await asyncio.sleep(0.05)
+
+            # Press UP: should retrieve "second message"
+            pipe.send_bytes(b"\x1b[A")
+            await asyncio.sleep(0.05)
+            self.assertEqual(ui.prompt_buffer.text, "second message")
+
+            # Press UP again: should retrieve "first message"
+            pipe.send_bytes(b"\x1b[A")
+            await asyncio.sleep(0.05)
+            self.assertEqual(ui.prompt_buffer.text, "first message")
+
+            # Press DOWN: should navigate forward to "second message"
+            pipe.send_bytes(b"\x1b[B")
+            await asyncio.sleep(0.05)
+            self.assertEqual(ui.prompt_buffer.text, "second message")
+
+            pipe.send_bytes(b"\x1b\x04")  # Esc, Ctrl+D to exit
+            await asyncio.wait_for(task, 2)
+
+    async def test_ctrl_c_unblocks_prompt_submission(self):
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            task = asyncio.create_task(ui.run_async())
+            await asyncio.sleep(0.05)
+
+            # Simulate thinking state
+            ui.state.is_thinking = True
+            ui.bridge._active_turn_id = "mock_turn_1"
+
+            # Press Ctrl+C
+            pipe.send_bytes(b"\x03")
+            await asyncio.sleep(0.05)
+
+            self.assertFalse(ui.state.is_thinking)
+            self.assertFalse(ui.bridge.is_active)
+
+            # Now verify submitting a new prompt works and does not fail
+            ui.prompt_buffer.text = "new prompt"
+            ui._accept_prompt(ui.prompt_buffer)
+            self.assertEqual(ui.prompt_buffer.text, "")
+
+            pipe.send_bytes(b"\x1b\x04")
+            await asyncio.wait_for(task, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -229,13 +229,22 @@ class TurnEventBridge:
 
     async def cancel(self, reason="Cancelled by user"):
         turn_id = self._active_turn_id
+        self._active_turn_id = None
+        self._turn_generation += 1
+
+        # Cancel tasks and consumer immediately so is_active flips to False right away
+        if self._producer_future and not self._producer_future.done():
+            self._producer_future.cancel()
+        if self._consumer and not self._consumer.done():
+            self._consumer.cancel()
+        self._consumer = None
+
         if self._daemon_bridge:
             if turn_id:
                 await self._daemon_bridge.cancel_turn(turn_id)
-            self._active_turn_id = None
+            self.invalidate()
             return
-        self._turn_generation += 1
-        self._active_turn_id = None
+
         if turn_id:
             for event in self.runtime.processor.cancel_turn(
                 turn_id, reason, conversation_id=self._active_conversation_id
@@ -243,11 +252,7 @@ class TurnEventBridge:
                 self._deliver(event)
         else:
             self._deliver(TurnCancelled(reason=reason))
-        if self._producer_future and not self._producer_future.done():
-            self._producer_future.cancel()
-        if self._consumer and not self._consumer.done():
-            self._consumer.cancel()
-        self._consumer = None
+
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
