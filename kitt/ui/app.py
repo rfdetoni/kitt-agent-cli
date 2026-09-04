@@ -2159,6 +2159,11 @@ class KittUIApp:
         @kb.add("up", filter=editor_focused & Condition(lambda: self.state.active_overlay is None))
         def _(event):
             buf = event.current_buffer
+            if buf.complete_state:
+                buf.complete_previous()
+                if self.application: self.application.invalidate()
+                return
+
             if buf.document.cursor_position_row == 0:
                 prev_text = buf.text
                 buf.history_backward()
@@ -2178,6 +2183,11 @@ class KittUIApp:
         @kb.add("down", filter=editor_focused & Condition(lambda: self.state.active_overlay is None))
         def _(event):
             buf = event.current_buffer
+            if buf.complete_state:
+                buf.complete_next()
+                if self.application: self.application.invalidate()
+                return
+
             if buf.document.cursor_position_row == buf.document.line_count - 1:
                 prev_text = buf.text
                 buf.history_forward()
