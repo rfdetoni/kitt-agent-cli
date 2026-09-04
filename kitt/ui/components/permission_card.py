@@ -4,7 +4,15 @@ from kitt.ui.state import UIState
 
 
 class PermissionCardComponent:
-    def render(self, state: UIState, width: int = 88) -> str:
+    ACTIONS = (
+        ("once", "Permitir uma vez", "y"),
+        ("always_session", "Sempre nesta sessão", "s"),
+        ("always_workspace", "Sempre neste workspace", "A"),
+        ("deny", "Negar", "n"),
+        ("deny_all", "Negar todas", "N"),
+    )
+
+    def render(self, state: UIState, width: int = 88, selected_action: int = 0) -> str:
         t = DEFAULT_THEME
         pending = state.pending_approvals
         if not pending and state.pending_approval:
@@ -38,15 +46,14 @@ class PermissionCardComponent:
             lines.append(f"│ Arquivos  : {', '.join(affected_paths)[:60]:<60} │")
         if diff_preview:
             lines.append(t.format_muted("│ ---- diff prévio ----"))
-            for dl in diff_preview.splitlines()[:8]:
+            for dl in diff_preview.splitlines()[:60]:
                 lines.append(f"│ {dl[:width-4]}")
         else:
             lines.append(f"│ Args      : {str(args)[:60]:<60} │")
 
         lines.append(t.format_primary("└" + "─" * (width - 2) + "┘"))
-        lines.append(
-            " [y] Permitir uma vez   [s] Sempre nesta sessão   [A] Sempre neste workspace   "
-            "[n] Negar   [d] Ver diff   [N] Negar todas"
-        )
+        lines.append(" Menu de aprovação [↑↓/Tab navegar, Enter confirmar]:")
+        for index, (_, label, shortcut) in enumerate(self.ACTIONS):
+            cursor = ">" if index == selected_action else " "
+            lines.append(f" {cursor} [{shortcut}] {label}")
         return "\n".join(lines)
-

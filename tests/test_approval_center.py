@@ -25,6 +25,8 @@ class TestApprovalCenter(unittest.TestCase):
 
         card_output = PermissionCardComponent().render(state, width=88)
         self.assertIn("(1 de 3 na fila)", card_output)
+        self.assertIn("Menu de aprovação", card_output)
+        self.assertIn("> [y] Permitir uma vez", card_output)
 
     def test_remembered_approval_rules_and_persistence(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:

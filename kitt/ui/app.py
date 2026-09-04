@@ -243,6 +243,15 @@ class KittUIApp:
         self.sidebar_control = FormattedTextControl(self._sidebar_text)
         self.status_control = FormattedTextControl(self._status_text)
         self.permission_control = FormattedTextControl(self._permission_text, focusable=True)
+        self.permission_control.mouse_handler = self._permission_mouse_handler
+        from prompt_toolkit.layout import Window
+        from prompt_toolkit.layout.margins import ScrollbarMargin
+        self.permission_window = Window(
+            self.permission_control,
+            wrap_lines=True,
+            right_margins=[ScrollbarMargin(display_arrows=True)],
+        )
+        self.approval_menu_index = 0
         self.palette_control = FormattedTextControl(self._palette_text, focusable=True)
         self.session_picker_control = FormattedTextControl(self._session_picker_text, focusable=True)
         self.timeline_control = FormattedTextControl(self._timeline_text, focusable=True)
@@ -364,6 +373,7 @@ class KittUIApp:
         from kitt.core.turn_events import TurnCompleted, TurnFailed, TurnCancelled, TurnBlocked
         reduce_ui_event(self.state, event)
         if isinstance(event, ApprovalRequired) and self.application:
+            self.approval_menu_index = 0
             self.open_overlay("permission", self.permission_control)
         elif isinstance(event, (TurnCompleted, TurnFailed, TurnCancelled, TurnBlocked)) and self.application:
             if not self.state.active_overlay:
@@ -940,6 +950,18 @@ class KittUIApp:
                 self.application.invalidate()
             return None
         return NotImplemented
+
+    def _permission_mouse_handler(self, mouse_event) -> Any:
+        from prompt_toolkit.mouse_events import MouseEventType
+        if mouse_event.event_type == MouseEventType.SCROLL_UP:
+            self.permission_window.vertical_scroll = max(0, self.permission_window.vertical_scroll - 3)
+        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+            self.permission_window.vertical_scroll += 3
+        else:
+            return NotImplemented
+        if self.application:
+            self.application.invalidate()
+        return None
 
     def toggle_mouse_support(self) -> bool:
         self.mouse_support_enabled = not getattr(self, "mouse_support_enabled", True)
@@ -1805,6 +1827,7 @@ class KittUIApp:
     def _key_bindings(self):
         from prompt_toolkit.filters import Condition
         from prompt_toolkit.key_binding import KeyBindings
+        from kitt.ui.components.permission_card import PermissionCardComponent
         kb = KeyBindings()
 
         permission = Condition(lambda: self.state.active_overlay == "permission")
@@ -2252,6 +2275,23 @@ class KittUIApp:
         @kb.add("y", filter=permission)
         def _(event): asyncio.create_task(self.resolve_approval("once"))
 
+        @kb.add("up", filter=permission)
+        @kb.add("s-tab", filter=permission)
+        def _(event):
+            self.approval_menu_index = (self.approval_menu_index - 1) % len(PermissionCardComponent.ACTIONS)
+            event.app.invalidate()
+
+        @kb.add("down", filter=permission)
+        @kb.add("tab", filter=permission)
+        def _(event):
+            self.approval_menu_index = (self.approval_menu_index + 1) % len(PermissionCardComponent.ACTIONS)
+            event.app.invalidate()
+
+        @kb.add("enter", filter=permission)
+        def _(event):
+            action = PermissionCardComponent.ACTIONS[self.approval_menu_index][0]
+            asyncio.create_task(self.resolve_approval(action))
+
         @kb.add("a", filter=permission)
         @kb.add("A", filter=permission)
         def _(event): asyncio.create_task(self.resolve_approval("always_workspace"))
@@ -2557,7 +2597,9 @@ class KittUIApp:
 
     def _permission_text(self):
         from kitt.ui.components.permission_card import PermissionCardComponent
-        return PermissionCardComponent().render(self.state, max(50, self.state.width - 8))
+        return PermissionCardComponent().render(
+            self.state, max(50, self.state.width - 10), self.approval_menu_index
+        )
 
     def _autonomy_text(self) -> str:
         t = DEFAULT_THEME

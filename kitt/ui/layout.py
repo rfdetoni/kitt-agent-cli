@@ -45,7 +45,6 @@ def build_root_container(ui):
     sidebar = Window(ui.sidebar_control, width=Dimension(min=38, max=42), wrap_lines=False, right_margins=[ScrollbarMargin(display_arrows=True)], style="class:surface.raised")
     body = VSplit([transcript, ConditionalContainer(sidebar, filter=desktop_sidebar)], padding=1)
     header = ConditionalContainer(Window(ui.header_control, height=1, wrap_lines=False, style="class:surface.raised"), filter=~short)
-    approval_inline = ConditionalContainer(Frame(Window(ui.permission_control, height=Dimension(min=4, max=10), wrap_lines=False, right_margins=[ScrollbarMargin(display_arrows=True)]), title="Approval"), filter=visible("permission"))
     live_agents = ConditionalContainer(Window(ui.live_agents_control, height=1, wrap_lines=False, style="class:primary"), filter=Condition(lambda: bool(ui.state.active_tasks)))
     prompt_window = Window(ui.prompt_control, height=Dimension(min=3, max=8), wrap_lines=True)
     ui.prompt_window = prompt_window
@@ -53,7 +52,7 @@ def build_root_container(ui):
         prompt_window,
         title=lambda: f"Prompt [{ui.state.turn_mode.upper()}]  │  F4: Alternar Modo  │  F12: Modelos  │  Alt+Enter: Nova Linha"
     )
-    session = HSplit([header, body, approval_inline, live_agents, prompt, Window(ui.status_control, height=1, wrap_lines=False, style="class:status")])
+    session = HSplit([header, body, live_agents, prompt, Window(ui.status_control, height=1, wrap_lines=False, style="class:status")])
 
     home = HSplit([
         Window(height=Dimension(weight=1)),
@@ -72,6 +71,7 @@ def build_root_container(ui):
         )
 
     floats = [
+        Float(content=ConditionalContainer(Box(Frame(ui.permission_window, title="Approval"), padding=1), filter=visible("permission")), left=4, right=4, top=1, bottom=2),
         Float(xcursor=True, ycursor=True, attach_to_window=ui.prompt_window, content=CompletionsMenu(max_height=12, scroll_offset=1)),
         Float(content=ConditionalContainer(Box(Frame(HSplit([
             Window(ui.palette_search_control, height=1), Window(ui.palette_control, wrap_lines=False, right_margins=[ScrollbarMargin()])
