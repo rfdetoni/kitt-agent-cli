@@ -1809,6 +1809,11 @@ class KittUIApp:
                     self._show_result(result.output if result.success else f"Error: {result.error or result.output}")
                     self.state.status_text = "SYSTEM ONLINE"
                 else:
+                    running_tool = next((b for b in reversed(self.state.transcript) if b.kind == "tool" and b.status == "waiting_approval"), None)
+                    if running_tool:
+                        running_tool.status = "running"
+                        running_tool.started_at = time.time()
+                        running_tool.text = running_tool.text.replace(" ⏸ (aguardando aprovação)", "").replace(" ⏸", "").strip()
                     await self.bridge.continue_turn(pending["turn_id"], grant)
             except Exception as exc:
                 self.state.add_toast(f"Approval failed: {exc}", persistent=True)
@@ -1824,6 +1829,11 @@ class KittUIApp:
                 self._show_result("Command denied.")
                 self.state.status_text = "SYSTEM ONLINE"
             else:
+                running_tool = next((b for b in reversed(self.state.transcript) if b.kind == "tool" and b.status == "waiting_approval"), None)
+                if running_tool:
+                    running_tool.status = "cancelled"
+                    clean_text = running_tool.text.replace(" ⏸ (aguardando aprovação)", "").replace(" ⏸", "").strip()
+                    running_tool.text = f"{clean_text} ∅"
                 await self.bridge.cancel("Approval denied")
         if self.application:
             self.application.invalidate()
@@ -2515,11 +2525,14 @@ class KittUIApp:
             if block.kind in {"tool", "thought"}:
                 text = block.text
                 if block.status == "running":
-                    elapsed = int(now - block.started_at)
-                    if block.kind == "thought":
-                        text = f"▸ Pensando ({elapsed}s...)"
+                    if self.state.active_turn_id or self.state.is_thinking or self.state.is_executing_tool:
+                        elapsed = int(now - block.started_at) if block.started_at else 0
+                        if block.kind == "thought":
+                            text = f"▸ Pensando ({elapsed}s...)"
+                        else:
+                            text = f"{text} ({elapsed}s...)"
                     else:
-                        text = f"{text} ({elapsed}s...)"
+                        block.status = "done"
 
                 if block.collapsed:
                     first_line = text.split("\n")[0]

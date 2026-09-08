@@ -13,6 +13,82 @@ TERMINAL_EVENTS = (TurnCompleted, TurnFailed, TurnCancelled, TurnBlocked)
 
 def format_tool_bullet(tool_name: str, args: dict | None) -> str:
     args = args or {}
+
+    # Handle composite kitt_runtime operations and dotted names
+    if tool_name == "kitt_runtime" or "operation" in args or "." in tool_name:
+        op = str(args.get("operation") or tool_name).strip()
+        inner_args = args.get("arguments")
+        if not isinstance(inner_args, dict):
+            inner_args = args
+
+        if op in {"repo.search", "search"}:
+            query = inner_args.get("query", inner_args.get("pattern", ""))
+            path = inner_args.get("path", "")
+            loc = f" em {path}" if path else ""
+            return f"● Buscar: '{query}'{loc}" if query else "● Buscar no projeto"
+        elif op in {"repo.read", "read_file"}:
+            path = inner_args.get("path", inner_args.get("file", ""))
+            start = inner_args.get("start_line")
+            end = inner_args.get("end_line")
+            range_str = f":L{start}-{end}" if start and end else ""
+            return f"● Ler arquivo: {path}{range_str}" if path else "● Ler arquivo"
+        elif op in {"repo.inspect_symbol", "repo.read_symbol"}:
+            sym = inner_args.get("symbol", "")
+            path = inner_args.get("path", "")
+            loc = f" em {path}" if path else ""
+            return f"● Inspecionar símbolo: {sym}{loc}" if sym else "● Inspecionar símbolo"
+        elif op == "repo.references":
+            sym = inner_args.get("symbol", "")
+            return f"● Referências de: {sym}" if sym else "● Buscar referências"
+        elif op in {"repo.edit_symbol", "patch.apply", "apply_patch", "write_file"}:
+            path = inner_args.get("path", inner_args.get("file", ""))
+            if not path and "patch" in inner_args:
+                patch = str(inner_args.get("patch", ""))
+                first_line = patch.strip().split("\n")[0] if patch else ""
+                path = first_line.split("<<<<<<<")[0].strip() or first_line
+            if not path and "symbol" in inner_args:
+                path = f"símbolo {inner_args.get('symbol')}"
+            return f"● Editar: {path}" if path else "● Editar arquivo"
+        elif op in {"process.run", "run_command", "bash"}:
+            cmd = inner_args.get("command", inner_args.get("cmd", ""))
+            return f"● Executar: {cmd}" if cmd else "● Executar comando"
+        elif op == "artifacts.read":
+            art_id = inner_args.get("artifact_id", "")
+            return f"● Ler artefato: {art_id}" if art_id else "● Ler artefato"
+        elif op == "artifacts.store":
+            art_type = inner_args.get("artifact_type", "artefato")
+            summary = inner_args.get("summary", "")
+            return f"● Salvar {art_type}: {summary}" if summary else f"● Salvar {art_type}"
+        elif op in {"children.spawn", "child_spawn"}:
+            prompt = str(inner_args.get("prompt", inner_args.get("task", "")))[:50]
+            return f"● Subagente: {prompt}" if prompt else "● Subagente"
+        elif op == "memory.query":
+            q = inner_args.get("query", "")
+            return f"● Consultar memória: {q}" if q else "● Consultar memória"
+        elif op.startswith("memory."):
+            sub = op.split(".")[-1]
+            return f"● Memória ({sub})"
+        elif op.startswith("state."):
+            k = inner_args.get("key", inner_args.get("prefix", ""))
+            sub = op.split(".")[-1]
+            return f"● Estado ({sub}): {k}" if k else f"● Estado ({sub})"
+        elif op == "handles.resolve":
+            h = inner_args.get("handle", "")
+            return f"● Resolver handle: {h}" if h else "● Resolver handle"
+        elif op == "list_files":
+            path = inner_args.get("path", ".")
+            return f"● Listar arquivos: {path}"
+        elif op == "repository_map":
+            query = inner_args.get("query", "")
+            return f"● Mapa do repositório: {query}" if query else "● Mapa do repositório (AST)"
+        elif op == "python_compute":
+            return "● Executar computação Python"
+        else:
+            summary = ", ".join(f"{k}={v}" for k, v in list(inner_args.items())[:2]) if inner_args else ""
+            name_cap = op.replace("_", " ").title().replace(" ", "")
+            return f"● {name_cap}({summary})" if summary else f"● {name_cap}"
+
+    # Legacy direct tools formatting
     if tool_name == "search":
         pattern = args.get("pattern", args.get("query", ""))
         path = args.get("path", "")
@@ -49,6 +125,7 @@ def format_tool_bullet(tool_name: str, args: dict | None) -> str:
         summary = ", ".join(f"{k}={v}" for k, v in list(args.items())[:2]) if args else ""
         name_cap = tool_name.replace("_", " ").title().replace(" ", "")
         return f"● {name_cap}({summary})"
+
 
 
 from kitt.ui.reducer_handlers import (

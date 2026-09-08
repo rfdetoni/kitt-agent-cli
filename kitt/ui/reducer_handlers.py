@@ -16,6 +16,20 @@ if TYPE_CHECKING:
 
 
 def handle_turn_started(state: UIState, event: TurnStarted) -> None:
+    now = time.time()
+    for block in state.transcript:
+        if block.status in ("running", "streaming", "waiting_approval"):
+            elapsed = max(0.1, now - block.started_at) if block.started_at else 0.1
+            block.duration_ms = int(elapsed * 1000)
+            block.status = "done"
+            if block.kind == "thought":
+                block.text = f"▸ Pensou por {elapsed:.0f}s"
+            elif block.kind == "tool":
+                clean_text = block.text.replace(" ⏸ (aguardando aprovação)", "").replace(" ⏸", "").strip()
+                if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
+                    clean_text = f"{clean_text} ({elapsed:.1f}s) ✔"
+                block.text = clean_text
+
     state.route = "session"
     state.active_turn_id = event.turn_id
     state.active_conversation_id = event.conversation_id
@@ -175,6 +189,14 @@ def handle_approval_required(state: UIState, event: ApprovalRequired) -> None:
         "affected_paths": affected,
         "diff_preview": patch,
     })
+
+    # Pause active tool block so timer doesn't tick during user confirmation modal
+    running_tool = next((b for b in reversed(state.transcript) if b.kind == "tool" and b.status == "running"), None)
+    if running_tool:
+        running_tool.status = "waiting_approval"
+        if not any(g in running_tool.text for g in ("⏸", "✔", "✖", "∅")):
+            running_tool.text = f"{running_tool.text} ⏸ (aguardando aprovação)"
+
     state.push_overlay("permission")
 
 
@@ -258,11 +280,37 @@ def handle_terminal_events(state: UIState, event: object) -> None:
     state.is_executing_tool = False
     state.active_tool_name = None
     state.active_turn_id = None
-    for block in reversed(state.transcript):
-        if block.kind == "assistant" and block.status == "streaming":
-            block.status = "done"
-            break
-    
+
+    now = time.time()
+    for block in state.transcript:
+        if block.status in ("running", "streaming", "waiting_approval"):
+            elapsed = max(0.1, now - block.started_at) if block.started_at else 0.1
+            block.duration_ms = int(elapsed * 1000)
+            if block.kind == "assistant":
+                block.status = "done"
+            elif block.kind == "thought":
+                block.status = "done"
+                block.text = f"▸ Pensou por {elapsed:.0f}s"
+            elif block.kind == "tool":
+                clean_text = block.text.replace(" ⏸ (aguardando aprovação)", "").replace(" ⏸", "").strip()
+                if isinstance(event, TurnCompleted):
+                    block.status = "done"
+                    if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
+                        clean_text = f"{clean_text} ({elapsed:.1f}s) ✔"
+                elif isinstance(event, TurnFailed):
+                    block.status = "error"
+                    if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
+                        clean_text = f"{clean_text} ({elapsed:.1f}s) ✖"
+                elif isinstance(event, TurnCancelled):
+                    block.status = "cancelled"
+                    if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
+                        clean_text = f"{clean_text} ({elapsed:.1f}s) ∅"
+                else:  # TurnBlocked or other
+                    block.status = "done"
+                    if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
+                        clean_text = f"{clean_text} ({elapsed:.1f}s) ⏸"
+                block.text = clean_text
+
     # Mark all tasks as done on completion
     for task in state.active_tasks:
         if task.status != "error" and task.status != "cancelled":
@@ -282,19 +330,25 @@ def handle_terminal_events(state: UIState, event: object) -> None:
         has_child_agent = any(t.kind == "child_agent" for t in state.active_tasks)
         tool_call_count = len([b for b in state.transcript if b.kind == "tool"])
         if has_child_agent or tool_call_count >= 3:
+            tok_info = f"{state.tokens_used:,}" if state.tokens_used else "0"
+            saved_info = f"{state.net_saved_tokens:,}" if state.net_saved_tokens else "0"
             summary_msg = f"✔ [PROCESSO CONCLUÍDO COM SUCESSO]\n" \
-                          f"  ↳ Tokens utilizados: {state.tokens_used} | Economizados (RTK/AST): {state.net_saved_tokens}"
+                          f"  ↳ Tokens utilizados: {tok_info} | Economizados (RTK/AST): {saved_info}"
             state.append_message("system", summary_msg)
             state.add_toast("✔ Processo concluído com sucesso!")
     elif isinstance(event, TurnFailed):
         state.status_text = "✖ FAILED"
-        state.append_message("error", f"✖ [PROCESSO FALHOU]\n  ↳ Causa: {event.error}")
-        state.add_toast(f"✖ Processo falhou: {event.error}", persistent=True)
+        error_msg = event.error or "Erro durante o processamento"
+        state.append_message("error", f"✖ [PROCESSO FALHOU]\n  ↳ Causa: {error_msg}")
+        state.add_toast(f"✖ Processo falhou: {error_msg}", persistent=True)
     elif isinstance(event, TurnCancelled):
         state.active_tasks = []
         state.status_text = "∅ CANCELLED"
-        state.append_message("system", f"∅ [PROCESSO CANCELADO]\n  ↳ Motivo: {event.reason or 'Cancelado pelo usuário'}")
-        state.add_toast(event.reason or "Processo cancelado")
+        reason = event.reason or "Cancelado pelo usuário"
+        state.append_message("system", f"∅ [PROCESSO CANCELADO]\n  ↳ Motivo: {reason}")
+        state.add_toast(reason or "Processo cancelado")
     else:
         state.status_text = "BLOCKED"
-        state.add_toast(getattr(event, "reason", "Blocked"), persistent=True)
+        reason = getattr(event, "reason", "Bloqueado por política ou aguardando confirmação")
+        state.append_message("warning", f"⚠️ [PROCESSO PAUSADO]\n  ↳ Motivo: {reason}")
+        state.add_toast(reason, persistent=True)

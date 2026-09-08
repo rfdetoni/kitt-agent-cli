@@ -30,9 +30,9 @@ class PermissionCardComponent:
         expires_in = max(0, int(expires_at - time.time())) if expires_at else 300
 
         # Risk classification
-        if tool_name in ("apply_patch", "write_file", "delete_file", "replace_file_content"):
+        if tool_name in ("apply_patch", "write_file", "delete_file", "replace_file_content", "patch.apply"):
             risk_label = "Modificação de arquivos no workspace"
-        elif tool_name in ("run_command", "bash", "execute_command"):
+        elif tool_name in ("run_command", "bash", "execute_command", "process.run"):
             risk_label = "Execução de comando de terminal"
         else:
             risk_label = "Chamada de ferramenta do sistema"
@@ -48,6 +48,9 @@ class PermissionCardComponent:
             lines.append(t.format_muted("│ ---- diff prévio ----"))
             for dl in diff_preview.splitlines()[:60]:
                 lines.append(f"│ {dl[:width-4]}")
+        elif tool_name in ("run_command", "bash", "execute_command", "process.run") and isinstance(args, dict) and ("command" in args or "cmd" in args):
+            cmd_str = args.get("command", args.get("cmd", ""))
+            lines.append(f"│ Comando   : {str(cmd_str)[:60]:<60} │")
         else:
             lines.append(f"│ Args      : {str(args)[:60]:<60} │")
 
