@@ -11,7 +11,11 @@ class FakeLLMClient:
         self.calls = []
 
     def chat(self, messages, system_prompt=None, response_format=None, session_key=None):
-        self.calls.append({"messages": messages, "system_prompt": system_prompt, "format": response_format})
+        self.calls.append({
+            "messages": [dict(message) for message in messages],
+            "system_prompt": system_prompt,
+            "format": response_format,
+        })
         if self.responses:
             self.last_resp = self.responses.pop(0)
         return self.last_resp
@@ -110,6 +114,79 @@ def hello(): return 'hello K.I.T.T.'
         self.assertEqual(len(fake_context_llm.calls), 1, "Context LLM deve ser chamada exatamente uma vez.")
         self.assertEqual(len(fake_execution_llm.calls), 1, "Execution LLM deve ser chamada exatamente uma vez. A continuação via grant não pode rodar a LLM novamente.")
         processor.close()
+
+    def test_safe_runtime_retries_malformed_patch_before_execution(self):
+        from kitt.core.execution_request import ExecutionRequest
+        from kitt.core.runtime_config import RuntimeConfig
+        from kitt.core.turn_command import TurnCommand
+        from kitt.core.turn_events import ToolCompleted, ToolStarted
+        from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_WRITE
+        from kitt.security.context import ExecutionSecurityContext
+
+        malformed = (
+            '<kitt-tool>{"name":"kitt_runtime","arguments":'
+            '{"operation":"patch.apply","arguments":{"path":"PROJECT_OVERVIEW.md",'
+            '"content":"summary"}}}</kitt-tool>'
+        )
+        valid = (
+            '<kitt-tool>{"name":"kitt_runtime","arguments":'
+            '{"operation":"patch.apply","arguments":{"patch":'
+            '"PROJECT_OVERVIEW.md\\n<<<<<<< SEARCH\\n=======\\nsummary\\n>>>>>>> REPLACE"}}}'
+            '</kitt-tool>'
+        )
+        execution = FakeLLMClient([malformed, valid, "done"])
+        processor = TurnProcessor(
+            root_dir=self.tmp_dir.name,
+            execution_client=execution,
+            config=RuntimeConfig(tool_runtime_mode="safe_runtime"),
+        )
+        processor.registry.policy.autonomy = type(
+            "Autonomy", (), {"level": "autonomous", "allow_file_write_auto": True}
+        )()
+        cmd = TurnCommand("conv-safe", "create PROJECT_OVERVIEW.md")
+        request = ExecutionRequest(
+            system_prompt=processor._tool_instructions(["kitt_runtime"]),
+            messages=[{"role": "user", "content": cmd.prompt}],
+            enabled_tools=["kitt_runtime"],
+        )
+        profile = ModelProfile("fake", "fake", supports_tools=True)
+        context = ExecutionSecurityContext.create_user_context(
+            workspace_id=processor.workspace_id,
+            conversation_id=cmd.conversation_id,
+            turn_id=cmd.turn_id,
+            capabilities={CAP_REPO_READ, CAP_REPO_WRITE},
+        )
+
+        try:
+            events = [
+                event
+                for event, _, _ in processor._execute_tool_loop(
+                    cmd, request, profile, execution, processor.workspace_id, context
+                )
+            ]
+            starts = [event for event in events if isinstance(event, ToolStarted)]
+            completions = [event for event in events if isinstance(event, ToolCompleted)]
+            self.assertEqual(len(starts), 1)
+            self.assertEqual(len(completions), 1)
+            self.assertTrue(completions[0].success, completions[0].error)
+            self.assertEqual(execution.calls[1]["messages"][-1]["role"], "user")
+            self.assertIn("arguments.patch", execution.calls[1]["messages"][-1]["content"])
+            self.assertEqual(
+                (self.root_path / "PROJECT_OVERVIEW.md").read_text(encoding="utf-8"),
+                "summary",
+            )
+        finally:
+            processor.close()
+
+    def test_safe_runtime_prompt_documents_patch_shape(self):
+        processor = TurnProcessor(root_dir=self.tmp_dir.name)
+        try:
+            instructions = processor._tool_instructions(["kitt_runtime"])
+            self.assertIn('"operation":"patch.apply"', instructions)
+            self.assertIn('"patch":', instructions)
+            self.assertIn("<<<<<<< SEARCH", instructions)
+        finally:
+            processor.close()
 
     def test_forged_grant_is_rejected(self):
         from kitt.tools.approval import ApprovalGrant

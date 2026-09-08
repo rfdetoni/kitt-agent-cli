@@ -383,6 +383,10 @@ To call the safe runtime, respond with exactly:
 <kitt-tool>
 {{"name":"kitt_runtime","arguments":{{"operation":"repo.read","arguments":{{"path":"path.ext","start_line":1,"end_line":100}}}}}}
 </kitt-tool>
+To create or edit a file, patch.apply requires one or more complete SEARCH/REPLACE blocks inside arguments.patch:
+<kitt-tool>
+{{"name":"kitt_runtime","arguments":{{"operation":"patch.apply","arguments":{{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original text, or empty for a new file\\n=======\\nreplacement content\\n>>>>>>> REPLACE"}}}}}}
+</kitt-tool>
 Supported operations: repo.read, repo.search, repo.inspect_symbol, repo.read_symbol, repo.references, repo.edit_symbol, patch.apply, process.run, artifacts.store, artifacts.read, children.spawn, children.send, children.inspect, goal.inspect, goal.update, memory.query, memory.correct, memory.concept, memory.link, state.get, state.set, state.list, handles.resolve.
 RULES:
 1. Focus strictly on user request.
@@ -1064,14 +1068,25 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     return
             tool_calls += 1
             tool_name, tool_args = ("python_compute", python_args) if python_args is not None else general_call
+            operation_args = (
+                tool_args.get("arguments", {})
+                if tool_name == "kitt_runtime"
+                and tool_args.get("operation") == "patch.apply"
+                and isinstance(tool_args.get("arguments", {}), dict)
+                else tool_args
+            )
             logger.debug(
-                "host tool turn=%s call=%s tool=%s operation=%s",
+                "host tool turn=%s call=%s tool=%s operation=%s argument_keys=%s",
                 cmd.turn_id,
                 tool_calls,
                 tool_name,
                 tool_args.get("operation", "-") if isinstance(tool_args, dict) else "-",
+                sorted(operation_args) if isinstance(operation_args, dict) else [],
             )
-            if tool_name == "apply_patch" and not self.diff_parser.parse(str(tool_args.get("patch", ""))):
+            is_patch_call = tool_name == "apply_patch" or (
+                tool_name == "kitt_runtime" and tool_args.get("operation") == "patch.apply"
+            )
+            if is_patch_call and not self.diff_parser.parse(str(operation_args.get("patch", ""))):
                 malformed_calls += 1
                 if malformed_calls > 2:
                     yield TurnFailed(error="Invalid apply_patch request: no valid SEARCH/REPLACE blocks."), None, None
