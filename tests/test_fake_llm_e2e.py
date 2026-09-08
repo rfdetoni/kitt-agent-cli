@@ -10,17 +10,17 @@ class FakeLLMClient:
         self.last_resp = responses[0] if responses else ""
         self.calls = []
 
-    def chat(self, messages, system_prompt=None, response_format=None):
+    def chat(self, messages, system_prompt=None, response_format=None, session_key=None):
         self.calls.append({"messages": messages, "system_prompt": system_prompt, "format": response_format})
         if self.responses:
             self.last_resp = self.responses.pop(0)
         return self.last_resp
 
-    def chat_stream(self, messages, system_prompt=None, response_format=None):
+    def chat_stream(self, messages, system_prompt=None, response_format=None, session_key=None):
         res = self.chat(messages, system_prompt, response_format)
         yield res
 
-    async def achat_stream(self, messages, system_prompt=None, response_format=None):
+    async def achat_stream(self, messages, system_prompt=None, response_format=None, session_key=None):
         res = self.chat(messages, system_prompt, response_format)
         yield res
 

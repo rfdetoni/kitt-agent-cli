@@ -233,7 +233,7 @@ class TestE2EPipeline(unittest.TestCase):
 
         class SummaryContextClient:
             def __init__(self): self.calls = []
-            def chat(self, messages, system_prompt=None, response_format=None):
+            def chat(self, messages, system_prompt=None, response_format=None, session_key=None):
                 self.calls.append((messages, system_prompt, response_format))
                 return "app.py contém função main; projeto é uma aplicação Python mínima."
 

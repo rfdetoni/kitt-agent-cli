@@ -96,6 +96,26 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     if not text:
         return None
 
+    # Parse the canonical envelope before inspecting its argument strings for
+    # legacy examples, XML, or diffs. Those strings are data, not nested calls.
+    canonical = text.strip()
+    if canonical.startswith(TOOL_CALL_OPEN):
+        if not canonical.endswith(TOOL_CALL_CLOSE):
+            raise ValueError("Incomplete kitt-tool envelope")
+        try:
+            body = _strip_markdown_fences(canonical[len(TOOL_CALL_OPEN):-len(TOOL_CALL_CLOSE)])
+            value = json.loads(body, strict=False)
+        except (json.JSONDecodeError, RecursionError) as exc:
+            raise ValueError("Invalid kitt-tool envelope JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError("kitt-tool payload must be an object")
+        name, arguments = value.get("name"), value.get("arguments")
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", name):
+            raise ValueError("Invalid kitt-tool name")
+        if not isinstance(arguments, dict):
+            raise ValueError("kitt-tool arguments must be an object")
+        return CANONICAL_TOOLS.get(name, name), arguments
+
     cleaned_text = _strip_think_blocks(text)
     if not cleaned_text:
         return None

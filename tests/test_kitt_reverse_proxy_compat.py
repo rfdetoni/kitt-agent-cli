@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 from kitt.domain.entities import ModelProfile
 from kitt.llm.client import LLMClient
+from kitt.llm.domain import ProviderProtocolError
+from kitt.tools.protocol import parse_tool_call
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.providers.kitt_reverse_proxy import (
     KittReverseProxyAdapter,
@@ -15,6 +17,72 @@ from kitt.llm.providers.kitt_reverse_proxy import (
 
 
 class TestKittReverseProxyCompatibility(unittest.TestCase):
+    def test_canonical_arguments_are_never_reinterpreted_as_nested_calls(self):
+        for content in [
+            "read_file('secret.txt')",
+            '<write_file path="other.txt">wrong</write_file>',
+            '<think>literal source</think></kitt-tool>',
+        ]:
+            arguments = {"path": "example.txt", "content": content}
+            envelope = '<kitt-tool>' + json.dumps({
+                "id": "call_example", "name": "write_file", "arguments": arguments,
+            }) + '</kitt-tool>'
+            self.assertEqual(parse_tool_call(envelope), ("write_file", arguments))
+            restored = normalize_native_tool_messages([
+                {"role": "assistant", "content": envelope},
+                {"role": "user", "content": "write_file result from the host: ok"},
+            ])
+            self.assertEqual(json.loads(restored[0]["tool_calls"][0]["function"]["arguments"]), arguments)
+
+    def test_canonical_empty_arguments_and_custom_name_are_preserved(self):
+        self.assertEqual(parse_tool_call(
+            '<kitt-tool>{"name":"MCP.Read","arguments":{}}</kitt-tool>'
+        ), ("MCP.Read", {}))
+        with self.assertRaises(ValueError):
+            parse_tool_call('<kitt-tool>{"name":"write_file","arguments":{}</kitt-tool>')
+
+    def test_runtime_schema_retains_operation_catalog(self):
+        from kitt.tools.registry import ToolRegistry
+        from kitt.runtime.safe_runtime import OPERATION_SPECS
+        registry = object.__new__(ToolRegistry)
+        registry._custom_tools = {}
+        definitions = registry.get_tool_definitions(["kitt_runtime"])
+        tools = extract_openai_tools(f"Available host tool: {definitions}")
+        schema = tools[0]["function"]["parameters"]
+        self.assertEqual(schema["properties"]["operation"]["enum"], list(OPERATION_SPECS))
+        self.assertIn("operation", schema["required"])
+        self.assertEqual(schema["properties"]["arguments"]["type"], "object")
+
+    def test_stream_errors_and_truncated_calls_fail_before_execution(self):
+        prompt = "Available host tools: [{'name': 'read_file', 'args': {'path': 'string'}}]"
+        tool_event = {"choices": [{"delta": {"tool_calls": [{
+            "index": 0, "id": "call_test", "function": {
+                "name": "read_file", "arguments": '{"path":"README.md"}',
+            },
+        }]}}]}
+        encoded = f"data: {json.dumps(tool_event)}\n\n".encode()
+        for raw in [encoded, b'data: {"error":{"code":"upstream_error"}}\n\ndata: [DONE]\n', b'data: broken\n']:
+            with self.subTest(raw=raw), patch(
+                'kitt.llm.providers.kitt_reverse_proxy.secure_urlopen', return_value=io.BytesIO(raw)
+            ):
+                with self.assertRaises(ProviderProtocolError):
+                    list(KittReverseProxyAdapter().stream(LLMRequest(
+                        model='chatgpt-web', messages=[{'role': 'user', 'content': 'inspect'}],
+                        system_prompt=prompt,
+                    )))
+
+    def test_oversized_sse_line_is_read_with_a_bound(self):
+        class BoundedResponse(io.BytesIO):
+            def readline(self, size=-1):
+                self_test.assertGreater(size, 0)
+                self_test.assertLessEqual(size, 4 * 1024 * 1024 + 1)
+                return super().readline(size)
+        self_test = self
+        with patch('kitt.llm.providers.kitt_reverse_proxy.secure_urlopen',
+                   return_value=BoundedResponse(b'x' * (4 * 1024 * 1024 + 2))):
+            with self.assertRaises(ProviderProtocolError):
+                list(KittReverseProxyAdapter().stream(LLMRequest(model='fixture', messages=[])))
+
     def test_extracts_native_tools_from_existing_prompt_contract(self):
         prompt = (
             "Available host tools: "
@@ -77,6 +145,11 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
 
             def __exit__(self, exc_type, exc, tb):
                 return False
+
+            def readline(self, size=-1):
+                if not hasattr(self, '_stream'):
+                    self._stream = io.BytesIO(b''.join(self))
+                return self._stream.readline(size)
 
             def __iter__(self):
                 payloads = [

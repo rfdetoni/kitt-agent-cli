@@ -100,7 +100,7 @@ class TestPhase1ContextFilter(unittest.TestCase):
             def __init__(self, response_text):
                 self.response_text = response_text
                 self.called = False
-            def chat(self, messages, system_prompt=None, response_format=None):
+            def chat(self, messages, system_prompt=None, response_format=None, session_key=None):
                 self.called = True
                 return self.response_text
 

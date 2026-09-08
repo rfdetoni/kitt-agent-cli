@@ -15,7 +15,7 @@ from kitt.llm.providers.base import LLMRequest, handle_http_error
 from kitt.llm.providers.openai_chat import OpenAIChatAdapter
 
 _TOOL_LIST_RE = re.compile(r"Available host tools?:\s*(\[[^\n]*\])", re.IGNORECASE)
-_BRIDGE_RE = re.compile(r"<kitt-tool>\s*(\{[\s\S]*?\})\s*</kitt-tool>", re.IGNORECASE)
+_BRIDGE_RE = re.compile(r"<kitt-tool>\s*(\{[\s\S]*\})\s*</kitt-tool>", re.IGNORECASE)
 _SAFE_CALL_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _REQUIRED_ARGS = {
     "read_file": ("path",),
@@ -67,6 +67,9 @@ def _normalize_parameters(name: str, raw: Any) -> Dict[str, Any]:
     }
     if required:
         schema["required"] = required
+    if name == "kitt_runtime" and "operation" in properties:
+        from kitt.runtime.safe_runtime import OPERATION_SPECS
+        properties["operation"]["enum"] = list(OPERATION_SPECS)
     return schema
 
 
@@ -121,7 +124,7 @@ def strip_legacy_tool_contract(system_prompt: Optional[str]) -> Optional[str]:
 def _decode_bridge_call(content: Any) -> Optional[Tuple[str, str, Dict[str, Any]]]:
     if not isinstance(content, str):
         return None
-    match = _BRIDGE_RE.search(content)
+    match = _BRIDGE_RE.fullmatch(content.strip())
     if not match:
         return None
     try:
@@ -242,22 +245,30 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
         )
         content_parts: List[str] = []
         calls: Dict[int, Dict[str, str]] = {}
+        stream_complete = False
+        received_bytes = 0
 
         try:
             with secure_urlopen(http_request, timeout=request.timeout_seconds) as response:
-                for raw_line in response:
+                for raw_line in iter(lambda: response.readline(4 * 1024 * 1024 + 1), b""):
+                    received_bytes += len(raw_line)
+                    if received_bytes > 4 * 1024 * 1024:
+                        raise ProviderProtocolError("KITT reverse proxy stream exceeds 4 MiB")
                     line = raw_line.decode("utf-8", "replace").strip()
                     if not line.startswith("data:"):
                         continue
                     data_content = line[5:].lstrip()
                     if data_content == "[DONE]":
+                        stream_complete = True
                         break
                     try:
                         chunk = json.loads(data_content)
-                    except json.JSONDecodeError:
-                        continue
+                    except (json.JSONDecodeError, RecursionError) as exc:
+                        raise ProviderProtocolError("KITT reverse proxy returned invalid SSE JSON") from exc
                     if not isinstance(chunk, dict):
-                        continue
+                        raise ProviderProtocolError("KITT reverse proxy returned a non-object SSE event")
+                    if "error" in chunk:
+                        raise ProviderProtocolError("KITT reverse proxy returned an SSE error")
                     choices = chunk.get("choices")
                     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                         continue
@@ -288,6 +299,8 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                                 state["name"] += name
                             if isinstance(arguments, str) and arguments:
                                 state["arguments"] += arguments
+                            if len(state["name"]) > 64 or len(state["arguments"].encode("utf-8")) > 64 * 1024:
+                                raise ProviderProtocolError("KITT reverse proxy tool call exceeds protocol limits")
         except socket.timeout:
             raise ProviderTimeoutError(
                 f"KITT reverse proxy timed out after {request.timeout_seconds}s"
@@ -317,9 +330,12 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                 f"Could not connect to KITT reverse proxy at {url}: {exc}"
             )
 
+        if not stream_complete:
+            raise ProviderProtocolError("KITT reverse proxy stream ended before [DONE]")
+
         if calls:
             if len(calls) != 1:
-                raise ProviderConnectionError(
+                raise ProviderProtocolError(
                     "KITT reverse proxy returned multiple tool calls while "
                     "parallel_tool_calls=false"
                 )
@@ -328,23 +344,25 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             if not _SAFE_CALL_ID.fullmatch(call_id) or not re.fullmatch(
                 r"[A-Za-z0-9_.:-]{1,64}", name
             ):
-                raise ProviderConnectionError(
+                raise ProviderProtocolError(
                     "KITT reverse proxy returned an invalid tool-call identity"
                 )
+            if name not in {tool["function"]["name"] for tool in tools}:
+                raise ProviderProtocolError("KITT reverse proxy returned a tool outside the request allowlist")
             try:
                 arguments = json.loads(state["arguments"] or "{}")
             except json.JSONDecodeError as exc:
-                raise ProviderConnectionError(
+                raise ProviderProtocolError(
                     f"KITT reverse proxy returned invalid tool arguments: {exc}"
                 ) from exc
             if not isinstance(arguments, dict):
-                raise ProviderConnectionError(
+                raise ProviderProtocolError(
                     "KITT reverse proxy returned non-object tool arguments"
                 )
             bridge = {"id": call_id, "name": name, "arguments": arguments}
             yield (
                 "<kitt-tool>"
-                + json.dumps(bridge, ensure_ascii=False, separators=(",", ":"))
+                + json.dumps(bridge, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c").replace(">", "\\u003e")
                 + "</kitt-tool>"
             )
             return
