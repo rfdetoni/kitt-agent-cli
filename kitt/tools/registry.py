@@ -562,6 +562,22 @@ class ToolRegistry:
         )
         approval_validated = False
         if permission == "DENY":
+            autonomy_level = getattr(
+                getattr(self.policy, "autonomy", None), "level", "supervised"
+            )
+            if autonomy_level != "read_only" and grant is None and origin == "MODEL":
+                expected_hash = self.policy.generate_action_hash(tool_name, args)
+                return ToolResult(
+                    False,
+                    "",
+                    f"Tool '{tool_name}' requires explicit user confirmation (policy restriction: DENY).",
+                    requires_approval=True,
+                    metadata={
+                        "approval_action": tool_name,
+                        "approval_payload": dict(args),
+                        "approval_hash": expected_hash,
+                    },
+                )
             return ToolResult(
                 False,
                 "",

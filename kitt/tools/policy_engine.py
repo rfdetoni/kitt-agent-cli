@@ -229,6 +229,15 @@ class PolicyEngine:
             return "DENY"
 
         executable = Path(argv[0]).name.lower()
+        if executable == "rtk":
+            if len(argv) > 1 and argv[1] == "proxy":
+                argv = argv[2:]
+            else:
+                argv = argv[1:]
+            if not argv:
+                return "DENY"
+            executable = Path(argv[0]).name.lower()
+
         if executable in self.DISALLOWED_SHELL_COMMANDS:
             return "DENY"
         if any(not self._path_arg_safe(arg) for arg in argv[1:] if not arg.startswith("-")):
