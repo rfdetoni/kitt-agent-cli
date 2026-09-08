@@ -71,8 +71,16 @@ class TestAutonomyPolicy(unittest.TestCase):
             ),
             "ASK",
         )
+        self.assertEqual(
+            engine.evaluate_command(
+                "rtk rg -n '^(def |async def |.*fun |function |export function|class )$' "
+                "backend jetbrains-plugin extensions"
+            ),
+            "ASK",
+        )
         self.assertEqual(engine.evaluate_command("rtk cat .env"), "DENY")
         self.assertEqual(engine.evaluate_command("rtk find . -delete"), "DENY")
+        self.assertEqual(engine.evaluate_command("echo '$HOME'"), "ASK")
 
     def test_safe_find_requires_and_accepts_approval(self):
         import tempfile
