@@ -18,6 +18,8 @@ const state = {
   diff: {loaded: false, available: false, content: ""},
   messagesNextBefore: "",
   messagesHasMore: false,
+  followOutput: true,
+  renderFrame: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -74,12 +76,14 @@ async function api(path, options = {}) {
 function showPairing() {
   state.csrf = "";
   els.pairingOverlay.classList.remove("hidden");
+  $("app").inert = true;
   setConnected(false);
   setTimeout(() => els.pairingCode.focus(), 50);
 }
 
 function hidePairing() {
   els.pairingOverlay.classList.add("hidden");
+  $("app").inert = false;
   els.pairingError.textContent = "";
 }
 
@@ -140,6 +144,9 @@ function clearConversation(message = "") {
 async function selectSession(sessionId) {
   closeEventSource();
   state.sessionId = sessionId;
+  state.followOutput = true;
+  state.activeTurnId = "";
+  els.cancelButton.classList.add("hidden");
   state.lastSequence = 0;
   state.events = [];
   state.approvals.clear();
@@ -153,6 +160,7 @@ async function selectSession(sessionId) {
   renderSessions();
   try {
     const detail = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    if (state.sessionId !== sessionId) return;
     state.sessionTitle = detail.conversation?.title || sessionId.slice(0, 10);
     els.sessionName.textContent = state.sessionTitle;
     state.lastSequence = Number(detail.last_sequence || 0);
@@ -164,9 +172,12 @@ async function selectSession(sessionId) {
     for (const approval of detail.approvals || []) state.approvals.set(approval.approval_id, approval);
     renderApprovalsInConversation();
     await loadArtifacts();
+    if (state.sessionId !== sessionId) return;
     renderInspector();
     openEventSource();
     els.sidebar.classList.remove("open");
+    syncPanels();
+    scrollConversation();
   } catch (err) {
     toast(err.message, "bad");
   }
@@ -177,10 +188,35 @@ function renderHistoryMessage(message, prepend = false) {
   const card = node("article", `message ${role}`);
   const head = node("div", "message-head");
   head.append(node("span", "message-role", role === "user" ? "YOU" : "K.I.T.T."), node("span", "message-time", formatTime(message.created_at)));
-  const body = node("div", "message-body", message.content || "");
+  const body = node("div", "message-body");
+  renderMessageBody(body, message.content || "");
   card.append(head, body);
   if (prepend) els.conversation.prepend(card);
   else els.conversation.append(card);
+}
+
+function renderMessageBody(body, text) {
+  body.replaceChildren();
+  // Only fenced code is formatted. All model/host content remains text, never HTML.
+  const parts = String(text).split(/(```[^\n]*\n[\s\S]*?\n```)/g);
+  for (const [index, part] of parts.entries()) {
+    if (index % 2 === 0) {
+      body.append(document.createTextNode(part)); continue;
+    }
+    const newline = part.indexOf("\n");
+    const code = part.slice(newline + 1, -4);
+    const block = node("div", "code-block");
+    const header = node("div", "code-heading");
+    const copy = node("button", "small-button", "Copiar código");
+    copy.type = "button";
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(code); toast("Código copiado"); }
+      catch (_) { toast("Não foi possível copiar. Selecione o código manualmente.", "warn"); }
+    });
+    header.append(node("span", "muted", part.slice(3, newline).trim() || "código"), copy);
+    const pre = node("pre", ""); pre.append(node("code", "", code));
+    block.append(header, pre); body.append(block);
+  }
 }
 
 function renderLoadOlderButton() {
@@ -223,17 +259,29 @@ function appendAssistantDelta(delta) {
     state.streamMessage = {card, body, text: ""};
   }
   state.streamMessage.text += delta || "";
-  state.streamMessage.body.textContent = state.streamMessage.text;
-  scrollConversation();
+  scheduleStreamRender();
 }
 
 function appendUserMessage(text) {
+  state.followOutput = true;
   renderHistoryMessage({role: "user", content: text, created_at: Date.now()/1000});
   scrollConversation();
 }
 
 function scrollConversation() {
-  requestAnimationFrame(() => { els.conversation.scrollTop = els.conversation.scrollHeight; });
+  requestAnimationFrame(() => {
+    if (state.followOutput) els.conversation.scrollTop = els.conversation.scrollHeight;
+    $("latestButton").classList.toggle("hidden", state.followOutput);
+  });
+}
+
+function scheduleStreamRender() {
+  if (state.renderFrame) return;
+  state.renderFrame = requestAnimationFrame(() => {
+    state.renderFrame = 0;
+    if (state.streamMessage) state.streamMessage.body.textContent = state.streamMessage.text;
+    scrollConversation();
+  });
 }
 
 function eventPayload(evt) { return evt?.payload || {}; }
@@ -270,6 +318,7 @@ function handleEvent(evt) {
   const seq = Number(evt.sequence_id || 0);
   if (seq && seq <= state.lastSequence) return;
   if (seq) state.lastSequence = seq;
+  if (evt.event_type === "TextDelta") { appendAssistantDelta(eventPayload(evt).delta || ""); return; }
   state.events.push(evt);
   if (state.events.length > 300) state.events.splice(0, state.events.length - 300);
   const type = evt.event_type || "Event";
@@ -280,8 +329,6 @@ function handleEvent(evt) {
     els.cancelButton.classList.toggle("hidden", !state.activeTurnId);
     state.streamMessage = null;
     addActivity("Turn started");
-  } else if (type === "TextDelta") {
-    appendAssistantDelta(p.delta || "");
   } else if (type === "ModelSelected") {
     els.modelName.textContent = p.model || p.profile_name || "—";
   } else if (type === "BudgetApplied") {
@@ -312,6 +359,7 @@ function handleEvent(evt) {
     state.activeTurnId = "";
     els.cancelButton.classList.add("hidden");
     if (type === "TurnCompleted" && p.response && (!state.streamMessage || !state.streamMessage.text)) appendAssistantDelta(p.response);
+    if (state.streamMessage) renderMessageBody(state.streamMessage.body, state.streamMessage.text);
     state.streamMessage = null;
     addActivity(type.replace("Turn", "Turn "));
     refreshApprovals();
@@ -352,8 +400,8 @@ function closeEventSource() {
 }
 
 function addToolCard(label, title, payload) {
-  const card = node("div", "event-card");
-  const head = node("div", "event-title");
+  const card = node("details", "event-card");
+  const head = node("summary", "event-title");
   head.append(node("strong", "", `${label} · ${title}`), node("span", "muted", formatTime(Date.now()/1000)));
   const pre = node("pre", "", JSON.stringify(payload, null, 2));
   card.append(head, pre);
@@ -430,10 +478,11 @@ function addActivity(text) {
 
 async function loadArtifacts() {
   if (!state.sessionId) { state.artifacts = []; return; }
+  const sessionId = state.sessionId;
   try {
-    const payload = await api(`/api/artifacts?session_id=${encodeURIComponent(state.sessionId)}`);
-    state.artifacts = payload.artifacts || [];
-  } catch (_) { state.artifacts = []; }
+    const payload = await api(`/api/artifacts?session_id=${encodeURIComponent(sessionId)}`);
+    if (state.sessionId === sessionId) state.artifacts = payload.artifacts || [];
+  } catch (_) { if (state.sessionId === sessionId) state.artifacts = []; }
 }
 
 async function loadDiff() {
@@ -522,6 +571,9 @@ function renderInspector() {
     ext.append(node("pre", "", JSON.stringify(state.extensions || {}, null, 2)));
     els.inspectorContent.append(ext);
   }
+  if (!els.inspectorContent.childElementCount) {
+    els.inspectorContent.append(node("div", "empty-state", "Os eventos e resultados das ferramentas aparecerão aqui."));
+  }
 }
 
 els.pairingForm.addEventListener("submit", async (event) => {
@@ -573,7 +625,7 @@ els.cancelButton.addEventListener("click", async () => {
 });
 
 els.promptInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     els.composer.requestSubmit();
   }
@@ -596,18 +648,112 @@ els.logoutButton.addEventListener("click", async () => {
   showPairing();
 });
 
-els.navToggle.addEventListener("click", () => els.sidebar.classList.toggle("open"));
-els.inspectorToggle.addEventListener("click", () => els.inspector.classList.toggle("open"));
+function syncPanels() {
+  els.navToggle.setAttribute("aria-expanded", String(innerWidth <= 760 ? els.sidebar.classList.contains("open") : !$("app").classList.contains("side-hidden")));
+  els.inspectorToggle.setAttribute("aria-expanded", String(innerWidth <= 1100 ? els.inspector.classList.contains("open") : !$("app").classList.contains("inspector-hidden")));
+}
+els.navToggle.addEventListener("click", () => {
+  if (innerWidth <= 760) { els.sidebar.classList.toggle("open"); els.inspector.classList.remove("open"); }
+  else $("app").classList.toggle("side-hidden");
+  syncPanels();
+});
+els.inspectorToggle.addEventListener("click", () => {
+  if (innerWidth <= 1100) { els.inspector.classList.toggle("open"); els.sidebar.classList.remove("open"); }
+  else $("app").classList.toggle("inspector-hidden");
+  syncPanels();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    const hadPanel = els.sidebar.classList.contains("open") || els.inspector.classList.contains("open");
+    els.sidebar.classList.remove("open"); els.inspector.classList.remove("open");
+    syncPanels();
+    if (hadPanel) els.promptInput.focus();
+  }
+});
+els.conversation.addEventListener("scroll", () => {
+  state.followOutput = els.conversation.scrollHeight - els.conversation.scrollTop - els.conversation.clientHeight < 64;
+  $("latestButton").classList.toggle("hidden", state.followOutput);
+}, {passive: true});
+$("latestButton").addEventListener("click", () => { state.followOutput = true; scrollConversation(); });
+
+function setupLayout() {
+  const app = $("app");
+  const resetters = [];
+  for (const handle of document.querySelectorAll("[data-resize]")) {
+    const side = handle.dataset.resize === "sidebar";
+    const fallback = side ? 240 : 340;
+    const storageKey = `kitt.web.${handle.dataset.resize}.width`;
+    let width = fallback;
+    try { width = Number(localStorage.getItem(storageKey)) || fallback; } catch (_) {}
+    let preferredWidth = width;
+    const applyWidth = (value, save = false) => {
+      const max = Math.max(side ? 180 : 260, Math.min(side ? 360 : 520, innerWidth * (side ? .25 : .38)));
+      width = Math.round(Math.max(side ? 180 : 260, Math.min(max, Number.isFinite(value) ? value : fallback)));
+      app.style.setProperty(`--${handle.dataset.resize}-width`, `${width}px`);
+      handle.setAttribute("aria-valuemin", side ? "180" : "260");
+      handle.setAttribute("aria-valuemax", String(Math.floor(max)));
+      handle.setAttribute("aria-valuenow", String(width));
+      if (save) {
+        preferredWidth = width;
+        try { localStorage.setItem(storageKey, String(width)); } catch (_) {}
+      }
+    };
+    let drag = null;
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      drag = {x: event.clientX, width};
+      handle.setPointerCapture(event.pointerId);
+      document.body.classList.add("resizing");
+      event.preventDefault();
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (drag) applyWidth(drag.width + (event.clientX - drag.x) * (side ? 1 : -1));
+    });
+    handle.addEventListener("lostpointercapture", () => { drag = null; document.body.classList.remove("resizing"); applyWidth(width, true); });
+    handle.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+      event.preventDefault();
+      applyWidth(event.key === "Home" ? fallback : width + (event.key === "ArrowRight" ? 20 : -20) * (side ? 1 : -1), true);
+    });
+    handle.addEventListener("dblclick", () => applyWidth(fallback, true));
+    window.addEventListener("resize", () => { applyWidth(preferredWidth); syncPanels(); });
+    resetters.push(() => applyWidth(fallback, true));
+    applyWidth(width);
+  }
+  $("resetLayout").addEventListener("click", () => {
+    app.classList.remove("side-hidden", "inspector-hidden");
+    resetters.forEach((reset) => reset()); syncPanels();
+  });
+  syncPanels();
+}
+setupLayout();
 for (const tab of document.querySelectorAll(".tab")) {
+  tab.setAttribute("role", "tab");
+  tab.id = `tab-${tab.dataset.tab}`;
+  tab.setAttribute("aria-controls", "inspectorContent");
+  tab.setAttribute("aria-selected", String(tab.classList.contains("active")));
+  tab.tabIndex = tab.classList.contains("active") ? 0 : -1;
   tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach((item) => {
+      item.classList.remove("active"); item.setAttribute("aria-selected", "false"); item.tabIndex = -1;
+    });
     tab.classList.add("active");
+    tab.setAttribute("aria-selected", "true"); tab.tabIndex = 0;
+    els.inspectorContent.setAttribute("aria-labelledby", tab.id);
     state.inspectorTab = tab.dataset.tab || "events";
     if (state.inspectorTab === "diff") state.diff = {loaded: false, available: false, content: ""};
     if (state.inspectorTab === "artifacts") loadArtifacts().then(renderInspector);
     else renderInspector();
   });
+  tab.addEventListener("keydown", (event) => {
+    const tabs = [...document.querySelectorAll(".tab")];
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const index = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[index].click(); tabs[index].focus();
+  });
 }
+els.inspectorContent.setAttribute("aria-labelledby", "tab-events");
 
 window.addEventListener("beforeunload", closeEventSource);
 bootstrap();
