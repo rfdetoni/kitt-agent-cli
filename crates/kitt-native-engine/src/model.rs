@@ -96,6 +96,29 @@ pub struct EditResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileReadResponse {
+    pub path: String,
+    pub content: String,
+    pub content_hash: String,
+    pub full_file_hash: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub total_lines: usize,
+    pub omitted_lines: usize,
+    pub next_start_line: Option<usize>,
+    pub estimated_tokens: usize,
+    pub file_size: u64,
+    pub mtime_ns: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileListResponse {
+    pub files: Vec<String>,
+    pub omitted: usize,
+    pub estimated_tokens: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionResponse {
     pub output: String,
     pub family: String,

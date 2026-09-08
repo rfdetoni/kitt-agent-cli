@@ -1,5 +1,7 @@
 use kitt_native_engine::model::{EditRequest, SearchOptions};
-use kitt_native_engine::{NativeEngine, compress_process_output};
+use kitt_native_engine::{
+    NativeEngine, compress_process_output_with_budget,
+};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -110,17 +112,55 @@ impl Engine {
                 .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
         )
     }
+
+    #[pyo3(signature=(path, start_line=1, end_line=None, max_bytes=4194304, token_budget=1200))]
+    fn read_file(
+        &self,
+        path: String,
+        start_line: usize,
+        end_line: Option<usize>,
+        max_bytes: usize,
+        token_budget: usize,
+    ) -> PyResult<String> {
+        json(
+            &self
+                .inner
+                .read_file(&path, start_line, end_line, max_bytes, token_budget)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+        )
+    }
+
+    #[pyo3(signature=(path, limit=100, token_budget=600))]
+    fn list_files(
+        &self,
+        path: String,
+        limit: usize,
+        token_budget: usize,
+    ) -> PyResult<String> {
+        json(
+            &self
+                .inner
+                .list_files(&path, limit, token_budget)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+        )
+    }
 }
 
 #[pyfunction]
+#[pyo3(signature=(argv, stdout, stderr, returncode, token_budget=1200))]
 fn compress_output(
     argv: Vec<String>,
     stdout: String,
     stderr: String,
     returncode: i32,
+    token_budget: usize,
 ) -> PyResult<String> {
-    json(&compress_process_output(
-        &argv, &stdout, &stderr, returncode,
+    json(&compress_process_output_with_budget(
+        &argv,
+        &stdout,
+        &stderr,
+        returncode,
+        token_budget,
     ))
 }
 

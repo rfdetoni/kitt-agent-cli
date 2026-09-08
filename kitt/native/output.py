@@ -6,6 +6,10 @@ from typing import Any
 from .bridge import NativeCodeEngine
 
 
+def _estimated_tokens(value: str) -> int:
+    return (len(value.encode("utf-8")) + 3) // 4
+
+
 @dataclass(frozen=True)
 class OptimizedOutput:
     output: str
@@ -18,6 +22,9 @@ class OptimizedOutput:
     raw_artifact_id: str | None = None
     capture_truncated: bool = False
     raw_total_bytes: int | None = None
+    raw_estimated_tokens: int = 0
+    output_estimated_tokens: int = 0
+    tokens_saved: int = 0
 
 
 class OutputOptimizer:
@@ -37,9 +44,16 @@ class OutputOptimizer:
         *,
         capture_truncated: bool = False,
         raw_total_bytes: int | None = None,
+        token_budget: int = 1200,
     ) -> OptimizedOutput:
+        token_budget = max(64, min(int(token_budget or 1200), 32_000))
         raw = stdout if not stderr else stderr if not stdout else stdout + "\n" + stderr
-        result = self.engine.compress_output(argv, stdout, stderr, returncode)
+        try:
+            result = self.engine.compress_output(
+                argv, stdout, stderr, returncode, token_budget=token_budget
+            )
+        except TypeError:
+            result = self.engine.compress_output(argv, stdout, stderr, returncode)
         candidate = str(result.get("output", raw))
         artifact_id = None
         if result.get("changed") and raw and artifact_store is not None:
@@ -57,6 +71,7 @@ class OutputOptimizer:
                         "captured_bytes": len(raw.encode("utf-8")),
                         "raw_total_bytes": raw_total_bytes,
                         "capture_truncated": bool(capture_truncated),
+                        "token_budget": token_budget,
                     },
                 )
                 artifact_id = getattr(artifact, "id", None)
@@ -69,14 +84,15 @@ class OutputOptimizer:
                 f"\n[KITT raw capture artifact: {artifact_id}; "
                 f"truncated={'true' if capture_truncated else 'false'}]"
             )
-            # Preserve the user-facing never-worse invariant, not just the
-            # compressor's pre-footer invariant. Artifact id remains metadata.
             if len((candidate + footer).encode("utf-8")) < len(raw.encode("utf-8")):
                 output = candidate + footer
 
         changed = len(output.encode("utf-8")) < len(raw.encode("utf-8"))
         if not changed:
             output = raw
+
+        raw_tokens = _estimated_tokens(raw)
+        output_tokens = _estimated_tokens(output)
         return OptimizedOutput(
             output=output,
             changed=changed,
@@ -88,4 +104,7 @@ class OutputOptimizer:
             raw_artifact_id=artifact_id,
             capture_truncated=bool(capture_truncated),
             raw_total_bytes=raw_total_bytes,
+            raw_estimated_tokens=raw_tokens,
+            output_estimated_tokens=output_tokens,
+            tokens_saved=max(0, raw_tokens - output_tokens),
         )

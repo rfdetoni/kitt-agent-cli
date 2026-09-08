@@ -27,7 +27,9 @@ class NativeCodeEngine:
             import kitt_native  # type: ignore
             self._native_module = kitt_native
             self._native = kitt_native.Engine(str(self.root))
-            self.status = NativeEngineStatus("rust", str(getattr(kitt_native, "ENGINE_VERSION", "unknown")), True)
+            self.status = NativeEngineStatus(
+                "rust", str(getattr(kitt_native, "ENGINE_VERSION", "unknown")), True
+            )
         except Exception as exc:
             self.status = NativeEngineStatus("python", "fallback-v1", False, str(exc))
 
@@ -37,11 +39,17 @@ class NativeCodeEngine:
 
     def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
         if self._native is not None:
-            return self._loads(self._native.search(
-                query, bool(kwargs.get("regex", False)), bool(kwargs.get("case_sensitive", False)),
-                int(kwargs.get("max_results", 50)), int(kwargs.get("max_per_file", 8)),
-                int(kwargs.get("context_lines", 1)), int(kwargs.get("token_budget", 1200)),
-            ))
+            return self._loads(
+                self._native.search(
+                    query,
+                    bool(kwargs.get("regex", False)),
+                    bool(kwargs.get("case_sensitive", False)),
+                    int(kwargs.get("max_results", 50)),
+                    int(kwargs.get("max_per_file", 8)),
+                    int(kwargs.get("context_lines", 1)),
+                    int(kwargs.get("token_budget", 1200)),
+                )
+            )
         return fallback.search(self.root, query, **kwargs)
 
     def find_symbols(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -64,13 +72,63 @@ class NativeCodeEngine:
             return self._loads(self._native.dependency_edges(max_symbols))
         return fallback.dependency_edges(self.root, max_symbols)
 
-    def replace_symbol(self, symbol_id: str, replacement: str, expected_hash: str | None = None,
-                       validate_syntax: bool = True) -> dict[str, Any]:
+    def replace_symbol(
+        self,
+        symbol_id: str,
+        replacement: str,
+        expected_hash: str | None = None,
+        validate_syntax: bool = True,
+    ) -> dict[str, Any]:
         if self._native is not None:
-            return self._loads(self._native.replace_symbol(symbol_id, replacement, expected_hash, validate_syntax))
-        return fallback.replace_symbol(self.root, symbol_id, replacement, expected_hash, validate_syntax)
+            return self._loads(
+                self._native.replace_symbol(
+                    symbol_id, replacement, expected_hash, validate_syntax
+                )
+            )
+        return fallback.replace_symbol(
+            self.root, symbol_id, replacement, expected_hash, validate_syntax
+        )
 
-    def compress_output(self, argv: list[str], stdout: str, stderr: str, returncode: int) -> dict[str, Any]:
+    def read_file(
+        self,
+        path: str,
+        *,
+        start_line: int = 1,
+        end_line: int | None = None,
+        max_bytes: int = 4 * 1024 * 1024,
+        token_budget: int = 1200,
+    ) -> dict[str, Any]:
+        if self._native is None:
+            raise RuntimeError("native workspace read is unavailable")
+        return self._loads(
+            self._native.read_file(
+                path, start_line, end_line, max_bytes, token_budget
+            )
+        )
+
+    def list_files(
+        self,
+        path: str = ".",
+        *,
+        limit: int = 100,
+        token_budget: int = 600,
+    ) -> dict[str, Any]:
+        if self._native is None:
+            raise RuntimeError("native workspace listing is unavailable")
+        return self._loads(self._native.list_files(path, limit, token_budget))
+
+    def compress_output(
+        self,
+        argv: list[str],
+        stdout: str,
+        stderr: str,
+        returncode: int,
+        token_budget: int = 1200,
+    ) -> dict[str, Any]:
         if self._native_module is not None:
-            return self._loads(self._native_module.compress_output(argv, stdout, stderr, returncode))
+            return self._loads(
+                self._native_module.compress_output(
+                    argv, stdout, stderr, returncode, token_budget
+                )
+            )
         return fallback.compress_output(argv, stdout, stderr, returncode)

@@ -106,7 +106,7 @@ class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
             self.assertEqual(ui.prompt_buffer.text, "second message")
 
-            pipe.send_bytes(b"\x1b\x04")  # Esc, Ctrl+D to exit
+            ui.request_exit()
             await asyncio.wait_for(task, 2)
 
     async def test_ctrl_c_unblocks_prompt_submission(self):

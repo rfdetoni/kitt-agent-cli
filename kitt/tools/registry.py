@@ -309,7 +309,11 @@ class ToolRegistry:
                 "operation": "string",
                 "arguments": "JSON object with operation-specific parameters",
             },
-            "list_files": {"path": "relative dir, default ."},
+            "list_files": {
+                "path": "relative dir, default .",
+                "limit": "int <=500, default 100",
+                "max_tokens": "output token budget, default 600",
+            },
             "search": {"pattern": "literal text or regex", "regex": "bool, default false"},
             "read_file": {
                 "path": "relative file, optional with around_symbol",
@@ -318,6 +322,7 @@ class ToolRegistry:
                 "start_line": "int >=1",
                 "end_line": "int, max 5000 lines",
                 "max_bytes": "int, optional output cap",
+                "max_tokens": "output token budget, default 1200",
             },
             "repository_map": {
                 "mode": "workspace|module|symbol|impact, default workspace",
@@ -337,7 +342,12 @@ class ToolRegistry:
                 "expected_content_hash": "optional sha256",
             },
             "apply_patch": {"patch": "SEARCH/REPLACE blocks"},
-            "run_command": {"command": "shell command allowed by policy"},
+            "run_command": {
+                "command": "shell command allowed by policy",
+                "max_tokens": "output token budget, default 1200",
+            },
+            "git_status": {"max_tokens": "output token budget, default 600"},
+            "git_diff": {"max_tokens": "output token budget, default 1200"},
             "artifact_read": {"artifact_id": "id", "offset": "int", "limit": "int"},
             "goal_create": {"objective": "text", "token_budget": "optional int"},
             "goal_add_gate": {"command": "validation command"},

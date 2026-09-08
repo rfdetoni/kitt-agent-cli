@@ -21,6 +21,50 @@ def _scoped_relative_path(ctx: ToolContext, relative_path: str) -> str:
     return resolved_relative
 
 
+def _token_budget(args: Dict[str, Any], default: int) -> int:
+    return max(64, min(int(args.get("max_tokens", default) or default), 32_000))
+
+
+def _optimized_process_output(ctx: ToolContext, argv: list[str], result, token_budget: int):
+    optimizer = getattr(ctx.registry, "output_optimizer", None)
+    if optimizer is None:
+        output = result.stdout + (("\n" + result.stderr) if result.stderr else "")
+        return output, {}, False
+
+    raw_total_bytes = (
+        result.stdout_total_bytes
+        + result.stderr_total_bytes
+        + (1 if result.stdout_total_bytes and result.stderr_total_bytes else 0)
+    )
+    optimized = optimizer.optimize(
+        argv,
+        result.stdout,
+        result.stderr,
+        result.returncode,
+        artifact_store=getattr(ctx.registry, "artifacts", None),
+        workspace_id=ctx.workspace_id,
+        conversation_id=ctx.conversation_id,
+        turn_id=ctx.turn_id,
+        capture_truncated=result.truncated,
+        raw_total_bytes=raw_total_bytes,
+        token_budget=token_budget,
+    )
+    metadata = {
+        "output_family": optimized.family,
+        "raw_bytes": optimized.raw_bytes,
+        "optimized_bytes": optimized.output_bytes,
+        "omitted_lines": optimized.omitted_lines,
+        "raw_artifact_id": optimized.raw_artifact_id,
+        "capture_truncated": optimized.capture_truncated,
+        "raw_total_bytes": optimized.raw_total_bytes,
+        "raw_estimated_tokens": optimized.raw_estimated_tokens,
+        "output_estimated_tokens": optimized.output_estimated_tokens,
+        "tokens_saved": optimized.tokens_saved,
+        "token_budget": token_budget,
+    }
+    return optimized.output, metadata, optimized.changed
+
+
 class PythonComputeHandler:
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult
@@ -61,26 +105,47 @@ class ApplyPatchHandler:
             if not isinstance(integrity, dict):
                 return ToolResult(False, "", "Invalid patch integrity manifest.")
             import hashlib
+
             for requested_path, relative in resolved_paths.items():
                 if relative not in integrity:
-                    return ToolResult(False, "", f"Missing integrity record for {relative}.")
+                    return ToolResult(
+                        False, "", f"Missing integrity record for {relative}."
+                    )
                 expected = integrity[relative]
                 target = ctx.registry.root_path / relative
                 if expected is None:
                     if target.exists():
-                        return ToolResult(False, "", f"File {relative} appeared after approval request.")
+                        return ToolResult(
+                            False,
+                            "",
+                            f"File {relative} appeared after approval request.",
+                        )
                     continue
                 if not target.is_file():
-                    return ToolResult(False, "", f"File {relative} disappeared after approval request.")
+                    return ToolResult(
+                        False,
+                        "",
+                        f"File {relative} disappeared after approval request.",
+                    )
                 actual = hashlib.sha256(target.read_bytes()).hexdigest()
                 if actual != expected:
-                    return ToolResult(False, "", f"File {relative} changed after approval request.")
+                    return ToolResult(
+                        False,
+                        "",
+                        f"File {relative} changed after approval request.",
+                    )
 
         coordinator = getattr(ctx.registry, "coordinator", None)
         security = ctx.security_context
-        if coordinator is not None and security is not None and getattr(security, "principal_type", "") == "CHILD":
+        if (
+            coordinator is not None
+            and security is not None
+            and getattr(security, "principal_type", "") == "CHILD"
+        ):
             try:
-                coordinator.claim_paths(resolved_paths.values(), security.principal_id, f"patch turn {ctx.turn_id}")
+                coordinator.claim_paths(
+                    resolved_paths.values(), security.principal_id, f"patch turn {ctx.turn_id}"
+                )
             except Exception as exc:
                 return ToolResult(False, "", f"Coordination conflict: {exc}")
 
@@ -128,31 +193,9 @@ class RunCommandHandler:
             return ToolResult(False, "", f"Invalid shell command syntax: {exc}")
 
         result = ctx.registry.process_runner.run(argv, timeout_seconds=30)
-        optimizer = getattr(ctx.registry, "output_optimizer", None)
-        if optimizer is not None:
-            raw_total_bytes = (
-                result.stdout_total_bytes + result.stderr_total_bytes
-                + (1 if result.stdout_total_bytes and result.stderr_total_bytes else 0)
-            )
-            optimized = optimizer.optimize(
-                argv, result.stdout, result.stderr, result.returncode,
-                artifact_store=getattr(ctx.registry, "artifacts", None),
-                workspace_id=ctx.workspace_id, conversation_id=ctx.conversation_id, turn_id=ctx.turn_id,
-                capture_truncated=result.truncated, raw_total_bytes=raw_total_bytes,
-            )
-            output = optimized.output
-            metadata = {
-                "output_family": optimized.family,
-                "raw_bytes": optimized.raw_bytes,
-                "optimized_bytes": optimized.output_bytes,
-                "omitted_lines": optimized.omitted_lines,
-                "raw_artifact_id": optimized.raw_artifact_id,
-                "capture_truncated": optimized.capture_truncated,
-                "raw_total_bytes": optimized.raw_total_bytes,
-            }
-        else:
-            output = result.stdout + (("\n" + result.stderr) if result.stderr else "")
-            metadata = {}
+        output, metadata, compacted = _optimized_process_output(
+            ctx, argv, result, _token_budget(args, 1200)
+        )
         if result.timed_out:
             command_error = "Command timed out"
         elif result.cancelled:
@@ -162,11 +205,15 @@ class RunCommandHandler:
         else:
             command_error = None
         return ToolResult(
-            success=(result.returncode == 0 and not result.timed_out and not result.cancelled),
+            success=(
+                result.returncode == 0
+                and not result.timed_out
+                and not result.cancelled
+            ),
             output=output,
             error=command_error,
             bytes_count=len(output.encode()),
-            truncated=result.truncated,
+            truncated=result.truncated or compacted,
             metadata=metadata,
         )
 
@@ -184,10 +231,16 @@ class GitStatusHandler:
 
         argv = ["git", "status", "--short", *_git_pathspec_args(ctx)]
         result = ctx.registry.process_runner.run(argv, timeout_seconds=30)
+        output, metadata, compacted = _optimized_process_output(
+            ctx, argv, result, _token_budget(args, 600)
+        )
         return ToolResult(
             success=result.returncode == 0,
-            output=result.stdout,
-            error=result.stderr or None,
+            output=output,
+            error=(result.stderr or None) if result.returncode != 0 else None,
+            bytes_count=len(output.encode("utf-8")),
+            truncated=result.truncated or compacted,
+            metadata=metadata,
         )
 
 
@@ -197,8 +250,14 @@ class GitDiffHandler:
 
         argv = ["git", "diff", *_git_pathspec_args(ctx)]
         result = ctx.registry.process_runner.run(argv, timeout_seconds=30)
+        output, metadata, compacted = _optimized_process_output(
+            ctx, argv, result, _token_budget(args, 1200)
+        )
         return ToolResult(
             success=result.returncode == 0,
-            output=result.stdout,
-            error=result.stderr or None,
+            output=output,
+            error=(result.stderr or None) if result.returncode != 0 else None,
+            bytes_count=len(output.encode("utf-8")),
+            truncated=result.truncated or compacted,
+            metadata=metadata,
         )
