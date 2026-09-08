@@ -212,6 +212,7 @@ class ModelProfile:
     supports_json: bool = False
     keep_alive: Optional[str] = None
     request_timeout_seconds: int = 300
+    enforce_local_limits: bool = True
 
 
 @dataclass

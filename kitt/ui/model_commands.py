@@ -183,3 +183,76 @@ async def handle_delete_provider_command(app: KittUIApp, arg: str) -> None:
         await _await_if_needed(app._persist_custom_providers())
 
     app.state.add_toast(f"✓ Provedor '{name}' removido.", persistent=False)
+
+
+async def handle_local_limits_command(app: KittUIApp, arg: str) -> None:
+    tokens = shlex.split(arg) if arg else []
+    router = app.runtime.processor.router
+
+    if not tokens:
+        lines = [
+            "◈ LIMITES LOCAIS DE TOOL CALLS (ENFORCE LOCAL LIMITS) ◈",
+            "Permite ignorar o limite local de 8 tool calls e confiar nas mensagens/limites do chat remoto.",
+            "",
+            "Status por Perfil:",
+        ]
+        for name, profile in router.config.profiles.items():
+            enforced = getattr(profile, "enforce_local_limits", True)
+            status_tag = "ATIVADO (Padrão local)" if enforced else "DESATIVADO (Confiar no chat)"
+            lines.append(f"  • {name:12} [{profile.backend}/{profile.model}]: {status_tag}")
+        lines.extend([
+            "",
+            "Uso: /local-limits <role|provider|all> <on|off|ativar|desativar>",
+            "Exemplo: /local-limits principal off",
+            "Exemplo: /local-limits kitt-reverse-proxy off",
+        ])
+        app._show_result("\n".join(lines))
+        return
+
+    target = tokens[0].lower()
+    val_str = tokens[1].lower() if len(tokens) > 1 else ""
+
+    if val_str in {"on", "true", "1", "ativar", "enable"}:
+        enable = True
+    elif val_str in {"off", "false", "0", "desativar", "disable"}:
+        enable = False
+    elif not val_str:
+        target_profiles = []
+        if target == "all":
+            target_profiles = list(router.config.profiles.keys())
+        elif target in router.config.profiles:
+            target_profiles = [target]
+        else:
+            matched = [k for k, p in router.config.profiles.items() if (p.backend or "").lower() == target]
+            target_profiles = matched
+        if not target_profiles:
+            app._show_result(f"Alvo '{target}' não encontrado em perfis ou provedores configurados.")
+            return
+        first_prof = router.config.profiles[target_profiles[0]]
+        enable = not getattr(first_prof, "enforce_local_limits", True)
+    else:
+        app._show_result("Opção inválida. Use 'on'/'ativar' ou 'off'/'desativar'.")
+        return
+
+    from dataclasses import replace
+    updated = 0
+    for name, profile in list(router.config.profiles.items()):
+        match = (
+            target == "all"
+            or target == name
+            or (profile.backend or "").lower() == target
+            or (target in {"principal", "context", "validation"} and name == app._role_tasks(target)[0])
+        )
+        if match:
+            router.config.profiles[name] = replace(profile, enforce_local_limits=enable)
+            updated += 1
+
+    if updated > 0:
+        await app._run_blocking(router.save_config, app.state.workspace_path)
+        if hasattr(app, "_ensure_daemon_management") and await app._ensure_daemon_management():
+            await app.bridge.reload_router()
+        status_txt = "ATIVADOS" if enable else "DESATIVADOS"
+        app.state.add_toast(f"Limites locais {status_txt} para '{target}' ({updated} perfil(s) atualizados).", persistent=False)
+        app._show_result(f"Limites locais de tool calls {status_txt} para: {target}")
+    else:
+        app._show_result(f"Nenhum perfil correspondente a '{target}' encontrado.")

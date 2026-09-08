@@ -24,7 +24,7 @@ from kitt.ui.state import UIState, safe_text
 from kitt.ui.theme import DEFAULT_THEME
 from kitt.ui.model_commands import (
     handle_model_command, handle_setup_models_command, handle_add_provider_command,
-    handle_edit_provider_command, handle_delete_provider_command, parse_model_command
+    handle_edit_provider_command, handle_delete_provider_command, handle_local_limits_command, parse_model_command
 )
 from kitt.ui.session_commands import (
     handle_resume_command, handle_fork_command, handle_export_command,
@@ -412,6 +412,8 @@ class KittUIApp:
             await handle_edit_provider_command(self, arg)
         elif found.id == "delete_provider":
             await handle_delete_provider_command(self, arg)
+        elif found.id == "local_limits":
+            await handle_local_limits_command(self, arg)
         elif found.id in {"mode", "toggle_mode"}:
             if arg:
                 self.toggle_turn_mode(arg.strip())
@@ -772,6 +774,11 @@ class KittUIApp:
             ),
             max_output_tokens=max(fallback.max_output_tokens, 2048) if role == "principal" else max(fallback.max_output_tokens, 1024),
             supports_json=provider in {"openai", "anthropic", "gemini", "deepseek", "groq", "together", "mistral", "openrouter", "antigravity", "ollama", "kitt-reverse-proxy", "kitt-proxy"} or "ollama" in (provider or "").lower() or is_kitt_proxy,
+            enforce_local_limits=(
+                getattr(fallback, "enforce_local_limits", True)
+                if same_provider
+                else (False if is_kitt_proxy else True)
+            ),
         )
         for task in tasks:
             router.config.routing[task] = profile_name
@@ -780,6 +787,23 @@ class KittUIApp:
             await self.bridge.reload_router()
         self._init_models_from_runtime()
         self.state.add_toast(f"{role.title()} model: {provider}/{model}")
+
+    async def _toggle_role_local_limits(self, role: str) -> None:
+        router = self.runtime.processor.router
+        profile_name, _ = self._role_tasks(role)
+        prof = router.config.profiles.get(profile_name)
+        if not prof:
+            return
+        curr = getattr(prof, "enforce_local_limits", True)
+        router.config.profiles[profile_name] = replace(prof, enforce_local_limits=not curr)
+        await self._run_blocking(router.save_config, self.state.workspace_path)
+        if await self._ensure_daemon_management():
+            await self.bridge.reload_router()
+        status_str = "ATIVADOS" if not curr else "DESATIVADOS"
+        self.state.add_toast(f"Limites locais {status_str} para o cargo {role.title()}.", persistent=False)
+        if self.application:
+            self.application.invalidate()
+
 
     async def _models_for_provider(self, provider: str, base_url: str) -> list[str]:
         from kitt.llm.auth import ProviderAuthService
@@ -2009,6 +2033,11 @@ class KittUIApp:
             prov = self.model_setup_model.selected_provider
             self._open_auth_login_overlay(prov, parent_name="model_setup")
 
+        @kb.add("t", filter=model_setup)
+        @kb.add("T", filter=model_setup)
+        def _(event):
+            asyncio.create_task(self._toggle_role_local_limits(self.model_setup_model.selected_role))
+
         @kb.add("a", filter=model_setup)
         @kb.add("A", filter=model_setup)
         @kb.add("+", filter=model_setup)
@@ -2697,14 +2726,16 @@ class KittUIApp:
     def _model_setup_header_text(self) -> str:
         setup = self.model_setup_model
         lines = [
-            " [Tab] Alternar Cargo  |  [P / Espaço] Menu Provedores (★)  |  [L] Login/Auth  |  [Enter] Selecionar  |  [Esc] Fechar",
+            " [Tab] Alternar Cargo  |  [T] Limites Locais  |  [P / Espaço] Menu Provedores (★)  |  [L] Login/Auth  |  [Enter] Selecionar  |  [Esc] Fechar",
             " Atribuições de Modelos por Cargo:"
         ]
         for role in setup.roles:
             marker = ">" if role == setup.selected_role else " "
             profile = self._profile_for_role(role)
             endpoint = profile.base_url if profile else "?"
-            lines.append(f" {marker} {role.title():10} {(profile.backend if profile else '?')}/{self._model_for_role(role)} @ {endpoint}")
+            enforced = getattr(profile, "enforce_local_limits", True) if profile else True
+            lim_badge = "[Lim: On]" if enforced else "[Lim: Off]"
+            lines.append(f" {marker} {role.title():10} {(profile.backend if profile else '?')}/{self._model_for_role(role)} @ {endpoint} {lim_badge}")
         
         profile = self._profile_for_role(setup.selected_role)
         endpoint = setup.base_url_override or (profile.base_url if (profile and profile.backend == setup.selected_provider) else self._provider_defaults(setup.selected_provider)[0])

@@ -34,6 +34,7 @@ _PROFILE_FIELDS = {
     "backend", "model", "base_url", "api_key", "credential_ref", "protocol",
     "context_window", "max_output_tokens", "temperature", "supports_tools",
     "supports_json", "keep_alive", "request_timeout_seconds",
+    "enforce_local_limits",
 }
 
 
@@ -190,6 +191,11 @@ class TaskRouter:
                     elif base_url and not base_url.startswith(("http://", "https://")):
                         item["base_url"] = None
                         changed = True
+                if "enforce_local_limits" in item:
+                    item["enforce_local_limits"] = bool(item["enforce_local_limits"])
+                elif backend in {"kitt-reverse-proxy", "kitt-proxy"} or item.get("protocol") == "kitt-reverse-proxy":
+                    item["enforce_local_limits"] = False
+
                 name = key[:64]
                 sanitized_profiles[name] = {
                     "backend": item.get("backend"),
@@ -204,6 +210,7 @@ class TaskRouter:
                     "supports_json": item.get("supports_json"),
                     "keep_alive": item.get("keep_alive"),
                     "request_timeout_seconds": item.get("request_timeout_seconds"),
+                    "enforce_local_limits": item.get("enforce_local_limits", True),
                 }
                 profiles[name] = ModelProfile(**item)
 
@@ -269,6 +276,7 @@ class TaskRouter:
                 "supports_json": profile.supports_json,
                 "keep_alive": profile.keep_alive,
                 "request_timeout_seconds": profile.request_timeout_seconds,
+                "enforce_local_limits": getattr(profile, "enforce_local_limits", True),
             }
 
         custom, _ = _sanitize_custom_provider_credentials(

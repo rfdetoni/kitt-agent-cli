@@ -61,6 +61,7 @@ class CommandRegistry:
             ("delete_provider", "Delete Provider", "Models", "Delete custom provider: /delete-provider <name>", ["/delete-provider", "/remove-provider"]),
             ("reasoning", "Reasoning Effort", "Models", "Adjust thinking depth: /reasoning <0-100> (Ctrl+Left/Right)", ["/reasoning", "/think", "/effort"]),
             ("router", "Router", "Models", "Show task routing configuration", ["/router"]),
+            ("local_limits", "Local Limits", "Models", "Toggle local tool call limits per provider/role: /local-limits [role|provider] [on|off]", ["/local-limits", "/limits"]),
             ("context_stats", "Context Stats", "Analytics", "Show context budget telemetry", ["/context-stats"]),
             ("stats", "Telemetry Stats", "Analytics", "Show token and latency telemetry", ["/stats", "/metrics"]),
             ("status", "Runtime Status", "System", "Show runtime snapshot", ["/status"]),

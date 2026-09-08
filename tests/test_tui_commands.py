@@ -193,6 +193,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             "/mode plan",
             "/mouse",
             "/remote status",
+            "/local-limits",
         ]
         tested = set()
         with patch("kitt.router.model_selector.ModelConfigurator.fetch_ollama_models", return_value=["local-test"]):

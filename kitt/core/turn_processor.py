@@ -63,6 +63,39 @@ from kitt.prompts import (
     CONTEXT_SUMMARY_USER_TEMPLATE,
 )
 
+_CHAT_LIMIT_PATTERNS = [
+    re.compile(
+        r"\b(?:you(?:'ve|\s+have)\s+reached\s+(?:your\s+|the\s+)?(?:current\s+)?(?:message|usage|rate|hourly|daily|turn|request|\s+)*limit"
+        r"|message\s+limit\s+(?:reached|exceeded)"
+        r"|usage\s+limit\s+(?:reached|exceeded)"
+        r"|rate\s+limit\s+(?:reached|exceeded)"
+        r"|too\s+many\s+requests(?:,\s*please\s*try\s*again)?"
+        r"|try\s+again\s+(?:in|after)\s+\d+\s+(?:minute|hour|second)s?"
+        r"|session\s+limit\s+exceeded"
+        r"|quota\s+limit\s+exceeded)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:você\s+atingiu\s+(?:o\s+|seu\s+)?limite(?:\s+de\s+(?:mensagens|uso|requisições|taxa))?"
+        r"|limite\s+(?:de\s+mensagens|de\s+uso|de\s+taxa|por\s+hora|diário)?\s*(?:atingido|excedido)"
+        r"|muitas\s+requisições,\s*tente\s+novamente"
+        r"|tente\s+novamente\s+(?:em|mais\s+tarde|após)\s*(?:\d+\s*(?:minuto|hora|segundo)s?)?)\b",
+        re.IGNORECASE,
+    ),
+]
+
+
+def detect_chat_limit_message(text: str) -> Optional[str]:
+    """Detect upstream chat/provider message and rate limit announcements in model text."""
+    if not text:
+        return None
+    for pattern in _CHAT_LIMIT_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            return m.group(0)
+    return None
+
+
 
 class TurnProcessor:
     """Decoupled core turn processing engine for K.I.T.T."""
@@ -1004,11 +1037,22 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                             {"role": "assistant", "content": full_response},
                             {"role": "user", "content": f"You did not call any tools to modify {candidate_files[0]}. You MUST emit a <kitt-tool> write_file or apply_patch tool call now so K.I.T.T. can apply the changes to the file."},
                         ])
-                        continue
+                    limit_msg = detect_chat_limit_message(full_response)
+                    if limit_msg:
+                        yield TurnFailed(error=f"Limite do chat atingido: {limit_msg}"), None, None
+                        return
                     break
-            if tool_calls >= self.config.max_tool_calls_per_turn:
-                yield TurnFailed(error="Host tool call limit exceeded for this turn."), None, None
-                return
+
+            enforce_limits = getattr(exe_profile, "enforce_local_limits", True)
+            if enforce_limits:
+                if tool_calls >= self.config.max_tool_calls_per_turn:
+                    yield TurnFailed(error="Host tool call limit exceeded for this turn."), None, None
+                    return
+            else:
+                # Safety ceiling to prevent runaway loop while allowing full chat-driven operations
+                if tool_calls >= 1000:
+                    yield TurnFailed(error="Safety ceiling reached (1000 tool calls)."), None, None
+                    return
             tool_calls += 1
             tool_name, tool_args = ("python_compute", python_args) if python_args is not None else general_call
             if tool_name == "apply_patch" and not self.diff_parser.parse(str(tool_args.get("patch", ""))):
