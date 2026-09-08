@@ -154,6 +154,10 @@ class SafeRuntimeHandler(ToolHandler):
             "duration_ms": result.duration_ms,
             **(result.metadata or {}),
         }
+        if result.success and operation == "repo.edit_symbol" and isinstance(result.data, dict):
+            changed_path = str(result.data.get("path") or "").strip()
+            if changed_path:
+                metadata["changed_paths"] = [changed_path]
         edit_result = metadata.get("edit_result")
         if result.success and edit_result is not None:
             ctx.registry.record_edit_result(

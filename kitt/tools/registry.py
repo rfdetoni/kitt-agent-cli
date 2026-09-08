@@ -387,11 +387,44 @@ class ToolRegistry:
                 security_context.workspace_id,
                 security_context.conversation_id,
             )
+            metadata = getattr(result, "metadata", {}) or {}
+            affected_paths = []
+
+            def add_affected_path(value) -> None:
+                if not value or len(affected_paths) >= 32:
+                    return
+                is_safe, target, _error = self.path_policy.validate_path(str(value))
+                if not is_safe or target is None:
+                    return
+                try:
+                    relative = str(target.relative_to(self.root_path))
+                except ValueError:
+                    return
+                if relative not in affected_paths:
+                    affected_paths.append(relative)
+
+            if isinstance(metadata, dict):
+                add_affected_path(metadata.get("path"))
+                edit_result = metadata.get("edit_result")
+                if edit_result is not None:
+                    for path in list(getattr(edit_result, "applied_files", None) or []):
+                        add_affected_path(path)
+                    for path in list(getattr(edit_result, "created_files", None) or []):
+                        add_affected_path(path)
+                for key in ("changed_paths", "affected_paths"):
+                    values = metadata.get(key)
+                    if isinstance(values, (list, tuple, set)):
+                        for path in values:
+                            add_affected_path(path)
+                            if len(affected_paths) >= 32:
+                                break
+
             store.set(
                 f"goal.resume:{principal_id}",
                 {
                     "turn_id": turn_id,
                     "tool_output": str(result.output or "")[:32768],
+                    "affected_paths": affected_paths,
                     "recorded_at": time.time(),
                 },
                 ttl_seconds=3600.0,

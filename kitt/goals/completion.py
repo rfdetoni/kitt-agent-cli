@@ -102,7 +102,8 @@ class AutonomousCompletionEngine:
         base_prompt: str,
         previous_state: Optional[Dict[str, Any]] = None,
     ) -> str:
-        if not self.has_contract(goal):
+        state = previous_state if isinstance(previous_state, dict) else {}
+        if not self.has_contract(goal) and not str(state.get("feedback") or "").strip():
             return base_prompt
 
         criteria = list(getattr(goal, "success_criteria", None) or [])
@@ -114,6 +115,7 @@ class AutonomousCompletionEngine:
             "Do not consider the task complete merely because code was written.",
             "Inspect the current workspace state, validate the implementation, and correct any problem you can find before finishing this turn.",
             "Never fabricate test results or evidence. Deterministic quality gates are authoritative over your own assessment.",
+            "After objective verification passes, KITT may run an independent adversarial senior code review. Required reviewer findings are completion gaps, not optional suggestions.",
         ]
 
         if criteria:
@@ -125,7 +127,6 @@ class AutonomousCompletionEngine:
                 argv = " ".join(getattr(gate, "argv", None) or [])
                 blocks.append(f"- {getattr(gate, 'name', 'QualityGate')}: {argv}")
 
-        state = previous_state if isinstance(previous_state, dict) else {}
         feedback = str(state.get("feedback") or "").strip()
         if feedback:
             blocks.extend(
@@ -325,6 +326,53 @@ class AutonomousCompletionEngine:
             signature = hashlib.sha256("\n".join(signature_parts).encode("utf-8")).hexdigest()
 
         return CompletionVerification(success, score, checks, feedback, signature)
+
+    def include_adversarial_review(
+        self,
+        verification: CompletionVerification,
+        review: Any,
+    ) -> CompletionVerification:
+        """Merge an independent code review as an additional authoritative check."""
+        if not bool(getattr(review, "applicable", False)):
+            return verification
+
+        approved = bool(getattr(review, "approved", False))
+        status = str(getattr(review, "status", "REVIEW") or "REVIEW")
+        review_feedback = str(getattr(review, "feedback", "") or "").strip()
+        review_summary = str(getattr(review, "summary", "") or "").strip()
+        approval_evidence = str(getattr(review, "approval_evidence", "") or "").strip()
+        evidence = approval_evidence or review_feedback or review_summary or status
+        review_check = CompletionCheck(
+            "review",
+            "Adversarial code review",
+            approved,
+            _bounded(evidence, 12000),
+        )
+        checks = [*verification.checks, review_check]
+        total = len(checks)
+        passed_count = sum(1 for check in checks if check.passed)
+        success = verification.success and approved
+        score = 1.0 if total == 0 else passed_count / total
+
+        if success:
+            return CompletionVerification(True, score, checks, "", "")
+
+        feedback_parts = [part for part in (verification.feedback, review_feedback) if part]
+        feedback = "\n\n".join(feedback_parts)
+        signature_parts = [
+            part
+            for part in (
+                verification.failure_signature,
+                str(getattr(review, "failure_signature", "") or ""),
+            )
+            if part
+        ]
+        signature = (
+            hashlib.sha256("\n".join(signature_parts).encode("utf-8")).hexdigest()
+            if signature_parts
+            else ""
+        )
+        return CompletionVerification(False, score, checks, feedback, signature)
 
     def next_state(
         self,
