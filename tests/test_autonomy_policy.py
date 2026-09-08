@@ -65,16 +65,23 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertEqual(engine.evaluate_command("rtk git diff"), "ALLOW")
         self.assertEqual(engine.evaluate_command("rtk pytest"), "ASK")
         self.assertEqual(engine.evaluate_command("rtk cargo test"), "ASK")
+        self.assertEqual(
+            engine.evaluate_command(
+                "rtk find jetbrains-plugin/src extensions/kitt-ai/src backend -type f"
+            ),
+            "ASK",
+        )
         self.assertEqual(engine.evaluate_command("rtk cat .env"), "DENY")
+        self.assertEqual(engine.evaluate_command("rtk find . -delete"), "DENY")
 
-    def test_policy_deny_requires_approval_in_interactive_mode(self):
+    def test_safe_find_requires_and_accepts_approval(self):
         import tempfile
-        from pathlib import Path
         from kitt.tools.registry import ToolRegistry
         from kitt.security.context import ExecutionSecurityContext
 
         with tempfile.TemporaryDirectory() as tmpdir:
             reg_sup = ToolRegistry(root_dir=tmpdir)
+            command = "find . -maxdepth 1 -type f"
             sec_ctx = ExecutionSecurityContext.from_dict({
                 "workspace_id": "ws_test",
                 "conversation_id": "conv_test",
@@ -86,11 +93,9 @@ class TestAutonomyPolicy(unittest.TestCase):
                 "trace_id": "trace-1",
             })
 
-            # In supervised mode, a model-invoked command that policy restricts (DENY)
-            # must return requires_approval=True so UI shows the permission popup modal:
             res_sup = reg_sup.execute_tool(
                 "run_command",
-                {"command": "rtk find . -maxdepth 3 -type f | sort"},
+                {"command": command},
                 turn_id="turn_test",
                 conversation_id="conv_test",
                 workspace_id="ws_test",
@@ -99,14 +104,63 @@ class TestAutonomyPolicy(unittest.TestCase):
             )
             self.assertFalse(res_sup.success)
             self.assertTrue(res_sup.requires_approval)
-            self.assertEqual(res_sup.metadata.get("approval_action"), "run_command")
+
+            approval_id = "req_find_command"
+            action_hash = reg_sup.policy.generate_action_hash(
+                "run_command", {"command": command}
+            )
+            reg_sup.approval_manager.register_request(
+                "turn_test", "conv_test", "ws_test", action_hash, approval_id, "run_command"
+            )
+            grant = reg_sup.approval_manager.issue_grant(
+                "turn_test", "conv_test", "ws_test", action_hash, approval_id
+            )
+            approved = reg_sup.execute_tool(
+                "run_command",
+                {"command": command},
+                turn_id="turn_test",
+                conversation_id="conv_test",
+                workspace_id="ws_test",
+                origin="MODEL",
+                grant=grant,
+                expected_approval_id=approval_id,
+                security_context=sec_ctx,
+            )
+            self.assertTrue(approved.success)
+
+            runtime_approval_id = "req_find_runtime_command"
+            reg_sup.approval_manager.register_request(
+                "runtime_turn", "conv_test", "ws_test", action_hash,
+                runtime_approval_id, "run_command",
+            )
+            runtime_grant = reg_sup.approval_manager.issue_grant(
+                "runtime_turn", "conv_test", "ws_test", action_hash,
+                runtime_approval_id,
+            )
+            from kitt.runtime.safe_runtime import SafeRuntime
+            rt_sup = SafeRuntime(
+                workspace_root=tmpdir,
+                workspace_id="ws_test",
+                conversation_id="conv_test",
+                tool_registry=reg_sup,
+            )
+            approved_runtime = rt_sup.execute(
+                "process.run",
+                {"command": command},
+                turn_id="runtime_turn",
+                origin="MODEL",
+                security_context=sec_ctx,
+                approval_grant=runtime_grant,
+                expected_approval_id=runtime_approval_id,
+            )
+            self.assertTrue(approved_runtime.success)
 
             # In read_only mode, it remains strictly hard-denied without approval popup:
             reg_ro = ToolRegistry(root_dir=tmpdir)
             reg_ro.policy = PolicyEngine(root_dir=tmpdir, autonomy=AutonomyPolicy.preset("read_only"))
             res_ro = reg_ro.execute_tool(
                 "run_command",
-                {"command": "rtk find . -maxdepth 3 -type f | sort"},
+                {"command": command},
                 turn_id="turn_test",
                 conversation_id="conv_test",
                 workspace_id="ws_test",
@@ -114,7 +168,6 @@ class TestAutonomyPolicy(unittest.TestCase):
                 security_context=sec_ctx,
             )
             # Test SafeRuntime.execute for process.run
-            from kitt.runtime.safe_runtime import SafeRuntime
             rt_sup = SafeRuntime(
                 workspace_root=tmpdir,
                 workspace_id="ws_test",
@@ -123,7 +176,7 @@ class TestAutonomyPolicy(unittest.TestCase):
             )
             res_rt_sup = rt_sup.execute(
                 "process.run",
-                {"command": "rtk find . -maxdepth 3 -type f | sort"},
+                {"command": command},
                 turn_id="turn_test",
                 origin="MODEL",
                 security_context=sec_ctx,
@@ -141,7 +194,7 @@ class TestAutonomyPolicy(unittest.TestCase):
             )
             res_rt_ro = rt_ro.execute(
                 "process.run",
-                {"command": "rtk find . -maxdepth 3 -type f | sort"},
+                {"command": command},
                 turn_id="turn_test",
                 origin="MODEL",
                 security_context=sec_ctx,

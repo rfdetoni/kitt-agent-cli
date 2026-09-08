@@ -142,7 +142,8 @@ def start_daemon_detached(workspace: str, timeout_seconds: float = 10.0) -> Dict
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
-        "cwd": root,
+        # Keep source checkout importable even when target workspace differs.
+        "cwd": str(Path(__file__).resolve().parents[2]),
         "env": sanitized_subprocess_env(),
     }
     if os.name != "nt":

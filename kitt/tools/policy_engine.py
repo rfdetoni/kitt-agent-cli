@@ -156,6 +156,41 @@ class PolicyEngine:
             return bool(safe)
         return True
 
+    def _find_readonly(self, argv: list[str]) -> Permission:
+        roots: list[str] = []
+        saw_predicate = False
+        index = 1
+        while index < len(argv):
+            arg = argv[index]
+            if not saw_predicate and not arg.startswith("-"):
+                roots.append(arg)
+                index += 1
+                continue
+            if arg == "-type" and index + 1 < len(argv) and argv[index + 1] in set("bcdpfls"):
+                saw_predicate = True
+                index += 2
+                continue
+            if arg in {"-maxdepth", "-mindepth"} and index + 1 < len(argv) and argv[index + 1].isdigit():
+                saw_predicate = True
+                index += 2
+                continue
+            if arg in {"-name", "-iname", "-path", "-ipath"} and index + 1 < len(argv):
+                saw_predicate = True
+                index += 2
+                continue
+            if arg in {"-print", "-print0", "-xdev", "-mount"}:
+                saw_predicate = True
+                index += 1
+                continue
+            return "DENY"
+        if not roots or not saw_predicate:
+            return "DENY"
+        return (
+            "ASK"
+            if all(self.path_policy.validate_path(root)[0] for root in roots)
+            else "DENY"
+        )
+
     @classmethod
     def _git_readonly(cls, argv: list[str]) -> Permission:
         if len(argv) < 2:
@@ -238,9 +273,12 @@ class PolicyEngine:
                 return "DENY"
             executable = Path(argv[0]).name.lower()
 
-        if executable in self.DISALLOWED_SHELL_COMMANDS:
-            return "DENY"
         if any(not self._path_arg_safe(arg) for arg in argv[1:] if not arg.startswith("-")):
+            return "DENY"
+
+        if executable == "find":
+            return self._find_readonly(argv)
+        if executable in self.DISALLOWED_SHELL_COMMANDS:
             return "DENY"
 
         if executable == "git":

@@ -132,9 +132,17 @@ async def _run_daemon_turn(runtime, prompt: str, write, *, readline=None) -> boo
 class PlainLineUI:
     """Standard-library fallback. No prompt_toolkit import or alternate screen."""
 
-    def __init__(self, runtime, reason: str | None = None, input_stream=None, output_stream=None):
+    def __init__(
+        self,
+        runtime,
+        reason: str | None = None,
+        input_stream=None,
+        output_stream=None,
+        no_animation: bool = False,
+    ):
         self.runtime = runtime
         self.reason = reason
+        self.no_animation = no_animation
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
         self.commands = CommandRegistry()

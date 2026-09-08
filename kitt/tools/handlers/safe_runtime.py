@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any, Dict, Optional
 
 from kitt.core.pending_action import embed_resume_descriptor
 from kitt.runtime.safe_runtime import SafeRuntime
 from kitt.tools.handlers import ToolContext, ToolHandler
 from kitt.tools.handlers.system import PATCH_INTEGRITY_KEY
+
+
+logger = logging.getLogger(__name__)
 
 
 class SafeRuntimeHandler(ToolHandler):
@@ -91,6 +95,13 @@ class SafeRuntimeHandler(ToolHandler):
             security_context=security_context,
             approval_grant=ctx.approval_grant,
             expected_approval_id=ctx.expected_approval_id,
+        )
+        logger.debug(
+            "runtime operation=%s success=%s approval=%s error=%r",
+            operation,
+            result.success,
+            result.requires_approval,
+            result.error,
         )
 
         event_bus = getattr(ctx.registry, "event_bus", None)

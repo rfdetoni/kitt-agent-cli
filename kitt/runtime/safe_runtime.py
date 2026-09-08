@@ -256,27 +256,6 @@ class SafeRuntime:
                     spec.policy_tool_action, args, origin=origin
                 )
                 if permission == "DENY":
-                    autonomy_level = getattr(
-                        getattr(policy, "autonomy", None), "level", "supervised"
-                    )
-                    if (
-                        autonomy_level != "read_only"
-                        and approval_grant is None
-                        and origin == "MODEL"
-                    ):
-                        return self._result(
-                            start,
-                            SafeRuntimeResult(
-                                False,
-                                op,
-                                error=f"Operation '{op}' requires user approval (policy restriction: DENY).",
-                                requires_approval=True,
-                                approval_action=spec.policy_tool_action,
-                                approval_payload=dict(args),
-                                required_capability=spec.required_capability,
-                                resume_tool_name=spec.resume_tool_name,
-                            ),
-                        )
                     return self._result(
                         start,
                         SafeRuntimeResult(

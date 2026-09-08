@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import queue
 import re
 import threading
@@ -62,6 +63,8 @@ from kitt.prompts import (
     CONTEXT_SUMMARY_SYSTEM as CONTEXT_SUMMARY_PROMPT,
     CONTEXT_SUMMARY_USER_TEMPLATE,
 )
+
+logger = logging.getLogger(__name__)
 
 _CHAT_LIMIT_PATTERNS = [
     re.compile(
@@ -1046,6 +1049,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             enforce_limits = getattr(exe_profile, "enforce_local_limits", True)
             if enforce_limits:
                 if tool_calls >= self.config.max_tool_calls_per_turn:
+                    logger.warning(
+                        "host tool limit turn=%s calls=%s limit=%s",
+                        cmd.turn_id,
+                        tool_calls,
+                        self.config.max_tool_calls_per_turn,
+                    )
                     yield TurnFailed(error="Host tool call limit exceeded for this turn."), None, None
                     return
             else:
@@ -1055,6 +1064,13 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     return
             tool_calls += 1
             tool_name, tool_args = ("python_compute", python_args) if python_args is not None else general_call
+            logger.debug(
+                "host tool turn=%s call=%s tool=%s operation=%s",
+                cmd.turn_id,
+                tool_calls,
+                tool_name,
+                tool_args.get("operation", "-") if isinstance(tool_args, dict) else "-",
+            )
             if tool_name == "apply_patch" and not self.diff_parser.parse(str(tool_args.get("patch", ""))):
                 malformed_calls += 1
                 if malformed_calls > 2:
@@ -1086,6 +1102,15 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 )
             finally:
                 self.turn_guard.end(cmd.turn_id)
+            logger.debug(
+                "host result turn=%s call=%s tool=%s success=%s approval=%s error=%r",
+                cmd.turn_id,
+                tool_calls,
+                tool_name,
+                tool_result.success,
+                tool_result.requires_approval,
+                tool_result.error,
+            )
             if tool_result.requires_approval:
                 # Pending-action registration is state mutation. Order it
                 # against cancellation instead of checking a racy boolean.

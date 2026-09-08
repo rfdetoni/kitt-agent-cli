@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,9 @@ from kitt.tools.path_policy import WorkspacePathPolicy
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.process_runner import ProcessRunner
 from kitt.tools.safe_python import SafePythonExecutor
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -560,24 +564,19 @@ class ToolRegistry:
         permission = self.policy.evaluate_tool(
             tool_name, args, origin=origin, conversation_id=conversation_id
         )
+        logger.debug(
+            "policy tool=%s decision=%s origin=%s autonomy=%s grant=%s approval_id=%s hash=%s",
+            tool_name,
+            permission,
+            origin,
+            getattr(getattr(self.policy, "autonomy", None), "level", "supervised"),
+            grant is not None,
+            expected_approval_id or "-",
+            self.policy.generate_action_hash(tool_name, args)[:12],
+        )
         approval_validated = False
         if permission == "DENY":
-            autonomy_level = getattr(
-                getattr(self.policy, "autonomy", None), "level", "supervised"
-            )
-            if autonomy_level != "read_only" and grant is None and origin == "MODEL":
-                expected_hash = self.policy.generate_action_hash(tool_name, args)
-                return ToolResult(
-                    False,
-                    "",
-                    f"Tool '{tool_name}' requires explicit user confirmation (policy restriction: DENY).",
-                    requires_approval=True,
-                    metadata={
-                        "approval_action": tool_name,
-                        "approval_payload": dict(args),
-                        "approval_hash": expected_hash,
-                    },
-                )
+            logger.debug("policy DENY enforced tool=%s", tool_name)
             return ToolResult(
                 False,
                 "",

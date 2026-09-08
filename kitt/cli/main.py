@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import logging.handlers
+import os
 import sys
 from dataclasses import replace
 
@@ -9,6 +12,21 @@ from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.ui.capabilities import create_backend
 from kitt.ui.fallback import HeadlessUI
+
+
+def _configure_debug_log() -> None:
+    path = os.getenv("KITT_DEBUG_LOG", "").strip()
+    if not path:
+        return
+    handler = logging.handlers.RotatingFileHandler(
+        path, maxBytes=1_000_000, backupCount=2, encoding="utf-8"
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+    logger = logging.getLogger("kitt")
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
 
 
 def _add_common_options(parser: argparse.ArgumentParser, *, defaults: bool) -> None:
@@ -244,6 +262,7 @@ async def async_main(args) -> int:
 
 
 def main(argv=None) -> int:
+    _configure_debug_log()
     parser = build_parser()
     args = parser.parse_args(argv)
 

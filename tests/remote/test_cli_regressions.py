@@ -24,6 +24,7 @@ class CliRegressionTests(unittest.TestCase):
         self.assertIn('"--root"', source)
         self.assertIn('"run"', source)
         self.assertNotIn('"--workspace"', source)
+        self.assertIn('"cwd": str(Path(__file__).resolve().parents[2])', source)
 
 
 if __name__ == "__main__":

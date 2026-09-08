@@ -4,6 +4,7 @@ from io import StringIO
 from types import SimpleNamespace
 
 from kitt.core.turn_events import TurnCompleted
+from kitt.ui.capabilities import create_backend
 from kitt.ui.fallback import HeadlessUI, PlainLineUI
 
 
@@ -13,6 +14,11 @@ class FinalOnlyProcessor:
 
 
 class TestFallbackResponseDisplay(unittest.IsolatedAsyncioTestCase):
+    def test_plain_backend_accepts_no_animation(self):
+        self.assertIsInstance(
+            create_backend(object(), "plain", no_animation=True), PlainLineUI
+        )
+
     async def test_plainlineui_prints_turn_completed_response(self):
         runtime = SimpleNamespace(
             history=SimpleNamespace(
