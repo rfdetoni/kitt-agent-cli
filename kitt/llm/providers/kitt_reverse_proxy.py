@@ -20,6 +20,9 @@ _SAFE_CALL_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _REQUIRED_ARGS = {
     "read_file": ("path",),
     "kitt_runtime": ("operation",),
+    "list_files": ("path",),
+    "repository_map": ("mode",),
+    "artifact_store": ("content",),
     "search": ("pattern",),
     "write_file": ("path", "content"),
     "apply_patch": ("patch",),
@@ -124,7 +127,7 @@ def strip_legacy_tool_contract(system_prompt: Optional[str]) -> Optional[str]:
 def _decode_bridge_call(content: Any) -> Optional[Tuple[str, str, Dict[str, Any]]]:
     if not isinstance(content, str):
         return None
-    match = _BRIDGE_RE.fullmatch(content.strip())
+    match = _BRIDGE_RE.search(content.strip())
     if not match:
         return None
     try:
@@ -150,6 +153,7 @@ def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[
     """Restore native assistant.tool_calls -> tool(tool_call_id) from KITT's text loop."""
     normalized: List[Dict[str, Any]] = []
     pending_call_id: Optional[str] = None
+    pending_name: Optional[str] = None
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -174,18 +178,24 @@ def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[
                     }],
                 })
                 pending_call_id = call_id
+                pending_name = name
                 continue
         if role == "user" and pending_call_id:
             result_text = "" if content is None else str(content)
             if "result from the host" in result_text[:512].lower():
-                normalized.append({
+                tool_msg: Dict[str, Any] = {
                     "role": "tool",
                     "tool_call_id": pending_call_id,
                     "content": result_text,
-                })
+                }
+                if pending_name:
+                    tool_msg["name"] = pending_name
+                normalized.append(tool_msg)
                 pending_call_id = None
+                pending_name = None
                 continue
             pending_call_id = None
+            pending_name = None
         clean: Dict[str, Any] = {"role": role, "content": content}
         for key in ("name", "tool_call_id", "tool_calls"):
             if key in message:

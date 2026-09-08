@@ -147,6 +147,35 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertLessEqual(total, profile.context_window - profile.max_output_tokens)
         self.assertEqual(messages[0]["content"], "original request")
 
+    def test_rebudget_execution_messages_preserves_tool_envelopes(self):
+        profile = type("Profile", (), {"context_window": 900, "max_output_tokens": 300})()
+        tool_call_msg = '<kitt-tool>{"id":"c1","name":"kitt_runtime","arguments":{"operation":"artifacts.read"}}</kitt-tool>'
+        tool_res_msg = "kitt_runtime result from the host:\nUntrusted data: OK"
+        messages = [
+            {"role": "user", "content": "original request"},
+            {"role": "assistant", "content": tool_call_msg},
+            {"role": "user", "content": tool_res_msg},
+            {"role": "assistant", "content": "x" * 4000},
+        ]
+
+        self.processor._rebudget_execution_messages(messages, "system", profile)
+        self.assertEqual(messages[1]["content"], tool_call_msg)
+        self.assertEqual(messages[2]["content"], tool_res_msg)
+
+    def test_security_context_grants_artifact_capabilities(self):
+        from kitt.core.turn_command import TurnCommand
+        from kitt.security.capabilities import CAP_ARTIFACT_READ, CAP_ARTIFACT_WRITE, CAP_REPO_READ
+
+        cmd_code = TurnCommand(conversation_id="conv-sec", prompt="edit something", mode="code")
+        sec_ctx = self.processor._security_context_for_turn(cmd_code, ["read_file", "write_file"])
+        self.assertIn(CAP_ARTIFACT_READ, sec_ctx.capabilities)
+        self.assertIn(CAP_ARTIFACT_WRITE, sec_ctx.capabilities)
+
+        cmd_ask = TurnCommand(conversation_id="conv-sec-ask", prompt="what is this?", mode="ask")
+        sec_ctx_ask = self.processor._security_context_for_turn(cmd_ask, ["read_file"])
+        self.assertIn(CAP_ARTIFACT_READ, sec_ctx_ask.capabilities)
+        self.assertNotIn(CAP_ARTIFACT_WRITE, sec_ctx_ask.capabilities)
+
     def test_simple_ask_skips_repository_context(self):
         class FakeExecutionClient:
             def chat_stream(self, *args, **kwargs):

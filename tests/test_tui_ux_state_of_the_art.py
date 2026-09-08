@@ -312,14 +312,14 @@ class TestUXStateOfTheArt(unittest.TestCase):
         app = KittUIApp(runtime=MagicMock())
         app.build_application()
         
-        # Test mouse toggle
-        self.assertTrue(app.mouse_support_enabled)
-        res = app.toggle_mouse_support()
-        self.assertFalse(res)
+        # Test mouse toggle (default False to allow native terminal copy/selection)
         self.assertFalse(app.mouse_support_enabled)
         res = app.toggle_mouse_support()
         self.assertTrue(res)
         self.assertTrue(app.mouse_support_enabled)
+        res = app.toggle_mouse_support()
+        self.assertFalse(res)
+        self.assertFalse(app.mouse_support_enabled)
 
         # Test transcript mouse scroll handler
         app.transcript_window.vertical_scroll = 50

@@ -118,6 +118,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         )
         self.assertEqual(normalized[2]["role"], "tool")
         self.assertEqual(normalized[2]["tool_call_id"], "call_abc123")
+        self.assertEqual(normalized[2]["name"], "read_file")
 
     def test_ordinary_messages_are_not_reinterpreted(self):
         source = [{"role": "user", "content": "hello"}]

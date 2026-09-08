@@ -48,7 +48,16 @@ class DeterministicFallbackPlanner:
     def generate_plan(self, task: SemanticTask) -> ContextPlan:
         if task.intent == 'ASK' and not task.paths and not task.symbols:
             return ContextPlan(confidence=1.0)
-        tools = ["write_file", "apply_patch", "read_file", "run_command", "repository_map", "python_compute"]
+        tools = [
+            "write_file",
+            "apply_patch",
+            "read_file",
+            "run_command",
+            "repository_map",
+            "python_compute",
+            "artifact_read",
+            "artifact_store",
+        ]
         return ContextPlan(
             search_queries=task.symbols + task.paths,
             candidate_symbols=task.symbols,

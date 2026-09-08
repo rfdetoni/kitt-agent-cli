@@ -49,7 +49,13 @@ from kitt.core.pending_action import PendingAction
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_execution_guard import TurnExecutionGuard
 from kitt.security.context import ExecutionSecurityContext
-from kitt.security.capabilities import capabilities_for_tools, READ_ONLY_CAPABILITIES, CAP_REPO_WRITE
+from kitt.security.capabilities import (
+    capabilities_for_tools,
+    READ_ONLY_CAPABILITIES,
+    CAP_REPO_WRITE,
+    CAP_ARTIFACT_READ,
+    CAP_ARTIFACT_WRITE,
+)
 from kitt.metrics.models import TurnMetrics
 from kitt.metrics.cost_estimator import estimate_cost
 from kitt.prompts import (
@@ -214,6 +220,12 @@ class TurnProcessor:
                 break
             message = messages[index]
             current = message.get("content", "")
+            # Preserve structural tool envelopes: truncating bridge tags or tool result
+            # envelopes corrupts JSON/tool protocol and causes reverse-proxy session resets.
+            if message.get("role") == "assistant" and ("<kitt-tool>" in current or "</kitt-tool>" in current):
+                continue
+            if message.get("role") == "user" and "result from the host" in current[:512].lower():
+                continue
             current_tokens = TokenCounter.count_tokens(current)
             if current_tokens <= 64:
                 continue
@@ -881,6 +893,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             ctx.assert_scope(self.workspace_id, cmd.conversation_id)
             return ctx.with_turn(cmd.turn_id)
         caps = capabilities_for_tools(planned_tools)
+        caps.add(CAP_ARTIFACT_READ)
+        if cmd.mode not in {"plan", "ask"}:
+            caps.add(CAP_ARTIFACT_WRITE)
         if cmd.mode in {"plan", "ask"}:
             caps &= set(READ_ONLY_CAPABILITIES)
         return ExecutionSecurityContext.create_user_context(

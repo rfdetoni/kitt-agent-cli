@@ -80,6 +80,7 @@ TOOL_TO_CAPABILITY = {
     "memory_recall": CAP_MEMORY_READ,
     "memory_save": CAP_MEMORY_WRITE,
     "mcp_call": CAP_MCP_CALL,
+    "kitt_runtime": CAP_REPO_READ,
 }
 
 

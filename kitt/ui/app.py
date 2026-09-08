@@ -57,7 +57,7 @@ class KittUIApp:
         self.timeline_model = TimelineModel(runtime)
         self.diff_model = DiffViewerModel(str(root))
         self.model_setup_model = ModelSetupModel()
-        self.mouse_support_enabled: bool = True
+        self.mouse_support_enabled: bool = False
         self.editing_provider_name: Optional[str] = None
 
         self._init_models_from_runtime()
@@ -304,7 +304,7 @@ class KittUIApp:
             style=DEFAULT_THEME.prompt_toolkit_style(),
             full_screen=True,
             cursor=CursorShape.BLINKING_BEAM,
-            mouse_support=Condition(lambda: getattr(self, "mouse_support_enabled", True)),
+            mouse_support=Condition(lambda: getattr(self, "mouse_support_enabled", False)),
             refresh_interval=None,
             min_redraw_interval=1 / 30,
             input=self.input,
@@ -964,7 +964,15 @@ class KittUIApp:
         return None
 
     def toggle_mouse_support(self) -> bool:
-        self.mouse_support_enabled = not getattr(self, "mouse_support_enabled", True)
+        self.mouse_support_enabled = not getattr(self, "mouse_support_enabled", False)
+        if self.application and hasattr(self.application, "output"):
+            try:
+                if self.mouse_support_enabled:
+                    self.application.output.enable_mouse_support()
+                else:
+                    self.application.output.disable_mouse_support()
+            except Exception:
+                pass
         msg = "Mouse TUI ativado (Scroll Interativo)" if self.mouse_support_enabled else "Mouse Terminal Nativo (Seleção/Cópia de Texto Habilitada)"
         self.state.add_toast(msg)
         if self.application:
