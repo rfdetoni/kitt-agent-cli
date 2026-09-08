@@ -17,8 +17,9 @@ class TestAutonomyOverlayRendering(unittest.TestCase):
             # 2. Render text
             text = app._autonomy_text()
             self.assertIn("CENTRAL DE PERMISSÕES & AUTONOMIA", text)
-            self.assertIn("Supervisionado Estrito", text)
-            self.assertIn("Edição Livre de Arquivos", text)
+            self.assertIn("ALLOW ALL", text)
+            self.assertIn("ASK", text)
+            self.assertIn("DENY", text)
 
             # 3. Test changing preset to files_free
             runtime.autonomy_store.set_preset("files_free")

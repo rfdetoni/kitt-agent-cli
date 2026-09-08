@@ -562,9 +562,11 @@ class KittUIApp:
             else:
                 level = arg.strip().lower()
                 preset_map = {
-                    "always_allow": "balanced", "always": "balanced",
-                    "files_free": "balanced", "1": "supervised",
-                    "2": "balanced", "3": "autonomous",
+                    "allow_all": "autonomous", "always_allow": "autonomous",
+                    "allow": "autonomous", "always": "autonomous",
+                    "ask": "supervised", "deny": "read_only",
+                    "files_free": "balanced", "1": "autonomous",
+                    "2": "supervised", "3": "read_only",
                     "read_only": "read_only", "supervised": "supervised",
                     "balanced": "balanced", "autonomous": "autonomous",
                 }
@@ -2356,15 +2358,15 @@ class KittUIApp:
 
         @kb.add("1", filter=autonomy_cond)
         def _(event):
-            asyncio.create_task(self._set_autonomy_profile("supervised"))
+            asyncio.create_task(self._set_autonomy_profile("autonomous"))
 
         @kb.add("2", filter=autonomy_cond)
         def _(event):
-            asyncio.create_task(self._set_autonomy_profile("balanced"))
+            asyncio.create_task(self._set_autonomy_profile("supervised"))
 
         @kb.add("3", filter=autonomy_cond)
         def _(event):
-            asyncio.create_task(self._set_autonomy_profile("autonomous"))
+            asyncio.create_task(self._set_autonomy_profile("read_only"))
 
         @kb.add("r", filter=autonomy_cond)
         def _(event):
@@ -2654,22 +2656,27 @@ class KittUIApp:
     def _autonomy_text(self) -> str:
         t = DEFAULT_THEME
         curr = self.runtime.autonomy_store.get()
+        command_mode = (
+            "DENY" if curr.level == "read_only"
+            else "ALLOW ALL" if curr.allow_run_command_auto
+            else "ASK"
+        )
         rules = getattr(self.runtime.approval, "remembered_rules", [])
         rules_str = "\n".join(f"  • {r.tool_name} ({r.path_glob or '*'}) -> {r.decision.upper()} [{r.scope}]" for r in rules[-5:]) if rules else "  (Nenhuma regra salva)"
 
         return (
             t.format_primary("┌── CENTRAL DE PERMISSÕES & AUTONOMIA / AUTONOMY CONTROL ───────────────────┐\n") +
-            f"│ Perfil Atual: [ {curr.level.upper()} ]  (Edição Livre de Arquivos: {curr.allow_file_write_auto})\n" +
+            f"│ Perfil Atual: [ {curr.level.upper()} ]  Comandos: [ {command_mode} ]\n" +
             "│\n" +
-            "│ Selecione um perfil de autonomia:\n" +
-            "│  [1] Supervisionado Estrito : Pedir aprovação para cada arquivo / comando\n" +
-            "│  [2] Edição Livre de Arquivos: SEMPRE PERMITIR alterações de arquivo (Always Allow)\n" +
-            "│  [3] Autonomia Total        : Sempre permitir arquivos, comandos e subagentes\n" +
+            "│ Política para comandos e alterações:\n" +
+            "│  [1] ALLOW ALL : Executar automaticamente dentro das regras críticas\n" +
+            "│  [2] ASK       : Pedir aprovação antes de comandos e alterações\n" +
+            "│  [3] DENY      : Bloquear comandos, alterações e subagentes\n" +
             "│\n" +
             "│ Regras Salvas no Workspace:\n" +
             f"{rules_str}\n" +
             "│\n" +
-            "│ Controles: [1] Estrito  [2] Edição Livre  [3] Autonomia Total  [c] Limpar Regras  [Esc] Sair\n" +
+            "│ Controles: [1] Allow All  [2] Ask  [3] Deny  [r] Limpar Regras  [Esc] Sair\n" +
             t.format_primary("└────────────────────────────────────────────────────────────────────────────┘")
         )
 

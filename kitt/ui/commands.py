@@ -80,7 +80,7 @@ class CommandRegistry:
             ("artifact", "Open Artifact", "Context", "Read or inspect persisted artifact: /artifact <id>", ["/artifact", "/art"]),
             ("cancel", "Cancel Turn", "Turn", "Cancel active turn or background operations", ["/cancel", "/stop"]),
             ("approvals", "Approvals", "Security", "Show approval audit trail", ["/approvals"]),
-            ("autonomy", "Autonomy Profile", "Security", "Set autonomy level: /autonomy <read_only|supervised|balanced|autonomous>", ["/autonomy"]),
+            ("autonomy", "Autonomy Profile", "Security", "Set policy: /autonomy <allow_all|ask|deny>", ["/autonomy", "/permissions"]),
             ("remote", "Remote Web Gateway", "Remote", "Enable browser control from this device or LAN: /remote [start|stop|status|code|lan] [port]", ["/remote", "/web"]),
             ("workspace", "Workspace", "System", "Show or switch workspace", ["/workspace"]),
             ("mouse", "Toggle Mouse Mode", "System", "Toggle between TUI mouse and Terminal native selection (F10 / Ctrl+M)", ["/mouse"]),

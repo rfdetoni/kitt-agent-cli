@@ -82,7 +82,14 @@ class PolicyEngine:
             if tool_name == "kitt_runtime" or tool_name in read_tools:
                 return "ALLOW"
             if tool_name == "run_command":
-                return self.evaluate_command(str(args.get("command", "")).strip())
+                decision = self.evaluate_command(str(args.get("command", "")).strip())
+                if decision == "DENY":
+                    return "DENY"
+                return (
+                    "ALLOW"
+                    if getattr(self.autonomy, "allow_run_command_auto", False)
+                    else "ASK"
+                )
             return "ASK"
 
         if tool_name in read_tools | {
@@ -93,7 +100,14 @@ class PolicyEngine:
         if tool_name in {"apply_patch", "write_file"}:
             return "ASK"
         if tool_name == "run_command":
-            return self.evaluate_command(str(args.get("command", "")).strip())
+            decision = self.evaluate_command(str(args.get("command", "")).strip())
+            if decision == "DENY":
+                return "DENY"
+            return (
+                "ALLOW"
+                if getattr(self.autonomy, "allow_run_command_auto", False)
+                else "ASK"
+            )
         return "ASK"
 
     def evaluate_tool(
@@ -136,7 +150,7 @@ class PolicyEngine:
                 return "DENY"
             if getattr(self.autonomy, "allow_run_command_auto", False):
                 return "ALLOW"
-            return command_decision
+            return "ASK"
         if tool_name in {"child_spawn", "child"} and getattr(
             self.autonomy, "allow_child_spawn_auto", True
         ):

@@ -26,7 +26,10 @@ class AutonomyPolicy:
         }
         alias_map = {
             "files_free": "balanced",
-            "always_allow": "balanced",
+            "always_allow": "autonomous",
+            "allow_all": "autonomous",
+            "ask": "supervised",
+            "deny": "read_only",
         }
         target = alias_map.get(str(level), str(level))
         if target not in presets:

@@ -21,6 +21,31 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertTrue(aut.allow_file_write_auto)
         self.assertTrue(aut.allow_run_command_auto)
 
+        self.assertEqual(AutonomyPolicy.preset("allow_all").level, "autonomous")
+        self.assertEqual(AutonomyPolicy.preset("ask").level, "supervised")
+        self.assertEqual(AutonomyPolicy.preset("deny").level, "read_only")
+
+    def test_run_command_menu_modes(self):
+        command = {"command": "git status"}
+        self.assertEqual(
+            PolicyEngine(autonomy=AutonomyPolicy.preset("allow_all")).evaluate_tool(
+                "run_command", command
+            ),
+            "ALLOW",
+        )
+        self.assertEqual(
+            PolicyEngine(autonomy=AutonomyPolicy.preset("ask")).evaluate_tool(
+                "run_command", command
+            ),
+            "ASK",
+        )
+        self.assertEqual(
+            PolicyEngine(autonomy=AutonomyPolicy.preset("deny")).evaluate_tool(
+                "run_command", command
+            ),
+            "DENY",
+        )
+
     def test_policy_engine_read_only_mode(self):
         engine = PolicyEngine(autonomy=AutonomyPolicy.preset("read_only"))
         self.assertEqual(engine.evaluate_tool("read_file", {"path": "src/app.py"}), "ALLOW")
