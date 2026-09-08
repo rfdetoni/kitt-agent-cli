@@ -380,6 +380,28 @@ class GoalScheduler:
                             state="ACTIVE",
                             next_run=time.time() + delay,
                         )
+                elif status == "INCOMPLETE":
+                    # Verification gaps are normal autonomous work, not an
+                    # infrastructure failure. Requeue without consuming the
+                    # failure/retry budgets; max_turns/max_wall_seconds/cost
+                    # remain the hard bounds for autonomous completion.
+                    retry_in = max(0.1, min(self.poll_interval, 1.0))
+                    message = (
+                        result.get("error", "completion verification incomplete")
+                        if isinstance(result, dict)
+                        else "completion verification incomplete"
+                    )
+                    self._release(
+                        goal.id,
+                        lease_id,
+                        state="ACTIVE",
+                        next_run=time.time() + retry_in,
+                        error=message,
+                    )
+                    self._on_event(
+                        "GoalSchedulerVerificationRetry",
+                        {"goal_id": goal.id, "retry_in": retry_in},
+                    )
                 else:
                     message = (
                         result.get("error", status)

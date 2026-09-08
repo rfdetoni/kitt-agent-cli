@@ -178,3 +178,22 @@ class GoalService:
                 (qid, goal_id, name, json.dumps(argv), timeout_seconds),
             )
         return QualityGate(qid, goal_id, name, argv, "PENDING", timeout_seconds)
+
+    def record_gate_result(self, gate_id, *, exit_code, status, output_artifact_id=None):
+        normalized = str(status or "").upper()
+        if normalized not in {"PASSED", "FAILED"}:
+            raise ValueError("Quality gate status must be PASSED or FAILED")
+        with self.db.get_connection() as c:
+            cursor = c.execute(
+                """UPDATE quality_gates
+                   SET status=?,last_exit_code=?,last_output_artifact_id=?,last_run_at=?
+                   WHERE id=?""",
+                (
+                    normalized,
+                    int(exit_code),
+                    output_artifact_id,
+                    time.time(),
+                    gate_id,
+                ),
+            )
+        return cursor.rowcount == 1
