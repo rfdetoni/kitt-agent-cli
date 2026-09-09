@@ -137,6 +137,9 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     "memory.query": RuntimeOperationSpec(
         "memory.query", CAP_MEMORY_READ, sensitive=False
     ),
+    "session.search": RuntimeOperationSpec(
+        "session.search", CAP_MEMORY_READ, sensitive=False
+    ),
     "memory.correct": RuntimeOperationSpec("memory.correct", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
     "memory.concept": RuntimeOperationSpec("memory.concept", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
     "memory.link": RuntimeOperationSpec("memory.link", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
@@ -276,10 +279,6 @@ class SafeRuntime:
                 ),
             )
 
-        # Structural edits must bind approval to the exact symbol version.
-        # Resolve path/id/hash before PolicyEngine computes the action hash; a
-        # post-approval file change will then fail optimistic locking instead
-        # of silently retargeting the approved edit.
         if op == "repo.edit_symbol":
             try:
                 args = self._canonicalize_repo_edit_args(args, security_context)
@@ -429,6 +428,7 @@ class SafeRuntime:
             "goal.inspect": lambda: self._op_goal_inspect(args),
             "goal.update": lambda: self._op_goal_update(args),
             "memory.query": lambda: self._op_memory_query(args),
+            "session.search": lambda: self._op_session_search(args),
             "memory.correct": lambda: self._op_memory_correct(args),
             "memory.concept": lambda: self._op_memory_concept(args),
             "memory.link": lambda: self._op_memory_link(args),
@@ -481,8 +481,6 @@ class SafeRuntime:
         )
 
     def _op_repo_read(self, args, turn_id, origin, security_context):
-        # SWE-agent-style ACI: default to a small scrollable viewer rather than
-        # returning the handler's wider default range.
         delegated = dict(args)
         try:
             start_line = max(1, int(delegated.get("start_line", 1) or 1))
@@ -1032,6 +1030,88 @@ class SafeRuntime:
                 "max_tokens": max_tokens,
                 "returned": len(bounded),
                 "truncated": len(bounded) < len(items) or any(row.get("truncated") for row in bounded),
+            },
+        )
+
+    def _op_session_search(self, args):
+        if not self.db:
+            return SafeRuntimeResult(False, "session.search", error="History database not attached")
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return SafeRuntimeResult(False, "session.search", error="query required")
+
+        limit = _runtime_int(args.get("limit", 10), 10, 1, 50)
+        offset = _runtime_int(args.get("offset", 0), 0, 0, 10_000)
+        max_tokens = _runtime_token_budget(args, 800)
+
+        from kitt.history.search_index import HistorySearchIndex
+
+        search = HistorySearchIndex(self.db)
+        rows = search.search(
+            self.workspace_id,
+            query,
+            limit=limit,
+            offset=offset,
+        )
+        budget_bytes = max_tokens * 4
+        bounded: list[dict[str, Any]] = []
+        used = 0
+        omitted_bytes = 0
+        allowed_keys = (
+            "id",
+            "title",
+            "updated_at",
+            "match_source",
+            "match_role",
+            "match_snippet",
+            "search_score",
+            "search_backend",
+            "indexed_rowid",
+        )
+        for source in rows:
+            row = {key: source.get(key) for key in allowed_keys if key in source}
+            snippet = str(row.get("match_snippet", "") or "")
+            fixed = {key: value for key, value in row.items() if key != "match_snippet"}
+            overhead = sum(
+                len(str(key).encode("utf-8")) + len(str(value).encode("utf-8"))
+                for key, value in fixed.items()
+            ) + 32
+            available = max(0, budget_bytes - used - overhead)
+            if bounded and available <= 32:
+                omitted_bytes += len(snippet.encode("utf-8")) + overhead
+                continue
+            bounded_snippet = _truncate_utf8(snippet, available)
+            row["match_snippet"] = bounded_snippet
+            row["truncated"] = bounded_snippet != snippet
+            bounded.append(row)
+            used += overhead + len(bounded_snippet.encode("utf-8"))
+            omitted_bytes += max(
+                0,
+                len(snippet.encode("utf-8")) - len(bounded_snippet.encode("utf-8")),
+            )
+            if used >= budget_bytes:
+                break
+
+        backend = (
+            str(rows[0].get("search_backend"))
+            if rows
+            else search.status().backend
+        )
+        truncated = len(bounded) < len(rows) or any(row.get("truncated") for row in bounded)
+        return SafeRuntimeResult(
+            True,
+            "session.search",
+            data=bounded,
+            context_handles=[f"ctx:sessions:{query[:64]}"],
+            tokens_saved=omitted_bytes // 4,
+            metadata={
+                "backend": backend,
+                "returned": len(bounded),
+                "matched": len(rows),
+                "offset": offset,
+                "max_tokens": max_tokens,
+                "truncated": truncated,
+                "workspace_scoped": True,
             },
         )
 
