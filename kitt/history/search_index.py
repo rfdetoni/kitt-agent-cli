@@ -20,10 +20,10 @@ class HistorySearchStatus:
 class HistorySearchIndex:
     """Incremental, disposable full-text index for persisted conversation history.
 
-    The canonical source remains ``messages``/``conversations``.  The FTS table
-    is an optimization cache that can be recreated at any time, so it is kept
-    outside the versioned canonical schema.  Searches are always workspace
-    scoped and return compact snippets rather than complete messages.
+    The canonical source remains ``messages``/``conversations``. The FTS table
+    is only a derived cache: it can be rebuilt without touching canonical data.
+    Searches are workspace-scoped and return bounded snippets, never whole
+    conversations or complete message histories.
     """
 
     MAX_QUERY_CHARS = 512
@@ -42,11 +42,14 @@ class HistorySearchIndex:
     @classmethod
     def _fts_query(cls, query: str) -> str:
         tokens = cls._tokens(query)
-        return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+        return " AND ".join(
+            f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens
+        )
 
     @staticmethod
     def _like_term(query: str) -> str:
-        return f"%{query.replace('%', r'\%').replace('_', r'\_')}%"
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return "%" + escaped + "%"
 
     def _ensure_fts(self, conn: sqlite3.Connection) -> bool:
         if self._fts_available is False:
@@ -74,6 +77,49 @@ class HistorySearchIndex:
             conn.execute(
                 "INSERT OR IGNORE INTO history_search_meta(singleton, indexed_rowid) VALUES (1, 0)"
             )
+            # These triggers keep the disposable index current after its first
+            # creation. Existing rows are backfilled by _sync().
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS history_message_fts_ai
+                AFTER INSERT ON messages BEGIN
+                    INSERT OR REPLACE INTO history_message_fts(
+                        rowid, conversation_id, workspace_id, role, content
+                    ) VALUES (
+                        new.rowid,
+                        new.conversation_id,
+                        (SELECT workspace_id FROM conversations WHERE id = new.conversation_id),
+                        new.role,
+                        new.content
+                    );
+                END
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS history_message_fts_ad
+                AFTER DELETE ON messages BEGIN
+                    DELETE FROM history_message_fts WHERE rowid = old.rowid;
+                END
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS history_message_fts_au
+                AFTER UPDATE OF conversation_id, role, content ON messages BEGIN
+                    DELETE FROM history_message_fts WHERE rowid = old.rowid;
+                    INSERT OR REPLACE INTO history_message_fts(
+                        rowid, conversation_id, workspace_id, role, content
+                    ) VALUES (
+                        new.rowid,
+                        new.conversation_id,
+                        (SELECT workspace_id FROM conversations WHERE id = new.conversation_id),
+                        new.role,
+                        new.content
+                    );
+                END
+                """
+            )
             self._fts_available = True
             return True
         except sqlite3.OperationalError as exc:
@@ -89,26 +135,39 @@ class HistorySearchIndex:
         indexed_rowid = int(row[0] if row else 0)
         max_row = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM messages").fetchone()
         max_rowid = int(max_row[0] if max_row else 0)
-        if max_rowid <= indexed_rowid:
-            return indexed_rowid
 
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO history_message_fts(
-                rowid, conversation_id, workspace_id, role, content
+        # Recover automatically if the derived FTS table was manually removed
+        # and recreated while its tiny metadata table survived.
+        if indexed_rowid > 0:
+            indexed_count = int(
+                conn.execute("SELECT COUNT(*) FROM history_message_fts").fetchone()[0]
             )
-            SELECT m.rowid, m.conversation_id, c.workspace_id, m.role, m.content
-              FROM messages AS m
-              JOIN conversations AS c ON c.id = m.conversation_id
-             WHERE m.rowid > ? AND m.rowid <= ?
-            """,
-            (indexed_rowid, max_rowid),
-        )
-        conn.execute(
-            "UPDATE history_search_meta SET indexed_rowid = ? WHERE singleton = 1",
-            (max_rowid,),
-        )
-        return max_rowid
+            message_count = int(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0])
+            if message_count > 0 and indexed_count == 0:
+                indexed_rowid = 0
+                conn.execute(
+                    "UPDATE history_search_meta SET indexed_rowid = 0 WHERE singleton = 1"
+                )
+
+        if max_rowid > indexed_rowid:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO history_message_fts(
+                    rowid, conversation_id, workspace_id, role, content
+                )
+                SELECT m.rowid, m.conversation_id, c.workspace_id, m.role, m.content
+                  FROM messages AS m
+                  JOIN conversations AS c ON c.id = m.conversation_id
+                 WHERE m.rowid > ? AND m.rowid <= ?
+                """,
+                (indexed_rowid, max_rowid),
+            )
+            indexed_rowid = max_rowid
+            conn.execute(
+                "UPDATE history_search_meta SET indexed_rowid = ? WHERE singleton = 1",
+                (indexed_rowid,),
+            )
+        return indexed_rowid
 
     @classmethod
     def _bounded_snippet(cls, value: Any) -> str:
@@ -149,10 +208,7 @@ class HistorySearchIndex:
         with self.db.get_connection() as conn:
             if not self._ensure_fts(conn):
                 return HistorySearchStatus("bounded_like", 0)
-            row = conn.execute(
-                "SELECT indexed_rowid FROM history_search_meta WHERE singleton = 1"
-            ).fetchone()
-            return HistorySearchStatus("fts5", int(row[0] if row else 0))
+            return HistorySearchStatus("fts5", self._sync(conn))
 
     def _search_fts(
         self,
@@ -166,8 +222,9 @@ class HistorySearchIndex:
         if not fts_query:
             return self._search_fallback(conn, workspace_id, query, limit, offset)
 
-        # Pull a small overfetch so multiple matching messages from the same
-        # conversation can be collapsed to the best hit without losing recall.
+        # Overfetch a bounded number of message hits, then collapse them to the
+        # best hit per conversation. This prevents a long conversation from
+        # monopolizing the result set.
         raw_limit = min(250, max(limit * 6, 30) + offset)
         message_rows = conn.execute(
             """
