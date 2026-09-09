@@ -5,7 +5,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from kitt.context_engine.context_map import ContextMapBuilder
 from kitt.runtime.handles import ContextHandleResolver
+from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
+from kitt.runtime.progressive import apply_progressive_search_view
+from kitt.runtime.retrieval_guard import RetrievalGuard
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
@@ -82,6 +86,10 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     ),
     "repo.read_symbol": RuntimeOperationSpec("repo.read_symbol", CAP_REPO_READ, "read_file"),
     "repo.references": RuntimeOperationSpec("repo.references", CAP_REPO_SEARCH, "search"),
+    "repo.context_map": RuntimeOperationSpec(
+        "repo.context_map", CAP_REPO_SEARCH, "search"
+    ),
+    "flow.execute": RuntimeOperationSpec("flow.execute", None, sensitive=False),
     "repo.edit_symbol": RuntimeOperationSpec("repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True),
     "artifacts.store": RuntimeOperationSpec(
         "artifacts.store",
@@ -202,6 +210,11 @@ class SafeRuntime:
             goal_service=self.goals,
             workspace_id=self.workspace_id,
             conversation_id=self.conversation_id,
+        )
+        self.retrieval_guard = RetrievalGuard()
+        self.programmatic_flow = ProgrammaticToolFlow(self)
+        self.context_map_builder = ContextMapBuilder(
+            self.index, self.goals, self.registry
         )
 
     def execute(
@@ -361,9 +374,16 @@ class SafeRuntime:
                 turn_id,
                 origin,
                 security_context,
+                capabilities,
                 delegated_grant,
                 delegated_approval_id,
             )
+            if op == "repo.search":
+                result = apply_progressive_search_view(result, args)
+            if op in {"repo.read", "repo.search"}:
+                result = self.retrieval_guard.observe(op, args, result)
+            elif result.success and op in {"repo.edit_symbol", "patch.apply"}:
+                self.retrieval_guard.invalidate()
         except Exception as exc:
             result = SafeRuntimeResult(
                 False, op, error=f"Runtime error in {op}: {exc}"
@@ -382,6 +402,7 @@ class SafeRuntime:
         turn_id: str,
         origin: str,
         security_context,
+        capabilities: set[str],
         grant,
         expected_approval_id,
     ) -> SafeRuntimeResult:
@@ -391,6 +412,12 @@ class SafeRuntime:
             "repo.inspect_symbol": lambda: self._op_repo_inspect_symbol(args, turn_id, origin, security_context),
             "repo.read_symbol": lambda: self._op_repo_read_symbol(args, security_context),
             "repo.references": lambda: self._op_repo_references(args, security_context),
+            "repo.context_map": lambda: self._op_repo_context_map(
+                args, security_context
+            ),
+            "flow.execute": lambda: self._op_flow_execute(
+                args, turn_id, origin, capabilities, security_context
+            ),
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context),
@@ -454,13 +481,30 @@ class SafeRuntime:
         )
 
     def _op_repo_read(self, args, turn_id, origin, security_context):
+        # SWE-agent-style ACI: default to a small scrollable viewer rather than
+        # returning the handler's wider default range.
+        delegated = dict(args)
+        try:
+            start_line = max(1, int(delegated.get("start_line", 1) or 1))
+        except (TypeError, ValueError):
+            start_line = 1
+        if delegated.get("end_line") is None and not delegated.get("around_symbol"):
+            delegated["end_line"] = start_line + 99
+        delegated.setdefault("max_tokens", 800)
+
         result = self._op_registry_tool(
-            "repo.read", "read_file", args, turn_id, origin, security_context
+            "repo.read", "read_file", delegated, turn_id, origin, security_context
         )
         if result.success:
+            metadata = dict(result.metadata or {})
+            end_line = metadata.get("end_line", delegated.get("end_line", start_line + 99))
             result.context_handles = [
-                f"ctx:file:{args.get('path', '')}:{args.get('start_line', 1)}-{args.get('end_line', 100)}"
+                f"ctx:file:{delegated.get('path', '')}:{start_line}-{end_line}"
             ]
+            metadata["aci_window_lines"] = (
+                int(end_line) - start_line + 1 if end_line is not None else 100
+            )
+            result.metadata = metadata
         return result
 
     def _op_repo_search(self, args, turn_id, origin, security_context):
@@ -527,6 +571,43 @@ class SafeRuntime:
         delegated.pop("token_budget", None)
         return self._op_registry_tool(
             "repo.search", "search", delegated, turn_id, origin, security_context
+        )
+
+    def _op_repo_context_map(self, args, security_context):
+        if self.registry is not None:
+            self.registry._refresh_index()
+        data = self.context_map_builder.build(
+            args,
+            conversation_id=self.conversation_id,
+            security_context=security_context,
+        )
+        encoded = str(data).encode("utf-8")
+        return SafeRuntimeResult(
+            True,
+            "repo.context_map",
+            data=data,
+            context_handles=["ctx:context-map"],
+            metadata={
+                "backend": "repository_index",
+                "output_family": "context_map",
+                "output_estimated_tokens": (len(encoded) + 3) // 4,
+            },
+        )
+
+    def _op_flow_execute(
+        self,
+        args,
+        turn_id,
+        origin,
+        capabilities,
+        security_context,
+    ):
+        return self.programmatic_flow.execute(
+            args,
+            turn_id=turn_id,
+            origin=origin,
+            capabilities=set(capabilities),
+            security_context=security_context,
         )
 
     def _op_repo_inspect_symbol(self, args, turn_id, origin, security_context):

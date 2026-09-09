@@ -39,6 +39,7 @@ from kitt.tools.path_policy import WorkspacePathPolicy
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.process_runner import ProcessRunner
 from kitt.tools.safe_python import SafePythonExecutor
+from kitt.validation.post_edit import PostEditValidator
 
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,9 @@ class ToolRegistry:
         self.approval_manager = ApprovalManager()
         self.safe_python = SafePythonExecutor()
         self.process_runner = ProcessRunner(root_dir)
+        self.post_edit_validator = PostEditValidator(
+            self.root_path, self.process_runner
+        )
         self.context_engine = context_engine or ContextEngine(
             repository_index=RepositoryIndex(self.root_path)
         )
@@ -519,6 +523,84 @@ class ToolRegistry:
             raise PermissionError("Goal scheduler lease lost; tool execution fenced")
 
     @staticmethod
+    def _post_edit_paths(tool_name: str, result: ToolResult) -> list[str]:
+        metadata = dict(result.metadata or {})
+        paths: list[str] = []
+        if tool_name == "write_file" and metadata.get("path"):
+            paths.append(str(metadata["path"]))
+        if tool_name == "apply_patch":
+            edit_result = metadata.get("edit_result")
+            if edit_result is not None:
+                paths.extend(
+                    str(path)
+                    for path in (
+                        list(getattr(edit_result, "applied_files", None) or [])
+                        + list(getattr(edit_result, "created_files", None) or [])
+                    )
+                )
+        return list(dict.fromkeys(path for path in paths if path))
+
+    def _apply_post_edit_gate(
+        self,
+        tool_name: str,
+        result: ToolResult,
+        *,
+        workspace_id: str,
+        conversation_id: str,
+    ) -> ToolResult:
+        if not result.success or tool_name not in {"write_file", "apply_patch"}:
+            return result
+        paths = self._post_edit_paths(tool_name, result)
+        if not paths:
+            return result
+
+        report = self.post_edit_validator.validate_paths(paths)
+        result.metadata = {
+            **dict(result.metadata or {}),
+            "post_edit_gate": report.as_dict(),
+        }
+        if report.ok:
+            return result
+
+        reverted = None
+        try:
+            reverted = self.applier.tracker.revert_last_changeset(
+                conversation_id=conversation_id,
+                workspace_id=workspace_id,
+            )
+            self._refresh_index(paths)
+        except Exception as exc:
+            return ToolResult(
+                False,
+                "",
+                (
+                    "Post-edit validation failed and automatic rollback also "
+                    f"failed: {exc}"
+                ),
+                metadata={
+                    **dict(result.metadata or {}),
+                    "post_edit_rollback_failed": True,
+                },
+            )
+
+        failures = [
+            f"{item.path} [{item.validator}]: {item.message}"
+            for item in report.diagnostics
+            if not item.ok
+        ]
+        return ToolResult(
+            False,
+            "",
+            "Post-edit validation failed; changes were reverted. "
+            + " | ".join(failures[:8]),
+            metadata={
+                **dict(result.metadata or {}),
+                "post_edit_rolled_back": bool(reverted),
+                "changed_paths": paths,
+            },
+        )
+
+    @staticmethod
     def _gain_estimated_tokens(byte_count: int) -> int:
         return (max(0, int(byte_count or 0)) + 3) // 4
 
@@ -537,38 +619,54 @@ class ToolRegistry:
             return
 
         metadata = dict(result.metadata or {})
+        context_avoidance = int(metadata.get("context_avoidance_tokens", 0) or 0)
+        delegated_runtime = (
+            tool_name == "kitt_runtime" and metadata.get("effective_tool_name")
+        )
         # Delegated SafeRuntime calls already pass through execute_tool() for the
-        # effective tool. Recording the outer kitt_runtime result would double-count.
-        if tool_name == "kitt_runtime" and metadata.get("effective_tool_name"):
+        # effective tool. Only record the outer layer when ACI/dedup avoided
+        # additional model-visible context.
+        if delegated_runtime and context_avoidance <= 0:
             return
 
         metric_name = tool_name
+        aci_only = False
         if tool_name == "kitt_runtime":
-            metric_name = str(metadata.get("operation") or tool_name)
+            operation = str(metadata.get("operation") or tool_name)
+            if delegated_runtime:
+                metric_name = f"aci:{operation}"
+                aci_only = True
+            else:
+                metric_name = operation
 
         visible = str(result.output or result.error or "")
         visible_bytes = len(visible.encode("utf-8"))
         output_tokens = self._gain_estimated_tokens(visible_bytes)
 
-        raw_tokens = output_tokens
-        raw_total_bytes = metadata.get("raw_total_bytes")
-        if isinstance(raw_total_bytes, (int, float)) and raw_total_bytes >= 0:
-            raw_tokens = max(raw_tokens, self._gain_estimated_tokens(int(raw_total_bytes)))
+        raw_tokens = (
+            output_tokens + context_avoidance
+            if aci_only
+            else output_tokens
+        )
+        if not aci_only:
+            raw_total_bytes = metadata.get("raw_total_bytes")
+            if isinstance(raw_total_bytes, (int, float)) and raw_total_bytes >= 0:
+                raw_tokens = max(raw_tokens, self._gain_estimated_tokens(int(raw_total_bytes)))
 
-        raw_estimated = metadata.get("raw_estimated_tokens")
-        if isinstance(raw_estimated, (int, float)) and raw_estimated >= 0:
-            raw_tokens = max(raw_tokens, int(raw_estimated))
+            raw_estimated = metadata.get("raw_estimated_tokens")
+            if isinstance(raw_estimated, (int, float)) and raw_estimated >= 0:
+                raw_tokens = max(raw_tokens, int(raw_estimated))
 
-        known_saved = metadata.get("tokens_saved")
-        if isinstance(known_saved, (int, float)) and known_saved > 0:
-            raw_tokens = max(raw_tokens, output_tokens + int(known_saved))
+            known_saved = metadata.get("tokens_saved")
+            if isinstance(known_saved, (int, float)) and known_saved > 0:
+                raw_tokens = max(raw_tokens, output_tokens + int(known_saved))
 
-        # Search/native retrieval can know how many matches were omitted without
-        # materializing them. Eight tokens/match is a deliberately conservative
-        # lower-bound estimate and avoids an expensive second repository scan.
-        omitted_matches = metadata.get("omitted_matches")
-        if isinstance(omitted_matches, (int, float)) and omitted_matches > 0:
-            raw_tokens = max(raw_tokens, output_tokens + (int(omitted_matches) * 8))
+            # Search/native retrieval can know how many matches were omitted without
+            # materializing them. Eight tokens/match is a deliberately conservative
+            # lower-bound estimate and avoids an expensive second repository scan.
+            omitted_matches = metadata.get("omitted_matches")
+            if isinstance(omitted_matches, (int, float)) and omitted_matches > 0:
+                raw_tokens = max(raw_tokens, output_tokens + (int(omitted_matches) * 8))
 
         from kitt.metrics.models import ToolGainMetrics
 
@@ -719,6 +817,12 @@ class ToolRegistry:
         started_perf = time.perf_counter()
         try:
             result = handler.execute(handler_args, context)
+            result = self._apply_post_edit_gate(
+                tool_name,
+                result,
+                workspace_id=workspace_id,
+                conversation_id=conversation_id,
+            )
             duration_ms = (time.perf_counter() - started_perf) * 1000.0
             self._record_tool_gain(
                 tool_name,
