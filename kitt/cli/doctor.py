@@ -100,6 +100,45 @@ class DoctorCheck:
         except Exception:
             results.append({"name": "Local Ollama Endpoint", "status": "INFO", "detail": "Not running on 127.0.0.1:11434"})
 
+        # 7. Optional capability backends. Absence is informational: KITT core
+        # must remain fully functional without third-party integrations.
+        try:
+            from kitt.integrations.catalog import IntegrationCatalog
+
+            statuses = IntegrationCatalog().probe_all(include_versions=False)
+            available = [status for status in statuses if status.available]
+            recommended_missing = [
+                status.spec.id
+                for status in statuses
+                if status.spec.recommended and not status.available
+            ]
+            details = ", ".join(status.spec.id for status in available) or "none detected"
+            results.append({
+                "name": "Optional Integration Capabilities",
+                "status": "PASS" if available else "INFO",
+                "detail": f"{len(available)}/{len(statuses)} available: {details}",
+            })
+            if recommended_missing:
+                results.append({
+                    "name": "Recommended Optional Integrations",
+                    "status": "INFO",
+                    "detail": "Not installed: " + ", ".join(recommended_missing),
+                })
+            for status in available:
+                capabilities = ", ".join(status.spec.capabilities) or status.spec.category
+                provider = status.command or status.module or status.spec.id
+                results.append({
+                    "name": f"Integration: {status.spec.id}",
+                    "status": "PASS",
+                    "detail": f"{provider} -> {capabilities}",
+                })
+        except Exception as e:
+            results.append({
+                "name": "Optional Integration Capabilities",
+                "status": "WARN",
+                "detail": f"Capability probe unavailable: {e}",
+            })
+
         return results
 
     def reset_state(self, backup: bool = True) -> str:
