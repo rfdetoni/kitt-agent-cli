@@ -125,13 +125,24 @@ def secure_urlopen(
 
 
 def read_error_body(error: urllib.error.HTTPError, max_bytes: int = MAX_ERROR_BYTES) -> str:
+    cached = getattr(error, "_cached_body", None)
+    if isinstance(cached, str):
+        return cached
     try:
         raw = error.read(max_bytes + 1)
     except Exception:
         return ""
     if len(raw) > max_bytes:
         raw = raw[:max_bytes]
-    return sanitize_remote_text(raw.decode("utf-8", "replace"))
+    body = sanitize_remote_text(raw.decode("utf-8", "replace"))
+    try:
+        object.__setattr__(error, "_cached_body", body)
+    except Exception:
+        try:
+            setattr(error, "_cached_body", body)
+        except Exception:
+            pass
+    return body
 
 
 def sanitize_remote_text(text: str, max_chars: int = 4096) -> str:

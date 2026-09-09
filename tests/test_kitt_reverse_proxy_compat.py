@@ -1,6 +1,7 @@
 import io
 import json
 import unittest
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 from kitt.domain.entities import ModelProfile
@@ -295,6 +296,77 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertNotIn("X-Kitt-Reasoning-Effort", third)
         self.assertRegex(first["X-Kitt-Session-Id"], r"^[a-f0-9]{32}$")
 
+    def test_stream_retries_without_reasoning_effort_on_unavailable_error(self):
+        adapter = KittReverseProxyAdapter()
+        calls = []
+
+        class FakeHTTPError(urllib.error.HTTPError):
+            def __init__(self):
+                super().__init__("http://127.0.0.1:3000/v1/chat/completions", 400, "Bad Request", {}, None)
+                self._fp = io.BytesIO(
+                    b'{"error":{"message":"O nivel de reasoning solicitado nao esta disponivel: medium.","code":"reasoning_level_unavailable"}}'
+                )
+
+            def read(self, *args):
+                return self._fp.read(*args)
+
+        class FakeSuccessResponse:
+            def __init__(self):
+                self._lines = [
+                    b'data: {"choices":[{"delta":{"content":"ok without reasoning"}}]}\n',
+                    b"data: [DONE]\n",
+                ]
+                self._idx = 0
+
+            def readline(self, *args):
+                if self._idx < len(self._lines):
+                    line = self._lines[self._idx]
+                    self._idx += 1
+                    return line
+                return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(req, timeout=300):
+            calls.append(req)
+            if req.has_header("X-kitt-reasoning-effort"):
+                raise FakeHTTPError()
+            return FakeSuccessResponse()
+
+        request = LLMRequest(
+            model="chatgpt-web",
+            messages=[{"role": "user", "content": "hello"}],
+            extra_headers={"X-Kitt-Reasoning-Effort": "50"},
+        )
+
+        with patch("kitt.llm.providers.kitt_reverse_proxy.secure_urlopen", side_effect=fake_urlopen):
+            chunks = list(adapter.stream(request))
+
+        self.assertEqual("".join(chunks), "ok without reasoning")
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[0].has_header("X-kitt-reasoning-effort"))
+        self.assertFalse(calls[1].has_header("X-kitt-reasoning-effort"))
+
+    def test_read_error_body_caches_on_repeated_reads(self):
+        from kitt.llm.http_security import read_error_body
+
+        class SingleReadError(urllib.error.HTTPError):
+            def __init__(self):
+                super().__init__("http://example.test", 400, "Bad Request", {}, None)
+                self._fp = io.BytesIO(b'{"error":"specific detail"}')
+
+            def read(self, *args):
+                return self._fp.read(*args)
+
+        err = SingleReadError()
+        first_read = read_error_body(err)
+        second_read = read_error_body(err)
+        self.assertEqual(first_read, '{"error":"specific detail"}')
+        self.assertEqual(second_read, '{"error":"specific detail"}')
 
 
 if __name__ == "__main__":

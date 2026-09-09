@@ -59,9 +59,10 @@ class ProviderAdapter(Protocol):
         ...
 
 
-def handle_http_error(e: urllib.error.HTTPError, url: str) -> None:
+def handle_http_error(e: urllib.error.HTTPError, url: str, body: Optional[str] = None) -> None:
     """Translate bounded, redacted HTTP failures into typed provider errors."""
-    body = read_error_body(e)
+    if body is None:
+        body = read_error_body(e)
     msg = f"HTTP {e.code}: {e.reason}" + (f" - {body}" if body else "")
 
     if e.code in (401, 403):

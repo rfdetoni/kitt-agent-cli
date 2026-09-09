@@ -317,6 +317,33 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             )
         except urllib.error.HTTPError as exc:
             body = read_error_body(exc)
+            if "X-Kitt-Reasoning-Effort" in request.extra_headers and (
+                "reasoning_level_unavailable" in body
+                or "reasoning_not_supported" in body
+                or "Reasoning" in body
+            ):
+                retry_headers = {
+                    k: v
+                    for k, v in request.extra_headers.items()
+                    if k != "X-Kitt-Reasoning-Effort"
+                }
+                retry_request = LLMRequest(
+                    model=request.model,
+                    messages=request.messages,
+                    system_prompt=request.system_prompt,
+                    response_format=request.response_format,
+                    temperature=request.temperature,
+                    context_window=request.context_window,
+                    max_output_tokens=request.max_output_tokens,
+                    keep_alive=request.keep_alive,
+                    api_key=request.api_key,
+                    base_url=request.base_url,
+                    timeout_seconds=request.timeout_seconds,
+                    extra_headers=retry_headers,
+                )
+                yield from self.stream(retry_request)
+                return
+
             semantic_codes = (
                 "tool_required_but_not_called",
                 "tool_parse_failed",
@@ -330,7 +357,7 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                 raise ProviderProtocolError(
                     f"KITT reverse proxy rejected the request: {matched}"
                 ) from exc
-            handle_http_error(exc, url)
+            handle_http_error(exc, url, body=body)
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, socket.timeout):
                 raise ProviderTimeoutError(
