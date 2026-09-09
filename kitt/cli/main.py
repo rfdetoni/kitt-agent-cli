@@ -206,6 +206,83 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resume_parser.add_argument("session", help="Session ID to resume")
 
+    evolve_parser = subparsers.add_parser(
+        "evolve",
+        parents=[common],
+        help="Offline staged self-evolution of managed KITT skills",
+    )
+    evolve_sub = evolve_parser.add_subparsers(
+        dest="evolve_action",
+        help="Evolution action",
+    )
+
+    evolve_skill = evolve_sub.add_parser(
+        "skill",
+        parents=[common],
+        help="Evolve one managed skill and stage only if holdout improves",
+    )
+    evolve_skill.add_argument("skill_name", help="Managed skill name")
+    evolve_skill.add_argument(
+        "--source",
+        choices=["synthetic", "history", "golden"],
+        default="synthetic",
+        help="Evaluation dataset source",
+    )
+    evolve_skill.add_argument(
+        "--dataset",
+        default=None,
+        help="Golden JSONL path when --source golden",
+    )
+    evolve_skill.add_argument("--generations", type=int, default=1)
+    evolve_skill.add_argument("--population", type=int, default=2)
+    evolve_skill.add_argument(
+        "--max-calls",
+        type=int,
+        default=48,
+        help="Hard LLM-call budget for the complete evolution run",
+    )
+    evolve_skill.add_argument(
+        "--cases",
+        type=int,
+        default=10,
+        help="Synthetic case count (6-24)",
+    )
+
+    evolve_runs = evolve_sub.add_parser(
+        "runs",
+        parents=[common],
+        help="List recent evolution runs",
+    )
+    evolve_runs.add_argument("--limit", type=int, default=30)
+
+    evolve_show = evolve_sub.add_parser(
+        "show",
+        parents=[common],
+        help="Inspect one evolution run and candidates",
+    )
+    evolve_show.add_argument("run_id")
+
+    evolve_promote = evolve_sub.add_parser(
+        "promote",
+        parents=[common],
+        help="Explicitly promote a STAGED candidate",
+    )
+    evolve_promote.add_argument("run_id")
+
+    evolve_reject = evolve_sub.add_parser(
+        "reject",
+        parents=[common],
+        help="Reject a staged/unpromoted evolution run",
+    )
+    evolve_reject.add_argument("run_id")
+
+    evolve_opportunities = evolve_sub.add_parser(
+        "opportunities",
+        parents=[common],
+        help="Mine Dreaming memory and recent failures for evolution opportunities",
+    )
+    evolve_opportunities.add_argument("--limit", type=int, default=10)
+
     doctor_parser = subparsers.add_parser(
         "doctor",
         parents=[common],
@@ -340,6 +417,11 @@ def main(argv=None) -> int:
         from kitt.cli.commands import handle_resume_command
 
         return handle_resume_command(session_id=args.session, root_dir=args.root)
+
+    if args.subcommand == "evolve":
+        from kitt.evolution.cli import handle_evolve_command
+
+        return handle_evolve_command(args)
 
     if args.subcommand == "doctor":
         from kitt.cli.commands import handle_doctor_command
