@@ -21,6 +21,10 @@ from kitt.llm.domain import (
     ProviderProtocolError,
     ProviderTimeoutError,
 )
+from kitt.llm.kitt_proxy_capabilities import (
+    KittProxyCapabilities,
+    discover_kitt_proxy_capabilities,
+)
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.registry import ProviderRegistry
 from kitt.llm.retry import RetryConfig, RetryPolicy
@@ -79,6 +83,7 @@ class LLMClient:
     ):
         self.profile = profile
         self._kitt_session_id = uuid.uuid4().hex[:32]
+        self._last_kitt_proxy_capabilities: Optional[KittProxyCapabilities] = None
         self._external_executor = executor is not None
         self._executor = executor or concurrent.futures.ThreadPoolExecutor(
             max_workers=2,
@@ -121,6 +126,11 @@ class LLMClient:
             is_local=is_local,
             privacy_class="local" if is_local else "cloud",
         )
+
+    @property
+    def kitt_proxy_capabilities(self) -> Optional[KittProxyCapabilities]:
+        """Most recently discovered reverse-proxy contract, if this client used one."""
+        return self._last_kitt_proxy_capabilities
 
     def close(self):
         """Shut down the owned thread pool executor."""
@@ -249,6 +259,13 @@ class LLMClient:
         )
         extra_headers: Dict[str, str] = {}
         if is_kitt_proxy:
+            discovered = discover_kitt_proxy_capabilities(
+                base_url,
+                api_key=api_key,
+                timeout=min(1.0, max(0.2, float(self.profile.request_timeout_seconds))),
+            )
+            self._last_kitt_proxy_capabilities = discovered
+
             if session_key:
                 session_id = uuid.uuid5(
                     uuid.NAMESPACE_URL,
@@ -256,14 +273,35 @@ class LLMClient:
                 ).hex[:32]
             else:
                 session_id = self._kitt_session_id
-            extra_headers["X-Kitt-Session-Id"] = session_id
-            extra_headers["X-Kitt-Request-Id"] = uuid.uuid4().hex
+
+            if discovered.discovered:
+                session_header = (
+                    discovered.session_header
+                    if discovered.accepts_named_sessions is not False
+                    else None
+                )
+                request_header = discovered.request_id_header
+            else:
+                # Backward-compatible contract for pre-discovery proxy builds.
+                session_header = "X-Kitt-Session-Id"
+                request_header = "X-Kitt-Request-Id"
+
+            if session_header:
+                extra_headers[session_header] = session_id
+            if request_header:
+                extra_headers[request_header] = uuid.uuid4().hex
+
             effort = _normalize_reasoning_effort(reasoning_effort)
-            if (
-                effort is not None
-                and (self.profile.model or "").strip().lower() == "chatgpt-web"
-            ):
-                extra_headers["X-Kitt-Reasoning-Effort"] = str(effort)
+            if effort is not None:
+                if discovered.discovered:
+                    reasoning_allowed = discovered.reasoning_supported is True
+                    reasoning_header = discovered.reasoning_header
+                    if reasoning_allowed and reasoning_header:
+                        low, high = discovered.reasoning_range
+                        effective_effort = max(low, min(high, effort))
+                        extra_headers[reasoning_header] = str(effective_effort)
+                elif (self.profile.model or "").strip().lower() == "chatgpt-web":
+                    extra_headers["X-Kitt-Reasoning-Effort"] = str(effort)
 
         request = LLMRequest(
             model=self.profile.model,
