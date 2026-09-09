@@ -248,20 +248,72 @@ class HistoryRepository:
         telemetry_id = uuid.uuid4().hex
         with self.db.get_connection() as conn:
             conn.execute(
-                """INSERT OR IGNORE INTO telemetry_events 
-                (id, conversation_id, turn_id, route, start_time, duration_ms, input_tokens, output_tokens, tokens_saved) 
+                """INSERT OR IGNORE INTO telemetry_events
+                (id, conversation_id, turn_id, route, start_time, duration_ms, input_tokens, output_tokens, tokens_saved)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);""",
                 (telemetry_id, conv_id, turn_id, route, start_time, duration_ms, input_tokens, output_tokens, tokens_saved)
             )
         return telemetry_id
 
+    def save_tool_gain(
+        self,
+        conv_id: str,
+        turn_id: str,
+        tool_name: str,
+        start_time: float,
+        duration_ms: float,
+        raw_tokens: int,
+        output_tokens: int,
+        tokens_saved: int,
+    ) -> Optional[str]:
+        """Persist tool-output savings without introducing a second metrics table.
+
+        ``input_tokens`` stores the naive/raw tool-output estimate and
+        ``output_tokens`` stores what was actually returned to the model.
+        The turn FK is checked first because some non-conversation tool uses are
+        intentionally ephemeral.
+        """
+        telemetry_id = uuid.uuid4().hex
+        safe_tool = str(tool_name or "unknown").replace("\n", " ").replace("\r", " ")[:160]
+        route = f"tool_gain:{safe_tool}"
+        with self.db.get_connection() as conn:
+            turn = conn.execute(
+                "SELECT 1 FROM turns WHERE id = ? AND conversation_id = ?",
+                (turn_id, conv_id),
+            ).fetchone()
+            if not turn:
+                return None
+            conn.execute(
+                """INSERT INTO telemetry_events
+                (id, conversation_id, turn_id, route, start_time, duration_ms, input_tokens, output_tokens, tokens_saved)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);""",
+                (
+                    telemetry_id,
+                    conv_id,
+                    turn_id,
+                    route,
+                    float(start_time),
+                    max(0.0, float(duration_ms)),
+                    max(0, int(raw_tokens)),
+                    max(0, int(output_tokens)),
+                    max(0, int(tokens_saved)),
+                ),
+            )
+        return telemetry_id
+
     def get_telemetry_stats(self, conv_id: Optional[str] = None) -> Dict[str, Any]:
-        query = "SELECT COUNT(*) as count, SUM(input_tokens) as input, SUM(output_tokens) as output, SUM(tokens_saved) as saved, SUM(duration_ms) as duration FROM telemetry_events"
+        query = """SELECT COUNT(*) as count,
+                          COALESCE(SUM(input_tokens), 0) as input,
+                          COALESCE(SUM(output_tokens), 0) as output,
+                          COALESCE(SUM(tokens_saved), 0) as saved,
+                          COALESCE(SUM(duration_ms), 0.0) as duration
+                   FROM telemetry_events
+                   WHERE route NOT LIKE 'tool_gain:%'"""
         args = []
         if conv_id:
-            query += " WHERE conversation_id = ?"
+            query += " AND conversation_id = ?"
             args = [conv_id]
-        
+
         with self.db.get_connection() as conn:
             cur = conn.cursor()
             cur.execute(query, tuple(args))
@@ -269,6 +321,93 @@ class HistoryRepository:
             if not row or row["count"] == 0:
                 return {"count": 0, "input": 0, "output": 0, "saved": 0, "duration": 0.0}
             return dict(row)
+
+    def _gain_where(self, conv_id: Optional[str]) -> tuple[str, list[Any]]:
+        where = "route LIKE 'tool_gain:%'"
+        args: list[Any] = []
+        if conv_id:
+            where += " AND conversation_id = ?"
+            args.append(conv_id)
+        return where, args
+
+    def get_gain_summary(self, conv_id: Optional[str] = None) -> Dict[str, Any]:
+        where, args = self._gain_where(conv_id)
+        query = f"""SELECT COUNT(*) as count,
+                           COALESCE(SUM(input_tokens), 0) as raw,
+                           COALESCE(SUM(output_tokens), 0) as output,
+                           COALESCE(SUM(tokens_saved), 0) as saved,
+                           COALESCE(SUM(duration_ms), 0.0) as duration
+                    FROM telemetry_events
+                    WHERE {where}"""
+        with self.db.get_connection() as conn:
+            row = conn.execute(query, tuple(args)).fetchone()
+            if not row:
+                return {"count": 0, "raw": 0, "output": 0, "saved": 0, "duration": 0.0}
+            return dict(row)
+
+    def get_gain_by_tool(
+        self,
+        conv_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        limit = max(1, min(int(limit), 100))
+        where, args = self._gain_where(conv_id)
+        query = f"""SELECT SUBSTR(route, 11) as tool,
+                           COUNT(*) as count,
+                           COALESCE(SUM(input_tokens), 0) as raw,
+                           COALESCE(SUM(output_tokens), 0) as output,
+                           COALESCE(SUM(tokens_saved), 0) as saved,
+                           COALESCE(SUM(duration_ms), 0.0) as duration
+                    FROM telemetry_events
+                    WHERE {where}
+                    GROUP BY route
+                    ORDER BY saved DESC, count DESC, tool ASC
+                    LIMIT ?"""
+        with self.db.get_connection() as conn:
+            rows = conn.execute(query, (*args, limit)).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_gain_history(
+        self,
+        conv_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        limit = max(1, min(int(limit), 200))
+        where, args = self._gain_where(conv_id)
+        query = f"""SELECT SUBSTR(route, 11) as tool,
+                           input_tokens as raw,
+                           output_tokens as output,
+                           tokens_saved as saved,
+                           duration_ms as duration,
+                           start_time
+                    FROM telemetry_events
+                    WHERE {where}
+                    ORDER BY start_time DESC, id DESC
+                    LIMIT ?"""
+        with self.db.get_connection() as conn:
+            rows = conn.execute(query, (*args, limit)).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_gain_daily(
+        self,
+        conv_id: Optional[str] = None,
+        days: int = 30,
+    ) -> List[Dict[str, Any]]:
+        days = max(1, min(int(days), 365))
+        where, args = self._gain_where(conv_id)
+        cutoff = time.time() - (days * 86400)
+        query = f"""SELECT DATE(start_time, 'unixepoch', 'localtime') as day,
+                           COUNT(*) as count,
+                           COALESCE(SUM(input_tokens), 0) as raw,
+                           COALESCE(SUM(output_tokens), 0) as output,
+                           COALESCE(SUM(tokens_saved), 0) as saved
+                    FROM telemetry_events
+                    WHERE {where} AND start_time >= ?
+                    GROUP BY day
+                    ORDER BY day ASC"""
+        with self.db.get_connection() as conn:
+            rows = conn.execute(query, (*args, cutoff)).fetchall()
+            return [dict(row) for row in rows]
 
     def get_messages_for_conversation(self, conv_id: str) -> List[Dict[str, Any]]:
         with self.db.get_connection() as conn:

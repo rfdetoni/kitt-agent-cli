@@ -183,6 +183,14 @@ class PlainLineUI:
             if text == "/help":
                 self._write("\n".join(f"{c.aliases[0]} - {c.description}" for c in self.commands.commands.values()) + "\n")
                 continue
+            if text == "/gain" or text.startswith("/gain "):
+                from kitt.metrics.gain_report import render_gain
+
+                self.runtime.metrics.flush()
+                conversation = self.runtime.history.get_or_create_active()
+                arg = text.partition(" ")[2].strip()
+                self._write(render_gain(self.runtime.history.repo, conversation["id"], arg) + "\n")
+                continue
             await self.run_turn(text)
         return 0
 

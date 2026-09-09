@@ -44,6 +44,20 @@ async def handle_stats_command(app: KittUIApp) -> None:
     app._show_result(f"Turns: {stats['count']}  Input: {stats['input']}  Output: {stats['output']}  Saved: {stats['saved']}")
 
 
+async def handle_gain_command(app: KittUIApp, arg: str = "") -> None:
+    from kitt.metrics.gain_report import render_gain
+
+    await app._run_blocking(app.runtime.metrics.flush)
+    conversation = app.runtime.history.get_or_create_active()
+    report = await app._run_blocking(
+        render_gain,
+        app.runtime.history.repo,
+        conversation["id"],
+        arg,
+    )
+    app._show_result(report)
+
+
 def handle_status_command(app: KittUIApp) -> None:
     snapshot = app.runtime.snapshot()
     app._show_result(

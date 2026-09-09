@@ -1,19 +1,25 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
-from typing import List, Dict, Any, Optional
-from kitt.metrics.models import TurnMetrics
+from typing import List, Dict, Any
+
+from kitt.metrics.models import ToolGainMetrics, TurnMetrics
+
 
 class MetricsCollector:
-    """Collects and aggregates token savings and performance telemetry idempotently."""
+    """Collects turn telemetry and RTK-style KITT tool-output gain metrics."""
+
+    MAX_TOOL_GAIN_HISTORY = 10_000
 
     def __init__(self, repository=None):
         self.history: List[TurnMetrics] = []
+        self.tool_gain_history: List[ToolGainMetrics] = []
         self.repository = repository
         self._lock = Lock()
         self._recorded_turn_ids: set = set()
         self.rejected_duplicates: int = 0
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kitt-metrics")
         self._closed = False
+        self._last_future: Future | None = None
 
     def record(self, payload: Any):
         if isinstance(payload, TurnMetrics):
@@ -30,6 +36,11 @@ class MetricsCollector:
             )
             self.record_turn(m)
 
+    def _submit(self, function, *args) -> None:
+        if self._closed:
+            return
+        self._last_future = self._executor.submit(function, *args)
+
     def record_turn(self, metrics: TurnMetrics):
         with self._lock:
             if metrics.turn_id and metrics.turn_id != "default" and metrics.turn_id in self._recorded_turn_ids:
@@ -39,11 +50,43 @@ class MetricsCollector:
                 self._recorded_turn_ids.add(metrics.turn_id)
             self.history.append(metrics)
         if self.repository:
-            self._executor.submit(
-                self.repository.save_telemetry, metrics.conversation_id, metrics.turn_id,
-                metrics.route, metrics.timestamp, metrics.duration_ms,
-                metrics.actual_input_tokens, metrics.actual_output_tokens, metrics.net_saved,
+            self._submit(
+                self.repository.save_telemetry,
+                metrics.conversation_id,
+                metrics.turn_id,
+                metrics.route,
+                metrics.timestamp,
+                metrics.duration_ms,
+                metrics.actual_input_tokens,
+                metrics.actual_output_tokens,
+                metrics.net_saved,
             )
+
+    def record_tool_gain(self, metrics: ToolGainMetrics) -> None:
+        with self._lock:
+            self.tool_gain_history.append(metrics)
+            overflow = len(self.tool_gain_history) - self.MAX_TOOL_GAIN_HISTORY
+            if overflow > 0:
+                del self.tool_gain_history[:overflow]
+        if self.repository:
+            self._submit(
+                self.repository.save_tool_gain,
+                metrics.conversation_id,
+                metrics.turn_id,
+                metrics.tool_name,
+                metrics.timestamp,
+                metrics.duration_ms,
+                metrics.raw_tokens,
+                metrics.output_tokens,
+                metrics.tokens_saved,
+            )
+
+    def flush(self) -> None:
+        """Wait until all metrics queued before this call are persisted."""
+        if self._closed:
+            return
+        barrier = self._executor.submit(lambda: None)
+        barrier.result()
 
     def get_summary(self) -> Dict[str, Any]:
         with self._lock:
@@ -69,5 +112,5 @@ class MetricsCollector:
 
     def close(self):
         if not self._closed:
-            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor.shutdown(wait=True, cancel_futures=False)
             self._closed = True

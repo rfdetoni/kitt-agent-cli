@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import queue
@@ -102,6 +103,7 @@ def detect_chat_limit_message(text: str) -> Optional[str]:
 
 class TurnProcessor:
     """Decoupled core turn processing engine for K.I.T.T."""
+    reasoning_effort: int = 50
 
     def __init__(
         self,
@@ -556,12 +558,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
         def _invoke_chat_stream(msgs, sys_prompt):
-            return client.chat_stream(
-                msgs,
-                system_prompt=sys_prompt,
-                session_key=session_key or None,
-                reasoning_effort=self.reasoning_effort,
-            )
+            kwargs = {
+                "system_prompt": sys_prompt,
+                "session_key": session_key or None,
+                "reasoning_effort": getattr(self, "reasoning_effort", 50),
+            }
+            try:
+                sig = inspect.signature(client.chat_stream)
+                has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if not has_varkw:
+                    kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            except (ValueError, TypeError):
+                pass
+            return client.chat_stream(msgs, **kwargs)
 
         if "lfm" in getattr(profile, "model", "").lower():
             raw_text = "".join(_invoke_chat_stream(messages, system_prompt))

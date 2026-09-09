@@ -160,6 +160,7 @@ class KittRuntime:
             ephemeral=ephemeral,
         )
         metrics = MetricsCollector(history.repo)
+        registry.metrics_collector = metrics
         harness = HarnessService(HarnessRepository(database))
         goals = GoalService(database)
         queue = InputQueueService(InputQueueRepository(database))

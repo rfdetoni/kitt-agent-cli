@@ -28,7 +28,8 @@ from kitt.ui.model_commands import (
 )
 from kitt.ui.session_commands import (
     handle_resume_command, handle_fork_command, handle_export_command,
-    handle_compact_command, handle_stats_command, handle_status_command
+    handle_compact_command, handle_stats_command, handle_gain_command,
+    handle_status_command
 )
 from kitt.ui.skill_commands import (
     handle_setup_skills_command, handle_skill_install_command, handle_skill_remove_command,
@@ -495,6 +496,8 @@ class KittUIApp:
             handle_status_command(self)
         elif found.id == "stats":
             await handle_stats_command(self)
+        elif found.id == "gain":
+            await handle_gain_command(self, arg)
         elif found.id == "context_stats":
             config = self.runtime.config
             self._show_result(f"Context window: {config.context_window_default}\nReserved output: {config.reserved_output_tokens}")

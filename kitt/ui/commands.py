@@ -63,7 +63,8 @@ class CommandRegistry:
             ("router", "Router", "Models", "Show task routing configuration", ["/router"]),
             ("local_limits", "Local Limits", "Models", "Toggle local tool call limits per provider/role: /local-limits [role|provider] [on|off]", ["/local-limits", "/limits"]),
             ("context_stats", "Context Stats", "Analytics", "Show context budget telemetry", ["/context-stats"]),
-            ("stats", "Telemetry Stats", "Analytics", "Show token and latency telemetry", ["/stats", "/metrics"]),
+            ("stats", "Telemetry Stats", "Analytics", "Show turn/context token and latency telemetry", ["/stats", "/metrics"]),
+            ("gain", "Token Savings", "Analytics", "RTK-style KITT tool-output savings: /gain [tools|history|daily|graph|all|json]", ["/gain"]),
             ("status", "Runtime Status", "System", "Show runtime snapshot", ["/status"]),
             ("compact", "Compact History", "Session", "Compact bounded conversation history", ["/compact"]),
             ("child", "Child Agent", "Agents", "Spawn isolated child task", ["/child"]),
@@ -135,3 +136,14 @@ class CommandRegistry:
     def find(self, name: str) -> CommandSpec | None:
         name = name.lower().strip()
         return next((command for command in self.commands.values() if name in command.aliases or name == command.id or name == f"/{command.id}"), None)
+
+    def resolve(self, raw: str) -> tuple[CommandSpec | None, str]:
+        parts = raw.split(maxsplit=1)
+        if not parts:
+            return None, ""
+        name = parts[0].lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        found = self.find(name)
+        if not found:
+            return None, ""
+        return found, arg

@@ -1,6 +1,7 @@
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Optional
+
 
 @dataclass
 class TurnMetrics:
@@ -23,7 +24,7 @@ class TurnMetrics:
     context_llm_output: int = 0
     duration_ms: float = 0.0
     route: str = "dual-model"
-    
+
     @property
     def gross_saved(self) -> int:
         return max(0, self.naive_input_tokens - self.actual_input_tokens)
@@ -43,3 +44,27 @@ class TurnMetrics:
     @property
     def net_saved_pct(self) -> float:
         return (self.net_saved / max(1, self.naive_input_tokens)) * 100.0
+
+
+@dataclass
+class ToolGainMetrics:
+    """One model-visible tool result, measured with a bytes/4 token estimate."""
+
+    turn_id: str
+    conversation_id: str
+    tool_name: str
+    raw_tokens: int
+    output_tokens: int
+    duration_ms: float = 0.0
+    timestamp: float = field(default_factory=time.time)
+    family: str = ""
+    backend: str = ""
+    estimate_kind: str = "estimated"
+
+    @property
+    def tokens_saved(self) -> int:
+        return max(0, int(self.raw_tokens) - int(self.output_tokens))
+
+    @property
+    def saved_pct(self) -> float:
+        return (self.tokens_saved / max(1, int(self.raw_tokens))) * 100.0

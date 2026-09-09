@@ -100,6 +100,9 @@ class ListFilesHandler:
                 suffix = "[KITT listing bounded; narrow path or increase limit/max_tokens]"
                 output = f"{output}\n{suffix}" if output else suffix
 
+            raw_listing = "\n".join(bounded_candidates)
+            raw_tokens = (len(raw_listing.encode("utf-8")) + 3) // 4
+            output_tokens = (len(output.encode("utf-8")) + 3) // 4
             return ToolResult(
                 True,
                 output,
@@ -107,7 +110,11 @@ class ListFilesHandler:
                 truncated=truncated,
                 metadata={
                     "method": "workspace_fs",
-                    "estimated_tokens": (len(output.encode("utf-8")) + 3) // 4,
+                    "output_family": "listing",
+                    "estimated_tokens": output_tokens,
+                    "raw_estimated_tokens": raw_tokens,
+                    "output_estimated_tokens": output_tokens,
+                    "tokens_saved": max(0, raw_tokens - output_tokens),
                     "visible_returned": len(files),
                     "scope_bounded": path_scoped,
                     "scan_saturated": scan_saturated if not path_scoped else None,
@@ -209,6 +216,9 @@ class ReadFileHandler:
         truncated = partial_line or selected_not_fully_returned or range_has_more
         next_start_line = returned_end + 1 if truncated and not partial_line else None
 
+        raw_range = "\n".join(selected)
+        raw_tokens = (len(raw_range.encode("utf-8")) + 3) // 4
+        output_tokens = (len(chunk.encode("utf-8")) + 3) // 4
         return ToolResult(
             True,
             chunk,
@@ -216,6 +226,7 @@ class ReadFileHandler:
             truncated=truncated,
             metadata={
                 "method": "workspace_fs",
+                "output_family": "read",
                 "content_hash": hashlib.sha256(chunk.encode("utf-8")).hexdigest(),
                 "hash_scope": "returned_range",
                 "path": relative,
@@ -228,7 +239,10 @@ class ReadFileHandler:
                 "omitted_lines": max(0, len(lines) - returned_end),
                 "next_start_line": next_start_line,
                 "partial_line_truncated": partial_line,
-                "estimated_tokens": (len(chunk.encode("utf-8")) + 3) // 4,
+                "estimated_tokens": output_tokens,
+                "raw_estimated_tokens": raw_tokens,
+                "output_estimated_tokens": output_tokens,
+                "tokens_saved": max(0, raw_tokens - output_tokens),
             },
         )
 

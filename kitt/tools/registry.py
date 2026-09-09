@@ -84,6 +84,7 @@ class ToolRegistry:
         self.skill_manager = None
         self.db = None
         self.event_bus = None
+        self.metrics_collector = None
         self._processor = None
 
         self._custom_tools: Dict[str, Dict[str, Any]] = {}
@@ -517,6 +518,75 @@ class ToolRegistry:
         ):
             raise PermissionError("Goal scheduler lease lost; tool execution fenced")
 
+    @staticmethod
+    def _gain_estimated_tokens(byte_count: int) -> int:
+        return (max(0, int(byte_count or 0)) + 3) // 4
+
+    def _record_tool_gain(
+        self,
+        tool_name: str,
+        result: ToolResult,
+        *,
+        turn_id: str,
+        conversation_id: str,
+        duration_ms: float,
+        started_at: float,
+    ) -> None:
+        collector = self.metrics_collector
+        if collector is None:
+            return
+
+        metadata = dict(result.metadata or {})
+        # Delegated SafeRuntime calls already pass through execute_tool() for the
+        # effective tool. Recording the outer kitt_runtime result would double-count.
+        if tool_name == "kitt_runtime" and metadata.get("effective_tool_name"):
+            return
+
+        metric_name = tool_name
+        if tool_name == "kitt_runtime":
+            metric_name = str(metadata.get("operation") or tool_name)
+
+        visible = str(result.output or result.error or "")
+        visible_bytes = len(visible.encode("utf-8"))
+        output_tokens = self._gain_estimated_tokens(visible_bytes)
+
+        raw_tokens = output_tokens
+        raw_total_bytes = metadata.get("raw_total_bytes")
+        if isinstance(raw_total_bytes, (int, float)) and raw_total_bytes >= 0:
+            raw_tokens = max(raw_tokens, self._gain_estimated_tokens(int(raw_total_bytes)))
+
+        raw_estimated = metadata.get("raw_estimated_tokens")
+        if isinstance(raw_estimated, (int, float)) and raw_estimated >= 0:
+            raw_tokens = max(raw_tokens, int(raw_estimated))
+
+        known_saved = metadata.get("tokens_saved")
+        if isinstance(known_saved, (int, float)) and known_saved > 0:
+            raw_tokens = max(raw_tokens, output_tokens + int(known_saved))
+
+        # Search/native retrieval can know how many matches were omitted without
+        # materializing them. Eight tokens/match is a deliberately conservative
+        # lower-bound estimate and avoids an expensive second repository scan.
+        omitted_matches = metadata.get("omitted_matches")
+        if isinstance(omitted_matches, (int, float)) and omitted_matches > 0:
+            raw_tokens = max(raw_tokens, output_tokens + (int(omitted_matches) * 8))
+
+        from kitt.metrics.models import ToolGainMetrics
+
+        collector.record_tool_gain(
+            ToolGainMetrics(
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+                tool_name=metric_name,
+                raw_tokens=raw_tokens,
+                output_tokens=output_tokens,
+                duration_ms=max(0.0, duration_ms),
+                timestamp=started_at,
+                family=str(metadata.get("output_family") or ""),
+                backend=str(metadata.get("backend") or metadata.get("method") or ""),
+                estimate_kind="estimated",
+            )
+        )
+
     def execute_tool(
         self,
         tool_name: str,
@@ -645,8 +715,19 @@ class ToolRegistry:
         handler = self._handlers.get(tool_name)
         if not handler:
             return ToolResult(False, "", f"Tool '{tool_name}' execution not implemented.")
+        started_at = time.time()
+        started_perf = time.perf_counter()
         try:
             result = handler.execute(handler_args, context)
+            duration_ms = (time.perf_counter() - started_perf) * 1000.0
+            self._record_tool_gain(
+                tool_name,
+                result,
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+                duration_ms=duration_ms,
+                started_at=started_at,
+            )
             if result.success and grant is not None and security_context is not None:
                 self._record_approved_principal_continuation(
                     security_context, turn_id, result
