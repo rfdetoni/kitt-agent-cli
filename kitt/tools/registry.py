@@ -423,7 +423,7 @@ class ToolRegistry:
                 if not is_safe or target is None:
                     return
                 try:
-                    relative = str(target.relative_to(self.root_path))
+                    relative = target.relative_to(self.root_path).as_posix()
                 except ValueError:
                     return
                 if relative not in affected_paths:
