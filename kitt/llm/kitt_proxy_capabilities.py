@@ -24,6 +24,11 @@ class KittProxyCapabilities:
     raw: Dict[str, Any] = field(default_factory=dict)
 
     @property
+    def provider(self) -> Optional[str]:
+        value = self.session_management.get("provider")
+        return str(value).strip().lower() if isinstance(value, str) and value.strip() else None
+
+    @property
     def accepts_named_sessions(self) -> Optional[bool]:
         value = self.session_management.get("accepts_named_sessions")
         return value if isinstance(value, bool) else None
@@ -96,8 +101,13 @@ def _parse(payload: Any) -> KittProxyCapabilities:
 
     reasoning_supported = reasoning_obj.get("supported")
     if not isinstance(reasoning_supported, bool):
-        dynamic = contract.get("reasoning_dynamic")
-        reasoning_supported = dynamic if isinstance(dynamic, bool) else None
+        explicit = contract.get("reasoning_supported")
+        reasoning_supported = explicit if isinstance(explicit, bool) else None
+    if reasoning_supported is None:
+        provider = session_management.get("provider")
+        if isinstance(provider, str) and provider.strip():
+            # The reverse proxy currently exposes native UI reasoning only for ChatGPT.
+            reasoning_supported = provider.strip().lower() == "chatgpt"
 
     reasoning_header = _safe_header(reasoning_obj.get("header"))
     if reasoning_header is None:
