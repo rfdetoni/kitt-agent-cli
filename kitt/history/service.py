@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from kitt.core.workspace_identity import WorkspaceIdentity
 from kitt.history.database import HistoryDatabase
 from kitt.history.repository import HistoryRepository, resolve_workspace_identity
+from kitt.history.search_index import HistorySearchIndex
 
 
 class HistoryService:
@@ -20,6 +21,7 @@ class HistoryService:
                  persistence_enabled: bool = True):
         self.db = db or HistoryDatabase(root_dir=root_dir)
         self.repo = repo or HistoryRepository(self.db)
+        self.search_index = HistorySearchIndex(self.db)
         from kitt.history.session_tree import SessionTreeRepository
         self.tree = tree or SessionTreeRepository(self.db)
         self.enabled = enabled
@@ -67,7 +69,14 @@ class HistoryService:
         return convs[0] if convs else None
 
     def list_history(self, limit: int = 20, offset: int = 0, search: Optional[str] = None) -> List[Dict[str, Any]]:
-        return self.repo.list_conversations(self.workspace_id, limit=limit, offset=offset, search=search)
+        if search and str(search).strip():
+            return self.search_index.search(
+                self.workspace_id,
+                str(search),
+                limit=limit,
+                offset=offset,
+            )
+        return self.repo.list_conversations(self.workspace_id, limit=limit, offset=offset)
 
     def list_turns(self, conversation_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         limit = max(1, min(limit, 100))
