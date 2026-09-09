@@ -30,7 +30,7 @@ class SafeRuntimeHandler(ToolHandler):
             is_safe, target, error = ctx.registry.path_policy.validate_path(block.file_path)
             if not is_safe or not target:
                 raise PermissionError(error or "Patch path is outside workspace")
-            relative = str(target.relative_to(ctx.registry.root_path))
+            relative = target.relative_to(ctx.registry.root_path).as_posix()
             if ctx.security_context is not None:
                 ctx.security_context.assert_path_allowed(relative)
             affected.append(relative)
