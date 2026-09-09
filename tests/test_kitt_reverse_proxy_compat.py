@@ -264,6 +264,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                     "".join(client.chat_stream(
                         [{"role": "user", "content": "one"}],
                         session_key="conversation-a",
+                        reasoning_effort=80,
                     )),
                     "ok",
                 )
@@ -271,6 +272,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                     "".join(client.chat_stream(
                         [{"role": "user", "content": "two"}],
                         session_key="conversation-a",
+                        reasoning_effort=20,
                     )),
                     "ok",
                 )
@@ -288,6 +290,9 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertEqual(first["X-Kitt-Session-Id"], second["X-Kitt-Session-Id"])
         self.assertNotEqual(first["X-Kitt-Session-Id"], third["X-Kitt-Session-Id"])
         self.assertNotEqual(first["X-Kitt-Request-Id"], second["X-Kitt-Request-Id"])
+        self.assertEqual(first["X-Kitt-Reasoning-Effort"], "80")
+        self.assertEqual(second["X-Kitt-Reasoning-Effort"], "20")
+        self.assertNotIn("X-Kitt-Reasoning-Effort", third)
         self.assertRegex(first["X-Kitt-Session-Id"], r"^[a-f0-9]{32}$")
 
 

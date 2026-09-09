@@ -556,10 +556,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
         def _invoke_chat_stream(msgs, sys_prompt):
-            try:
-                return client.chat_stream(msgs, system_prompt=sys_prompt, session_key=session_key or None)
-            except TypeError:
-                return client.chat_stream(msgs, system_prompt=sys_prompt)
+            return client.chat_stream(
+                msgs,
+                system_prompt=sys_prompt,
+                session_key=session_key or None,
+                reasoning_effort=self.reasoning_effort,
+            )
 
         if "lfm" in getattr(profile, "model", "").lower():
             raw_text = "".join(_invoke_chat_stream(messages, system_prompt))
@@ -883,23 +885,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             f"{base_sys}\n\nProject context:\n{context_map_str}".strip() if context_map_str else base_sys
         )
 
-        reasoning_instruction = ""
-        if plan.enabled_tools:
-            if self.reasoning_effort <= 0:
-                effort_label = "fast/direct"
-            elif self.reasoning_effort < 40:
-                effort_label = "low"
-            elif self.reasoning_effort <= 75:
-                effort_label = "medium"
-            else:
-                effort_label = "deep"
-            reasoning_instruction = (
-                f"\n\nReasoning Policy: use {effort_label} internal reasoning "
-                f"({self.reasoning_effort}% effort). Do not expose chain-of-thought, "
-                "scratchpad text, or <think>/<thought> blocks. Emit only the next tool "
-                "call or the concise final answer."
-            )
-
         if cmd.mode == "plan":
             planning_instruction = (
                 "\n\n[PLANNING MODE ACTIVE]\n"
@@ -914,7 +899,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             )
             sys_prompt = sys_prompt + planning_instruction
 
-        sys_prompt = sys_prompt + reasoning_instruction
         request = ExecutionRequest(
             system_prompt=sys_prompt,
             messages=[{"role": "user", "content": principal_task_prompt}],

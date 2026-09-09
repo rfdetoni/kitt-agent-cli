@@ -41,6 +41,17 @@ class UnsupportedProviderError(LLMError):
     """Raised when a backend provider is unknown or unsupported."""
 
 
+def _normalize_reasoning_effort(value: Optional[int]) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("reasoning_effort must be an integer between 0 and 100")
+    effort = int(value)
+    if effort < 0 or effort > 100:
+        raise ValueError("reasoning_effort must be an integer between 0 and 100")
+    return effort
+
+
 def _with_retry(fn, max_retries: int = 3, base_delay: float = 0.5):
     """Backward-compatible helper delegating retry behavior to RetryPolicy."""
     policy = RetryPolicy(
@@ -129,6 +140,7 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
+        reasoning_effort: Optional[int] = None,
     ) -> str:
         full_text = "".join(
             self.chat_stream(
@@ -136,6 +148,7 @@ class LLMClient:
                 system_prompt=system_prompt,
                 response_format=response_format,
                 session_key=session_key,
+                reasoning_effort=reasoning_effort,
             )
         )
         if not full_text.strip():
@@ -148,6 +161,7 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
+        reasoning_effort: Optional[int] = None,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
@@ -158,9 +172,10 @@ class LLMClient:
             try:
                 for chunk in self.chat_stream(
                     messages,
-                    system_prompt,
-                    response_format,
-                    session_key,
+                    system_prompt=system_prompt,
+                    response_format=response_format,
+                    session_key=session_key,
+                    reasoning_effort=reasoning_effort,
                 ):
                     if stop.is_set():
                         break
@@ -199,6 +214,7 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
+        reasoning_effort: Optional[int] = None,
     ) -> Generator[str, None, None]:
         backend = (self.profile.backend or "").strip().lower()
         base_url = (self.profile.base_url or "").strip()
@@ -242,6 +258,12 @@ class LLMClient:
                 session_id = self._kitt_session_id
             extra_headers["X-Kitt-Session-Id"] = session_id
             extra_headers["X-Kitt-Request-Id"] = uuid.uuid4().hex
+            effort = _normalize_reasoning_effort(reasoning_effort)
+            if (
+                effort is not None
+                and (self.profile.model or "").strip().lower() == "chatgpt-web"
+            ):
+                extra_headers["X-Kitt-Reasoning-Effort"] = str(effort)
 
         request = LLMRequest(
             model=self.profile.model,

@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from kitt.ui.state import UIState
 from kitt.ui.git import read_git_branch_name
 from kitt.ui.components.status_bar import StatusBarComponent
@@ -31,13 +32,35 @@ class TestReasoningEffortToggle(unittest.TestCase):
                 "feature/status-bar",
             )
 
-    def test_turn_processor_reasoning_policy_in_system_prompt(self):
-        processor = TurnProcessor.__new__(TurnProcessor)
-        processor.reasoning_effort = 0
-        self.assertEqual(processor.reasoning_effort, 0)
+    def test_turn_processor_forwards_native_reasoning_to_execution_client(self):
+        class CapturingClient:
+            profile = SimpleNamespace(model="chatgpt-web")
 
+            def __init__(self):
+                self.values = []
+
+            def chat_stream(
+                self,
+                messages,
+                system_prompt=None,
+                response_format=None,
+                session_key=None,
+                reasoning_effort=None,
+            ):
+                self.values.append(reasoning_effort)
+                yield "ok"
+
+        processor = TurnProcessor.__new__(TurnProcessor)
         processor.reasoning_effort = 80
-        self.assertEqual(processor.reasoning_effort, 80)
+        client = CapturingClient()
+
+        list(processor._stream_execution_response(
+            client,
+            [{"role": "user", "content": "inspect"}],
+            "system",
+        ))
+
+        self.assertEqual(client.values, [80])
 
 if __name__ == "__main__":
     unittest.main()
