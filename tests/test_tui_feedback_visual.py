@@ -8,6 +8,7 @@ from kitt.core.turn_events import (
     ChildAgentSpawned, ChildAgentFinished, EditApplied
 )
 from kitt.ui.components.status_bar import StatusBarComponent
+from kitt.ui.app import KittUIApp
 
 class TestTUIVisualFeedback(unittest.TestCase):
     def test_turn_completed_visual_feedback(self):
@@ -42,6 +43,23 @@ class TestTUIVisualFeedback(unittest.TestCase):
 
         status_bar = StatusBarComponent().render(state, width=80)
         self.assertIn("✖ FALHA NO PROCESSO", status_bar)
+
+    def test_completed_turn_reports_recovered_tool_failure(self):
+        state = UIState()
+        reduce_ui_event(state, TurnStarted(turn_id="t1", conversation_id="c1", prompt="Create summary"))
+        reduce_ui_event(state, ToolStarted(tool_name="read_file", call_id="read-1"))
+        reduce_ui_event(state, ToolCompleted(tool_name="read_file", success=False, call_id="read-1"))
+        reduce_ui_event(state, ToolStarted(tool_name="write_file", call_id="write-1"))
+        reduce_ui_event(state, ToolCompleted(tool_name="write_file", success=True, call_id="write-1"))
+        reduce_ui_event(state, TurnCompleted(response="Created."))
+
+        app = KittUIApp.__new__(KittUIApp)
+        app.state = state
+        summary = app._live_agents_text()
+
+        self.assertIn("PROCESSO CONCLUÍDO", summary)
+        self.assertIn("1 tentativa(s) recuperada(s)", summary)
+        self.assertNotIn("FALHA NO PROCESSO", summary)
 
     def test_child_agent_lifecycle_visual_feedback(self):
         state = UIState()

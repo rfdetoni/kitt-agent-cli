@@ -1499,6 +1499,9 @@ class KittUIApp:
         else:
             done = [tk for tk in tasks if tk.status == "done"]
             err = [tk for tk in tasks if tk.status == "error"]
+            if self.state.status_text.startswith("✔") or "COMPLETED" in self.state.status_text:
+                recovered = f" | {len(err)} tentativa(s) recuperada(s)" if err else ""
+                return f" ✔ [PROCESSO CONCLUÍDO] {len(done)} tarefa(s)/agente(s) finalizados com sucesso{recovered}!"
             if err:
                 return f" ✖ [FALHA NO PROCESSO] {len(err)} tarefa(s) com erro | {len(done)} concluída(s)"
             return f" ✔ [PROCESSO CONCLUÍDO] {len(done)} tarefa(s)/agente(s) finalizados com sucesso!"
