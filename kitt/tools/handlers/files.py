@@ -19,7 +19,11 @@ def _scope(ctx: ToolContext, relative: str) -> str:
 
 
 def _token_budget(args: Dict[str, Any], default: int) -> int:
-    return max(64, min(int(args.get("max_tokens", default) or default), 32_000))
+    try:
+        value = int(args.get("max_tokens", default) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(64, min(value, 32_000))
 
 
 class ListFilesHandler:
@@ -27,8 +31,12 @@ class ListFilesHandler:
         from kitt.tools.registry import ToolResult
 
         rel = str(args.get("path", ".") or ".")
-        limit = max(1, min(int(args.get("limit", 100) or 100), 500))
+        try:
+            limit = max(1, min(int(args.get("limit", 100) or 100), 500))
+        except (TypeError, ValueError):
+            limit = 100
         max_tokens = _token_budget(args, 600)
+
         try:
             fs = _fs(ctx)
             relative_dir = fs.relative(rel)
@@ -44,67 +52,55 @@ class ListFilesHandler:
                     f"Path '{relative_dir}' is outside the principal path scope",
                 )
 
-            native = getattr(ctx.registry, "native_engine", None)
-            if (
-                native is not None
-                and getattr(getattr(native, "status", None), "available", False)
-                and not (security is not None and security.is_path_scoped)
-            ):
-                try:
-                    data = native.list_files(rel, limit=limit, token_budget=max_tokens)
-                    output = "\n".join(str(item) for item in data.get("files", []))
-                    omitted = int(data.get("omitted", 0) or 0)
-                    if omitted:
-                        suffix = (
-                            f"\n[KITT {omitted} file(s) omitted; narrow path "
-                            "or increase limit/max_tokens]"
-                        )
-                        output += suffix
-                    return ToolResult(
-                        True,
-                        output,
-                        bytes_count=len(output.encode("utf-8")),
-                        truncated=omitted > 0,
-                        metadata={
-                            "method": "native",
-                            "backend": getattr(native.status, "backend", "rust"),
-                            "omitted": omitted,
-                            "estimated_tokens": int(
-                                data.get("estimated_tokens", 0) or 0
-                            ),
-                        },
-                    )
-                except Exception:
-                    # Native optimization may not make repository access unavailable.
-                    pass
+            # WorkspaceFileSystem is the canonical filesystem trust boundary.
+            # Do not bypass its dir_fd/O_NOFOLLOW/reparse checks for a native
+            # fast path. Scan one extra visible candidate to report truncation
+            # without enumerating the whole repository into model context.
+            scan_limit = 500 if security is not None and security.is_path_scoped else min(500, limit + 1)
+            scanned = fs.list_regular_files(rel, limit=scan_limit)
 
-            files = []
-            char_budget = max_tokens * 4
-            chars = 0
-            scanned = fs.list_regular_files(rel, limit=limit)
+            visible: list[str] = []
             for item in scanned:
                 try:
-                    item = _scope(ctx, item)
+                    visible.append(_scope(ctx, item))
                 except PermissionError:
                     continue
-                extra = len(item) + (1 if files else 0)
+
+            bounded_candidates = visible[:limit]
+            files: list[str] = []
+            char_budget = max_tokens * 4
+            chars = 0
+            for item in bounded_candidates:
+                extra = len(item.encode("utf-8")) + (1 if files else 0)
                 if files and chars + extra > char_budget:
                     break
                 files.append(item)
                 chars += extra
-            omitted = max(0, len(scanned) - len(files))
+
+            hidden_by_budget = len(bounded_candidates) - len(files)
+            more_visible = len(visible) > limit
+            path_scoped = security is not None and security.is_path_scoped
+            scan_saturated = len(scanned) >= scan_limit
+            # Do not expose whether a scoped directory contains many entries
+            # outside the principal's allowed paths.
+            truncated = hidden_by_budget > 0 or more_visible or (scan_saturated and not path_scoped)
+
             output = "\n".join(files)
-            if omitted:
-                output += f"\n[KITT {omitted} file(s) omitted; increase max_tokens]"
+            if truncated:
+                suffix = "[KITT listing bounded; narrow path or increase limit/max_tokens]"
+                output = f"{output}\n{suffix}" if output else suffix
+
             return ToolResult(
                 True,
                 output,
                 bytes_count=len(output.encode("utf-8")),
-                truncated=omitted > 0,
+                truncated=truncated,
                 metadata={
-                    "method": "python",
-                    "omitted": omitted,
+                    "method": "workspace_fs",
                     "estimated_tokens": (len(output.encode("utf-8")) + 3) // 4,
+                    "visible_returned": len(files),
+                    "scope_bounded": path_scoped,
+                    "scan_saturated": scan_saturated if not path_scoped else None,
                 },
             )
         except Exception as exc:
@@ -124,106 +120,84 @@ class ReadFileHandler:
             if not symbol:
                 return ToolResult(False, "", f"Symbol not found: {around_symbol}")
             rel = symbol["path"]
-            context_lines = max(0, min(int(args.get("context_lines", 20)), 200))
+            try:
+                context_lines = max(0, min(int(args.get("context_lines", 20)), 200))
+            except (TypeError, ValueError):
+                context_lines = 20
             args["start_line"] = max(1, int(symbol["start_line"]) - context_lines)
             args["end_line"] = int(symbol["end_line"]) + context_lines
 
         max_tokens = _token_budget(args, 1200)
-        requested_max = int(args.get("max_bytes", 0) or 0)
-        max_bytes = (
-            min(requested_max, DEFAULT_MAX_FILE_BYTES)
-            if requested_max > 0
-            else DEFAULT_MAX_FILE_BYTES
-        )
-        start_value = args.get("start_line")
-        start_line = max(1, int(start_value if start_value is not None else 1))
-        end_value = args.get("end_line")
-        end_line = int(end_value) if end_value is not None else None
+        try:
+            requested_max = int(args.get("max_bytes", 0) or 0)
+        except (TypeError, ValueError):
+            requested_max = 0
+        requested_max = max(0, min(requested_max, DEFAULT_MAX_FILE_BYTES))
+
+        try:
+            start_value = args.get("start_line")
+            start_line = max(1, int(start_value if start_value is not None else 1))
+            end_value = args.get("end_line")
+            end_line = int(end_value) if end_value is not None else None
+        except (TypeError, ValueError):
+            return ToolResult(False, "", "Invalid start_line/end_line")
+        if end_line is not None and end_line < start_line:
+            return ToolResult(False, "", "end_line must be >= start_line")
 
         try:
             fs = _fs(ctx)
             relative = _scope(ctx, fs.relative(rel))
-        except Exception as exc:
-            return ToolResult(False, "", f"File access denied: {exc}")
-
-        native = getattr(ctx.registry, "native_engine", None)
-        if (
-            native is not None
-            and getattr(getattr(native, "status", None), "available", False)
-        ):
-            try:
-                data = native.read_file(
-                    relative,
-                    start_line=start_line,
-                    end_line=end_line,
-                    max_bytes=max_bytes,
-                    token_budget=max_tokens,
-                )
-                chunk = str(data.get("content", ""))
-                next_start = data.get("next_start_line")
-                return ToolResult(
-                    True,
-                    chunk,
-                    bytes_count=len(chunk.encode("utf-8")),
-                    truncated=next_start is not None,
-                    metadata={
-                        "method": "native",
-                        "backend": getattr(native.status, "backend", "rust"),
-                        "content_hash": str(data.get("content_hash", "")),
-                        "hash_scope": "returned_range",
-                        "path": str(data.get("path", relative)),
-                        "start_line": int(data.get("start_line", start_line)),
-                        "end_line": int(data.get("end_line", start_line)),
-                        "file_size": int(data.get("file_size", 0)),
-                        "mtime_ns": int(data.get("mtime_ns", 0)),
-                        "full_file_hash": str(data.get("full_file_hash", "")),
-                        "total_lines": int(data.get("total_lines", 0)),
-                        "omitted_lines": int(data.get("omitted_lines", 0)),
-                        "next_start_line": next_start,
-                        "estimated_tokens": int(
-                            data.get("estimated_tokens", 0) or 0
-                        ),
-                    },
-                )
-            except Exception:
-                # Preserve the existing safe Python path as compatibility fallback.
-                pass
-
-        try:
+            # Keep WorkspaceFileSystem as the single filesystem trust boundary.
+            # Read at the repository file-size limit; max_bytes below is an
+            # output cap, matching the model-facing schema.
             data = fs.read(relative, max_bytes=DEFAULT_MAX_FILE_BYTES)
         except Exception as exc:
             return ToolResult(False, "", f"File access denied: {exc}")
 
-        start = start_line - 1
+        start = min(start_line - 1, max(0, data.content.count(b"\n") + 1))
         requested_end = end_line if end_line is not None else start + 200
         end = min(requested_end, start + 5000)
         text = data.content.decode("utf-8", errors="ignore")
         lines = text.splitlines()
+        start = min(start, len(lines))
+        end = min(end, len(lines))
         selected = lines[start:end]
 
-        char_budget = max_tokens * 4
-        bounded = []
-        chars = 0
+        byte_budget = max_tokens * 4
+        if requested_max > 0:
+            byte_budget = min(byte_budget, requested_max)
+
+        bounded: list[str] = []
+        bytes_used = 0
+        partial_line = False
         for line in selected:
-            extra = len(line) + (1 if bounded else 0)
-            if bounded and chars + extra > char_budget:
+            encoded = line.encode("utf-8")
+            separator = 1 if bounded else 0
+            if bounded and bytes_used + separator + len(encoded) > byte_budget:
                 break
-            if not bounded and extra > char_budget:
-                bounded.append(line[:char_budget])
+            if not bounded and len(encoded) > byte_budget:
+                # Avoid returning invalid UTF-8 while making the omission explicit.
+                keep = min(len(encoded), byte_budget)
+                while keep > 0:
+                    try:
+                        prefix = encoded[:keep].decode("utf-8")
+                        break
+                    except UnicodeDecodeError:
+                        keep -= 1
+                else:
+                    prefix = ""
+                bounded.append(prefix)
+                partial_line = True
                 break
             bounded.append(line)
-            chars += extra
+            bytes_used += separator + len(encoded)
+
         chunk = "\n".join(bounded)
         returned_end = start + len(bounded)
-        truncated = returned_end < min(end, len(lines)) or end < len(lines)
-        next_start_line = returned_end + 1 if truncated else None
-
-        if requested_max > 0:
-            encoded = chunk.encode("utf-8")
-            if len(encoded) > requested_max:
-                encoded = encoded[:requested_max]
-                chunk = encoded.decode("utf-8", errors="ignore")
-                truncated = True
+        selected_not_fully_returned = returned_end < end
+        range_has_more = end < len(lines)
+        truncated = partial_line or selected_not_fully_returned or range_has_more
+        next_start_line = returned_end + 1 if truncated and not partial_line else None
 
         return ToolResult(
             True,
@@ -231,7 +205,7 @@ class ReadFileHandler:
             bytes_count=len(chunk.encode("utf-8")),
             truncated=truncated,
             metadata={
-                "method": "python",
+                "method": "workspace_fs",
                 "content_hash": hashlib.sha256(chunk.encode("utf-8")).hexdigest(),
                 "hash_scope": "returned_range",
                 "path": relative,
@@ -243,6 +217,7 @@ class ReadFileHandler:
                 "total_lines": len(lines),
                 "omitted_lines": max(0, len(lines) - returned_end),
                 "next_start_line": next_start_line,
+                "partial_line_truncated": partial_line,
                 "estimated_tokens": (len(chunk.encode("utf-8")) + 3) // 4,
             },
         )
@@ -257,11 +232,7 @@ class WriteFileHandler:
         if not isinstance(content, str):
             return ToolResult(False, "", "write_file content must be a string")
         if len(content.encode("utf-8")) > DEFAULT_MAX_FILE_BYTES:
-            return ToolResult(
-                False,
-                "",
-                f"write_file content exceeds {DEFAULT_MAX_FILE_BYTES} bytes",
-            )
+            return ToolResult(False, "", f"write_file content exceeds {DEFAULT_MAX_FILE_BYTES} bytes")
 
         fs = _fs(ctx)
         try:
@@ -304,18 +275,9 @@ class WriteFileHandler:
                     )
                 except Exception:
                     if existed:
-                        fs.atomic_write(
-                            relative,
-                            before_content or "",
-                            expected_exists=True,
-                            expected_sha256=digest,
-                        )
+                        fs.atomic_write(relative, before_content or "", expected_exists=True, expected_sha256=digest)
                     else:
-                        fs.unlink(
-                            relative,
-                            expected_exists=True,
-                            expected_sha256=digest,
-                        )
+                        fs.unlink(relative, expected_exists=True, expected_sha256=digest)
                     raise
         except Exception as exc:
             return ToolResult(False, "", f"Workspace write refused: {exc}")
@@ -324,9 +286,5 @@ class WriteFileHandler:
         return ToolResult(
             True,
             f"Successfully wrote {len(content.encode('utf-8'))} bytes to {relative}.",
-            metadata={
-                "content_hash": digest,
-                "path": relative,
-                "changeset": changeset,
-            },
+            metadata={"content_hash": digest, "path": relative, "changeset": changeset},
         )

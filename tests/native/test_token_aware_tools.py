@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 from kitt.native.output import OutputOptimizer
 from kitt.tools.handlers.files import ListFilesHandler, ReadFileHandler
-from kitt.tools.handlers.system import GitDiffHandler, GitStatusHandler
 
 
 class NativeStub:
@@ -13,26 +12,13 @@ class NativeStub:
         self.read_calls = []
         self.list_calls = []
 
-    def read_file(self, path, start_line=1, end_line=None, max_bytes=0, token_budget=1200):
-        self.read_calls.append((path, start_line, end_line, max_bytes, token_budget))
-        return {
-            "path": path,
-            "content": "a\nb",
-            "content_hash": "range",
-            "full_file_hash": "full",
-            "start_line": 1,
-            "end_line": 2,
-            "total_lines": 100,
-            "omitted_lines": 98,
-            "next_start_line": 3,
-            "estimated_tokens": 1,
-            "file_size": 200,
-            "mtime_ns": 10,
-        }
+    def read_file(self, *args, **kwargs):
+        self.read_calls.append((args, kwargs))
+        raise AssertionError("filesystem handler must not bypass WorkspaceFileSystem")
 
-    def list_files(self, path=".", limit=100, token_budget=600):
-        self.list_calls.append((path, limit, token_budget))
-        return {"files": ["a.py", "b.py"], "omitted": 7, "estimated_tokens": 2}
+    def list_files(self, *args, **kwargs):
+        self.list_calls.append((args, kwargs))
+        raise AssertionError("filesystem handler must not bypass WorkspaceFileSystem")
 
 
 class CompressStub:
@@ -49,49 +35,108 @@ class CompressStub:
         }
 
 
-def test_output_optimizer_propagates_budget_and_counts_tokens():
+class ArtifactStoreStub:
+    def put(self, *args, **kwargs):
+        return SimpleNamespace(id="artifact-1")
+
+
+def _ctx(tmp_path, native=None, security_context=None):
+    registry = SimpleNamespace(root_path=tmp_path, native_engine=native)
+    return SimpleNamespace(
+        registry=registry,
+        security_context=security_context,
+        workspace_id="w",
+        conversation_id="c",
+        turn_id="t",
+    )
+
+
+def test_output_optimizer_reports_unavailable_raw_capture_truthfully():
     optimizer = OutputOptimizer(CompressStub())
     result = optimizer.optimize(["pytest"], "x" * 5000, "", 1, token_budget=96)
     assert result.changed
-    assert result.output == "FAIL compact"
+    assert "FAIL compact" in result.output
+    assert "raw capture unavailable" in result.output
     assert result.tokens_saved > 0
-    assert result.output_estimated_tokens < result.raw_estimated_tokens
+    assert not result.raw_capture_available
+    assert not result.full_raw_recoverable
 
 
-def test_native_file_read_is_bounded(tmp_path):
-    target = tmp_path / "a.py"
-    target.write_text("a\nb\n" + "c\n" * 100)
-    native = NativeStub()
-    registry = SimpleNamespace(root_path=tmp_path, native_engine=native)
-    from kitt.security.workspace_fs import WorkspaceFileSystem
-    registry.path_policy = SimpleNamespace()
-    ctx = SimpleNamespace(
-        registry=registry,
-        security_context=None,
-        workspace_id="w",
-        conversation_id="c",
-        turn_id="t",
+def test_output_optimizer_marks_complete_artifact_recoverable():
+    optimizer = OutputOptimizer(CompressStub())
+    result = optimizer.optimize(
+        ["pytest"],
+        "x" * 5000,
+        "",
+        1,
+        artifact_store=ArtifactStoreStub(),
+        token_budget=96,
     )
-    result = ReadFileHandler().execute({"path": "a.py", "max_tokens": 128}, ctx)
+    assert result.changed
+    assert result.raw_artifact_id == "artifact-1"
+    assert result.raw_capture_available
+    assert result.full_raw_recoverable
+    assert "artifact-1" in result.output
+
+
+def test_output_optimizer_marks_process_truncation_not_fully_recoverable():
+    optimizer = OutputOptimizer(CompressStub())
+    result = optimizer.optimize(
+        ["pytest"],
+        "x" * 5000,
+        "",
+        1,
+        artifact_store=ArtifactStoreStub(),
+        capture_truncated=True,
+        raw_total_bytes=50_000,
+        token_budget=96,
+    )
+    assert result.raw_capture_available
+    assert not result.full_raw_recoverable
+    assert "full=false" in result.output
+
+
+def test_read_file_uses_workspace_fs_not_native(tmp_path):
+    (tmp_path / "a.py").write_text("a\nb\n" + "c\n" * 100)
+    native = NativeStub()
+    result = ReadFileHandler().execute(
+        {"path": "a.py", "max_tokens": 128}, _ctx(tmp_path, native=native)
+    )
+    assert result.success
+    assert result.metadata["method"] == "workspace_fs"
+    assert native.read_calls == []
+
+
+def test_read_file_rejects_inverted_range(tmp_path):
+    (tmp_path / "a.py").write_text("a\nb\n")
+    result = ReadFileHandler().execute(
+        {"path": "a.py", "start_line": 10, "end_line": 2}, _ctx(tmp_path)
+    )
+    assert not result.success
+    assert "end_line" in (result.error or "")
+
+
+def test_read_file_long_line_reports_partial_without_fake_resume(tmp_path):
+    (tmp_path / "a.py").write_text("x" * 10_000 + "\nsecond\n")
+    result = ReadFileHandler().execute(
+        {"path": "a.py", "max_tokens": 64}, _ctx(tmp_path)
+    )
     assert result.success
     assert result.truncated
-    assert result.metadata["method"] == "native"
-    assert result.metadata["next_start_line"] == 3
-    assert native.read_calls[0][-1] == 128
+    assert result.metadata["partial_line_truncated"] is True
+    assert result.metadata["next_start_line"] is None
+    assert len(result.output.encode("utf-8")) <= 64 * 4
 
 
-def test_native_list_reports_omitted(tmp_path):
+def test_list_files_uses_workspace_fs_not_native(tmp_path):
     (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("")
     native = NativeStub()
-    registry = SimpleNamespace(root_path=tmp_path, native_engine=native)
-    ctx = SimpleNamespace(
-        registry=registry,
-        security_context=None,
-        workspace_id="w",
-        conversation_id="c",
-        turn_id="t",
+    result = ListFilesHandler().execute(
+        {"path": ".", "limit": 1, "max_tokens": 128},
+        _ctx(tmp_path, native=native),
     )
-    result = ListFilesHandler().execute({"path": ".", "limit": 2, "max_tokens": 128}, ctx)
     assert result.success
-    assert "7 file(s) omitted" in result.output
-    assert result.metadata["method"] == "native"
+    assert result.metadata["method"] == "workspace_fs"
+    assert native.list_calls == []
+    assert result.truncated

@@ -61,6 +61,9 @@ def _optimized_process_output(ctx: ToolContext, argv: list[str], result, token_b
         "output_estimated_tokens": optimized.output_estimated_tokens,
         "tokens_saved": optimized.tokens_saved,
         "token_budget": token_budget,
+        "raw_capture_available": optimized.raw_capture_available,
+        "full_raw_recoverable": optimized.full_raw_recoverable,
+        "artifact_error": optimized.artifact_error,
     }
     return optimized.output, metadata, optimized.changed
 
