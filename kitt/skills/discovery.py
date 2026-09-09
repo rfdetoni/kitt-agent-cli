@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
@@ -105,14 +106,29 @@ def _workspace_root(roots: Iterable[Any]) -> Path | None:
 class SkillDiscovery:
     """Discover skills through the same trust/activation state as SkillManager.
 
-    For a KITT workspace this is the canonical path. The generic directory scan
-    remains as a compatibility fallback for callers that pass arbitrary roots.
+    Canonical SkillManager instances are reused per workspace to avoid repeating
+    initialization/default-skill filesystem work on every turn. Active/trust
+    state and SKILL.md bodies are intentionally *not* cached: revocation and
+    edits must be observed immediately at the next discovery.
     """
+
+    _manager_lock = threading.RLock()
+    _managers: Dict[str, SkillManager] = {}
+
+    @classmethod
+    def _manager_for(cls, workspace: Path) -> SkillManager:
+        key = str(workspace.resolve())
+        with cls._manager_lock:
+            manager = cls._managers.get(key)
+            if manager is None:
+                manager = SkillManager(key, persistence_enabled=True)
+                cls._managers[key] = manager
+            return manager
 
     def discover(self, roots: List[Any]) -> List[SkillDescriptor]:
         workspace = _workspace_root(roots)
         if workspace is not None:
-            manager = SkillManager(str(workspace), persistence_enabled=True)
+            manager = self._manager_for(workspace)
             active = set(manager.get_active_skills())
             result: list[SkillDescriptor] = []
             for skill in manager.list_skills():
