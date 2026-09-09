@@ -282,7 +282,6 @@ class LLMClient:
                 )
                 request_header = discovered.request_id_header
             else:
-                # Backward-compatible contract for pre-discovery proxy builds.
                 session_header = "X-Kitt-Session-Id"
                 request_header = "X-Kitt-Request-Id"
 
@@ -293,14 +292,20 @@ class LLMClient:
 
             effort = _normalize_reasoning_effort(reasoning_effort)
             if effort is not None:
+                legacy_chatgpt = (self.profile.model or "").strip().lower() == "chatgpt-web"
                 if discovered.discovered:
-                    reasoning_allowed = discovered.reasoning_supported is True
-                    reasoning_header = discovered.reasoning_header
+                    reasoning_allowed = (
+                        discovered.reasoning_supported is True
+                        or (discovered.reasoning_supported is None and legacy_chatgpt)
+                    )
+                    reasoning_header = discovered.reasoning_header or (
+                        "X-Kitt-Reasoning-Effort" if legacy_chatgpt else None
+                    )
                     if reasoning_allowed and reasoning_header:
                         low, high = discovered.reasoning_range
                         effective_effort = max(low, min(high, effort))
                         extra_headers[reasoning_header] = str(effective_effort)
-                elif (self.profile.model or "").strip().lower() == "chatgpt-web":
+                elif legacy_chatgpt:
                     extra_headers["X-Kitt-Reasoning-Effort"] = str(effort)
 
         request = LLMRequest(
