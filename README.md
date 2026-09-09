@@ -1,97 +1,84 @@
 # K.I.T.T. Agent CLI
 
-> Local-first autonomous coding agent and terminal pair programmer.
+Local-first autonomous coding agent with a Python control plane, optional Rust data plane and SQLite/FTS5 workspace intelligence.
 
-Supports Ollama, OpenRouter, and OpenAI-compatible providers, structured workspace context indexing, tool execution, single-use approval grants, persistent conversation history, Dreaming mode memory consolidation, and seamless integration with the KITT ecosystem.
+## Architecture
 
----
+- **Python control plane** — agent loop, routing, policy/approvals, goals, child agents, providers, plugins/MCP, Dreaming and self-evolution.
+- **Rust native engine** — bounded repository search, file I/O, tree-sitter symbol intelligence, references, structural edits and process-output reduction. A portable Python fallback remains available when a native wheel/toolchain is unavailable.
+- **SQLite + FTS5** — history, state, memory, telemetry and persistent repository search without an external database service.
+- **KITT Reverse Proxy** — stable conversation sessions, OpenAI-compatible transport and native reasoning-effort propagation when using authorized web-chat sessions.
 
-## ✨ Features
+The model-facing default is the compact policy-governed `kitt_runtime` surface, reducing tool-schema tokens and keeping path, approval and capability checks at one execution boundary.
 
-- **Local-First & Multi-Model**: Native support for local Ollama models (`qwen2.5-coder`, `deepseek-coder`, etc.) and remote endpoints.
-- **Shared Memory via Protocol-v1**: Seamlessly integrates with the ecosystem's `kitt-memory` backend via `kittd` authenticated loopback IPC (`127.0.0.1:41827`).
-- **Standalone Resilience**: If `kittd` is offline, `kitt-agent-cli` operates with 100% standalone autonomy using local SQLite storage.
-- **KITT Control Center Integration**: Loads settings overrides layered as `defaults < overlay < env < CLI` from `${XDG_CONFIG_HOME:-~/.config}/kitt/control-center/overrides.json`.
-- **Security & Safety**:
-  - Strict loopback validation prevents auth token egress to remote hosts.
-  - Process-control environment variable protection (forbids tampering with `PATH`, `LD_PRELOAD`, `PYTHONPATH`).
-  - Single-use ApprovalGrant tokens and P0 command security boundaries.
-- **Context Engine**: Fast repo map, AST indexing, FTS5 lexical search, budget invariant enforcement, and compact multi-turn rolling context.
+## Install / update
 
----
-
-## 🚀 Installation & Setup
-
-### 1. Create Virtual Environment
+### Linux / macOS
 
 ```bash
-cd kitt-agent-cli
-python3 -m venv .venv
-source .venv/bin/activate
+curl -fsSL https://raw.githubusercontent.com/rfdetoni/kitt-agent-cli/main/install.sh | bash
 ```
 
-### 2. Install Package & Dependencies
+The command is idempotent: running it again updates the checkout and environment. If Rust/Cargo is installed, it builds and installs the native backend; otherwise it installs the portable Python backend.
 
-```bash
-pip install --upgrade pip
-pip install -e .
+Options after downloading the script include `--ref <branch|tag|sha>`, `--no-native`, and `--uninstall`.
+
+### Windows PowerShell
+
+```powershell
+irm https://raw.githubusercontent.com/rfdetoni/kitt-agent-cli/main/install.ps1 | iex
 ```
 
----
+The installer keeps the application under `%LOCALAPPDATA%\KITT\agent-cli`, creates an isolated virtual environment and adds `%LOCALAPPDATA%\KITT\bin` to the user PATH.
 
-## 💻 Usage
+Requirements: Git and Python 3.12+. Rust is optional but recommended for the high-performance backend.
 
-### Interactive Pair Programmer
+## Usage
 
 ```bash
-# Launch interactive REPL / TUI in current repository
 kitt
-
-# Or specify a target repository root
 kitt --root /path/to/project
-```
-
-### Direct CLI Commands
-
-```bash
-# Display available models and providers
 kitt models
-
-# Run diagnostics and doctor check
 kitt doctor
-
-# View help and options
 kitt --help
 ```
 
----
+Inside the TUI, `/reasoning 0-100` and the reasoning shortcuts update the execution model. For `kitt-reverse-proxy`, KITT keeps a stable `X-Kitt-Session-Id` per conversation and forwards reasoning effort for the next turn without creating a new chat.
 
-## ⚙️ Configuration & Precedence
+## Runtime design
 
-`kitt-agent-cli` dynamically merges configurations following this strict priority ladder:
+KITT is intentionally hybrid rather than a full Rust rewrite. Orchestration and provider I/O remain in Python where flexibility dominates; CPU/data-heavy repository operations use Rust where it materially reduces latency and memory. Process execution is bounded and preserves diagnostic tails instead of accumulating unbounded stdout/stderr.
 
-1. **CLI Arguments**: (e.g. `--model`, `--provider`, `--root`)
-2. **Environment Variables**: (e.g. `KITT_SAFE_RUNTIME`, `KITT_DAEMON`, `OPENAI_API_KEY`)
-3. **KITT Control Center Overlay**: Managed centrally via `http://127.0.0.1:41828`
-4. **Native Defaults**: Dataclass defaults defined in `RuntimeConfig`.
+Security invariants include workspace path containment, sanitized subprocess environments, single-use approval grants, capability intersection for child agents, bounded output/artifacts, secret-aware egress policy and fail-closed tool validation.
 
----
+## Configuration
 
-## 🧪 Testing & Validation
+Configuration precedence is:
+
+1. CLI arguments
+2. environment variables
+3. KITT Control Center overrides
+4. runtime defaults
+
+Useful environment switches include `KITT_SAFE_RUNTIME`, `KITT_DAEMON`, `KITT_DAEMON_AUTO_START`, `KITT_RETAINED_AGENTS` and `KITT_SCHEDULER`.
+
+## Development
 
 ```bash
-# Run complete test suite (760+ unit and integration tests)
-pytest
-
-# Run specific memory client loopback tests
-pytest tests/memory/test_shared_memory_client.py
-
-# Run control center overlay tests
-pytest tests/settings/test_control_center.py
+python -m pip install -e '.[dev]'
+python -m pytest -q
+python packaging/verify_cleanroom.py
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 ```
 
----
+Release CI builds a universal Python distribution plus native platform wheels for supported Linux, Windows and macOS runners.
 
-## 📄 License
+## Reverse proxy
 
-MIT License. See [LICENSE](LICENSE).
+Install the companion gateway from `rfdetoni/kitt-reverse-proxy` when you want an OpenAI-compatible local endpoint backed by an already-authorized browser session. The proxy is designed to reuse authenticated profiles, operate headless when possible and expose tools/reasoning through the same stable conversation session used by Agent CLI.
+
+## License
+
+MIT. See `LICENSE`.

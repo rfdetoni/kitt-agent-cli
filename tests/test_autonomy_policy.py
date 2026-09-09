@@ -27,24 +27,9 @@ class TestAutonomyPolicy(unittest.TestCase):
 
     def test_run_command_menu_modes(self):
         command = {"command": "git status"}
-        self.assertEqual(
-            PolicyEngine(autonomy=AutonomyPolicy.preset("allow_all")).evaluate_tool(
-                "run_command", command
-            ),
-            "ALLOW",
-        )
-        self.assertEqual(
-            PolicyEngine(autonomy=AutonomyPolicy.preset("ask")).evaluate_tool(
-                "run_command", command
-            ),
-            "ASK",
-        )
-        self.assertEqual(
-            PolicyEngine(autonomy=AutonomyPolicy.preset("deny")).evaluate_tool(
-                "run_command", command
-            ),
-            "DENY",
-        )
+        self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("allow_all")).evaluate_tool("run_command", command), "ALLOW")
+        self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("ask")).evaluate_tool("run_command", command), "ASK")
+        self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("deny")).evaluate_tool("run_command", command), "DENY")
 
     def test_policy_engine_read_only_mode(self):
         engine = PolicyEngine(autonomy=AutonomyPolicy.preset("read_only"))
@@ -90,19 +75,8 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertEqual(engine.evaluate_command("rtk git diff"), "ALLOW")
         self.assertEqual(engine.evaluate_command("rtk pytest"), "ASK")
         self.assertEqual(engine.evaluate_command("rtk cargo test"), "ASK")
-        self.assertEqual(
-            engine.evaluate_command(
-                "rtk find jetbrains-plugin/src extensions/kitt-ai/src backend -type f"
-            ),
-            "ASK",
-        )
-        self.assertEqual(
-            engine.evaluate_command(
-                "rtk rg -n '^(def |async def |.*fun |function |export function|class )$' "
-                "backend jetbrains-plugin extensions"
-            ),
-            "ASK",
-        )
+        self.assertEqual(engine.evaluate_command("rtk find jetbrains-plugin/src extensions/kitt-ai/src backend -type f"), "ASK")
+        self.assertEqual(engine.evaluate_command("rtk rg -n '^(def |async def |.*fun |function |export function|class )$' backend jetbrains-plugin extensions"), "ASK")
         self.assertEqual(engine.evaluate_command("rtk cat .env"), "DENY")
         self.assertEqual(engine.evaluate_command("rtk find . -delete"), "DENY")
         self.assertEqual(engine.evaluate_command("echo '$HOME'"), "ASK")
@@ -111,130 +85,106 @@ class TestAutonomyPolicy(unittest.TestCase):
         import tempfile
         from kitt.tools.registry import ToolRegistry
         from kitt.security.context import ExecutionSecurityContext
+        from kitt.runtime.safe_runtime import SafeRuntime
 
         with tempfile.TemporaryDirectory() as tmpdir:
             reg_sup = ToolRegistry(root_dir=tmpdir)
-            command = "find . -maxdepth 1 -type f"
-            sec_ctx = ExecutionSecurityContext.from_dict({
-                "workspace_id": "ws_test",
-                "conversation_id": "conv_test",
-                "turn_id": "turn_test",
-                "origin": "MODEL",
-                "principal_type": "assistant",
-                "principal_id": "agent-1",
-                "capabilities": ["process.run"],
-                "trace_id": "trace-1",
-            })
+            reg_ro = None
+            try:
+                # Use a command with identical semantics on GitHub-hosted Linux,
+                # macOS and Windows runners. `find` is a different executable on
+                # Windows and made the approval test platform-dependent.
+                command = 'python -c "print(\'ok\')"'
+                sec_ctx = ExecutionSecurityContext.from_dict({
+                    "workspace_id": "ws_test",
+                    "conversation_id": "conv_test",
+                    "turn_id": "turn_test",
+                    "origin": "MODEL",
+                    "principal_type": "assistant",
+                    "principal_id": "agent-1",
+                    "capabilities": ["process.run"],
+                    "trace_id": "trace-1",
+                })
 
-            res_sup = reg_sup.execute_tool(
-                "run_command",
-                {"command": command},
-                turn_id="turn_test",
-                conversation_id="conv_test",
-                workspace_id="ws_test",
-                origin="MODEL",
-                security_context=sec_ctx,
-            )
-            self.assertFalse(res_sup.success)
-            self.assertTrue(res_sup.requires_approval)
+                res_sup = reg_sup.execute_tool(
+                    "run_command", {"command": command}, turn_id="turn_test",
+                    conversation_id="conv_test", workspace_id="ws_test",
+                    origin="MODEL", security_context=sec_ctx,
+                )
+                self.assertFalse(res_sup.success)
+                self.assertTrue(res_sup.requires_approval)
 
-            approval_id = "req_find_command"
-            action_hash = reg_sup.policy.generate_action_hash(
-                "run_command", {"command": command}
-            )
-            reg_sup.approval_manager.register_request(
-                "turn_test", "conv_test", "ws_test", action_hash, approval_id, "run_command"
-            )
-            grant = reg_sup.approval_manager.issue_grant(
-                "turn_test", "conv_test", "ws_test", action_hash, approval_id
-            )
-            approved = reg_sup.execute_tool(
-                "run_command",
-                {"command": command},
-                turn_id="turn_test",
-                conversation_id="conv_test",
-                workspace_id="ws_test",
-                origin="MODEL",
-                grant=grant,
-                expected_approval_id=approval_id,
-                security_context=sec_ctx,
-            )
-            self.assertTrue(approved.success)
+                approval_id = "req_command"
+                action_hash = reg_sup.policy.generate_action_hash("run_command", {"command": command})
+                reg_sup.approval_manager.register_request(
+                    "turn_test", "conv_test", "ws_test", action_hash, approval_id, "run_command"
+                )
+                grant = reg_sup.approval_manager.issue_grant(
+                    "turn_test", "conv_test", "ws_test", action_hash, approval_id
+                )
+                approved = reg_sup.execute_tool(
+                    "run_command", {"command": command}, turn_id="turn_test",
+                    conversation_id="conv_test", workspace_id="ws_test",
+                    origin="MODEL", grant=grant, expected_approval_id=approval_id,
+                    security_context=sec_ctx,
+                )
+                self.assertTrue(approved.success, approved.error)
 
-            runtime_approval_id = "req_find_runtime_command"
-            reg_sup.approval_manager.register_request(
-                "runtime_turn", "conv_test", "ws_test", action_hash,
-                runtime_approval_id, "run_command",
-            )
-            runtime_grant = reg_sup.approval_manager.issue_grant(
-                "runtime_turn", "conv_test", "ws_test", action_hash,
-                runtime_approval_id,
-            )
-            from kitt.runtime.safe_runtime import SafeRuntime
-            rt_sup = SafeRuntime(
-                workspace_root=tmpdir,
-                workspace_id="ws_test",
-                conversation_id="conv_test",
-                tool_registry=reg_sup,
-            )
-            approved_runtime = rt_sup.execute(
-                "process.run",
-                {"command": command},
-                turn_id="runtime_turn",
-                origin="MODEL",
-                security_context=sec_ctx,
-                approval_grant=runtime_grant,
-                expected_approval_id=runtime_approval_id,
-            )
-            self.assertTrue(approved_runtime.success)
+                runtime_approval_id = "req_runtime_command"
+                reg_sup.approval_manager.register_request(
+                    "runtime_turn", "conv_test", "ws_test", action_hash,
+                    runtime_approval_id, "run_command",
+                )
+                runtime_grant = reg_sup.approval_manager.issue_grant(
+                    "runtime_turn", "conv_test", "ws_test", action_hash, runtime_approval_id,
+                )
+                rt_sup = SafeRuntime(
+                    workspace_root=tmpdir, workspace_id="ws_test",
+                    conversation_id="conv_test", tool_registry=reg_sup,
+                )
+                approved_runtime = rt_sup.execute(
+                    "process.run", {"command": command}, turn_id="runtime_turn",
+                    origin="MODEL", security_context=sec_ctx,
+                    approval_grant=runtime_grant,
+                    expected_approval_id=runtime_approval_id,
+                )
+                self.assertTrue(approved_runtime.success, approved_runtime.error)
 
-            # In read_only mode, it remains strictly hard-denied without approval popup:
-            reg_ro = ToolRegistry(root_dir=tmpdir)
-            reg_ro.policy = PolicyEngine(root_dir=tmpdir, autonomy=AutonomyPolicy.preset("read_only"))
-            res_ro = reg_ro.execute_tool(
-                "run_command",
-                {"command": command},
-                turn_id="turn_test",
-                conversation_id="conv_test",
-                workspace_id="ws_test",
-                origin="MODEL",
-                security_context=sec_ctx,
-            )
-            # Test SafeRuntime.execute for process.run
-            rt_sup = SafeRuntime(
-                workspace_root=tmpdir,
-                workspace_id="ws_test",
-                conversation_id="conv_test",
-                tool_registry=reg_sup,
-            )
-            res_rt_sup = rt_sup.execute(
-                "process.run",
-                {"command": command},
-                turn_id="turn_test",
-                origin="MODEL",
-                security_context=sec_ctx,
-            )
-            self.assertFalse(res_rt_sup.success)
-            self.assertTrue(res_rt_sup.requires_approval)
-            self.assertEqual(res_rt_sup.approval_action, "run_command")
+                reg_ro = ToolRegistry(root_dir=tmpdir)
+                reg_ro.policy = PolicyEngine(
+                    root_dir=tmpdir, autonomy=AutonomyPolicy.preset("read_only")
+                )
+                res_ro = reg_ro.execute_tool(
+                    "run_command", {"command": command}, turn_id="turn_test",
+                    conversation_id="conv_test", workspace_id="ws_test",
+                    origin="MODEL", security_context=sec_ctx,
+                )
+                self.assertFalse(res_ro.success)
+                self.assertFalse(res_ro.requires_approval)
 
-            # SafeRuntime in read_only mode:
-            rt_ro = SafeRuntime(
-                workspace_root=tmpdir,
-                workspace_id="ws_test",
-                conversation_id="conv_test",
-                tool_registry=reg_ro,
-            )
-            res_rt_ro = rt_ro.execute(
-                "process.run",
-                {"command": command},
-                turn_id="turn_test",
-                origin="MODEL",
-                security_context=sec_ctx,
-            )
-            self.assertFalse(res_rt_ro.success)
-            self.assertFalse(res_rt_ro.requires_approval)
-            self.assertIn("read_only", res_rt_ro.error)
+                res_rt_sup = rt_sup.execute(
+                    "process.run", {"command": command}, turn_id="turn_test",
+                    origin="MODEL", security_context=sec_ctx,
+                )
+                self.assertFalse(res_rt_sup.success)
+                self.assertTrue(res_rt_sup.requires_approval)
+                self.assertEqual(res_rt_sup.approval_action, "run_command")
+
+                rt_ro = SafeRuntime(
+                    workspace_root=tmpdir, workspace_id="ws_test",
+                    conversation_id="conv_test", tool_registry=reg_ro,
+                )
+                res_rt_ro = rt_ro.execute(
+                    "process.run", {"command": command}, turn_id="turn_test",
+                    origin="MODEL", security_context=sec_ctx,
+                )
+                self.assertFalse(res_rt_ro.success)
+                self.assertFalse(res_rt_ro.requires_approval)
+                self.assertIn("read_only", res_rt_ro.error)
+            finally:
+                if reg_ro is not None:
+                    reg_ro.close()
+                reg_sup.close()
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from typing import Dict, Set, List, Tuple
 
 
 class RepositoryGraph:
-    """Graph structure with O(V+E) PageRank and bounded neighborhood expansion."""
+    """Graph structure with O(1) edge updates and O(V+E) PageRank iterations."""
 
     def __init__(self):
         self.adj: Dict[str, List[Tuple[str, float]]] = {}
@@ -14,37 +14,27 @@ class RepositoryGraph:
         self.nodes: Set[str] = set()
         self.cached_scores: Dict[str, float] = {}
         self.generation: int = 0
+        self._edge_positions: Dict[Tuple[str, str], Tuple[int, int]] = {}
 
     def add_edge(self, src: str, dst: str, weight: float = 1.0, kind: str = "import") -> None:
         self.nodes.add(src)
         self.nodes.add(dst)
-        changed = False
+        edge_key = (src, dst)
+        positions = self._edge_positions.get(edge_key)
 
-        if src not in self.adj:
-            self.adj[src] = []
-        for idx, (existing, old_weight) in enumerate(self.adj[src]):
-            if existing == dst:
-                if weight > old_weight:
-                    self.adj[src][idx] = (dst, weight)
-                    changed = True
-                break
-        else:
-            self.adj[src].append((dst, weight))
-            changed = True
+        if positions is None:
+            src_edges = self.adj.setdefault(src, [])
+            dst_edges = self.rev_adj.setdefault(dst, [])
+            self._edge_positions[edge_key] = (len(src_edges), len(dst_edges))
+            src_edges.append((dst, weight))
+            dst_edges.append((src, weight))
+            self.generation += 1
+            return
 
-        if dst not in self.rev_adj:
-            self.rev_adj[dst] = []
-        for idx, (existing, old_weight) in enumerate(self.rev_adj[dst]):
-            if existing == src:
-                if weight > old_weight:
-                    self.rev_adj[dst][idx] = (src, weight)
-                    changed = True
-                break
-        else:
-            self.rev_adj[dst].append((src, weight))
-            changed = True
-
-        if changed:
+        src_idx, dst_idx = positions
+        if weight > self.adj[src][src_idx][1]:
+            self.adj[src][src_idx] = (dst, weight)
+            self.rev_adj[dst][dst_idx] = (src, weight)
             self.generation += 1
 
     def compute_pagerank(
@@ -62,7 +52,6 @@ class RepositoryGraph:
         initial_val = 1.0 / num_nodes
         scores = {n: initial_val for n in node_list}
 
-        # Precompute out-weights for O(V+E) iteration
         out_sums = {}
         for src in node_list:
             out_sums[src] = sum(w for _, w in self.adj.get(src, []))

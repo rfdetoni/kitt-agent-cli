@@ -41,14 +41,30 @@ class ContextEngine:
         self.last_compiled_context: CompiledContext | None = None
         self.last_build_stats: dict[str, object] = {}
 
+    def __enter__(self) -> "ContextEngine":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
     def close(self) -> None:
-        if self._owns_index and self.index is not None:
-            try:
-                self.index.close()
-            finally:
-                self.index = None
-        self._retrieval = None
-        self._retrieval_index_identity = None
+        """Release the active repository index and retrieval state.
+
+        A ContextEngine is the lifecycle boundary for its active index even when
+        that index was injected by a composition root. RepositoryIndex.close()
+        is idempotent, so higher-level owners may safely close it again. This is
+        especially important on Windows, where an open SQLite handle prevents
+        workspace/temp-directory cleanup.
+        """
+        index = self.index
+        self.index = None
+        try:
+            if index is not None:
+                index.close()
+        finally:
+            self._retrieval = None
+            self._retrieval_index_identity = None
+            self.cache.clear()
 
     def extract_task_focus(self, task_description: str) -> TaskFocus:
         if not task_description:
@@ -129,9 +145,6 @@ class ContextEngine:
         working_set = list(working_set_paths or [])
         bootstrap_paths = list(dict.fromkeys([*plan.exact_paths, *working_set]))
 
-        # Freshness is established before cache lookup. Targeted paths are
-        # refreshed immediately; unrelated repositories use a bounded refresh
-        # interval to avoid a full scan on every prompt.
         stats = self._refresh_index(bootstrap_paths)
         retrieval = self._get_retrieval()
         namespace = self._cache_namespace(root_path, retrieval)
@@ -182,8 +195,6 @@ class ContextEngine:
             partial=stats.get("state") == "PARTIAL",
         )
         self.last_compiled_context = compiled
-        # Context built with a conversation working-set must never seed the
-        # generic prompt cache because the key intentionally omits that set.
         if not working_set:
             self.cache.put(
                 task_description,
