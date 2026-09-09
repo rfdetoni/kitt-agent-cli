@@ -99,12 +99,13 @@ class ProgressiveSkillLoader:
             )
         )
         terms = self._terms(indexed_text)
+        keywords = {str(item).lower() for item in (getattr(skill, "keywords", ()) or ())}
         for word in prompt_terms.intersection(terms):
             idf = math.log((num_docs + 1.0) / (df[word] + 0.5)) + 1.0
             score += idf
             if word in name:
                 score += 2.0 * idf
-            if word in set(getattr(skill, "keywords", ()) or ()):
+            if word in keywords:
                 score += 3.0 * idf
         return score
 
@@ -175,7 +176,7 @@ class ProgressiveSkillLoader:
         self,
         chosen: Iterable[Any],
         by_name: dict[str, Any],
-        max_skills: int,
+        max_items: int,
     ) -> list[Any]:
         ordered: list[Any] = []
         visiting: set[str] = set()
@@ -183,7 +184,7 @@ class ProgressiveSkillLoader:
 
         def visit(skill: Any) -> None:
             name = str(getattr(skill, "name", ""))
-            if not name or name in visited or len(ordered) >= max_skills:
+            if not name or name in visited or len(ordered) >= max_items:
                 return
             if name in visiting:
                 return
@@ -194,7 +195,7 @@ class ProgressiveSkillLoader:
                     visit(dep)
             visiting.discard(name)
             visited.add(name)
-            if len(ordered) < max_skills:
+            if len(ordered) < max_items:
                 ordered.append(skill)
 
         for skill in chosen:
@@ -232,7 +233,8 @@ class ProgressiveSkillLoader:
         scored: list[tuple[float, int, str, Any]] = []
         for skill in eligible:
             score = self._score(skill, prompt_lower, prompt_terms, paths, df, num_docs)
-            always = bool(getattr(skill, "always_apply", False)) or str(getattr(skill, "name", "")) in _CORE_ALWAYS
+            name = str(getattr(skill, "name", "")).lower()
+            always = bool(getattr(skill, "always_apply", False)) or name in _CORE_ALWAYS
             if score > 0 or always:
                 scored.append(
                     (
@@ -245,23 +247,33 @@ class ProgressiveSkillLoader:
         scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
 
         by_name = {str(getattr(skill, "name", "")): skill for skill in eligible}
+        # Dependencies are supporting instructions, not primary selections. Let
+        # them expand the primary set without displacing the task-specific skill.
+        dependency_cap = min(32, max_skills + 8)
         ordered = self._dependency_order(
             (item[3] for item in scored[:max_skills]),
             by_name,
-            max_skills,
+            dependency_cap,
         )
         if not ordered:
             return []
 
-        # One global budget, not N independent per-skill limits. Small always-on
-        # protocols consume little; task-specific skills receive the remainder.
-        base = max(self.min_skill_chars, self.max_total_chars // len(ordered))
+        # One hard global budget. A per-skill minimum may influence ranking but
+        # can never make the aggregate exceed max_total_chars.
         remaining = self.max_total_chars
         materialized: list[Any] = []
         score_by_name = {item[2]: item[0] for item in scored}
         for index, skill in enumerate(ordered):
+            if remaining <= 0:
+                break
             slots = max(1, len(ordered) - index)
-            budget = min(base, max(self.min_skill_chars, remaining // slots))
+            fair_share = max(256, remaining // slots)
+            budget = min(remaining, max(256, min(self.min_skill_chars, fair_share)))
+            # If there is surplus after guaranteeing a small share to remaining
+            # skills, let the current relevant skill use it without crossing the
+            # aggregate ceiling.
+            reserved_for_rest = max(0, slots - 1) * 256
+            budget = min(remaining, max(budget, remaining - reserved_for_rest))
             excerpt = self._excerpt(skill, prompt or "", budget)
             remaining = max(0, remaining - len(excerpt))
             try:
