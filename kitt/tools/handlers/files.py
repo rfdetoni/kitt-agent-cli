@@ -52,37 +52,47 @@ class ListFilesHandler:
                     f"Path '{relative_dir}' is outside the principal path scope",
                 )
 
-            # WorkspaceFileSystem is the canonical filesystem trust boundary.
-            # Do not bypass its dir_fd/O_NOFOLLOW/reparse checks for a native
-            # fast path. Scan one extra visible candidate to report truncation
-            # without enumerating the whole repository into model context.
-            scan_limit = 500 if security is not None and security.is_path_scoped else min(500, limit + 1)
-            scanned = fs.list_regular_files(rel, limit=scan_limit)
-
-            visible: list[str] = []
-            for item in scanned:
-                try:
-                    visible.append(_scope(ctx, item))
-                except PermissionError:
-                    continue
+            # WorkspaceFileSystem remains the canonical trust boundary.
+            # For a scoped principal, never enumerate an ancestor directory and
+            # then filter a fixed prefix: that can miss an allowed file after
+            # the scan cap and can leak work proportional to unrelated entries.
+            path_scoped = security is not None and security.is_path_scoped
+            if path_scoped and not security.allows_path(relative_dir):
+                visible: list[str] = []
+                for scope in sorted(security.path_scope or (), key=str.casefold):
+                    parent = scope.rsplit("/", 1)[0] if "/" in scope else "."
+                    if parent != relative_dir:
+                        continue
+                    try:
+                        if fs.exists_regular(scope):
+                            visible.append(_scope(ctx, scope))
+                    except (FileNotFoundError, OSError, PermissionError):
+                        continue
+                scan_saturated = False
+            else:
+                scan_limit = min(500, limit + 1)
+                scanned = fs.list_regular_files(rel, limit=scan_limit)
+                visible = []
+                for item in scanned:
+                    try:
+                        visible.append(_scope(ctx, item))
+                    except PermissionError:
+                        continue
+                scan_saturated = len(scanned) >= scan_limit
 
             bounded_candidates = visible[:limit]
             files: list[str] = []
-            char_budget = max_tokens * 4
-            chars = 0
+            byte_budget = max_tokens * 4
+            bytes_used = 0
             for item in bounded_candidates:
                 extra = len(item.encode("utf-8")) + (1 if files else 0)
-                if files and chars + extra > char_budget:
+                if files and bytes_used + extra > byte_budget:
                     break
                 files.append(item)
-                chars += extra
+                bytes_used += extra
 
             hidden_by_budget = len(bounded_candidates) - len(files)
             more_visible = len(visible) > limit
-            path_scoped = security is not None and security.is_path_scoped
-            scan_saturated = len(scanned) >= scan_limit
-            # Do not expose whether a scoped directory contains many entries
-            # outside the principal's allowed paths.
             truncated = hidden_by_budget > 0 or more_visible or (scan_saturated and not path_scoped)
 
             output = "\n".join(files)

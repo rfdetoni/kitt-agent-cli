@@ -283,7 +283,7 @@ class ToolRegistry:
                 ),
             },
             {"name": "list_files", "description": "List files in directory"},
-            {"name": "search", "description": "Search regex pattern across repository"},
+            {"name": "search", "description": "Search literal text or regex using bounded indexed/native retrieval"},
             {"name": "read_file", "description": "Read file lines with start_line and end_line bounds"},
             {"name": "repository_map", "description": "Get compact indexed repository map"},
             {
@@ -318,7 +318,14 @@ class ToolRegistry:
                 "limit": "int <=500, default 100",
                 "max_tokens": "output token budget, default 600",
             },
-            "search": {"pattern": "literal text or regex", "regex": "bool, default false"},
+            "search": {
+                "pattern": "literal text or regex",
+                "regex": "bool, default false",
+                "case_sensitive": "bool, default false",
+                "limit": "int <=500, default 80",
+                "max_per_file": "int <=100, default 8",
+                "max_tokens": "output token budget, default 1200",
+            },
             "read_file": {
                 "path": "relative file, optional with around_symbol",
                 "around_symbol": "indexed symbol name",

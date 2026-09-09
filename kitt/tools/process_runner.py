@@ -4,7 +4,6 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -74,10 +73,65 @@ def sanitized_subprocess_env(extra: Optional[dict[str, str]] = None) -> dict[str
     return result
 
 
-class _BoundedCapture:
+def _trim_head_tail(data: bytes, limit: int) -> bytes:
+    """Bound bytes while preserving both diagnostic prefix and final summary."""
+    limit = max(0, int(limit))
+    if len(data) <= limit:
+        return data
+    if limit <= 0:
+        return b""
+
+    marker = f"\n[KITT capture omitted {len(data) - limit} byte(s)]\n".encode("utf-8")
+    if len(marker) >= limit:
+        return data[-limit:]
+
+    # Keep more tail than head: test/build summaries and terminal exceptions
+    # are disproportionately likely to be at the end of the stream.
+    payload = limit - len(marker)
+    head_keep = payload // 4
+    tail_keep = payload - head_keep
+    return data[:head_keep] + marker + data[-tail_keep:]
+
+
+def _fair_stream_budget(stdout: bytes, stderr: bytes, limit: int) -> tuple[bytes, bytes, bool]:
+    """Apply one combined cap without allowing stdout to starve stderr."""
+    limit = max(0, int(limit))
+    total = len(stdout) + len(stderr)
+    if total <= limit:
+        return stdout, stderr, False
+    if not stdout:
+        return b"", _trim_head_tail(stderr, limit), True
+    if not stderr:
+        return _trim_head_tail(stdout, limit), b"", True
+
+    half = limit // 2
+    out_budget = min(len(stdout), half)
+    err_budget = min(len(stderr), half)
+    remaining = limit - out_budget - err_budget
+
+    # Prefer stderr for leftover capacity because diagnostics commonly live
+    # there; give any remainder back to stdout.
+    extra_err = min(max(0, len(stderr) - err_budget), remaining)
+    err_budget += extra_err
+    remaining -= extra_err
+    out_budget += min(max(0, len(stdout) - out_budget), remaining)
+
+    return (
+        _trim_head_tail(stdout, out_budget),
+        _trim_head_tail(stderr, err_budget),
+        True,
+    )
+
+
+class _HeadTailCapture:
+    """Bounded stream capture retaining both the beginning and the latest bytes."""
+
     def __init__(self, limit: int):
         self.limit = max(1024, int(limit))
-        self.data = bytearray()
+        self.head_limit = max(256, self.limit // 4)
+        self.tail_limit = max(0, self.limit - self.head_limit)
+        self.head = bytearray()
+        self.tail = bytearray()
         self.truncated = False
         self.total_bytes = 0
         self._lock = threading.Lock()
@@ -90,16 +144,36 @@ class _BoundedCapture:
                     break
                 with self._lock:
                     self.total_bytes += len(chunk)
-                    remaining = self.limit - len(self.data)
-                    if remaining > 0:
-                        self.data.extend(chunk[:remaining])
-                    if len(chunk) > remaining:
+                    offset = 0
+
+                    if len(self.head) < self.head_limit:
+                        take = min(self.head_limit - len(self.head), len(chunk))
+                        self.head.extend(chunk[:take])
+                        offset = take
+
+                    if offset < len(chunk) and self.tail_limit > 0:
+                        self.tail.extend(chunk[offset:])
+                        overflow = len(self.tail) - self.tail_limit
+                        if overflow > 0:
+                            del self.tail[:overflow]
+
+                    if self.total_bytes > self.limit:
                         self.truncated = True
         finally:
             try:
                 pipe.close()
             except Exception:
                 pass
+
+    def render(self) -> bytes:
+        with self._lock:
+            if not self.truncated:
+                return bytes(self.head + self.tail)
+            omitted = max(0, self.total_bytes - len(self.head) - len(self.tail))
+            marker = f"\n[KITT capture omitted {omitted} byte(s)]\n".encode("utf-8")
+            tail_budget = max(0, self.tail_limit - len(marker))
+            tail = bytes(self.tail[-tail_budget:]) if tail_budget else b""
+            return bytes(self.head) + marker + tail
 
 
 class ProcessRunner:
@@ -155,9 +229,10 @@ class ProcessRunner:
         timeout_seconds = max(1, min(int(timeout_seconds), 3600))
         started = time.monotonic()
 
-        per_stream_limit = self.max_output_bytes
-        out_cap = _BoundedCapture(per_stream_limit)
-        err_cap = _BoundedCapture(per_stream_limit)
+        # Each stream gets a full bounded head/tail capture so a noisy stdout
+        # cannot erase a short stderr before the final fair combined budget.
+        out_cap = _HeadTailCapture(self.max_output_bytes)
+        err_cap = _HeadTailCapture(self.max_output_bytes)
         kwargs = dict(
             cwd=self.root,
             stdin=subprocess.DEVNULL,
@@ -203,13 +278,12 @@ class ProcessRunner:
             if out_thread.is_alive() or err_thread.is_alive():
                 self._terminate_tree(proc)
 
-        out = bytes(out_cap.data)
-        err = bytes(err_cap.data)
-        combined_truncated = out_cap.truncated or err_cap.truncated or (len(out) + len(err) > self.max_output_bytes)
-        remaining = self.max_output_bytes
-        out = out[:remaining]
-        remaining -= len(out)
-        err = err[:max(0, remaining)]
+        raw_out = out_cap.render()
+        raw_err = err_cap.render()
+        out, err, combined_trimmed = _fair_stream_budget(
+            raw_out, raw_err, self.max_output_bytes
+        )
+        combined_truncated = out_cap.truncated or err_cap.truncated or combined_trimmed
 
         return ProcessResult(
             list(argv),

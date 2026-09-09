@@ -24,6 +24,47 @@ from kitt.security.capabilities import (
 )
 
 
+def _runtime_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _runtime_token_budget(args: dict, default: int = 1200) -> int:
+    return _runtime_int(
+        args.get("max_tokens", args.get("token_budget", default)),
+        default,
+        64,
+        32_000,
+    )
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    payload = value.encode("utf-8")
+    if len(payload) <= max_bytes:
+        return value
+    keep = max(0, int(max_bytes))
+    while keep > 0:
+        try:
+            return payload[:keep].decode("utf-8")
+        except UnicodeDecodeError:
+            keep -= 1
+    return ""
+
+
+def _bounded_symbol_payload(found: dict, max_tokens: int) -> dict:
+    payload = dict(found)
+    source = str(payload.get("source", "") or "")
+    max_bytes = max_tokens * 4
+    bounded = _truncate_utf8(source, max_bytes)
+    payload["source"] = bounded
+    payload["truncated"] = len(bounded.encode("utf-8")) < len(source.encode("utf-8"))
+    payload["estimated_tokens"] = (len(bounded.encode("utf-8")) + 3) // 4
+    return payload
+
+
 @dataclass(frozen=True)
 class RuntimeOperationSpec:
     name: str
@@ -423,32 +464,78 @@ class SafeRuntime:
         return result
 
     def _op_repo_search(self, args, turn_id, origin, security_context):
+        query = str(args.get("query", args.get("pattern", ""))).strip()
+        if not query:
+            return SafeRuntimeResult(False, "repo.search", error="query or pattern required")
+
+        max_tokens = _runtime_token_budget(args, 1200)
+        max_results = _runtime_int(args.get("max_results", args.get("limit", 50)), 50, 1, 500)
+        max_per_file = _runtime_int(args.get("max_per_file", 8), 8, 1, 100)
+        regex_mode = bool(args.get("regex", False))
+        case_sensitive = bool(args.get("case_sensitive", False))
+
+        if not regex_mode and self.registry and self.index is not None:
+            from kitt.tools.handlers.search import indexed_literal_search
+
+            self.registry._refresh_index()
+            data = indexed_literal_search(
+                self.index,
+                query,
+                path_allowed=lambda path: (
+                    security_context is None or security_context.allows_path(path)
+                ),
+                case_sensitive=case_sensitive,
+                max_results=max_results,
+                max_per_file=max_per_file,
+                token_budget=max_tokens,
+            )
+            if data is not None:
+                return SafeRuntimeResult(
+                    True,
+                    "repo.search",
+                    data=data,
+                    tokens_saved=max(0, int(data.get("omitted_matches", 0)) * 8),
+                    metadata={
+                        "backend": "index",
+                        "index_state": data.get("index_state", "UNKNOWN"),
+                        "max_tokens": max_tokens,
+                    },
+                )
+
         engine = getattr(self.registry, "native_engine", None) if self.registry else None
         if engine is not None and not getattr(security_context, "is_path_scoped", False):
-            query = str(args.get("query", args.get("pattern", ""))).strip()
-            if query:
-                data = engine.search(
-                    query,
-                    regex=bool(args.get("regex", False)),
-                    case_sensitive=bool(args.get("case_sensitive", False)),
-                    max_results=int(args.get("max_results", args.get("limit", 50)) or 50),
-                    max_per_file=int(args.get("max_per_file", 8) or 8),
-                    context_lines=int(args.get("context_lines", 1) or 1),
-                    token_budget=int(args.get("token_budget", 1200) or 1200),
-                )
-                return SafeRuntimeResult(
-                    True, "repo.search", data=data,
-                    tokens_saved=max(0, int(data.get("omitted_matches", 0)) * 10),
-                    metadata={"backend": engine.status.backend},
-                )
+            data = engine.search(
+                query,
+                regex=regex_mode,
+                case_sensitive=case_sensitive,
+                max_results=max_results,
+                max_per_file=max_per_file,
+                context_lines=_runtime_int(args.get("context_lines", 1), 1, 0, 8),
+                token_budget=max_tokens,
+            )
+            return SafeRuntimeResult(
+                True,
+                "repo.search",
+                data=data,
+                tokens_saved=max(0, int(data.get("omitted_matches", 0)) * 8),
+                metadata={"backend": engine.status.backend, "max_tokens": max_tokens},
+            )
+
+        delegated = dict(args)
+        delegated["pattern"] = query
+        delegated["max_tokens"] = max_tokens
+        delegated.pop("token_budget", None)
         return self._op_registry_tool(
-            "repo.search", "search", args, turn_id, origin, security_context
+            "repo.search", "search", delegated, turn_id, origin, security_context
         )
 
     def _op_repo_inspect_symbol(self, args, turn_id, origin, security_context):
         symbol = str(args.get("symbol", "")).strip()
         if not symbol:
             return SafeRuntimeResult(False, "repo.inspect_symbol", error="Symbol argument required")
+
+        max_tokens = _runtime_token_budget(args, 1200)
+        total_budget_bytes = max_tokens * 4
         engine = getattr(self.registry, "native_engine", None) if self.registry else None
         if engine is not None:
             native_matches = engine.find_symbols(symbol, limit=5)
@@ -459,29 +546,65 @@ class SafeRuntime:
                 except PermissionError:
                     continue
                 safe_matches.append(item)
+
             if safe_matches:
                 snippets = []
+                remaining = total_budget_bytes
+                omitted_source_bytes = 0
                 for item in safe_matches[:3]:
+                    if remaining <= 128:
+                        break
                     read = engine.read_symbol(item["id"])
-                    if read:
-                        snippets.append({"symbol": item["name"], "path": item["path"], "kind": item["kind"], "lines": f"{item['start_line']}-{item['end_line']}", "content": read["source"]})
+                    if not read:
+                        continue
+                    source = str(read.get("source", "") or "")
+                    source_budget = max(0, remaining - 128)
+                    bounded = _truncate_utf8(source, source_budget)
+                    omitted_source_bytes += max(
+                        0, len(source.encode("utf-8")) - len(bounded.encode("utf-8"))
+                    )
+                    snippets.append(
+                        {
+                            "symbol": item["name"],
+                            "path": item["path"],
+                            "kind": item["kind"],
+                            "lines": f"{item['start_line']}-{item['end_line']}",
+                            "content": bounded,
+                            "truncated": bounded != source,
+                        }
+                    )
+                    remaining -= min(remaining, len(bounded.encode("utf-8")) + 128)
+
                 return SafeRuntimeResult(
-                    True, "repo.inspect_symbol",
+                    True,
+                    "repo.inspect_symbol",
                     data={"symbol": symbol, "matches": safe_matches, "snippets": snippets},
                     context_handles=[f"ctx:repo:{symbol}"],
-                    metadata={"backend": engine.status.backend},
+                    tokens_saved=omitted_source_bytes // 4,
+                    metadata={
+                        "backend": engine.status.backend,
+                        "max_tokens": max_tokens,
+                        "truncated": omitted_source_bytes > 0 or len(snippets) < min(3, len(safe_matches)),
+                    },
                 )
+
         handle_info = self.handles.resolve(
             f"ctx:repo:{symbol}", security_context=security_context
         )
         symbols = handle_info.get("symbols", [])
         snippets = []
+        per_snippet_tokens = max(64, max_tokens // 3)
         for item in symbols[:3]:
             path = item.get("path", "")
             start = max(1, int(item.get("start_line", 1)) - 5)
             end = int(item.get("end_line", start + 30)) + 5
             read_result = self._op_repo_read(
-                {"path": path, "start_line": start, "end_line": end},
+                {
+                    "path": path,
+                    "start_line": start,
+                    "end_line": end,
+                    "max_tokens": per_snippet_tokens,
+                },
                 turn_id,
                 origin,
                 security_context,
@@ -496,13 +619,19 @@ class SafeRuntime:
                         "content": read_result.data,
                     }
                 )
-        content_chars = sum(len(str(item.get("content", ""))) for item in snippets)
+        content_bytes = sum(
+            len(str(item.get("content", "")).encode("utf-8")) for item in snippets
+        )
         return SafeRuntimeResult(
             True,
             "repo.inspect_symbol",
             data={"symbol": symbol, "matches": symbols, "snippets": snippets},
             context_handles=[f"ctx:repo:{symbol}"],
-            tokens_saved=max(50, content_chars // 4),
+            metadata={
+                "backend": "handles",
+                "max_tokens": max_tokens,
+                "estimated_tokens": (content_bytes + 3) // 4,
+            },
         )
 
     def _resolve_native_symbol(self, value: str):
@@ -532,7 +661,15 @@ class SafeRuntime:
         if not found:
             return SafeRuntimeResult(False, "repo.read_symbol", error=f"symbol not found: {value}")
         self._assert_native_path_allowed(security_context, found["symbol"]["path"])
-        return SafeRuntimeResult(True, "repo.read_symbol", data=found, context_handles=[f"ctx:repo:{found['symbol']['id']}"])
+        max_tokens = _runtime_token_budget(args, 1200)
+        bounded = _bounded_symbol_payload(found, max_tokens)
+        return SafeRuntimeResult(
+            True,
+            "repo.read_symbol",
+            data=bounded,
+            context_handles=[f"ctx:repo:{found['symbol']['id']}"],
+            metadata={"max_tokens": max_tokens, "truncated": bounded.get("truncated", False)},
+        )
 
     def _op_repo_references(self, args, security_context):
         value = str(args.get("symbol_id", args.get("symbol", ""))).strip()
@@ -541,7 +678,10 @@ class SafeRuntime:
         engine = getattr(self.registry, "native_engine", None) if self.registry else None
         if engine is None:
             return SafeRuntimeResult(False, "repo.references", error="native code engine unavailable")
-        rows = engine.references(value, int(args.get("limit", 100) or 100))
+
+        limit = _runtime_int(args.get("limit", 100), 100, 1, 500)
+        max_tokens = _runtime_token_budget(args, 1200)
+        rows = engine.references(value, limit)
         allowed = []
         for row in rows:
             try:
@@ -549,7 +689,33 @@ class SafeRuntime:
             except PermissionError:
                 continue
             allowed.append(row)
-        return SafeRuntimeResult(True, "repo.references", data=allowed)
+
+        budget_bytes = max_tokens * 4
+        bounded = []
+        used = 0
+        for row in allowed:
+            estimated = sum(
+                len(str(key).encode("utf-8")) + len(str(value).encode("utf-8"))
+                for key, value in row.items()
+            ) + 16
+            if bounded and used + estimated > budget_bytes:
+                break
+            bounded.append(row)
+            used += estimated
+            if used >= budget_bytes:
+                break
+
+        return SafeRuntimeResult(
+            True,
+            "repo.references",
+            data=bounded,
+            metadata={
+                "max_tokens": max_tokens,
+                "returned": len(bounded),
+                "total_allowed": len(allowed),
+                "truncated": len(bounded) < len(allowed),
+            },
+        )
 
     def _canonicalize_repo_edit_args(self, args: dict, security_context) -> dict:
         value = str(args.get("symbol_id", args.get("symbol", ""))).strip()
@@ -737,7 +903,8 @@ class SafeRuntime:
         if not self.memory:
             return SafeRuntimeResult(False, "memory.query", error="Memory service not attached")
         query = str(args.get("query", ""))
-        limit = max(1, min(int(args.get("limit", 5)), 50))
+        limit = _runtime_int(args.get("limit", 5), 5, 1, 50)
+        max_tokens = _runtime_token_budget(args, 800)
         if hasattr(self.memory, "query"):
             items = self.memory.query(query, limit=limit)
         elif hasattr(self.memory, "get_relevant_memories"):
@@ -753,7 +920,39 @@ class SafeRuntime:
             ]
         else:
             return SafeRuntimeResult(False, "memory.query", error="Memory query API unavailable")
-        return SafeRuntimeResult(True, "memory.query", data=items)
+
+        budget_bytes = max_tokens * 4
+        bounded = []
+        used = 0
+        for item in items:
+            row = dict(item) if isinstance(item, dict) else {"text": str(item)}
+            text = str(row.get("text", "") or "")
+            overhead = sum(
+                len(str(key).encode("utf-8")) + len(str(value).encode("utf-8"))
+                for key, value in row.items()
+                if key != "text"
+            ) + 16
+            available = max(0, budget_bytes - used - overhead)
+            if bounded and available <= 32:
+                break
+            bounded_text = _truncate_utf8(text, available)
+            row["text"] = bounded_text
+            row["truncated"] = bounded_text != text
+            bounded.append(row)
+            used += overhead + len(bounded_text.encode("utf-8"))
+            if used >= budget_bytes:
+                break
+
+        return SafeRuntimeResult(
+            True,
+            "memory.query",
+            data=bounded,
+            metadata={
+                "max_tokens": max_tokens,
+                "returned": len(bounded),
+                "truncated": len(bounded) < len(items) or any(row.get("truncated") for row in bounded),
+            },
+        )
 
     def _op_skill_call(self, args, security_context):
         skill_name = args.get("name") or args.get("skill_name")

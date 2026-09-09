@@ -582,7 +582,7 @@ class WorkspaceFileSystem:
             if target.is_symlink() or not target.is_dir():
                 raise NotADirectoryError(str(target))
             results = []
-            for entry in target.iterdir():
+            for entry in sorted(target.iterdir(), key=lambda item: item.name.casefold()):
                 if entry.is_symlink() or not entry.is_file():
                     continue
                 results.append(f"{base_rel}/{entry.name}".strip("/"))
@@ -602,7 +602,7 @@ class WorkspaceFileSystem:
                 os.close(fd)
                 fd = next_fd
             results = []
-            for name in os.listdir(fd):
+            for name in sorted(os.listdir(fd), key=str.casefold):
                 try:
                     st = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 except FileNotFoundError:
