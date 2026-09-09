@@ -25,6 +25,6 @@ def test_safe_runtime_exposes_compact_native_operations():
     from kitt.runtime.safe_runtime import OPERATION_SPECS
     required = {
         "repo.search", "repo.inspect_symbol", "repo.read_symbol", "repo.references", "repo.edit_symbol",
-        "memory.query", "memory.correct", "memory.concept", "memory.link", "process.run",
+        "memory.query", "memory.correct", "memory.concept", "memory.link", "session.search", "process.run",
     }
     assert required.issubset(OPERATION_SPECS)
