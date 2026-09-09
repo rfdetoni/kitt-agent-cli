@@ -1,13 +1,16 @@
 from collections import defaultdict
 from threading import RLock
 
+from kitt.observability.event_observer import build_default_observer
+
 
 class EventBus:
-    def __init__(self):
+    def __init__(self, observer=None):
         self._handlers = defaultdict(list)
         self._unsubscribers = defaultdict(list)
         self._lock = RLock()
         self._closed = False
+        self._observer = observer if observer is not None else build_default_observer()
 
     def subscribe(self, event, handler):
         with self._lock:
@@ -38,6 +41,9 @@ class EventBus:
             if self._closed:
                 return
             handlers = list(self._handlers.get(event, ())) + list(self._handlers.get("*", ()))
+            observer = self._observer
+        if observer is not None:
+            observer.observe(event, payload)
         for handler in handlers:
             handler(event, payload)
 
@@ -48,6 +54,9 @@ class EventBus:
             if self._closed:
                 return
             handlers = list(self._handlers.get(event, ())) + list(self._handlers.get("*", ()))
+            observer = self._observer
+        if observer is not None:
+            observer.observe(event, payload)
         for handler in handlers:
             if inspect.iscoroutinefunction(handler):
                 await handler(event, payload)
@@ -64,6 +73,8 @@ class EventBus:
                 return
             self._closed = True
             unsubscribers = list(self._unsubscribers.values())
+            observer = self._observer
+            self._observer = None
             self._handlers.clear()
             self._unsubscribers.clear()
         for group in unsubscribers:
@@ -72,3 +83,8 @@ class EventBus:
                     fn()
                 except Exception:
                     pass
+        if observer is not None:
+            try:
+                observer.close()
+            except Exception:
+                pass
