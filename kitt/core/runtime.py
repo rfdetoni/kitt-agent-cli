@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from kitt.artifacts.store import ArtifactStore
@@ -95,7 +96,11 @@ class KittRuntime:
 
         config = config or RuntimeConfig.from_env()
         canonical_root = canonical_workspace_path(root_dir)
-        state_root = canonical_workspace_path(state_root_dir) if state_root_dir else canonical_root
+        state_root = (
+            canonical_workspace_path(state_root_dir)
+            if state_root_dir
+            else str(Path.home().resolve(strict=False))
+        )
         ephemeral = config.ephemeral
         in_memory = not config.history_enabled
         persistence_enabled = not ephemeral
@@ -103,9 +108,9 @@ class KittRuntime:
 
         session_tree = SessionTreeRepository(database)
         history_repo = HistoryRepository(database)
-        identity = resolve_workspace_identity(database, state_root)
+        identity = resolve_workspace_identity(database, canonical_root)
         history = HistoryService(
-            state_root,
+            canonical_root,
             db=database,
             repo=history_repo,
             tree=session_tree,
@@ -115,7 +120,7 @@ class KittRuntime:
         )
 
         autonomy_store = AutonomyStore(
-            state_root, persistence_enabled=persistence_enabled
+            canonical_root, persistence_enabled=persistence_enabled
         )
         approval = ApprovalManager(
             db=database, ttl_seconds=config.approval_ttl_seconds
