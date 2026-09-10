@@ -173,7 +173,9 @@ def symbols_in_file(root: Path, rel: str) -> list[dict[str, Any]]:
     path = (root / rel).resolve()
     if root not in path.parents and path != root:
         raise PermissionError("path escapes repository root")
-    text = path.read_text(encoding="utf-8", errors="replace")
+    # Preserve physical newlines so AST-derived UTF-8 byte offsets stay aligned
+    # with the raw bytes later sliced by read_symbol/replace_symbol on Windows.
+    text = path.read_bytes().decode("utf-8", errors="replace")
     return _python_symbols(rel, text) if path.suffix.lower() == ".py" else _generic_symbols(rel, text)
 
 

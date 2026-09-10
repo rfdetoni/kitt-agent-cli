@@ -27,7 +27,7 @@ class ProgressiveSkillLoader:
     """
 
     def __init__(self, *, max_total_chars: int = 16000, min_skill_chars: int = 1200):
-        self.max_total_chars = max(2000, min(int(max_total_chars), 128000))
+        self.max_total_chars = max(256, min(int(max_total_chars), 128000))
         self.min_skill_chars = max(256, min(int(min_skill_chars), 8000))
 
     @staticmethod
@@ -152,26 +152,28 @@ class ProgressiveSkillLoader:
             scored.append((float(score), index, text))
 
         scored.sort(key=lambda item: (-item[0], item[1]))
-        selected: list[tuple[int, str]] = []
-        used = 0
-        for _, index, text in scored:
-            if used >= budget:
-                break
-            remaining = budget - used
-            if remaining < 128:
-                break
-            piece = text[:remaining]
-            selected.append((index, piece))
-            used += len(piece) + 2
-        selected.sort(key=lambda item: item[0])
-
         header = (
             f"---\nname: {getattr(skill, 'name', 'unknown')}\n"
             f"description: {getattr(skill, 'description', '')}\n"
             "lazy_excerpt: true\n---\n"
         )
+        body_budget = max(0, budget - len(header))
+        selected: list[tuple[int, str]] = []
+        used = 0
+        for _, index, text in scored:
+            if used >= body_budget:
+                break
+            separator_cost = 2 if selected else 0
+            remaining = body_budget - used - separator_cost
+            if remaining < 128:
+                break
+            piece = text[:remaining]
+            selected.append((index, piece))
+            used += len(piece) + separator_cost
+        selected.sort(key=lambda item: item[0])
+
         body = "\n\n".join(text for _, text in selected)
-        return (header + body)[:budget]
+        return header + body
 
     def _dependency_order(
         self,
