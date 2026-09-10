@@ -2,7 +2,9 @@
 set -euo pipefail
 
 REPO_URL="${KITT_AGENT_REPO:-https://github.com/rfdetoni/kitt-agent-cli.git}"
+TOOLBOX_REPO="${KITT_TOOLBOX_REPO:-https://github.com/rfdetoni/kitt-toolbox.git}"
 REF="${KITT_AGENT_REF:-main}"
+TOOLBOX_REF="${KITT_TOOLBOX_REF:-main}"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 INSTALL_ROOT="${KITT_AGENT_HOME:-$DATA_HOME/kitt-agent-cli}"
 BIN_DIR="${KITT_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
@@ -16,9 +18,11 @@ K.I.T.T. Agent CLI installer/updater
 Usage: install.sh [--ref REF] [--no-native] [--uninstall]
 
 Environment:
-  KITT_AGENT_HOME  installation root
-  KITT_BIN_DIR     command directory (default ~/.local/bin)
-  KITT_AGENT_REPO  git repository URL
+  KITT_AGENT_HOME    installation root
+  KITT_BIN_DIR       command directory (default ~/.local/bin)
+  KITT_AGENT_REPO    Agent CLI git repository URL
+  KITT_TOOLBOX_REPO  shared native toolbox git repository URL
+  KITT_TOOLBOX_REF   toolbox branch/tag/SHA (default main)
 EOF
 }
 
@@ -33,6 +37,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 SRC="$INSTALL_ROOT/src"
+TOOLBOX_SRC="$INSTALL_ROOT/toolbox"
 VENV="$INSTALL_ROOT/venv"
 DIST="$INSTALL_ROOT/dist-native"
 LAUNCHER="$BIN_DIR/kitt"
@@ -53,15 +58,20 @@ if sys.version_info < (3, 12):
     raise SystemExit(f"Python 3.12+ required; found {sys.version.split()[0]}")
 PY
 
+sync_repo() {
+  local repo="$1" ref="$2" dest="$3"
+  if [[ ! -d "$dest/.git" ]]; then
+    rm -rf "$dest"
+    git clone --filter=blob:none --no-checkout "$repo" "$dest"
+  fi
+  git -C "$dest" remote set-url origin "$repo"
+  git -C "$dest" fetch --force --depth 1 origin "$ref"
+  git -C "$dest" checkout --detach --force FETCH_HEAD
+  git -C "$dest" clean -ffd
+}
+
 mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
-if [[ ! -d "$SRC/.git" ]]; then
-  rm -rf "$SRC"
-  git clone --filter=blob:none --no-checkout "$REPO_URL" "$SRC"
-fi
-git -C "$SRC" remote set-url origin "$REPO_URL"
-git -C "$SRC" fetch --force --depth 1 origin "$REF"
-git -C "$SRC" checkout --detach --force FETCH_HEAD
-git -C "$SRC" clean -ffd
+sync_repo "$REPO_URL" "$REF" "$SRC"
 
 if [[ ! -x "$VENV/bin/python" ]]; then
   rm -rf "$VENV"
@@ -70,25 +80,25 @@ fi
 VPY="$VENV/bin/python"
 "$VPY" -m pip install --disable-pip-version-check -U pip wheel >/dev/null
 
+# Install the portable control plane first so native acceleration can fail closed.
+"$VPY" -m pip install --disable-pip-version-check --upgrade --force-reinstall "$SRC"
+
 installed_native=0
 if [[ $NATIVE -eq 1 ]] && command -v cargo >/dev/null 2>&1; then
+  sync_repo "$TOOLBOX_REPO" "$TOOLBOX_REF" "$TOOLBOX_SRC"
   rm -rf "$DIST"; mkdir -p "$DIST"
   if "$VPY" -m pip install --disable-pip-version-check -U 'maturin>=1.8,<2' >/dev/null \
-    && "$VPY" "$SRC/packaging/build_native_release.py" --out "$DIST" \
+    && "$VPY" "$TOOLBOX_SRC/packaging/build_native_release.py" --out "$DIST" \
     && compgen -G "$DIST/*.whl" >/dev/null \
-    && "$VPY" -m pip install --disable-pip-version-check --force-reinstall "$DIST"/*.whl; then
+    && "$VPY" -m pip install --disable-pip-version-check --no-deps --force-reinstall "$DIST"/*.whl; then
     installed_native=1
   else
-    echo "Native build unavailable; using portable Python package." >&2
+    echo "Shared native acceleration unavailable; keeping portable Python backend." >&2
   fi
-fi
-
-if [[ $installed_native -eq 0 ]]; then
-  "$VPY" -m pip install --disable-pip-version-check --upgrade --force-reinstall "$SRC"
 fi
 
 ln -sfn "$VENV/bin/kitt" "$LAUNCHER"
 "$LAUNCHER" --help >/dev/null
 backend="$($VPY -c "from kitt.native.bridge import NativeCodeEngine; print(NativeCodeEngine('$SRC').status.backend)")"
-echo "K.I.T.T. Agent CLI installed/updated at $INSTALL_ROOT (backend: $backend)."
+echo "K.I.T.T. Agent CLI installed/updated at $INSTALL_ROOT (backend: $backend; native wheel: $installed_native)."
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Add $BIN_DIR to PATH to use: kitt" ;; esac
