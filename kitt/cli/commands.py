@@ -139,14 +139,22 @@ def handle_plugins_command(
     root_dir: str = ".",
 ) -> int:
     import asyncio
-    from kitt.daemon.client import DaemonClient
     from kitt.extensions.manager import ExtensionManager
+
+    try:
+        from kitt.daemon.client import DaemonClient
+    except ModuleNotFoundError as exc:
+        if exc.name and not exc.name.startswith("kitt.daemon"):
+            raise
+        DaemonClient = None
 
     ext = ExtensionManager(workspace_root=root_dir)
     manifests = ext.plugins.discover()
     action = (action or "list").strip().lower()
 
     async def _daemon_request(ipc_action: str, params=None):
+        if DaemonClient is None:
+            return None
         client = DaemonClient(workspace_root=root_dir)
         try:
             if not await client.is_running():
@@ -282,14 +290,22 @@ def handle_mcp_command(
     root_dir: str = ".",
 ) -> int:
     import asyncio
-    from kitt.daemon.client import DaemonClient
     from kitt.extensions.manager import ExtensionManager
+
+    try:
+        from kitt.daemon.client import DaemonClient
+    except ModuleNotFoundError as exc:
+        if exc.name and not exc.name.startswith("kitt.daemon"):
+            raise
+        DaemonClient = None
 
     ext = ExtensionManager(workspace_root=root_dir)
     action = (action or "list").strip().lower()
     servers = {cfg.server_id: cfg for cfg in ext.mcp.list_servers()}
 
     async def _daemon_request(ipc_action: str, params=None):
+        if DaemonClient is None:
+            return None
         client = DaemonClient(workspace_root=root_dir)
         try:
             if not await client.is_running():

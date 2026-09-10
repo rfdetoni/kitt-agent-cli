@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.util
 import logging
 import logging.handlers
 import os
@@ -12,6 +13,22 @@ from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.ui.capabilities import create_backend
 from kitt.ui.fallback import HeadlessUI
+
+
+def _module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
+def _missing_companion(feature: str, package: str) -> int:
+    print(
+        f"{feature} requires the separately owned {package} companion. "
+        "Use the K.I.T.T. ecosystem/Agent installer or install that companion package.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def _configure_debug_log() -> None:
@@ -299,11 +316,14 @@ def build_parser() -> argparse.ArgumentParser:
 async def async_main(args) -> int:
     base_config = RuntimeConfig.from_env()
     persistent = not args.no_history
-    daemon_authoritative = bool(base_config.daemon_enabled and persistent)
+    resident_available = _module_available("kitt.daemon.client")
+    daemon_enabled = bool(base_config.daemon_enabled and resident_available)
+    daemon_authoritative = bool(daemon_enabled and persistent)
     config = replace(
         base_config,
         history_enabled=persistent,
         persistence_enabled=persistent,
+        daemon_enabled=daemon_enabled,
         frontend_only=daemon_authoritative,
     )
     runtime = KittRuntime.build(args.root, config=config)
@@ -381,11 +401,15 @@ def main(argv=None) -> int:
         )
 
     if args.subcommand == "daemon":
+        if not _module_available("kitt.daemon.process"):
+            return _missing_companion("Daemon management", "kitt-assistant-runtime")
         from kitt.cli.commands import handle_daemon_command
 
         return handle_daemon_command(action=args.daemon_action, root_dir=args.root)
 
     if args.subcommand in {"remote", "web"}:
+        if not _module_available("kitt.remote.cli"):
+            return _missing_companion("Remote/Web control", "kitt-assistant-runtime")
         from kitt.remote.cli import run_remote_command
 
         return run_remote_command(
@@ -400,11 +424,25 @@ def main(argv=None) -> int:
         )
 
     if args.subcommand == "sessions":
+        if not _module_available("kitt.daemon.client"):
+            from kitt.core.runtime import KittRuntime
+            from kitt.core.runtime_config import RuntimeConfig
+            rt = KittRuntime.build(args.root, config=RuntimeConfig(daemon_enabled=False))
+            try:
+                convs = rt.history.list_history(limit=20)
+                print("\n\033[1;36m=== KITT Sessions (Local) ===\033[0m")
+                for conv in convs:
+                    print(f"  • \033[1m{conv.get('id', '')[:12]}\033[0m {conv.get('title', '')}")
+                return 0
+            finally:
+                rt.close()
         from kitt.cli.commands import handle_sessions_command
 
         return handle_sessions_command(root_dir=args.root)
 
     if args.subcommand == "attach":
+        if not _module_available("kitt.daemon.client"):
+            return _missing_companion("Daemon session attach", "kitt-assistant-runtime")
         from kitt.cli.commands import handle_attach_command
 
         return handle_attach_command(session_id=args.session, root_dir=args.root)
@@ -414,11 +452,15 @@ def main(argv=None) -> int:
         return 0
 
     if args.subcommand == "resume":
+        if not _module_available("kitt.daemon.client"):
+            return _missing_companion("Daemon session resume", "kitt-assistant-runtime")
         from kitt.cli.commands import handle_resume_command
 
         return handle_resume_command(session_id=args.session, root_dir=args.root)
 
     if args.subcommand == "evolve":
+        if not _module_available("kitt.evolution.cli"):
+            return _missing_companion("Self-evolution", "kitt-evolution")
         from kitt.evolution.cli import handle_evolve_command
 
         return handle_evolve_command(args)

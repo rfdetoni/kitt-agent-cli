@@ -89,7 +89,12 @@ class TurnEventBridge:
         if not await bridge.connect():
             if not getattr(config, "daemon_auto_start", True):
                 return False
-            from kitt.daemon.process import start_daemon_detached
+            try:
+                from kitt.daemon.process import start_daemon_detached
+            except ModuleNotFoundError as exc:
+                if exc.name and not exc.name.startswith("kitt.daemon"):
+                    raise
+                return False
             result = await asyncio.to_thread(start_daemon_detached, str(self.runtime.canonical_root))
             if result.get("status") != "ok" or not await bridge.connect():
                 if getattr(config, "daemon_local_fallback", False):

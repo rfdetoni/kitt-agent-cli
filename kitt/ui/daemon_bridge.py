@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import fields
 from typing import Any, Callable, Optional
 
-from kitt.daemon.client import DaemonClient
-from kitt.daemon.protocol import DaemonEvent
 from kitt.core import turn_events as te
 
 
@@ -22,7 +20,7 @@ _EVENT_TYPES = {
 }
 
 
-def map_daemon_event_to_turn_event(event: DaemonEvent) -> Any:
+def map_daemon_event_to_turn_event(event: Any) -> Any:
     cls = _EVENT_TYPES.get(event.event_type)
     if cls is None:
         return None
@@ -49,7 +47,7 @@ class DaemonUIBridge:
         self.workspace_dir = workspace_dir
         self.token = token
         self.event_sink = event_sink
-        self.client: Optional[DaemonClient] = None
+        self.client: Optional[Any] = None
         self.attached_session_id: Optional[str] = None
         self._last_sequence_by_session: dict[str, int] = {}
         self._connected = False
@@ -60,6 +58,12 @@ class DaemonUIBridge:
         return self._last_sequence_by_session.get(sid, 0)
 
     async def connect(self) -> bool:
+        try:
+            from kitt.daemon.client import DaemonClient
+        except ModuleNotFoundError as exc:
+            if exc.name and not exc.name.startswith("kitt.daemon"):
+                raise
+            return False
         self.client = DaemonClient(self.workspace_dir, token=self.token)
         self._connected = await self.client.connect()
         return self._connected
@@ -79,7 +83,7 @@ class DaemonUIBridge:
         res = await self.request("create_session", {"title": title})
         return res.get("session_id")
 
-    def _on_wire_event(self, event: DaemonEvent) -> None:
+    def _on_wire_event(self, event: Any) -> None:
         sid = str(event.session_id or self.attached_session_id or "")
         if sid:
             self._last_sequence_by_session[sid] = max(

@@ -5,9 +5,6 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
-from kitt.daemon.process import start_daemon_detached
-from kitt.remote.server import RemoteServer, RemoteServerConfig
-
 if TYPE_CHECKING:
     from kitt.ui.app import KittUIApp
 
@@ -31,7 +28,7 @@ async def handle_remote_command(app: KittUIApp, arg: str) -> None:
         )
         return
 
-    server: RemoteServer | None = getattr(app, "_remote_server", None)
+    server = getattr(app, "_remote_server", None)
 
     if subcommand == "stop":
         if server is None:
@@ -101,6 +98,18 @@ async def handle_remote_command(app: KittUIApp, arg: str) -> None:
 
     workspace_root = str(getattr(app.state, "workspace_path", "") or app.runtime.canonical_root)
     bind_host = "0.0.0.0" if lan else "127.0.0.1"
+
+    try:
+        from kitt.daemon.process import start_daemon_detached
+        from kitt.remote.server import RemoteServer, RemoteServerConfig
+    except ModuleNotFoundError as exc:
+        if exc.name and not (exc.name.startswith("kitt.daemon") or exc.name.startswith("kitt.remote")):
+            raise
+        app._show_result(
+            "K.I.T.T. Web Remote requer o companion kitt-assistant-runtime. "
+            "Instale pelo instalador do ecossistema/Agent."
+        )
+        return
 
     daemon_res = start_daemon_detached(workspace_root)
     if daemon_res.get("status") != "ok":
