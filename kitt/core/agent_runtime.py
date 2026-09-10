@@ -377,12 +377,14 @@ def install_agent_engineering(processor, registry) -> None:
     processor.turn_journal = journal
     _install_tool_execution(processor, registry)
 
-    # Correlate every existing _emit call without changing TurnProcessor's event
-    # API. Observers now receive turn/conversation ids for true parent-child traces.
+    # Correlate mapping payloads without changing TurnProcessor's event API or
+    # retyping typed payloads such as TurnMetrics.
     original_emit = processor._emit
     processor._agent_trace_context = None
     def correlated_emit(self, event_name, payload):
-        data = dict(payload or {})
+        if not isinstance(payload, dict):
+            return original_emit(event_name, payload)
+        data = dict(payload)
         context = getattr(self, "_agent_trace_context", None)
         if context:
             data.setdefault("turn_id", context[0])
