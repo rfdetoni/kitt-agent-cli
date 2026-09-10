@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from kitt.daemon.redaction import sanitize_public_event_payload
+from kitt.security.public_events import sanitize_public_event_payload
 
 
 class OpenTelemetryEventObserver:
