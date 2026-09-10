@@ -21,17 +21,28 @@ jobs:
         python: ["3.12", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Agent
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout Assistant runtime companion
+        uses: actions/checkout@v4
+        with:
+          repository: rfdetoni/kitt-assistant
+          ref: main
+          path: assistant-source
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install Agent control plane
-        run: python -m pip install -U pip && python -m pip install -e '.[dev]'
+      - name: Install split control plane
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e '.[dev]'
+          python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
       - name: Compile Python sources
-        run: python -m compileall -q kitt tests
+        run: python -m compileall -q kitt tests assistant-source/packages/kitt-assistant-runtime/kitt
       - name: Run complete Agent suite
         run: python -m pytest -q
       - name: Clean-room provenance guard
