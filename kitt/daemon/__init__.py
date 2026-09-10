@@ -1,1 +1,0 @@
-"""KITT Daemon & IPC subsystem."""
