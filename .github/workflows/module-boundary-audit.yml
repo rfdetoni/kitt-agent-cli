@@ -1,0 +1,23 @@
+name: module-boundary-audit
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/module-boundary-audit.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Inventory cross-module imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== daemon/remote references outside owned directories ==='
+          grep -RInE '(^|[[:space:]])(from|import)[[:space:]]+kitt\.(daemon|remote)' kitt tests --include='*.py' | grep -vE '^kitt/(daemon|remote)/' || true
+          echo '=== extensions references outside extension directory ==='
+          grep -RInE '(^|[[:space:]])(from|import)[[:space:]]+kitt\.extensions' kitt tests --include='*.py' | grep -v '^kitt/extensions/' || true
+          echo '=== integrations references outside integrations directory ==='
+          grep -RInE '(^|[[:space:]])(from|import)[[:space:]]+kitt\.integrations' kitt tests --include='*.py' | grep -v '^kitt/integrations/' || true
