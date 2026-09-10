@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +20,10 @@ def test_catalog_indexes_optional_capabilities_without_importing_dependencies():
     assert "telemetry.otlp" in index
 
 
+def test_catalog_preserves_explicit_empty_specs():
+    assert IntegrationCatalog([]).specs == ()
+
+
 def test_catalog_probe_uses_command_or_python_module(monkeypatch):
     spec = IntegrationSpec(
         "demo", "test", "demo", commands=("demo-bin",), python_modules=("json",)
@@ -29,6 +32,33 @@ def test_catalog_probe_uses_command_or_python_module(monkeypatch):
     status = IntegrationCatalog([spec]).probe("demo")
     assert status.available is True
     assert status.module == "json"
+
+
+def test_catalog_version_probe_uses_bounded_runner(monkeypatch):
+    captured = {}
+
+    class FakeRunner:
+        def __init__(self, root_dir: str, max_output_bytes: int):
+            captured["root"] = root_dir
+            captured["max_output_bytes"] = max_output_bytes
+
+        def run(self, argv, timeout_seconds):
+            captured["argv"] = argv
+            captured["timeout_seconds"] = timeout_seconds
+            return SimpleNamespace(
+                stdout="demo 1.2.3\n",
+                stderr="",
+                timed_out=False,
+                cancelled=False,
+            )
+
+    monkeypatch.setattr("kitt.integrations.catalog.shutil.which", lambda _: "/usr/bin/demo")
+    monkeypatch.setattr("kitt.integrations.catalog.ProcessRunner", FakeRunner)
+
+    assert IntegrationCatalog._version("demo") == "demo 1.2.3"
+    assert captured["max_output_bytes"] == 16 * 1024
+    assert captured["timeout_seconds"] == 2
+    assert captured["argv"] == ["/usr/bin/demo", "--version"]
 
 
 def test_ast_grep_rejects_workspace_escape(tmp_path: Path):
