@@ -13,13 +13,11 @@ ToolResult = _core.ToolResult
 
 def runtime_operation_names() -> tuple[str, ...]:
     """Return the live, authoritative KITT runtime operation catalog."""
-
     return tuple(sorted(str(name) for name in OPERATION_SPECS))
 
 
 def compact_runtime_operation_catalog() -> str:
     """Encode the live operation catalog compactly without losing exact names."""
-
     grouped: dict[str, list[str]] = {}
     literals: list[str] = []
     for name in runtime_operation_names():
@@ -28,41 +26,27 @@ def compact_runtime_operation_catalog() -> str:
             grouped.setdefault(namespace, []).append(operation)
         else:
             literals.append(name)
-
     parts: list[str] = []
     for namespace in sorted(grouped):
         operations = sorted(grouped[namespace])
-        if len(operations) == 1:
-            parts.append(f"{namespace}.{operations[0]}")
-        else:
-            parts.append(f"{namespace}.{{{','.join(operations)}}}")
+        parts.append(
+            f"{namespace}.{operations[0]}" if len(operations) == 1
+            else f"{namespace}.{{{','.join(operations)}}}"
+        )
     parts.extend(sorted(literals))
     return ";".join(parts)
 
 
 class ToolRegistry(_core.ToolRegistry):
-    """Stable registry facade and model-facing Agent Computer Interface.
-
-    Runtime operation discovery is generated from the executable contract rather
-    than a second hand-maintained list. This keeps provider schemas and prompts
-    from silently drifting behind KITT's actual capabilities.
-    """
+    """Stable registry facade and model-facing Agent Computer Interface."""
 
     @staticmethod
     def runtime_operation_names() -> tuple[str, ...]:
         return runtime_operation_names()
 
     def attach_processor(self, processor):
-        """Attach the processor and activate KITT-native engineering controls.
-
-        ``registry_core`` remains the canonical implementation.  This facade is
-        the existing composition seam used by ``KittRuntime``, so cross-cutting
-        durability/verification controls can be installed without introducing a
-        second runtime or coupling the core processor to optional services.
-        """
         result = super().attach_processor(processor)
-        from kitt.core.agent_engineering import install_agent_engineering
-
+        from kitt.core.agent_runtime import install_agent_engineering
         install_agent_engineering(processor, self)
         return result
 
@@ -96,9 +80,4 @@ def __getattr__(name: str):
         raise AttributeError(name) from exc
 
 
-__all__ = [
-    "ToolRegistry",
-    "ToolResult",
-    "runtime_operation_names",
-    "compact_runtime_operation_catalog",
-]
+__all__ = ["ToolRegistry", "ToolResult", "runtime_operation_names", "compact_runtime_operation_catalog"]
