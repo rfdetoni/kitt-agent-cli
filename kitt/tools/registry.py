@@ -17,6 +17,34 @@ def runtime_operation_names() -> tuple[str, ...]:
     return tuple(sorted(str(name) for name in OPERATION_SPECS))
 
 
+def compact_runtime_operation_catalog() -> str:
+    """Encode the live operation catalog compactly without losing exact names.
+
+    Names sharing a namespace are rendered as ``repo.{read,search}`` instead of
+    repeating the prefix for every operation. This keeps the ACI complete while
+    preserving the SafeRuntime token-reduction contract.
+    """
+
+    grouped: dict[str, list[str]] = {}
+    literals: list[str] = []
+    for name in runtime_operation_names():
+        namespace, separator, operation = name.partition(".")
+        if separator:
+            grouped.setdefault(namespace, []).append(operation)
+        else:
+            literals.append(name)
+
+    parts: list[str] = []
+    for namespace in sorted(grouped):
+        operations = sorted(grouped[namespace])
+        if len(operations) == 1:
+            parts.append(f"{namespace}.{operations[0]}")
+        else:
+            parts.append(f"{namespace}.{{{','.join(operations)}}}")
+    parts.extend(sorted(literals))
+    return ";".join(parts)
+
+
 class ToolRegistry(_core.ToolRegistry):
     """Stable registry facade and model-facing Agent Computer Interface.
 
@@ -31,7 +59,7 @@ class ToolRegistry(_core.ToolRegistry):
 
     def get_tool_definitions(self, enabled_tools=None):
         tools = super().get_tool_definitions(enabled_tools)
-        operation_hint = "one of: " + ", ".join(self.runtime_operation_names())
+        operation_hint = compact_runtime_operation_catalog()
         for tool in tools:
             if tool.get("name") == "child_spawn":
                 args = dict(tool.get("args") or {})
@@ -42,16 +70,12 @@ class ToolRegistry(_core.ToolRegistry):
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
                 tool["description"] = (
-                    "Authoritative, policy-governed KITT Agent Computer Interface. "
-                    "The operation catalog in args.operation is generated from the "
-                    "live runtime contract and is complete for this build."
+                    "Compact policy-governed KITT Agent Computer Interface; "
+                    "args.operation is generated from the live runtime contract."
                 )
                 args = dict(tool.get("args") or {})
                 args["operation"] = operation_hint
-                args["arguments"] = (
-                    "JSON object for the selected operation; operation-specific "
-                    "contracts are validated fail-closed by the runtime"
-                )
+                args["arguments"] = "operation-specific JSON object; validated fail-closed"
                 tool["args"] = args
         return tools
 
@@ -63,4 +87,9 @@ def __getattr__(name: str):
         raise AttributeError(name) from exc
 
 
-__all__ = ["ToolRegistry", "ToolResult", "runtime_operation_names"]
+__all__ = [
+    "ToolRegistry",
+    "ToolResult",
+    "runtime_operation_names",
+    "compact_runtime_operation_catalog",
+]
