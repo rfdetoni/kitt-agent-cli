@@ -62,13 +62,10 @@ class ToolRegistry(_core.ToolRegistry):
                 )
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
-                tool["description"] = (
-                    "Compact policy-governed KITT Agent Computer Interface; "
-                    "args.operation is generated from the live runtime contract."
-                )
+                tool["description"] = "KITT live runtime contract."
                 args = dict(tool.get("args") or {})
                 args["operation"] = operation_hint
-                args["arguments"] = "operation-specific JSON object; validated fail-closed"
+                args["arguments"] = "JSON object"
                 tool["args"] = args
         return tools
 
