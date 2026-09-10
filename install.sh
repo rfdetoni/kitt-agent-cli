@@ -2,8 +2,12 @@
 set -euo pipefail
 
 REPO_URL="${KITT_AGENT_REPO:-https://github.com/rfdetoni/kitt-agent-cli.git}"
+ASSISTANT_REPO="${KITT_ASSISTANT_REPO:-https://github.com/rfdetoni/kitt-assistant.git}"
+WORKERS_REPO="${KITT_AI_WORKERS_REPO:-https://github.com/rfdetoni/kitt-ai-workers.git}"
 TOOLBOX_REPO="${KITT_TOOLBOX_REPO:-https://github.com/rfdetoni/kitt-toolbox.git}"
 REF="${KITT_AGENT_REF:-main}"
+ASSISTANT_REF="${KITT_ASSISTANT_REF:-main}"
+WORKERS_REF="${KITT_AI_WORKERS_REF:-main}"
 TOOLBOX_REF="${KITT_TOOLBOX_REF:-main}"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 INSTALL_ROOT="${KITT_AGENT_HOME:-$DATA_HOME/kitt-agent-cli}"
@@ -17,12 +21,19 @@ K.I.T.T. Agent CLI installer/updater
 
 Usage: install.sh [--ref REF] [--no-native] [--uninstall]
 
+The installer composes the portable Agent control plane with the Assistant
+runtime and Evolution/Evals packages. The shared Rust backend is optional.
+
 Environment:
-  KITT_AGENT_HOME    installation root
-  KITT_BIN_DIR       command directory (default ~/.local/bin)
-  KITT_AGENT_REPO    Agent CLI git repository URL
-  KITT_TOOLBOX_REPO  shared native toolbox git repository URL
-  KITT_TOOLBOX_REF   toolbox branch/tag/SHA (default main)
+  KITT_AGENT_HOME       installation root
+  KITT_BIN_DIR          command directory (default ~/.local/bin)
+  KITT_AGENT_REPO       Agent CLI repository URL
+  KITT_ASSISTANT_REPO   Assistant repository URL
+  KITT_AI_WORKERS_REPO  Evolution/Evals repository URL
+  KITT_TOOLBOX_REPO     shared native toolbox repository URL
+  KITT_ASSISTANT_REF    Assistant branch/tag/SHA (default main)
+  KITT_AI_WORKERS_REF   workers branch/tag/SHA (default main)
+  KITT_TOOLBOX_REF      toolbox branch/tag/SHA (default main)
 EOF
 }
 
@@ -37,6 +48,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 SRC="$INSTALL_ROOT/src"
+ASSISTANT_SRC="$INSTALL_ROOT/assistant"
+WORKERS_SRC="$INSTALL_ROOT/ai-workers"
 TOOLBOX_SRC="$INSTALL_ROOT/toolbox"
 VENV="$INSTALL_ROOT/venv"
 DIST="$INSTALL_ROOT/dist-native"
@@ -72,6 +85,8 @@ sync_repo() {
 
 mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
 sync_repo "$REPO_URL" "$REF" "$SRC"
+sync_repo "$ASSISTANT_REPO" "$ASSISTANT_REF" "$ASSISTANT_SRC"
+sync_repo "$WORKERS_REPO" "$WORKERS_REF" "$WORKERS_SRC"
 
 if [[ ! -x "$VENV/bin/python" ]]; then
   rm -rf "$VENV"
@@ -80,8 +95,14 @@ fi
 VPY="$VENV/bin/python"
 "$VPY" -m pip install --disable-pip-version-check -U pip wheel >/dev/null
 
-# Install the portable control plane first so native acceleration can fail closed.
+# The Agent remains the portable control plane. Runtime/evolution features are
+# separately owned packages composed into the same kitt namespace.
 "$VPY" -m pip install --disable-pip-version-check --upgrade --force-reinstall "$SRC"
+"$VPY" -m pip install \
+  --disable-pip-version-check --no-deps --upgrade --force-reinstall \
+  "$ASSISTANT_SRC/packages/kitt-assistant-runtime" \
+  "$WORKERS_SRC/packages/kitt-evolution" \
+  "$WORKERS_SRC/packages/kitt-evals"
 
 installed_native=0
 if [[ $NATIVE -eq 1 ]] && command -v cargo >/dev/null 2>&1; then
@@ -99,6 +120,13 @@ fi
 
 ln -sfn "$VENV/bin/kitt" "$LAUNCHER"
 "$LAUNCHER" --help >/dev/null
+"$VPY" - <<'PY'
+import kitt.daemon.client
+import kitt.remote.server
+import kitt.evolution
+import kitt.evals.corpus
+print('KITT companion packages: ok')
+PY
 backend="$($VPY -c "from kitt.native.bridge import NativeCodeEngine; print(NativeCodeEngine('$SRC').status.backend)")"
 echo "K.I.T.T. Agent CLI installed/updated at $INSTALL_ROOT (backend: $backend; native wheel: $installed_native)."
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Add $BIN_DIR to PATH to use: kitt" ;; esac
