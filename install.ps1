@@ -5,9 +5,12 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Repo = if ($env:KITT_AGENT_REPO) { $env:KITT_AGENT_REPO } else { 'https://github.com/rfdetoni/kitt-agent-cli.git' }
+$ToolboxRepo = if ($env:KITT_TOOLBOX_REPO) { $env:KITT_TOOLBOX_REPO } else { 'https://github.com/rfdetoni/kitt-toolbox.git' }
+$ToolboxRef = if ($env:KITT_TOOLBOX_REF) { $env:KITT_TOOLBOX_REF } else { 'main' }
 $Root = if ($env:KITT_AGENT_HOME) { $env:KITT_AGENT_HOME } else { Join-Path $env:LOCALAPPDATA 'KITT\agent-cli' }
 $Bin = if ($env:KITT_BIN_DIR) { $env:KITT_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'KITT\bin' }
 $Src = Join-Path $Root 'src'
+$ToolboxSrc = Join-Path $Root 'toolbox'
 $Venv = Join-Path $Root 'venv'
 $Dist = Join-Path $Root 'dist-native'
 $Launcher = Join-Path $Bin 'kitt.cmd'
@@ -24,15 +27,21 @@ $Python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $Python) { throw 'Python 3.12+ is required' }
 & $Python.Source -c "import sys; assert sys.version_info >= (3,12), 'Python 3.12+ required'"
 
-New-Item -ItemType Directory -Force -Path $Root, $Bin | Out-Null
-if (-not (Test-Path (Join-Path $Src '.git'))) {
-  Remove-Item -LiteralPath $Src -Recurse -Force -ErrorAction SilentlyContinue
-  & git clone --filter=blob:none --no-checkout $Repo $Src
+function Sync-Repo([string]$RepoUrl, [string]$RepoRef, [string]$Dest) {
+  if (-not (Test-Path (Join-Path $Dest '.git'))) {
+    Remove-Item -LiteralPath $Dest -Recurse -Force -ErrorAction SilentlyContinue
+    & git clone --filter=blob:none --no-checkout $RepoUrl $Dest
+    if ($LASTEXITCODE -ne 0) { throw "git clone failed: $RepoUrl" }
+  }
+  & git -C $Dest remote set-url origin $RepoUrl
+  & git -C $Dest fetch --force --depth 1 origin $RepoRef
+  if ($LASTEXITCODE -ne 0) { throw "git fetch failed: $RepoRef" }
+  & git -C $Dest checkout --detach --force FETCH_HEAD
+  & git -C $Dest clean -ffd
 }
-& git -C $Src remote set-url origin $Repo
-& git -C $Src fetch --force --depth 1 origin $Ref
-& git -C $Src checkout --detach --force FETCH_HEAD
-& git -C $Src clean -ffd
+
+New-Item -ItemType Directory -Force -Path $Root, $Bin | Out-Null
+Sync-Repo $Repo $Ref $Src
 
 $Vpy = Join-Path $Venv 'Scripts\python.exe'
 if (-not (Test-Path $Vpy)) {
@@ -41,26 +50,27 @@ if (-not (Test-Path $Vpy)) {
 }
 & $Vpy -m pip install --disable-pip-version-check -U pip wheel | Out-Null
 
+# Install the portable control plane first so native acceleration can fail closed.
+& $Vpy -m pip install --disable-pip-version-check --upgrade --force-reinstall $Src
+if ($LASTEXITCODE -ne 0) { throw 'K.I.T.T. installation failed' }
+
 $Native = $false
 if (-not $NoNative -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
-  Remove-Item -LiteralPath $Dist -Recurse -Force -ErrorAction SilentlyContinue
-  New-Item -ItemType Directory -Force -Path $Dist | Out-Null
   try {
+    Sync-Repo $ToolboxRepo $ToolboxRef $ToolboxSrc
+    Remove-Item -LiteralPath $Dist -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $Dist | Out-Null
     & $Vpy -m pip install --disable-pip-version-check -U 'maturin>=1.8,<2' | Out-Null
-    & $Vpy (Join-Path $Src 'packaging\build_native_release.py') --out $Dist
+    & $Vpy (Join-Path $ToolboxSrc 'packaging\build_native_release.py') --out $Dist
     if ($LASTEXITCODE -ne 0) { throw 'native build failed' }
     $Wheel = Get-ChildItem -Path $Dist -Filter '*.whl' | Select-Object -First 1
     if (-not $Wheel) { throw 'native wheel not produced' }
-    & $Vpy -m pip install --disable-pip-version-check --force-reinstall $Wheel.FullName
+    & $Vpy -m pip install --disable-pip-version-check --no-deps --force-reinstall $Wheel.FullName
     if ($LASTEXITCODE -ne 0) { throw 'native install failed' }
     $Native = $true
   } catch {
-    Write-Warning "Native build unavailable; using portable Python package. $($_.Exception.Message)"
+    Write-Warning "Shared native acceleration unavailable; keeping portable Python backend. $($_.Exception.Message)"
   }
-}
-if (-not $Native) {
-  & $Vpy -m pip install --disable-pip-version-check --upgrade --force-reinstall $Src
-  if ($LASTEXITCODE -ne 0) { throw 'K.I.T.T. installation failed' }
 }
 
 $KittExe = Join-Path $Venv 'Scripts\kitt.exe'
@@ -73,5 +83,5 @@ if ($Parts -notcontains $Bin) {
 }
 & $KittExe --help | Out-Null
 $Backend = & $Vpy -c "from kitt.native.bridge import NativeCodeEngine; print(NativeCodeEngine(r'$Src').status.backend)"
-Write-Host "K.I.T.T. Agent CLI installed/updated at $Root (backend: $Backend)."
+Write-Host "K.I.T.T. Agent CLI installed/updated at $Root (backend: $Backend; native wheel: $Native)."
 Write-Host 'Open a new terminal and run: kitt'
