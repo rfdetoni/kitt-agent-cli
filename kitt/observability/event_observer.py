@@ -13,10 +13,11 @@ _TERMINAL = {"COMPLETED", "FAILED", "BLOCKED", "CANCELLED"}
 class OpenTelemetryEventObserver:
     """Emit sanitized hierarchical KITT traces when correlation is available.
 
-    ``TurnStateChanged`` events create one durable root span per turn. Other
-    events carrying the same turn id are emitted beneath that span. If tracing
-    is partially configured or a provider rejects a span, observation remains
-    fail-open and never affects agent execution.
+    ``TurnStateChanged`` events create one durable root span per turn when the
+    tracer exposes the OpenTelemetry ``start_span`` API. Other events carrying
+    the same turn id are emitted beneath that span. Lightweight/custom tracers
+    that only expose ``start_as_current_span`` remain supported with standalone
+    spans. Observation is fail-open and never affects agent execution.
     """
 
     def __init__(self, tracer: Any):
@@ -36,6 +37,32 @@ class OpenTelemetryEventObserver:
             elif isinstance(value, str):
                 attrs[f"kitt.event.{key}"] = value[:512]
         return attrs
+
+    @staticmethod
+    def _set_attributes(span: Any, attrs: dict[str, str | int | float | bool]) -> None:
+        for key, value in attrs.items():
+            span.set_attribute(key, value)
+
+    def _emit_span(self, name: str, attrs: dict[str, str | int | float | bool], context: Any = None) -> None:
+        """Emit one span against either the full OTEL API or a minimal tracer."""
+        start_span = getattr(self.tracer, "start_span", None)
+        if callable(start_span):
+            try:
+                span = start_span(name, context=context) if context is not None else start_span(name)
+            except TypeError:
+                span = start_span(name)
+            try:
+                self._set_attributes(span, attrs)
+            finally:
+                end = getattr(span, "end", None)
+                if callable(end):
+                    end()
+            return
+
+        start_current = getattr(self.tracer, "start_as_current_span", None)
+        if callable(start_current):
+            with start_current(name) as span:
+                self._set_attributes(span, attrs)
 
     def _child_context(self, turn_id: str):
         if not turn_id:
@@ -58,33 +85,39 @@ class OpenTelemetryEventObserver:
             state = str(safe_payload.get("state") or "").upper()
 
             if event == "TurnStateChanged" and turn_id:
-                with self._lock:
-                    root = self._turn_spans.get(turn_id)
-                    if root is None and state == "RUNNING":
-                        root = self.tracer.start_span("kitt.turn")
-                        root.set_attribute("kitt.turn.id", turn_id)
-                        conversation_id = str(safe_payload.get("conversation_id") or "")
-                        if conversation_id:
-                            root.set_attribute("kitt.conversation.id", conversation_id[:128])
-                        self._turn_spans[turn_id] = root
-                context = self._child_context(turn_id)
-                phase = self.tracer.start_span(f"kitt.phase.{state.lower() or 'unknown'}", context=context)
-                for key, value in attrs.items():
-                    phase.set_attribute(key, value)
-                phase.end()
-                if state in _TERMINAL:
+                start_span = getattr(self.tracer, "start_span", None)
+                if callable(start_span):
                     with self._lock:
-                        root = self._turn_spans.pop(turn_id, None)
-                    if root is not None:
-                        root.set_attribute("kitt.turn.state", state)
-                        root.end()
+                        root = self._turn_spans.get(turn_id)
+                        if root is None and state == "RUNNING":
+                            root = start_span("kitt.turn")
+                            root.set_attribute("kitt.turn.id", turn_id)
+                            conversation_id = str(safe_payload.get("conversation_id") or "")
+                            if conversation_id:
+                                root.set_attribute("kitt.conversation.id", conversation_id[:128])
+                            self._turn_spans[turn_id] = root
+                    self._emit_span(
+                        f"kitt.phase.{state.lower() or 'unknown'}",
+                        attrs,
+                        context=self._child_context(turn_id),
+                    )
+                    if state in _TERMINAL:
+                        with self._lock:
+                            root = self._turn_spans.pop(turn_id, None)
+                        if root is not None:
+                            root.set_attribute("kitt.turn.state", state)
+                            root.end()
+                else:
+                    # Minimal tracers cannot hold a long-lived parent span, but
+                    # should still observe every phase/event independently.
+                    self._emit_span(f"kitt.phase.{state.lower() or 'unknown'}", attrs)
                 return
 
-            context = self._child_context(turn_id)
-            span = self.tracer.start_span(f"kitt.event.{str(event)[:96]}", context=context)
-            for key, value in attrs.items():
-                span.set_attribute(key, value)
-            span.end()
+            self._emit_span(
+                f"kitt.event.{str(event)[:96]}",
+                attrs,
+                context=self._child_context(turn_id),
+            )
         except Exception:
             return
 
