@@ -68,42 +68,61 @@ def _fingerprint(name: str, args: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _ensure_turn(processor, cmd: TurnCommand) -> None:
+def _ensure_turn(processor, cmd: TurnCommand) -> bool:
+    """Ensure a durable row only when its parent conversation is persistent.
+
+    Tests, ephemeral/headless callers and --no-history paths may intentionally
+    execute a TurnCommand whose conversation does not exist in SQLite. Durable
+    execution must remain an additive capability, never turn persistence into a
+    new runtime precondition.
+    """
     db = _db(processor)
     if db is None:
-        return
-    with db.get_connection() as conn:
-        if conn.execute("SELECT 1 FROM turns WHERE id=?", (cmd.turn_id,)).fetchone():
-            return
-        ordinal = conn.execute(
-            "SELECT COALESCE(MAX(ordinal),0)+1 FROM turns WHERE conversation_id=?",
-            (cmd.conversation_id,),
-        ).fetchone()[0]
-        conn.execute(
-            "INSERT INTO turns (id,conversation_id,ordinal,state,mode,started_at) VALUES (?,?,?,?,?,?)",
-            (cmd.turn_id, cmd.conversation_id, ordinal, "CREATED", cmd.mode, time.time()),
-        )
+        return False
+    try:
+        with db.get_connection() as conn:
+            if conn.execute("SELECT 1 FROM turns WHERE id=?", (cmd.turn_id,)).fetchone():
+                return True
+            if not conn.execute("SELECT 1 FROM conversations WHERE id=?", (cmd.conversation_id,)).fetchone():
+                return False
+            ordinal = conn.execute(
+                "SELECT COALESCE(MAX(ordinal),0)+1 FROM turns WHERE conversation_id=?",
+                (cmd.conversation_id,),
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO turns (id,conversation_id,ordinal,state,mode,started_at) VALUES (?,?,?,?,?,?)",
+                (cmd.turn_id, cmd.conversation_id, ordinal, "CREATED", cmd.mode, time.time()),
+            )
+            return True
+    except Exception:
+        return False
 
 
 def _turn(processor, turn_id: str) -> dict[str, Any] | None:
     db = _db(processor)
     if db is None:
         return None
-    with db.get_connection() as conn:
-        row = conn.execute("SELECT * FROM turns WHERE id=?", (turn_id,)).fetchone()
-        return dict(row) if row else None
+    try:
+        with db.get_connection() as conn:
+            row = conn.execute("SELECT * FROM turns WHERE id=?", (turn_id,)).fetchone()
+            return dict(row) if row else None
+    except Exception:
+        return None
 
 
 def _message(processor, turn_id: str, role: str) -> str:
     db = _db(processor)
     if db is None:
         return ""
-    with db.get_connection() as conn:
-        row = conn.execute(
-            "SELECT content FROM messages WHERE turn_id=? AND role=? ORDER BY created_at DESC LIMIT 1",
-            (turn_id, role),
-        ).fetchone()
-        return str(row[0]) if row else ""
+    try:
+        with db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT content FROM messages WHERE turn_id=? AND role=? ORDER BY created_at DESC LIMIT 1",
+                (turn_id, role),
+            ).fetchone()
+            return str(row[0]) if row else ""
+    except Exception:
+        return ""
 
 
 def _set_turn_state(processor, cmd: TurnCommand, state: str, error: str | None = None) -> None:
@@ -112,16 +131,19 @@ def _set_turn_state(processor, cmd: TurnCommand, state: str, error: str | None =
         return
     task = getattr(getattr(processor, "session_state", None), "last_task", None)
     completed = time.time() if state in TERMINAL else None
-    with db.get_connection() as conn:
-        conn.execute(
-            """UPDATE turns SET state=?, mode=?, semantic_intent=COALESCE(?,semantic_intent),
-            risk=COALESCE(?,risk), confidence=COALESCE(?,confidence),
-            completed_at=COALESCE(?,completed_at), error_code=?
-            WHERE id=? AND conversation_id=?""",
-            (state, cmd.mode, getattr(task, "intent", None), getattr(task, "risk", None),
-             getattr(task, "confidence", None), completed, str(error)[:512] if error else None,
-             cmd.turn_id, cmd.conversation_id),
-        )
+    try:
+        with db.get_connection() as conn:
+            conn.execute(
+                """UPDATE turns SET state=?, mode=?, semantic_intent=COALESCE(?,semantic_intent),
+                risk=COALESCE(?,risk), confidence=COALESCE(?,confidence),
+                completed_at=COALESCE(?,completed_at), error_code=?
+                WHERE id=? AND conversation_id=?""",
+                (state, cmd.mode, getattr(task, "intent", None), getattr(task, "risk", None),
+                 getattr(task, "confidence", None), completed, str(error)[:512] if error else None,
+                 cmd.turn_id, cmd.conversation_id),
+            )
+    except Exception:
+        return
 
 
 def _record_route(processor, cmd: TurnCommand, profile: str, success: bool, duration_ms: float) -> None:
@@ -130,28 +152,34 @@ def _record_route(processor, cmd: TurnCommand, profile: str, success: bool, dura
         return
     route = f"routing:{profile}:{'success' if success else 'failure'}"
     event_id = hashlib.sha256(f"{cmd.turn_id}:{route}".encode()).hexdigest()[:24]
-    with db.get_connection() as conn:
-        if not conn.execute("SELECT 1 FROM turns WHERE id=?", (cmd.turn_id,)).fetchone():
-            return
-        conn.execute(
-            "INSERT OR REPLACE INTO telemetry_events (id,conversation_id,turn_id,route,start_time,duration_ms,input_tokens,output_tokens,tokens_saved) VALUES (?,?,?,?,?,?,?,?,?)",
-            (event_id, cmd.conversation_id, cmd.turn_id, route, time.time(), duration_ms, 0, 0, 0),
-        )
+    try:
+        with db.get_connection() as conn:
+            if not conn.execute("SELECT 1 FROM turns WHERE id=?", (cmd.turn_id,)).fetchone():
+                return
+            conn.execute(
+                "INSERT OR REPLACE INTO telemetry_events (id,conversation_id,turn_id,route,start_time,duration_ms,input_tokens,output_tokens,tokens_saved) VALUES (?,?,?,?,?,?,?,?,?)",
+                (event_id, cmd.conversation_id, cmd.turn_id, route, time.time(), duration_ms, 0, 0, 0),
+            )
+    except Exception:
+        return
 
 
 def routing_feedback(processor, profile: str) -> dict[str, float | int]:
     db = _db(processor)
     if db is None:
         return {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0}
-    with db.get_connection() as conn:
-        row = conn.execute(
-            """SELECT COUNT(*), COALESCE(SUM(CASE WHEN route LIKE '%:success' THEN 1 ELSE 0 END),0),
-            COALESCE(AVG(duration_ms),0) FROM telemetry_events WHERE route LIKE ?""",
-            (f"routing:{profile}:%",),
-        ).fetchone()
-        n = int(row[0]) if row else 0
-        return {"samples": n, "success_rate": float(row[1]) / n if n else 0.5,
-                "avg_duration_ms": float(row[2]) if row else 0.0}
+    try:
+        with db.get_connection() as conn:
+            row = conn.execute(
+                """SELECT COUNT(*), COALESCE(SUM(CASE WHEN route LIKE '%:success' THEN 1 ELSE 0 END),0),
+                COALESCE(AVG(duration_ms),0) FROM telemetry_events WHERE route LIKE ?""",
+                (f"routing:{profile}:%",),
+            ).fetchone()
+            n = int(row[0]) if row else 0
+            return {"samples": n, "success_rate": float(row[1]) / n if n else 0.5,
+                    "avg_duration_ms": float(row[2]) if row else 0.0}
+    except Exception:
+        return {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0}
 
 
 def _expire_code_memory(processor, paths: list[str]) -> None:
@@ -160,16 +188,19 @@ def _expire_code_memory(processor, paths: list[str]) -> None:
     if db is None:
         return
     now = time.time()
-    with db.get_connection() as conn:
-        for path in paths[:64]:
-            conn.execute(
-                """UPDATE memories SET status='SUPERSEDED', valid_until=?, updated_at=?
-                WHERE workspace_id=? AND status='ACTIVE' AND pinned=0
-                AND kind IN ('TECHNICAL_FACT','PROJECT_STATE','OPEN_ISSUE')
-                AND id IN (SELECT memory_id FROM memory_evidence
-                           WHERE workspace_id=? AND evidence_text LIKE ?)""",
-                (now, now, processor.workspace_id, processor.workspace_id, f"%{path}%"),
-            )
+    try:
+        with db.get_connection() as conn:
+            for path in paths[:64]:
+                conn.execute(
+                    """UPDATE memories SET status='SUPERSEDED', valid_until=?, updated_at=?
+                    WHERE workspace_id=? AND status='ACTIVE' AND pinned=0
+                    AND kind IN ('TECHNICAL_FACT','PROJECT_STATE','OPEN_ISSUE')
+                    AND id IN (SELECT memory_id FROM memory_evidence
+                               WHERE workspace_id=? AND evidence_text LIKE ?)""",
+                    (now, now, processor.workspace_id, processor.workspace_id, f"%{path}%"),
+                )
+    except Exception:
+        return
 
 
 def adaptive_retrieval_ratio(processor, task: Any, cmd: TurnCommand) -> float:
@@ -230,43 +261,44 @@ def _affected_paths(processor, name: str, args: dict[str, Any], result: Any) -> 
 
 
 class DurableTurnJournal:
+    """Project processor events onto KITT's existing durable turn state."""
+
     def __init__(self, processor):
         self.processor = processor
         self.profiles: dict[str, str] = {}
         self.started: dict[str, float] = {}
 
     def begin(self, cmd: TurnCommand) -> None:
-        _ensure_turn(self.processor, cmd)
+        persistent = _ensure_turn(self.processor, cmd)
         self.started[cmd.turn_id] = time.time()
-        store = _state_store(self.processor, cmd.conversation_id)
-        if store:
-            try:
-                store.set(f"turn:{cmd.turn_id}:checkpoint", {
-                    "turn_id": cmd.turn_id, "conversation_id": cmd.conversation_id,
-                    "prompt": cmd.prompt, "mode": cmd.mode,
-                    "explicit_files": sorted(cmd.explicit_files), "dry_run": bool(cmd.dry_run),
-                    "state": "RUNNING", "updated_at": time.time()}, ttl_seconds=604800)
-            except Exception:
-                pass
+        if persistent:
+            store = _state_store(self.processor, cmd.conversation_id)
+            if store:
+                try:
+                    store.set(f"turn:{cmd.turn_id}:checkpoint", {
+                        "turn_id": cmd.turn_id, "conversation_id": cmd.conversation_id,
+                        "prompt": cmd.prompt, "mode": cmd.mode,
+                        "explicit_files": sorted(cmd.explicit_files), "dry_run": bool(cmd.dry_run),
+                        "state": "RUNNING", "updated_at": time.time()}, ttl_seconds=604800)
+                except Exception:
+                    pass
         self.state(cmd, "RUNNING")
 
     def state(self, cmd: TurnCommand, state: str, error: str | None = None) -> None:
-        try:
-            _set_turn_state(self.processor, cmd, state, error)
-        except Exception:
-            pass
-        store = _state_store(self.processor, cmd.conversation_id)
-        if store:
-            try:
-                key = f"turn:{cmd.turn_id}:checkpoint"
-                value = store.get(key) or {}
-                if isinstance(value, dict):
-                    value.update({"state": state, "updated_at": time.time()})
-                    if error:
-                        value["error"] = str(error)[:2000]
-                    store.set(key, value, ttl_seconds=604800)
-            except Exception:
-                pass
+        _set_turn_state(self.processor, cmd, state, error)
+        if _turn(self.processor, cmd.turn_id):
+            store = _state_store(self.processor, cmd.conversation_id)
+            if store:
+                try:
+                    key = f"turn:{cmd.turn_id}:checkpoint"
+                    value = store.get(key) or {}
+                    if isinstance(value, dict):
+                        value.update({"state": state, "updated_at": time.time()})
+                        if error:
+                            value["error"] = str(error)[:2000]
+                        store.set(key, value, ttl_seconds=604800)
+                except Exception:
+                    pass
         try:
             self.processor._emit("TurnStateChanged", {"turn_id": cmd.turn_id,
                 "conversation_id": cmd.conversation_id, "state": state})
@@ -283,11 +315,10 @@ class DurableTurnJournal:
         if state in TERMINAL:
             profile = self.profiles.pop(cmd.turn_id, "")
             started = self.started.pop(cmd.turn_id, time.time())
-            try:
+            # User cancellation and policy blocking are not model-quality labels.
+            if state in {"COMPLETED", "FAILED"}:
                 _record_route(self.processor, cmd, profile, state == "COMPLETED",
                               max(0.0, (time.time() - started) * 1000.0))
-            except Exception:
-                pass
 
 
 def _install_tool_execution(processor, registry) -> None:
@@ -323,10 +354,7 @@ def _install_tool_execution(processor, registry) -> None:
                 result.success = False
                 result.error = "Post-edit verification failed:\n" + report.failure_message()
         if getattr(result, "success", False) and paths:
-            try:
-                _expire_code_memory(processor, paths)
-            except Exception:
-                pass
+            _expire_code_memory(processor, paths)
         if replay_key and store and getattr(result, "success", False):
             try:
                 store.set(replay_key, {"completed": True,
@@ -348,6 +376,19 @@ def install_agent_engineering(processor, registry) -> None:
     journal = DurableTurnJournal(processor)
     processor.turn_journal = journal
     _install_tool_execution(processor, registry)
+
+    # Correlate every existing _emit call without changing TurnProcessor's event
+    # API. Observers now receive turn/conversation ids for true parent-child traces.
+    original_emit = processor._emit
+    processor._agent_trace_context = None
+    def correlated_emit(self, event_name, payload):
+        data = dict(payload or {})
+        context = getattr(self, "_agent_trace_context", None)
+        if context:
+            data.setdefault("turn_id", context[0])
+            data.setdefault("conversation_id", context[1])
+        return original_emit(event_name, data)
+    processor._emit = MethodType(correlated_emit, processor)
 
     original_instructions = processor._tool_instructions
     def instructions(self, enabled_tools):
@@ -400,6 +441,8 @@ def install_agent_engineering(processor, registry) -> None:
     def run_turn(self, cmd: TurnCommand) -> Iterator[Any]:
         journal.begin(cmd)
         terminal = False
+        previous_context = getattr(self, "_agent_trace_context", None)
+        self._agent_trace_context = (cmd.turn_id, cmd.conversation_id)
         try:
             for event in original_run(cmd):
                 journal.observe(cmd, event)
@@ -410,6 +453,7 @@ def install_agent_engineering(processor, registry) -> None:
             journal.state(cmd, "FAILED", str(exc))
             raise
         finally:
+            self._agent_trace_context = previous_context
             if not terminal:
                 current = str((_turn(self, cmd.turn_id) or {}).get("state") or "")
                 if current not in {"WAITING_APPROVAL", *TERMINAL}:
@@ -420,10 +464,15 @@ def install_agent_engineering(processor, registry) -> None:
     def continue_turn(self, turn_id, grant):
         row = _turn(self, turn_id) or {}
         cmd = TurnCommand(conversation_id=str(row.get("conversation_id") or ""), prompt="", turn_id=turn_id)
+        previous_context = getattr(self, "_agent_trace_context", None)
+        self._agent_trace_context = (cmd.turn_id, cmd.conversation_id)
         journal.state(cmd, "EXECUTING")
-        for event in original_continue(turn_id, grant):
-            journal.observe(cmd, event)
-            yield event
+        try:
+            for event in original_continue(turn_id, grant):
+                journal.observe(cmd, event)
+                yield event
+        finally:
+            self._agent_trace_context = previous_context
     processor.continue_turn = MethodType(continue_turn, processor)
 
     def resume_turn(self, turn_id: str, grant=None):
