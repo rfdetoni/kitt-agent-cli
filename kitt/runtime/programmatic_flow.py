@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
+# Explicit allowlist: flow.execute compresses read-only work into fewer model
+# round-trips, but it must never become a generic bypass around approvals,
+# mutations, external tools, or potentially expensive security subprocesses.
 READ_ONLY_FLOW_OPERATIONS = {
     "repo.read",
     "repo.search",
@@ -14,9 +17,17 @@ READ_ONLY_FLOW_OPERATIONS = {
     "repo.read_symbol",
     "repo.references",
     "repo.context_map",
+    "repo.definition",
+    "repo.hover",
+    "repo.references_semantic",
+    "repo.diagnostics",
+    "repo.call_hierarchy",
+    "repo.outline",
+    "repo.ast_search",
     "artifacts.read",
     "goal.inspect",
     "memory.query",
+    "session.search",
     "handles.resolve",
     "state.get",
     "state.list",
