@@ -33,9 +33,16 @@ class WorkspaceIdentity:
 
     @classmethod
     def build(cls, root_path: str | Path) -> "WorkspaceIdentity":
-        from kitt.history.repository import get_or_create_workspace_identity
+        """Resolve identity without ever creating runtime state in the workspace."""
+        from kitt.history.database import HistoryDatabase
+        from kitt.history.repository import resolve_workspace_identity
 
-        return get_or_create_workspace_identity(canonical_workspace_path(root_path))
+        canonical_root = canonical_workspace_path(root_path)
+        database = HistoryDatabase(str(Path.home().resolve(strict=False)))
+        try:
+            return resolve_workspace_identity(database, canonical_root)
+        finally:
+            database.close()
 
     @staticmethod
     def path_hash(root_path: str | Path) -> str:
