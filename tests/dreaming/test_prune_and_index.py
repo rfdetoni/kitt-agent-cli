@@ -108,6 +108,7 @@ class TestDreamPruneAndIndex(unittest.TestCase):
         )
         self.assertTrue(mem_file.exists())
         self.assertEqual(mem_file.read_text(encoding="utf-8"), view)
+        self.assertFalse((self.root / ".kitt" / "memory" / "MEMORY.md").exists())
 
 
 if __name__ == "__main__":
