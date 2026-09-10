@@ -1,0 +1,93 @@
+name: One-shot reverse proxy fast path
+
+on:
+  push:
+    branches: [perf/reverse-proxy-fast-path]
+    paths:
+      - .github/workflows/one-shot-reverse-proxy-fast-path.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fast-path:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: perf/reverse-proxy-fast-path
+
+      - name: Apply fast path
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # 1) Make SemanticFilter truly deterministic when requested; do not construct an LLM client on bypass.
+          path = Path('kitt/context_filter/semantic_filter.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '        self.llm_client = llm_client or LLMClient(context_profile)\n',
+              '        self.llm_client = llm_client\n',
+              1,
+          )
+          old = '''    def filter_and_plan(\n        self, prompt: str, session_key: Optional[str] = None\n    ) -> SemanticFilterResult:\n        start_t = time.time()\n\n        # Rule 1: Trivial prompt bypass\n        if self.extractor.is_trivial_prompt(prompt):\n'''
+          new = '''    def filter_and_plan(\n        self, prompt: str, session_key: Optional[str] = None, *, deterministic_only: bool = False\n    ) -> SemanticFilterResult:\n        start_t = time.time()\n\n        # Rule 1: Deterministic/trivial bypass. Keep this path free of LLM client\n        # construction so reverse-proxy sessions are not opened for internal planning.\n        if deterministic_only or self.extractor.is_trivial_prompt(prompt):\n'''
+          if old not in text:
+              raise SystemExit('semantic_filter signature block not found')
+          text = text.replace(old, new, 1)
+          old = '''        # Rule 2: Call Context LLM\n        try:\n            messages = [{"role": "user", "content": prompt}]\n            response_text = self.llm_client.chat(\n'''
+          new = '''        # Rule 2: Call Context LLM lazily.\n        try:\n            if self.llm_client is None:\n                self.llm_client = LLMClient(self.profile)\n            messages = [{"role": "user", "content": prompt}]\n            response_text = self.llm_client.chat(\n'''
+          if old not in text:
+              raise SystemExit('semantic_filter LLM block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # 2) Collapse context+execution into one reverse-proxy LLM session when both routes hit the same endpoint.
+          path = Path('kitt/core/turn_processor.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '''def detect_chat_limit_message(text: str) -> Optional[str]:\n    \"\"\"Detect upstream chat/provider message and rate limit announcements in model text.\"\"\"\n    if not text:\n        return None\n    for pattern in _CHAT_LIMIT_PATTERNS:\n        m = pattern.search(text)\n        if m:\n            return m.group(0)\n    return None\n\n\n'''
+          helper = '''def detect_chat_limit_message(text: str) -> Optional[str]:\n    \"\"\"Detect upstream chat/provider message and rate limit announcements in model text.\"\"\"\n    if not text:\n        return None\n    for pattern in _CHAT_LIMIT_PATTERNS:\n        m = pattern.search(text)\n        if m:\n            return m.group(0)\n    return None\n\n\ndef _reverse_proxy_identity(profile) -> Optional[tuple[str, str]]:\n    backend = str(getattr(profile, \"backend\", \"\") or \"\").strip().lower()\n    protocol = str(getattr(profile, \"protocol\", \"\") or \"\").strip().lower()\n    if backend not in {\"kitt-reverse-proxy\", \"kitt-proxy\"} and protocol != \"kitt-reverse-proxy\":\n        return None\n    base_url = str(getattr(profile, \"base_url\", \"\") or \"http://127.0.0.1:3000\").strip().rstrip(\"/\")\n    credential = str(getattr(profile, \"credential_ref\", \"\") or getattr(profile, \"api_key\", \"\") or \"\")\n    return base_url, credential\n\n\ndef _same_reverse_proxy_endpoint(left, right) -> bool:\n    left_identity = _reverse_proxy_identity(left)\n    return left_identity is not None and left_identity == _reverse_proxy_identity(right)\n\n\n'''
+          if marker not in text:
+              raise SystemExit('turn_processor helper insertion marker not found')
+          text = text.replace(marker, helper, 1)
+          old = '''    def _run_semantic_filter(self, cmd: TurnCommand) -> tuple:\n        ctx_profile_name, ctx_profile = self.router.resolve_profile_for_task(\"context-gather\")\n        if ctx_profile.max_output_tokens < 1024:\n            ctx_profile = replace(ctx_profile, max_output_tokens=1024)\n        sf_client = self.context_client or LLMClient(ctx_profile)\n        semantic_filter = SemanticFilter(context_profile=ctx_profile, llm_client=sf_client)\n        filter_res = semantic_filter.filter_and_plan(\n            cmd.prompt, session_key=cmd.conversation_id\n        )\n'''
+          new = '''    def _run_semantic_filter(self, cmd: TurnCommand) -> tuple:\n        ctx_profile_name, ctx_profile = self.router.resolve_profile_for_task(\"context-gather\")\n        _, execution_profile = self.router.resolve_profile_for_task(\"code-generation\")\n        shared_reverse_proxy = (\n            self.context_client is None\n            and self.execution_client is None\n            and _same_reverse_proxy_endpoint(ctx_profile, execution_profile)\n        )\n        if ctx_profile.max_output_tokens < 1024:\n            ctx_profile = replace(ctx_profile, max_output_tokens=1024)\n        sf_client = self.context_client\n        semantic_filter = SemanticFilter(context_profile=ctx_profile, llm_client=sf_client)\n        filter_res = semantic_filter.filter_and_plan(\n            cmd.prompt,\n            session_key=cmd.conversation_id,\n            deterministic_only=shared_reverse_proxy,\n        )\n        sf_client = semantic_filter.llm_client\n'''
+          if old not in text:
+              raise SystemExit('turn_processor semantic filter block not found')
+          text = text.replace(old, new, 1)
+          old = '''            context_map_str = self._summarize_project_context(\n                sf_client, cmd.prompt, context_map_str,\n                session_key=cmd.conversation_id,\n            )\n'''
+          new = '''            # A deterministic bypass must remain LLM-free; otherwise the context\n            # summarizer would reopen the reverse-proxy chat we deliberately skipped.\n            if filter_res.source != \"DETERMINISTIC_BYPASS\" and sf_client is not None:\n                context_map_str = self._summarize_project_context(\n                    sf_client, cmd.prompt, context_map_str,\n                    session_key=cmd.conversation_id,\n                )\n'''
+          if old not in text:
+              raise SystemExit('turn_processor summary block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # 3) Local reverse proxy failures should fail fast instead of backing off for minutes.
+          path = Path('kitt/llm/client.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''        self.retry_policy = retry_policy or RetryPolicy()\n        self.registry = registry or ProviderRegistry()\n'''
+          new = '''        if retry_policy is not None:\n            self.retry_policy = retry_policy\n        else:\n            backend = (profile.backend or \"\").strip().lower()\n            protocol = (profile.protocol or \"\").strip().lower()\n            if backend in {\"kitt-reverse-proxy\", \"kitt-proxy\"} or protocol == \"kitt-reverse-proxy\":\n                self.retry_policy = RetryPolicy(RetryConfig(\n                    max_retries=2,\n                    base_delay_ms=200,\n                    max_delay_ms=1500,\n                ))\n            else:\n                self.retry_policy = RetryPolicy()\n        self.registry = registry or ProviderRegistry()\n'''
+          if old not in text:
+              raise SystemExit('LLMClient retry block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          Path('tests/test_reverse_proxy_fast_path.py').write_text('''import unittest\n\nfrom kitt.context_filter.semantic_filter import SemanticFilter\nfrom kitt.core.turn_processor import _same_reverse_proxy_endpoint\nfrom kitt.domain.entities import ModelProfile\nfrom kitt.llm.client import LLMClient\n\n\nclass _FailIfCalled:\n    def chat(self, *args, **kwargs):\n        raise AssertionError(\"context LLM must not be called on deterministic fast path\")\n\n\nclass TestReverseProxyFastPath(unittest.TestCase):\n    def test_deterministic_semantic_filter_does_not_call_llm(self):\n        profile = ModelProfile(backend=\"kitt-reverse-proxy\", model=\"chatgpt-web\", base_url=\"http://127.0.0.1:3000\")\n        result = SemanticFilter(profile, _FailIfCalled()).filter_and_plan(\n            \"crie uma pasta teste\", session_key=\"conv\", deterministic_only=True\n        )\n        self.assertEqual(result.source, \"DETERMINISTIC_BYPASS\")\n\n    def test_same_reverse_proxy_endpoint_ignores_profile_role(self):\n        context = ModelProfile(backend=\"kitt-reverse-proxy\", model=\"chatgpt-web\", base_url=\"http://127.0.0.1:3000/\")\n        execute = ModelProfile(backend=\"kitt-reverse-proxy\", model=\"chatgpt-web\", base_url=\"http://127.0.0.1:3000\")\n        self.assertTrue(_same_reverse_proxy_endpoint(context, execute))\n\n    def test_reverse_proxy_retry_budget_is_bounded(self):\n        profile = ModelProfile(backend=\"kitt-reverse-proxy\", model=\"chatgpt-web\", base_url=\"http://127.0.0.1:3000\")\n        client = LLMClient(profile)\n        try:\n            self.assertEqual(client.retry_policy.config.max_retries, 2)\n            self.assertEqual(client.retry_policy.config.max_delay_ms, 1500)\n        finally:\n            client.close()\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n''', encoding='utf-8')
+          PY
+
+      - name: Validate focused tests
+        shell: bash
+        run: |
+          python -m compileall -q kitt tests/test_reverse_proxy_fast_path.py
+          python -m pip install -q -e '.[dev]'
+          pytest -q tests/test_reverse_proxy_fast_path.py tests/test_arun_turn_approval_lifecycle.py tests/test_cancellation_real_stop.py
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name "kitt-perf-bot"
+          git config user.email "kitt-perf-bot@users.noreply.github.com"
+          git rm .github/workflows/one-shot-reverse-proxy-fast-path.yml
+          git add kitt/context_filter/semantic_filter.py kitt/core/turn_processor.py kitt/llm/client.py tests/test_reverse_proxy_fast_path.py
+          git diff --cached --check
+          git commit -m "perf(proxy): collapse shared context execution round trips"
+          git push origin HEAD:perf/reverse-proxy-fast-path
