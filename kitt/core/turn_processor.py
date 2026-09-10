@@ -220,8 +220,9 @@ class TurnProcessor:
         return guard.cancel(turn_id)
 
     def _emit(self, event_name: str, payload: Dict[str, Any]):
-        if self.event_callback and not self._closed:
-            self.event_callback(event_name, payload)
+        callback = getattr(self, "event_callback", None)
+        if callback and not getattr(self, "_closed", False):
+            callback(event_name, payload)
 
     def _record_latency(
         self,
@@ -243,7 +244,12 @@ class TurnProcessor:
             "latency turn=%s phase=%s duration_ms=%.2f elapsed_ms=%.2f detail=%s",
             turn_id, phase, payload["duration_ms"], payload["elapsed_ms"], payload["detail"],
         )
-        self._emit("LatencyRecorded", payload)
+        try:
+            self._emit("LatencyRecorded", payload)
+        except Exception:
+            # Observability is strictly fail-open: a broken metrics consumer
+            # must never alter tool, approval, cancellation or response flow.
+            logger.debug("latency callback failed", exc_info=True)
         return payload
 
     @staticmethod
@@ -1740,13 +1746,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             yield TurnFailed(error="Pending action source integrity check failed.")
             return
 
-        self._record_latency(
-            turn_id,
-            "approval_wait",
-            (time.time() - pa.created_at) * 1000,
-            detail={"tool": pa.tool_name},
-        )
-
         from kitt.security.mutation_preconditions import validate_preconditions
         valid, prec_error = validate_preconditions(self.root_path, pa.get_preconditions())
         if not valid:
@@ -1771,6 +1770,15 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         if not self.turn_guard.begin(turn_id):
             yield TurnCancelled(reason="Turn cancelled before approved action execution")
             return
+
+        pending_created_at = getattr(pa, "created_at", None)
+        if isinstance(pending_created_at, (int, float)):
+            self._record_latency(
+                turn_id,
+                "approval_wait",
+                max(0.0, (time.time() - pending_created_at) * 1000),
+                detail={"tool": str(getattr(pa, "tool_name", ""))},
+            )
 
         consume_failed = False
         edit_result = None
