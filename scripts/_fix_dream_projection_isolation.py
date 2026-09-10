@@ -42,7 +42,7 @@ test = replace_once(
 test = replace_once(
     test,
     '''        # 3. Check materialized view (.kitt/memory/MEMORY.md)\n        mem_file = self.root / ".kitt" / "memory" / "MEMORY.md"\n        self.assertTrue(mem_file.exists())\n''',
-    '''        # 3. Check the workspace-scoped materialized view under private home state.\n        mem_file = (\n            self.home\n            / ".kitt"\n            / "workspaces"\n            / self.workspace_id\n            / "memory"\n            / "MEMORY.md"\n        )\n        self.assertTrue(mem_file.exists())\n        self.assertFalse((self.home / ".kitt" / "memory" / "MEMORY.md").exists())\n        self.assertFalse((self.workspace / ".kitt").exists())\n''',
+    '''        # 3. Check the workspace-scoped materialized view under private home state.\n        mem_file = (\n            self.home\n            / ".kitt"\n            / "workspaces"\n            / self.workspace_id\n            / "memory"\n            / "MEMORY.md"\n        )\n        self.assertTrue(mem_file.exists())\n        self.assertFalse((self.home / ".kitt" / "memory" / "MEMORY.md").exists())\n        self.assertFalse((self.workspace / ".kitt" / "memory" / "MEMORY.md").exists())\n''',
     "projection assertion",
 )
 test_path.write_text(test, encoding="utf-8")
