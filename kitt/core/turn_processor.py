@@ -343,14 +343,19 @@ class TurnProcessor:
             target=produce, name=f"kitt-turn-{cmd.turn_id[:8]}", daemon=True
         )
         producer.start()
+        stream_completed = False
         try:
             while True:
                 item = await queue.get()
                 if item is sentinel:
+                    stream_completed = True
                     break
                 yield item
         finally:
-            if producer.is_alive():
+            # Thread liveness is not cancellation state. The producer can still
+            # be alive for a scheduling tick after it has published the natural
+            # completion sentinel. Only an abandoned stream should cancel the turn.
+            if not stream_completed:
                 self._mark_cancelled(cmd.turn_id)
             stop.set()
             if producer.is_alive():
