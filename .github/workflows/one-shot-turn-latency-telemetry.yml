@@ -1,0 +1,361 @@
+name: One-shot turn latency telemetry
+
+on:
+  push:
+    branches: [perf/turn-latency-telemetry]
+
+permissions:
+  contents: write
+
+jobs:
+  instrument:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/turn-latency-telemetry
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instrument turn pipeline
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          events = Path('kitt/core/turn_events.py')
+          text = events.read_text()
+          old = '''@dataclass
+          class MetricsRecorded(TurnEvent):
+              input_tokens: int = 0
+              output_tokens: int = 0
+              saved_tokens: int = 0
+              estimated_usd: float = 0.0
+
+          @dataclass
+          class TurnCompleted(TurnEvent):
+          '''
+          new = '''@dataclass
+          class MetricsRecorded(TurnEvent):
+              input_tokens: int = 0
+              output_tokens: int = 0
+              saved_tokens: int = 0
+              estimated_usd: float = 0.0
+
+          @dataclass
+          class LatencyRecorded(TurnEvent):
+              phase: str = ""
+              duration_ms: float = 0.0
+              elapsed_ms: float = 0.0
+              detail: Dict[str, Any] = field(default_factory=dict)
+
+          @dataclass
+          class TurnCompleted(TurnEvent):
+          '''
+          assert old in text
+          events.write_text(text.replace(old, new, 1))
+
+          path = Path('kitt/core/turn_processor.py')
+          text = path.read_text()
+          old = '''    EditApplied, MetricsRecorded, TurnCompleted, TurnFailed,
+              TurnCancelled, TurnBlocked
+          )'''
+          new = '''    EditApplied, MetricsRecorded, LatencyRecorded, TurnCompleted, TurnFailed,
+              TurnCancelled, TurnBlocked
+          )'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''    def _emit(self, event_name: str, payload: Dict[str, Any]):
+              if self.event_callback and not self._closed:
+                  self.event_callback(event_name, payload)
+
+              @staticmethod
+          '''
+          new = '''    def _emit(self, event_name: str, payload: Dict[str, Any]):
+              if self.event_callback and not self._closed:
+                  self.event_callback(event_name, payload)
+
+              def _latency_event(
+                  self,
+                  turn_id: str,
+                  phase: str,
+                  duration_ms: float,
+                  *,
+                  elapsed_ms: float = 0.0,
+                  detail: Optional[Dict[str, Any]] = None,
+              ) -> LatencyRecorded:
+                  duration = round(max(0.0, float(duration_ms)), 2)
+                  elapsed = round(max(0.0, float(elapsed_ms)), 2)
+                  safe_detail = dict(detail or {})
+                  logger.info(
+                      "latency turn=%s phase=%s duration_ms=%.2f elapsed_ms=%.2f detail=%s",
+                      turn_id, phase, duration, elapsed, safe_detail,
+                  )
+                  self._emit("LatencyRecorded", {
+                      "turn_id": turn_id,
+                      "phase": phase,
+                      "duration_ms": duration,
+                      "elapsed_ms": elapsed,
+                      "detail": safe_detail,
+                  })
+                  return LatencyRecorded(
+                      phase=phase,
+                      duration_ms=duration,
+                      elapsed_ms=elapsed,
+                      detail=safe_detail,
+                  )
+
+              @staticmethod
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        if "lfm" in getattr(profile, "model", "").lower():
+              raw_text = "".join(_invoke_chat_stream(messages, system_prompt))
+          '''
+          new = '''        if "lfm" in getattr(profile, "model", "").lower():
+              request_started_at = time.perf_counter()
+              chunks = []
+              first_chunk = True
+              for chunk in _invoke_chat_stream(messages, system_prompt):
+                  if first_chunk:
+                      first_chunk = False
+                      yield "", self._latency_event(
+                          turn_id,
+                          "model_ttft",
+                          (time.perf_counter() - request_started_at) * 1000,
+                          detail={"session": "named" if session_key else "default"},
+                      )
+                  chunks.append(chunk)
+              raw_text = "".join(chunks)
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        for chunk in _invoke_chat_stream(messages, system_prompt):
+              if turn_id and self._cancel_requested(turn_id):
+                  break
+              full_response += chunk
+          '''
+          new = '''        request_started_at = time.perf_counter()
+              first_chunk = True
+              for chunk in _invoke_chat_stream(messages, system_prompt):
+                  if turn_id and self._cancel_requested(turn_id):
+                      break
+                  if first_chunk:
+                      first_chunk = False
+                      yield full_response, self._latency_event(
+                          turn_id,
+                          "model_ttft",
+                          (time.perf_counter() - request_started_at) * 1000,
+                          detail={"session": "named" if session_key else "default"},
+                      )
+                  full_response += chunk
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        malformed_calls = 0
+
+              thinking_started_at = time.time()
+          '''
+          new = '''        malformed_calls = 0
+              model_round = 0
+
+              thinking_started_at = time.time()
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            self._rebudget_execution_messages(execution_messages, request.system_prompt, exe_profile)
+              for streamed_response, event in self._stream_execution_response(
+          '''
+          new = '''            self._rebudget_execution_messages(execution_messages, request.system_prompt, exe_profile)
+              model_round += 1
+              model_round_started_at = time.perf_counter()
+              for streamed_response, event in self._stream_execution_response(
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''                    yield event, None, None
+
+              if not thinking_completed:
+          '''
+          new = '''                    yield event, None, None
+
+              yield self._latency_event(
+                  cmd.turn_id,
+                  "model_roundtrip",
+                  (time.perf_counter() - model_round_started_at) * 1000,
+                  detail={"round": model_round},
+              ), None, None
+
+              if not thinking_completed:
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            call_id = uuid.uuid4().hex[:8]
+              if not self.turn_guard.begin(cmd.turn_id):
+                  return
+              yield ToolStarted(tool_name=tool_name, args=tool_args, call_id=call_id), None, None
+              try:
+                  tool_result = self.registry.execute_tool(
+          '''
+          new = '''            call_id = uuid.uuid4().hex[:8]
+              yield self._latency_event(
+                  cmd.turn_id,
+                  "tool_proposal",
+                  (time.perf_counter() - model_round_started_at) * 1000,
+                  detail={"round": model_round, "tool": tool_name},
+              ), None, None
+              if not self.turn_guard.begin(cmd.turn_id):
+                  return
+              yield ToolStarted(tool_name=tool_name, args=tool_args, call_id=call_id), None, None
+              tool_started_at = time.perf_counter()
+              try:
+                  tool_result = self.registry.execute_tool(
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            logger.debug(
+                  "host result turn=%s call=%s tool=%s success=%s approval=%s error=%r",
+                  cmd.turn_id,
+                  tool_calls,
+                  tool_name,
+                  tool_result.success,
+                  tool_result.requires_approval,
+                  tool_result.error,
+              )
+              if tool_result.requires_approval:
+          '''
+          new = '''            logger.debug(
+                  "host result turn=%s call=%s tool=%s success=%s approval=%s error=%r",
+                  cmd.turn_id,
+                  tool_calls,
+                  tool_name,
+                  tool_result.success,
+                  tool_result.requires_approval,
+                  tool_result.error,
+              )
+              yield self._latency_event(
+                  cmd.turn_id,
+                  "tool_preflight" if tool_result.requires_approval else "tool_execution",
+                  (time.perf_counter() - tool_started_at) * 1000,
+                  detail={"tool": tool_name, "requires_approval": bool(tool_result.requires_approval)},
+              ), None, None
+              if tool_result.requires_approval:
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            # 1. Semantic Filter
+              task, plan, filter_res, sf_client, ctx_profile, agent_addressed = self._run_semantic_filter(cmd)
+          '''
+          new = '''            # 1. Semantic Filter
+              semantic_started_at = time.perf_counter()
+              task, plan, filter_res, sf_client, ctx_profile, agent_addressed = self._run_semantic_filter(cmd)
+              yield self._latency_event(
+                  cmd.turn_id,
+                  "semantic",
+                  (time.perf_counter() - semantic_started_at) * 1000,
+                  elapsed_ms=(time.time() - turn_started_at) * 1000,
+                  detail={"source": str(getattr(filter_res, "source", ""))},
+              )
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            context_map_str, explicit_str, agents_str, skills_str, context_blocks, explicit_items, build_stats, needs_project_context = self._build_context(
+                  cmd, task, plan, exe_profile, sf_client
+              )
+          '''
+          new = '''            context_started_at = time.perf_counter()
+              context_map_str, explicit_str, agents_str, skills_str, context_blocks, explicit_items, build_stats, needs_project_context = self._build_context(
+                  cmd, task, plan, exe_profile, sf_client
+              )
+              yield self._latency_event(
+                  cmd.turn_id,
+                  "context_retrieval",
+                  (time.perf_counter() - context_started_at) * 1000,
+                  elapsed_ms=(time.time() - turn_started_at) * 1000,
+                  detail={"selected": len(context_blocks), "explicit": len(explicit_items)},
+              )
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        if self._args_digest(pa.normalized_args) != pa.source_response_sha256:
+              yield TurnFailed(error="Pending action source integrity check failed.")
+              return
+
+              from kitt.security.mutation_preconditions import validate_preconditions
+          '''
+          new = '''        if self._args_digest(pa.normalized_args) != pa.source_response_sha256:
+              yield TurnFailed(error="Pending action source integrity check failed.")
+              return
+
+              yield self._latency_event(
+                  turn_id,
+                  "approval_wait",
+                  (time.time() - pa.created_at) * 1000,
+                  detail={"tool": pa.tool_name},
+              )
+
+              from kitt.security.mutation_preconditions import validate_preconditions
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        consume_failed = False
+              edit_result = None
+              try:
+          '''
+          new = '''        consume_failed = False
+              edit_result = None
+              approved_tool_started_at = time.perf_counter()
+              try:
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        finally:
+              self.turn_guard.end(turn_id)
+
+              if consume_failed:
+          '''
+          new = '''        finally:
+              self.turn_guard.end(turn_id)
+
+              yield self._latency_event(
+                  turn_id,
+                  "tool_execution",
+                  (time.perf_counter() - approved_tool_started_at) * 1000,
+                  detail={"tool": pa.tool_name, "approved": True},
+              )
+
+              if consume_failed:
+          '''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+          Path('tests/test_turn_latency_telemetry.py').write_text('''import time\nimport unittest\nfrom types import SimpleNamespace\n\nfrom kitt.core.turn_events import LatencyRecorded\nfrom kitt.core.turn_processor import TurnProcessor\n\n\nclass _StreamingClient:\n    profile = SimpleNamespace(model="chatgpt-web")\n\n    def chat_stream(self, messages, **kwargs):\n        yield "hello"\n\n\nclass _Harness:\n    reasoning_effort = 50\n    _clean_visible_text = staticmethod(TurnProcessor._clean_visible_text)\n\n    def _cancel_requested(self, turn_id):\n        return False\n\n    def _emit(self, *args, **kwargs):\n        pass\n\n    _latency_event = TurnProcessor._latency_event\n\n\nclass TestTurnLatencyTelemetry(unittest.TestCase):\n    def test_stream_emits_ttft_metric_before_content_completion(self):\n        events = list(TurnProcessor._stream_execution_response(\n            _Harness(), _StreamingClient(), [{"role": "user", "content": "hi"}],\n            "system", turn_id="turn-1", started_at=time.time(), session_key="conv-1"\n        ))\n        timing = [event for _, event in events if isinstance(event, LatencyRecorded)]\n        self.assertTrue(any(event.phase == "model_ttft" for event in timing))\n        self.assertTrue(all(event.duration_ms >= 0 for event in timing))\n\n    def test_latency_event_preserves_structured_phase_details(self):\n        event = TurnProcessor._latency_event(\n            _Harness(), "turn-2", "context_retrieval", 12.345, elapsed_ms=20.0,\n            detail={"selected": 3}\n        )\n        self.assertEqual(event.phase, "context_retrieval")\n        self.assertEqual(event.detail["selected"], 3)\n        self.assertEqual(event.duration_ms, 12.35)\n\n\nif __name__ == "__main__":\n    unittest.main()\n''')
+          PY
+      - name: Validate telemetry
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e '.[dev]'
+          python -m compileall -q kitt tests
+          python -m pytest -q tests/test_turn_latency_telemetry.py tests/test_reverse_proxy_fast_path.py tests/test_arun_turn_approval_lifecycle.py tests/test_e2e_pipeline.py tests/test_prime_runtime.py tests/test_safe_python.py
+      - name: Commit implementation
+        run: |
+          rm .github/workflows/one-shot-turn-latency-telemetry.yml
+          git config user.name 'kitt-telemetry-bot'
+          git config user.email 'kitt-telemetry-bot@users.noreply.github.com'
+          git add kitt/core/turn_events.py kitt/core/turn_processor.py tests/test_turn_latency_telemetry.py .github/workflows/one-shot-turn-latency-telemetry.yml
+          git commit -m 'perf(metrics): instrument turn latency phases'
+          git push origin HEAD:perf/turn-latency-telemetry
