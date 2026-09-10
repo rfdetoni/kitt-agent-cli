@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  source-fallback:
+  portable:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,42 +18,53 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build universal fallback wheel
+      - name: Build universal Agent wheel
         run: |
           python -m pip install -U pip build
-          python -m build --wheel --outdir dist-fallback
+          python -m build --wheel --outdir dist-agent
       - name: Install without Rust
         run: |
-          python -m pip install --force-reinstall dist-fallback/*.whl
+          python -m pip install --force-reinstall dist-agent/*.whl
           kitt --help >/dev/null
-          python -c "from kitt.native.bridge import NativeCodeEngine; e=NativeCodeEngine('.'); print(e.status.backend)"
+          python -c "from kitt.native.bridge import NativeCodeEngine; e=NativeCodeEngine('.'); assert e.status.backend == 'python', e.status; print(e.status)"
 
-  native:
+  toolbox-native-composition:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-13, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Agent
+        uses: actions/checkout@v4
         with:
+          path: agent
+          persist-credentials: false
+      - name: Checkout native toolbox
+        uses: actions/checkout@v4
+        with:
+          repository: rfdetoni/kitt-toolbox
+          ref: e81e8cb944b8fc1dedb78a6c60a1c6c8e9a3370e
+          path: toolbox
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build native wheel
-        run: |
-          python -m pip install -U pip maturin
-          python packaging/build_native_release.py --out dist-native
-      - name: Install and require Rust backend
+      - name: Build and install Agent plus toolbox native wheel
         shell: bash
         run: |
-          python -m pip install --force-reinstall dist-native/*.whl
+          set -euo pipefail
+          python -m pip install -U pip build maturin
+          python -m build --wheel --outdir agent-dist agent
+          python -m pip install --force-reinstall agent-dist/*.whl
+          python toolbox/packaging/build_native_release.py --out native-dist
+          python -m pip install --force-reinstall native-dist/*.whl
           kitt --help >/dev/null
           python - <<'PY'
           from kitt.native.bridge import NativeCodeEngine
+          import kitt_native
           engine = NativeCodeEngine('.')
           assert engine.status.backend == 'rust', engine.status
-          print(engine.status)
+          print(kitt_native.ENGINE_VERSION, engine.status)
           PY
