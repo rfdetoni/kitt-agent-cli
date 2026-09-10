@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List
@@ -31,6 +32,11 @@ IGNORED_EXTS = {
     ".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe", ".bin", ".zip",
     ".tar", ".gz", ".png", ".jpg", ".pdf",
 }
+# WorkspaceFileSystem.atomic_write stages payloads as
+# ``.<target>.<16-hex>.tmp`` in the destination directory. They are an
+# implementation detail, not repository content. Indexing them can also race
+# the final rename on Windows where an open reader may block os.replace().
+_ATOMIC_WRITE_TEMP_RE = re.compile(r"^\..+\.[0-9a-f]{16}\.tmp$")
 
 
 class RepositoryScanner:
@@ -54,8 +60,11 @@ class RepositoryScanner:
         return patterns
 
     def _is_ignored(self, rel_path: str) -> bool:
-        parts = Path(rel_path).parts
+        path = Path(rel_path)
+        parts = path.parts
         if any(part in IGNORED_DIRS for part in parts):
+            return True
+        if _ATOMIC_WRITE_TEMP_RE.fullmatch(path.name):
             return True
         return any(
             fnmatch.fnmatch(rel_path, pattern)
