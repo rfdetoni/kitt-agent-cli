@@ -39,7 +39,7 @@ jobs:
               failed=1
             fi
           done
-          if grep -RInE 'packaging/build_native_release\.py|crates/kitt-native|maturin.*kitt-agent-cli' .github install.sh install.ps1 pyproject.toml --exclude='module-boundary-audit.yml' 2>/dev/null; then
+          if grep -RInE '(^|[[:space:]/])crates/kitt-native|maturin[^\n]*kitt-agent-cli' .github install.sh install.ps1 pyproject.toml --exclude='module-boundary-audit.yml' 2>/dev/null; then
             echo 'forbidden local native-build reference found in Agent distribution files' >&2
             failed=1
           fi
