@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
+import math
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any, Iterable
+
+from kitt.tools.process_runner import ProcessRunner
 
 
 class SemgrepUnavailable(RuntimeError):
@@ -83,29 +84,29 @@ class SemgrepAdapter:
             config.relative_to(self.root).as_posix(),
             *relative_targets,
         ]
-        env = dict(os.environ)
-        env.update({"SEMGREP_SEND_METRICS": "off", "NO_COLOR": "1", "CLICOLOR": "0"})
-        completed = subprocess.run(
+        capture_limit = max(64 * 1024, min(int(max_output_bytes), 16 * 1024 * 1024))
+        runner = ProcessRunner(str(self.root), max_output_bytes=capture_limit + 32_768)
+        completed = runner.run(
             command,
-            cwd=self.root,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=False,
-            timeout=max(1.0, min(float(timeout_seconds), 600.0)),
-            check=False,
-            env=env,
+            timeout_seconds=max(1, min(math.ceil(float(timeout_seconds)), 600)),
+            env={"SEMGREP_SEND_METRICS": "off", "NO_COLOR": "1", "CLICOLOR": "0"},
         )
-        cap = max(64 * 1024, min(int(max_output_bytes), 16 * 1024 * 1024))
-        raw = completed.stdout[:cap]
-        stderr = completed.stderr[:32_768].decode("utf-8", "replace")
-        if not raw:
+        stderr = completed.stderr[:32_768]
+        if completed.timed_out:
+            raise RuntimeError("Semgrep timed out")
+        if completed.cancelled:
+            raise RuntimeError("Semgrep was cancelled")
+        if not completed.stdout:
             if completed.returncode != 0:
                 raise RuntimeError(f"Semgrep failed ({completed.returncode}): {stderr[:2000]}")
             payload: dict[str, Any] = {}
         else:
+            if completed.stdout_total_bytes > len(completed.stdout.encode("utf-8")):
+                raise RuntimeError(
+                    f"Semgrep output exceeded the {capture_limit}-byte capture limit"
+                )
             try:
-                decoded = json.loads(raw.decode("utf-8", "replace"))
+                decoded = json.loads(completed.stdout)
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f"Semgrep returned invalid JSON: {stderr[:1000]}") from exc
             payload = decoded if isinstance(decoded, dict) else {"results": decoded}
@@ -121,6 +122,6 @@ class SemgrepAdapter:
             "errors": errors[:100] if isinstance(errors, list) else [],
             "returned": len(bounded),
             "total_findings": len(findings),
-            "truncated": len(findings) > max_findings or len(completed.stdout) > len(raw),
+            "truncated": len(findings) > max_findings or completed.truncated,
             "exit_code": completed.returncode,
         }
