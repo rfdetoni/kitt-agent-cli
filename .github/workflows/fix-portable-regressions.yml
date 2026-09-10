@@ -40,6 +40,11 @@ jobs:
               'self.max_total_chars = max(256, min(int(max_total_chars), 128000))',
           )
           replace_once(
+              'kitt/skills/loader.py',
+              '''        scored.sort(key=lambda item: (-item[0], item[1]))\n        selected: list[tuple[int, str]] = []\n        used = 0\n        for _, index, text in scored:\n            if used >= budget:\n                break\n            remaining = budget - used\n            if remaining < 128:\n                break\n            piece = text[:remaining]\n            selected.append((index, piece))\n            used += len(piece) + 2\n        selected.sort(key=lambda item: item[0])\n\n        header = (\n            f"---\\nname: {getattr(skill, 'name', 'unknown')}\\n"\n            f"description: {getattr(skill, 'description', '')}\\n"\n            "lazy_excerpt: true\\n---\\n"\n        )\n        body = "\\n\\n".join(text for _, text in selected)\n        return (header + body)[:budget]\n''',
+              '''        scored.sort(key=lambda item: (-item[0], item[1]))\n        header = (\n            f"---\\nname: {getattr(skill, 'name', 'unknown')}\\n"\n            f"description: {getattr(skill, 'description', '')}\\n"\n            "lazy_excerpt: true\\n---\\n"\n        )\n        body_budget = max(0, budget - len(header))\n        selected: list[tuple[int, str]] = []\n        used = 0\n        for _, index, text in scored:\n            if used >= body_budget:\n                break\n            separator_cost = 2 if selected else 0\n            remaining = body_budget - used - separator_cost\n            if remaining < 128:\n                break\n            piece = text[:remaining]\n            selected.append((index, piece))\n            used += len(piece) + separator_cost\n        selected.sort(key=lambda item: item[0])\n\n        body = "\\n\\n".join(text for _, text in selected)\n        return header + body\n''',
+          )
+          replace_once(
               'kitt/native/fallback.py',
               '''def symbols_in_file(root: Path, rel: str) -> list[dict[str, Any]]:\n    path = (root / rel).resolve()\n    if root not in path.parents and path != root:\n        raise PermissionError("path escapes repository root")\n    text = path.read_text(encoding="utf-8", errors="replace")\n''',
               '''def symbols_in_file(root: Path, rel: str) -> list[dict[str, Any]]:\n    path = (root / rel).resolve()\n    if root not in path.parents and path != root:\n        raise PermissionError("path escapes repository root")\n    # Preserve physical newlines so AST-derived UTF-8 byte offsets stay aligned\n    # with the raw bytes later sliced by read_symbol/replace_symbol on Windows.\n    text = path.read_bytes().decode("utf-8", errors="replace")\n''',
@@ -47,10 +52,9 @@ jobs:
 
           finalizer = Path('.github/workflows/finalize-portable-boundary.yml')
           text = finalizer.read_text(encoding='utf-8')
-          marker = '# rerun-after-portable-regression-fixes\n'
+          marker = '# rerun-after-portable-regression-fixes-v2\n'
           if marker not in text:
               finalizer.write_text(text + '\n' + marker, encoding='utf-8')
-
           Path('.github/workflows/fix-portable-regressions.yml').unlink()
           PY
       - name: Focused regression gate
