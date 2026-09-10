@@ -100,6 +100,21 @@ def detect_chat_limit_message(text: str) -> Optional[str]:
     return None
 
 
+def _reverse_proxy_identity(profile) -> Optional[tuple[str, str]]:
+    backend = str(getattr(profile, "backend", "") or "").strip().lower()
+    protocol = str(getattr(profile, "protocol", "") or "").strip().lower()
+    if backend not in {"kitt-reverse-proxy", "kitt-proxy"} and protocol != "kitt-reverse-proxy":
+        return None
+    base_url = str(getattr(profile, "base_url", "") or "http://127.0.0.1:3000").strip().rstrip("/")
+    credential = str(getattr(profile, "credential_ref", "") or getattr(profile, "api_key", "") or "")
+    return base_url, credential
+
+
+def _same_reverse_proxy_endpoint(left, right) -> bool:
+    left_identity = _reverse_proxy_identity(left)
+    return left_identity is not None and left_identity == _reverse_proxy_identity(right)
+
+
 
 class TurnProcessor:
     """Decoupled core turn processing engine for K.I.T.T."""
@@ -705,13 +720,22 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
     def _run_semantic_filter(self, cmd: TurnCommand) -> tuple:
         ctx_profile_name, ctx_profile = self.router.resolve_profile_for_task("context-gather")
+        _, execution_profile = self.router.resolve_profile_for_task("code-generation")
+        shared_reverse_proxy = (
+            self.context_client is None
+            and self.execution_client is None
+            and _same_reverse_proxy_endpoint(ctx_profile, execution_profile)
+        )
         if ctx_profile.max_output_tokens < 1024:
             ctx_profile = replace(ctx_profile, max_output_tokens=1024)
-        sf_client = self.context_client or LLMClient(ctx_profile)
+        sf_client = self.context_client
         semantic_filter = SemanticFilter(context_profile=ctx_profile, llm_client=sf_client)
         filter_res = semantic_filter.filter_and_plan(
-            cmd.prompt, session_key=cmd.conversation_id
+            cmd.prompt,
+            session_key=cmd.conversation_id,
+            deterministic_only=shared_reverse_proxy,
         )
+        sf_client = semantic_filter.llm_client
         task, plan = filter_res.task, filter_res.plan
         agent_addressed = self._addresses_kitt(cmd.prompt)
         if cmd.mode == "plan":
@@ -797,10 +821,13 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 f"Repository map:\n{context_map_str}" if context_map_str else "",
                 f"Source excerpts:\n{sources}" if sources else "",
             ) if part)
-            context_map_str = self._summarize_project_context(
-                sf_client, cmd.prompt, context_map_str,
-                session_key=cmd.conversation_id,
-            )
+            # A deterministic bypass must remain LLM-free; otherwise the context
+            # summarizer would reopen the reverse-proxy chat we deliberately skipped.
+            if filter_res.source != "DETERMINISTIC_BYPASS" and sf_client is not None:
+                context_map_str = self._summarize_project_context(
+                    sf_client, cmd.prompt, context_map_str,
+                    session_key=cmd.conversation_id,
+                )
 
         working_context = self.working_set.context(cmd.conversation_id)
         if working_context:

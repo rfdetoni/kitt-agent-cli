@@ -89,7 +89,19 @@ class LLMClient:
             max_workers=2,
             thread_name_prefix="llm_client_worker",
         )
-        self.retry_policy = retry_policy or RetryPolicy()
+        if retry_policy is not None:
+            self.retry_policy = retry_policy
+        else:
+            backend = (profile.backend or "").strip().lower()
+            protocol = (profile.protocol or "").strip().lower()
+            if backend in {"kitt-reverse-proxy", "kitt-proxy"} or protocol == "kitt-reverse-proxy":
+                self.retry_policy = RetryPolicy(RetryConfig(
+                    max_retries=2,
+                    base_delay_ms=200,
+                    max_delay_ms=1500,
+                ))
+            else:
+                self.retry_policy = RetryPolicy()
         self.registry = registry or ProviderRegistry()
         self.auth_service = auth_service or self.registry.auth_service
         self.endpoint_policy = (
