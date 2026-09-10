@@ -9,24 +9,36 @@ on:
 permissions:
   contents: read
 
+env:
+  ASSISTANT_RUNTIME_REF: ce36ce4483c59fa2a46e74af84130a13bed08d5b
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Agent
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout validated Assistant runtime
+        uses: actions/checkout@v4
+        with:
+          repository: rfdetoni/kitt-assistant
+          ref: ${{ env.ASSISTANT_RUNTIME_REF }}
+          path: assistant-source
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Test portable Agent control plane
+      - name: Test portable Agent control plane with companion runtime
         run: |
           python -m pip install -U pip
           python -m pip install -e '.[dev]'
+          python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
           python -m pytest -q
           python packaging/verify_cleanroom.py
-          python -m compileall -q kitt
+          python -m compileall -q kitt assistant-source/packages/kitt-assistant-runtime/kitt
 
   universal:
     needs: verify
@@ -42,7 +54,7 @@ jobs:
         run: |
           python -m pip install -U pip build
           python -m build --outdir dist
-      - name: Smoke portable wheel
+      - name: Smoke portable control-plane wheel without companion packages
         run: |
           python -m venv smoke
           smoke/bin/python -m pip install dist/*.whl
