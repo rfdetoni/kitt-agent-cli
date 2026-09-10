@@ -101,12 +101,13 @@ class KittRuntime:
 
         config = config or RuntimeConfig.from_env()
         execution_root = canonical_workspace_path(root_dir)
-        workspace_root = canonical_workspace_path(workspace_root_dir or root_dir)
-        state_root = (
-            canonical_workspace_path(state_root_dir)
-            if state_root_dir
-            else str(Path.home().resolve(strict=False))
+        # ``state_root_dir`` is retained for the child-worker protocol: it carries
+        # the logical parent workspace when execution happens in a temporary
+        # worktree. Persistent files themselves are always anchored to HOME.
+        workspace_root = canonical_workspace_path(
+            workspace_root_dir or state_root_dir or root_dir
         )
+        state_root = str(Path.home().resolve(strict=False))
         ephemeral = config.ephemeral
         in_memory = not config.history_enabled
         persistence_enabled = not ephemeral
@@ -167,7 +168,7 @@ class KittRuntime:
             database,
             inline_limit=config.artifact_inline_limit,
             max_artifact_bytes=config.max_artifact_bytes,
-            page_bytes=config.artifact_page_bytes,
+            page_bytes=config.page_bytes if hasattr(config, "page_bytes") else config.artifact_page_bytes,
             ephemeral=ephemeral,
         )
         metrics = MetricsCollector(history.repo)
@@ -193,7 +194,7 @@ class KittRuntime:
             execution_root,
             ChildRepository(database),
             artifacts,
-            state_root_dir=state_root,
+            state_root_dir=workspace_root,
             max_children=config.max_children,
             max_depth=config.max_child_depth,
             workspace_id=identity.id,
@@ -366,11 +367,9 @@ class KittRuntime:
                 raise RuntimeError("Cannot start KittRuntime while it is closing")
             if self._started:
                 return
-            self._lifecycle_loop = asyncio.get_running_loop()
+            self._lifecycle_loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
 
         if self.config.frontend_only:
-            # UI facade only: database/history/config objects remain available,
-            # but daemon is the sole owner of schedulers, extensions and tools.
             with self._close_lock:
                 self._started = True
             return
@@ -453,11 +452,7 @@ class KittRuntime:
             ("metrics", None, getattr(self.metrics, "close", None)),
             ("artifacts", None, getattr(self.artifacts, "close", None)),
             ("events", None, getattr(self.events, "close", None)),
-            (
-                "repository_index",
-                None,
-                getattr(self.repository_index, "close", None),
-            ),
+            ("repository_index", None, getattr(self.repository_index, "close", None)),
             ("database", None, getattr(self.database, "close", None)),
         ):
             try:
