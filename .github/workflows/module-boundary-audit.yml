@@ -1,23 +1,47 @@
 name: module-boundary-audit
+
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/module-boundary-audit.yml']
+  pull_request:
+
 permissions:
   contents: read
+
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { persist-credentials: false }
-      - name: Inventory cross-module imports
+        with:
+          persist-credentials: false
+      - name: Enforce Agent ownership boundary
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== daemon/remote references outside owned directories ==='
-          grep -RInE '(^|[[:space:]])(from|import)[[:space:]]+kitt\.(daemon|remote)' kitt tests --include='*.py' | grep -vE '^kitt/(daemon|remote)/' || true
-          echo '=== extensions references outside extension directory ==='
-          grep -RInE '(^|[[:space:]])(from|import)[[:space:]]+kitt\.extensions' kitt tests --include='*.py' | grep -v '^kitt/extensions/' || true
-          echo '=== integrations references outside integrations directory ==='
-          grep -RInE '(^|[[:space:]])(from|import)[[:space:]]+kitt\.integrations' kitt tests --include='*.py' | grep -v '^kitt/integrations/' || true
+          forbidden=(
+            crates
+            Cargo.toml
+            Cargo.lock
+            rust-toolchain.toml
+            .cargo/config.toml
+            packaging/build_native_release.py
+            packaging/pyproject.maturin.toml
+            kitt/daemon
+            kitt/remote
+            kitt/evolution
+            kitt/evals
+          )
+          failed=0
+          for path in "${forbidden[@]}"; do
+            if [[ -e "$path" ]]; then
+              echo "forbidden Agent-owned path reintroduced: $path" >&2
+              failed=1
+            fi
+          done
+          if grep -RInE 'packaging/build_native_release\.py|crates/kitt-native|maturin.*kitt-agent-cli' .github install.sh install.ps1 pyproject.toml --exclude='module-boundary-audit.yml' 2>/dev/null; then
+            echo 'forbidden local native-build reference found in Agent distribution files' >&2
+            failed=1
+          fi
+          test "$failed" -eq 0
+          echo 'Agent module ownership boundary: OK'
