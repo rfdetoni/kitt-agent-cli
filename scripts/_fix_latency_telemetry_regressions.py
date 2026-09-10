@@ -11,6 +11,17 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 path = Path("kitt/core/turn_processor.py")
 text = path.read_text(encoding="utf-8")
 
+old = '''    def _emit(self, event_name: str, payload: Dict[str, Any]):
+        if self.event_callback and not self._closed:
+            self.event_callback(event_name, payload)
+'''
+new = '''    def _emit(self, event_name: str, payload: Dict[str, Any]):
+        callback = getattr(self, "event_callback", None)
+        if callback and not getattr(self, "_closed", False):
+            callback(event_name, payload)
+'''
+text = replace_once(text, old, new, "partial-object safe event emitter")
+
 old = '''        logger.info(
             "latency turn=%s phase=%s duration_ms=%.2f elapsed_ms=%.2f detail=%s",
             turn_id, phase, payload["duration_ms"], payload["elapsed_ms"], payload["detail"],
@@ -22,14 +33,12 @@ new = '''        logger.info(
             "latency turn=%s phase=%s duration_ms=%.2f elapsed_ms=%.2f detail=%s",
             turn_id, phase, payload["duration_ms"], payload["elapsed_ms"], payload["detail"],
         )
-        callback = getattr(self, "event_callback", None)
-        if callback and not getattr(self, "_closed", False):
-            try:
-                callback("LatencyRecorded", payload)
-            except Exception:
-                # Observability is strictly fail-open: a broken metrics consumer
-                # must never alter tool, approval, cancellation or response flow.
-                logger.debug("latency callback failed", exc_info=True)
+        try:
+            self._emit("LatencyRecorded", payload)
+        except Exception:
+            # Observability is strictly fail-open: a broken metrics consumer
+            # must never alter tool, approval, cancellation or response flow.
+            logger.debug("latency callback failed", exc_info=True)
         return payload
 '''
 text = replace_once(text, old, new, "fail-open latency callback")
