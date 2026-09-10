@@ -52,7 +52,7 @@ jobs:
 
           finalizer = Path('.github/workflows/finalize-portable-boundary.yml')
           text = finalizer.read_text(encoding='utf-8')
-          marker = '# rerun-after-portable-regression-fixes-v2\n'
+          marker = '# rerun-after-portable-regression-fixes-v3\n'
           if marker not in text:
               finalizer.write_text(text + '\n' + marker, encoding='utf-8')
           Path('.github/workflows/fix-portable-regressions.yml').unlink()
@@ -68,18 +68,23 @@ jobs:
           import ast
           import tempfile
           from pathlib import Path
-          from kitt.native.fallback import PythonFallbackEngine
+          from kitt.native.bridge import NativeCodeEngine
 
           with tempfile.TemporaryDirectory() as td:
               root = Path(td)
               path = root / 'sample.py'
               path.write_bytes(b'def first():\r\n    return 1\r\n\r\ndef second():\r\n    return 2\r\n')
-              engine = PythonFallbackEngine(root)
-              symbols = engine.symbols_in_file('sample.py')
-              second = next(s for s in symbols if s.name == 'second')
-              result = engine.replace_symbol(second.symbol_id, 'def second():\n    return 3\n', validate_syntax=True)
-              assert result.ok, result
+              engine = NativeCodeEngine(str(root))
+              second = next(s for s in engine.find_symbols('second') if s['name'] == 'second')
+              current = engine.read_symbol(second['id'])
+              result = engine.replace_symbol(
+                  second['id'],
+                  'def second():\n    return 3\n',
+                  expected_hash=current['symbol']['source_hash'],
+              )
+              assert result['changed'], result
               ast.parse(path.read_text(encoding='utf-8'))
+              assert 'return 3' in path.read_text(encoding='utf-8')
           print('CRLF symbol replacement: ok')
           PY
       - name: Commit fixes and retrigger finalizer
