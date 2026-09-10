@@ -5,17 +5,11 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from kitt.core.agent_runtime import (
-    DurableTurnJournal,
-    _get_turn,
-    _routing_feedback,
-    adaptive_retrieval_ratio,
-)
+from kitt.core.agent_runtime import DurableTurnJournal, _turn, adaptive_retrieval_ratio
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.session_state import SessionState
 from kitt.core.turn_command import TurnCommand
 from kitt.history.database import HistoryDatabase
-from kitt.history.migrations import MigrationRunner
 from kitt.history.repository import HistoryRepository, resolve_workspace_identity
 from kitt.metrics.admission import AgentAdmissionGate, AgentScorecard
 from kitt.runtime.programmatic_flow import _transform
@@ -57,7 +51,6 @@ class AgentRuntimePrinciplesTests(unittest.TestCase):
     def test_turn_journal_persists_operational_state_in_canonical_turn(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = HistoryDatabase(tmp, in_memory=True)
-            MigrationRunner().migrate(db.connection)
             repo = HistoryRepository(db)
             identity = resolve_workspace_identity(db, tmp)
             conv = repo.create_conversation(identity.id, "journal")
@@ -73,10 +66,10 @@ class AgentRuntimePrinciplesTests(unittest.TestCase):
             journal = DurableTurnJournal(processor)
             journal.begin(cmd)
             journal.state(cmd, "RETRIEVING")
-            row = _get_turn(processor, cmd.turn_id)
+            row = _turn(processor, cmd.turn_id)
             self.assertEqual(row["state"], "RETRIEVING")
             journal.state(cmd, "COMPLETED")
-            row = _get_turn(processor, cmd.turn_id)
+            row = _turn(processor, cmd.turn_id)
             self.assertEqual(row["state"], "COMPLETED")
             self.assertIsNotNone(row["completed_at"])
             db.close()
