@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from kitt.core.runtime import KittRuntime
 from kitt.core.workspace_identity import WorkspaceIdentity
+from kitt.security.private_state import workspace_key
 
 
 class _StopRuntimeBuild(RuntimeError):
@@ -14,7 +15,7 @@ class _StopRuntimeBuild(RuntimeError):
 
 
 class StateHomeTests(unittest.TestCase):
-    def test_runtime_defaults_state_root_to_user_home_not_workspace(self) -> None:
+    def test_runtime_uses_workspace_database_without_checkout_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             home = root / "home"
@@ -23,24 +24,24 @@ class StateHomeTests(unittest.TestCase):
             workspace.mkdir(parents=True)
             captured: dict[str, Path] = {}
 
-            def stop_after_state_root(root_dir, *args, **kwargs):
-                captured["root"] = Path(root_dir)
+            def stop_after_workspace_database(workspace_root, *args, **kwargs):
+                captured["root"] = Path(workspace_root)
                 raise _StopRuntimeBuild
 
             with (
                 patch("kitt.core.runtime.Path.home", return_value=home),
                 patch(
-                    "kitt.core.runtime.HistoryDatabase",
-                    side_effect=stop_after_state_root,
+                    "kitt.core.runtime.WorkspaceHistoryDatabase",
+                    side_effect=stop_after_workspace_database,
                 ),
                 self.assertRaises(_StopRuntimeBuild),
             ):
                 KittRuntime.build(str(workspace))
 
-            self.assertEqual(captured["root"], home.resolve())
+            self.assertEqual(captured["root"], workspace.resolve())
             self.assertFalse((workspace / ".kitt").exists())
 
-    def test_workspace_identity_persists_database_under_home(self) -> None:
+    def test_workspace_identity_persists_database_under_home_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             home = root / "home"
@@ -48,11 +49,19 @@ class StateHomeTests(unittest.TestCase):
             home.mkdir(parents=True)
             workspace.mkdir(parents=True)
 
-            with patch("kitt.core.workspace_identity.Path.home", return_value=home):
+            with patch("kitt.security.private_state.Path.home", return_value=home):
                 identity = WorkspaceIdentity.build(workspace)
 
+            expected_db = (
+                home
+                / ".kitt"
+                / "workspaces"
+                / workspace_key(workspace)
+                / "history"
+                / "history.sqlite3"
+            )
             self.assertEqual(identity.canonical_root, workspace.resolve())
-            self.assertTrue((home / ".kitt" / "history" / "history.sqlite3").is_file())
+            self.assertTrue(expected_db.is_file())
             self.assertFalse((workspace / ".kitt").exists())
 
 
