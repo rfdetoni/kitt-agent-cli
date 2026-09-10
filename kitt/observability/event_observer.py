@@ -5,14 +5,11 @@ from typing import Any
 
 from kitt.security.public_events import sanitize_public_event_payload
 
+_TRUE = {"1", "true", "yes", "on", "enabled"}
+
 
 class OpenTelemetryEventObserver:
-    """Emit sanitized instantaneous KITT event spans to an existing OTel provider.
-
-    KITT never configures an exporter here. If the host application configured
-    an OpenTelemetry SDK/provider, these spans flow through it; otherwise the
-    OpenTelemetry API's no-op provider keeps this path effectively free.
-    """
+    """Emit sanitized instantaneous KITT event spans to an existing OTel provider."""
 
     def __init__(self, tracer: Any):
         self.tracer = tracer
@@ -20,9 +17,7 @@ class OpenTelemetryEventObserver:
     @staticmethod
     def _attributes(event: str, payload: Any) -> dict[str, str | int | float | bool]:
         sanitized = sanitize_public_event_payload(event, payload if isinstance(payload, dict) else {})
-        attrs: dict[str, str | int | float | bool] = {
-            "kitt.event.name": str(event)[:128],
-        }
+        attrs: dict[str, str | int | float | bool] = {"kitt.event.name": str(event)[:128]}
         for key, value in sanitized.items():
             if isinstance(value, bool):
                 attrs[f"kitt.event.{key}"] = value
@@ -38,25 +33,36 @@ class OpenTelemetryEventObserver:
                 for key, value in self._attributes(event, payload).items():
                     span.set_attribute(key, value)
         except Exception:
-            # Observability is deliberately fail-open with respect to telemetry:
-            # it must never take the runtime down or alter tool/model results.
             return
 
     def close(self) -> None:
         return None
 
 
-def build_default_observer() -> OpenTelemetryEventObserver | None:
-    enabled = os.getenv("KITT_OTEL_ENABLED", "").strip().lower() in {
-        "1", "true", "yes", "on", "enabled"
-    }
-    if not enabled:
+def build_default_observer():
+    """Build all explicitly enabled telemetry sinks as one fail-open observer."""
+    otel_enabled = os.getenv("KITT_OTEL_ENABLED", "").strip().lower() in _TRUE
+    langfuse_enabled = os.getenv("KITT_LANGFUSE_ENABLED", "").strip().lower() in _TRUE
+    if not otel_enabled and not langfuse_enabled:
         return None
     try:
         from opentelemetry import trace
     except (ImportError, ModuleNotFoundError):
         return None
+
+    observers: list[Any] = []
     try:
-        return OpenTelemetryEventObserver(trace.get_tracer("kitt.runtime.events"))
+        if otel_enabled:
+            observers.append(OpenTelemetryEventObserver(trace.get_tracer("kitt.runtime.events")))
+        if langfuse_enabled:
+            from kitt.observability.langfuse import LangfuseEventObserver
+            observers.append(LangfuseEventObserver(trace.get_tracer("kitt.langfuse.events")))
     except Exception:
+        pass
+
+    if not observers:
         return None
+    if len(observers) == 1:
+        return observers[0]
+    from kitt.observability.composite import CompositeEventObserver
+    return CompositeEventObserver(observers)
