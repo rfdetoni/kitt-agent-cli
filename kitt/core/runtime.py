@@ -27,6 +27,7 @@ from kitt.history.database import HistoryDatabase
 from kitt.history.repository import HistoryRepository, resolve_workspace_identity
 from kitt.history.service import HistoryService
 from kitt.history.session_tree import SessionTreeRepository
+from kitt.history.workspace_database import WorkspaceHistoryDatabase
 from kitt.index.repository import RepositoryIndex
 from kitt.llm.client import LLMClient
 from kitt.memory.memory_manager import MemoryManager
@@ -90,12 +91,17 @@ class KittRuntime:
 
     @classmethod
     def build(
-        cls, root_dir: str, config: Optional[RuntimeConfig] = None, state_root_dir: Optional[str] = None
+        cls,
+        root_dir: str,
+        config: Optional[RuntimeConfig] = None,
+        state_root_dir: Optional[str] = None,
+        workspace_root_dir: Optional[str] = None,
     ) -> KittRuntime:
         from kitt.core.workspace_identity import canonical_workspace_path
 
         config = config or RuntimeConfig.from_env()
-        canonical_root = canonical_workspace_path(root_dir)
+        execution_root = canonical_workspace_path(root_dir)
+        workspace_root = canonical_workspace_path(workspace_root_dir or root_dir)
         state_root = (
             canonical_workspace_path(state_root_dir)
             if state_root_dir
@@ -104,13 +110,13 @@ class KittRuntime:
         ephemeral = config.ephemeral
         in_memory = not config.history_enabled
         persistence_enabled = not ephemeral
-        database = HistoryDatabase(state_root, in_memory=in_memory)
+        database = WorkspaceHistoryDatabase(workspace_root, in_memory=in_memory)
 
         session_tree = SessionTreeRepository(database)
         history_repo = HistoryRepository(database)
-        identity = resolve_workspace_identity(database, canonical_root)
+        identity = resolve_workspace_identity(database, workspace_root)
         history = HistoryService(
-            canonical_root,
+            workspace_root,
             db=database,
             repo=history_repo,
             tree=session_tree,
@@ -120,19 +126,19 @@ class KittRuntime:
         )
 
         autonomy_store = AutonomyStore(
-            canonical_root, persistence_enabled=persistence_enabled
+            workspace_root, persistence_enabled=persistence_enabled
         )
         approval = ApprovalManager(
             db=database, ttl_seconds=config.approval_ttl_seconds
         )
         policy = PolicyEngine(
-            canonical_root,
+            execution_root,
             autonomy=autonomy_store.get(),
             approval_manager=approval,
         )
 
         repository_index = RepositoryIndex(
-            canonical_root,
+            execution_root,
             in_memory=in_memory,
             max_files=config.max_index_files,
             max_file_bytes=config.max_index_file_bytes,
@@ -146,13 +152,13 @@ class KittRuntime:
             state_root, persistence_enabled=persistence_enabled
         )
 
-        registry = ToolRegistry(canonical_root, context_engine=context_engine)
+        registry = ToolRegistry(execution_root, context_engine=context_engine)
         registry.policy = policy
         registry.approval_manager = approval
         registry.runtime_config = config
 
         skills = SkillManager(
-            canonical_root, persistence_enabled=persistence_enabled
+            execution_root, persistence_enabled=persistence_enabled
         )
         skills.executable_enabled = config.executable_skills_enabled
 
@@ -184,7 +190,7 @@ class KittRuntime:
         registry.event_bus = events
 
         children = ChildAgentManager(
-            canonical_root,
+            execution_root,
             ChildRepository(database),
             artifacts,
             state_root_dir=state_root,
@@ -208,7 +214,7 @@ class KittRuntime:
         # the Python fallback preserves behavior on unsupported platforms.
         from kitt.native.runtime import NativeSubsystem
         native = NativeSubsystem.build(
-            execution_root=canonical_root,
+            execution_root=execution_root,
             state_root=state_root,
             db=database,
             workspace_id=identity.id,
@@ -237,10 +243,10 @@ class KittRuntime:
             mode=getattr(config, "privacy_mode", "hybrid_redacted")
         )
         sensitive_scanner = SensitiveDataScanner()
-        path_policy = PathPolicy(canonical_root)
+        path_policy = PathPolicy(execution_root)
         network_policy = NetworkPolicy()
 
-        task_router = TaskRouter(root_dir=canonical_root)
+        task_router = TaskRouter(root_dir=execution_root)
         _, context_profile = task_router.resolve_profile_for_task("context-gather")
         dream_llm = LLMClient(context_profile)
         dream_service = DreamingService(
@@ -255,7 +261,7 @@ class KittRuntime:
         )
 
         processor = TurnProcessor(
-            canonical_root,
+            execution_root,
             history_service=history,
             registry=registry,
             metrics_collector=metrics,
@@ -308,7 +314,7 @@ class KittRuntime:
         from kitt.extensions.manager import ExtensionManager
 
         extensions = ExtensionManager(
-            workspace_root=canonical_root,
+            workspace_root=execution_root,
             event_bus=events,
             tool_registry=registry,
         )
