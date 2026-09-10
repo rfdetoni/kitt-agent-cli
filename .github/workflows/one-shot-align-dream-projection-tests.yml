@@ -1,0 +1,46 @@
+name: One-shot align dream projection tests
+
+on:
+  push:
+    branches: [perf/turn-latency-telemetry]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Agent
+        uses: actions/checkout@v4
+        with:
+          ref: perf/turn-latency-telemetry
+      - name: Checkout Assistant runtime companion
+        uses: actions/checkout@v4
+        with:
+          repository: rfdetoni/kitt-assistant
+          ref: main
+          path: assistant-source
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Align workspace projection tests
+        run: python scripts/_align_dream_projection_tests.py
+      - name: Validate affected paths
+        run: |
+          git diff --check
+          python -m pip install -U pip
+          python -m pip install -e '.[dev]'
+          python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
+          python -m compileall -q kitt tests assistant-source/packages/kitt-assistant-runtime/kitt
+          python -m pytest -q tests/dreaming/test_prune_and_index.py tests/dreaming/test_transactions_and_security.py tests/dreaming/test_e2e.py tests/test_state_home.py tests/test_turn_latency_telemetry.py tests/test_arun_turn_approval_lifecycle.py tests/test_cancellation_real_stop.py tests/test_cancellation_unblocks_prompt.py
+      - name: Commit fix
+        run: |
+          rm -rf assistant-source
+          rm -f .github/workflows/one-shot-align-dream-projection-tests.yml scripts/_align_dream_projection_tests.py .projection-tests-trigger
+          git config user.name 'kitt-ci-bot'
+          git config user.email 'kitt-ci-bot@users.noreply.github.com'
+          git add -A
+          git commit -m 'test(memory): align projection paths with workspace isolation'
+          git push origin HEAD:perf/turn-latency-telemetry
