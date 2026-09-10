@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python:
     strategy:
