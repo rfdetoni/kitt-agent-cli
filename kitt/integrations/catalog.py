@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
-import subprocess
 from dataclasses import dataclass
 from typing import Iterable, Tuple
+
+from kitt.tools.process_runner import ProcessRunner
 
 
 @dataclass(frozen=True)
@@ -127,7 +128,7 @@ class IntegrationCatalog:
     """
 
     def __init__(self, specs: Iterable[IntegrationSpec] | None = None):
-        self.specs = tuple(specs or _SPECS)
+        self.specs = tuple(_SPECS if specs is None else specs)
 
     def get(self, integration_id: str) -> IntegrationSpec | None:
         wanted = str(integration_id or "").strip().lower()
@@ -145,20 +146,16 @@ class IntegrationCatalog:
         executable = shutil.which(command)
         if not executable:
             return None
+        runner = ProcessRunner(".", max_output_bytes=16 * 1024)
         for flag in ("--version", "-V", "version"):
             try:
-                result = subprocess.run(
-                    [executable, flag],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=2.0,
-                    check=False,
-                )
-            except (OSError, subprocess.SubprocessError):
+                result = runner.run([executable, flag], timeout_seconds=2)
+            except OSError:
                 continue
-            line = (result.stdout or "").strip().splitlines()
+            if result.timed_out or result.cancelled:
+                continue
+            output = result.stdout or result.stderr
+            line = output.strip().splitlines()
             if line:
                 return line[0][:256]
         return None
