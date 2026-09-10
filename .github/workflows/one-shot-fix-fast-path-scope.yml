@@ -1,0 +1,48 @@
+name: One-shot fix fast path scope
+
+on:
+  push:
+    branches: [perf/reverse-proxy-fast-path]
+    paths:
+      - .github/workflows/one-shot-fix-fast-path-scope.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/reverse-proxy-fast-path
+          fetch-depth: 0
+      - name: Repair context summary guard
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('kitt/core/turn_processor.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''            # A deterministic bypass must remain LLM-free; otherwise the context\n            # summarizer would reopen the reverse-proxy chat we deliberately skipped.\n            if filter_res.source != "DETERMINISTIC_BYPASS" and sf_client is not None:\n'''
+          new = '''            # A deterministic bypass leaves sf_client unset; keep the summarizer\n            # LLM-free so it cannot reopen the reverse-proxy chat we deliberately skipped.\n            if sf_client is not None:\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one summary guard, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Validate affected paths
+        shell: bash
+        run: |
+          python -m pip install -q -e '.[dev]'
+          pytest -q tests/test_reverse_proxy_fast_path.py tests/test_e2e_pipeline.py tests/test_prime_runtime.py tests/test_safe_python.py
+          python -m compileall -q kitt tests
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name "kitt-perf-bot"
+          git config user.email "kitt-perf-bot@users.noreply.github.com"
+          git rm .github/workflows/one-shot-fix-fast-path-scope.yml
+          git add kitt/core/turn_processor.py
+          git diff --cached --check
+          git commit -m "fix(proxy): keep deterministic fast path summary local"
+          git push origin HEAD:perf/reverse-proxy-fast-path
