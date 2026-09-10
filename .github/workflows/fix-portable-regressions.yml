@@ -41,8 +41,8 @@ jobs:
           )
           replace_once(
               'kitt/native/fallback.py',
-              'text = path.read_text(encoding="utf-8", errors="replace")',
-              'text = path.read_bytes().decode("utf-8", errors="replace")',
+              '''def symbols_in_file(root: Path, rel: str) -> list[dict[str, Any]]:\n    path = (root / rel).resolve()\n    if root not in path.parents and path != root:\n        raise PermissionError("path escapes repository root")\n    text = path.read_text(encoding="utf-8", errors="replace")\n''',
+              '''def symbols_in_file(root: Path, rel: str) -> list[dict[str, Any]]:\n    path = (root / rel).resolve()\n    if root not in path.parents and path != root:\n        raise PermissionError("path escapes repository root")\n    # Preserve physical newlines so AST-derived UTF-8 byte offsets stay aligned\n    # with the raw bytes later sliced by read_symbol/replace_symbol on Windows.\n    text = path.read_bytes().decode("utf-8", errors="replace")\n''',
           )
 
           finalizer = Path('.github/workflows/finalize-portable-boundary.yml')
