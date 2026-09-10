@@ -1,8 +1,8 @@
 """Private KITT state utilities.
 
 Security-sensitive and user-private runtime state must never derive authority
-from files inside the repository checkout.  State is keyed by canonical
-workspace identity and stored below ~/.kitt/workspaces by default.
+from files inside the repository checkout. State is keyed by canonical
+workspace identity and always stored below ~/.kitt.
 """
 from __future__ import annotations
 
@@ -27,9 +27,8 @@ def _absolute_unresolved(path: str | Path) -> Path:
 
 
 def kitt_home() -> Path:
-    configured = os.environ.get("KITT_HOME")
-    path = _absolute_unresolved(configured or (Path.home() / ".kitt"))
-    return ensure_private_dir(path)
+    """Return the single private-state root, always inside the user's home."""
+    return ensure_private_dir(Path.home() / ".kitt")
 
 
 def _validate_private_dir(path: Path) -> None:
@@ -46,6 +45,22 @@ def _validate_private_dir(path: Path) -> None:
             raise PermissionError(f"Private state directory must not be group/world accessible: {path}")
 
 
+def _secure_private_dir(path: Path) -> None:
+    try:
+        st = path.lstat()
+    except FileNotFoundError as exc:
+        raise PermissionError(f"Private-state component missing: {path}") from exc
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        raise PermissionError(f"Private-state component is not a real directory: {path}")
+    if os.name != "nt":
+        if st.st_uid != os.getuid():
+            raise PermissionError(f"Private-state component owner mismatch: {path}")
+        try:
+            os.chmod(path, 0o700)
+        except OSError as exc:
+            raise PermissionError(f"Unable to secure private-state directory {path}: {exc}") from exc
+
+
 def ensure_private_dir(path: str | Path) -> Path:
     path = _absolute_unresolved(path)
     chain: list[Path] = []
@@ -53,35 +68,18 @@ def ensure_private_dir(path: str | Path) -> Path:
     while not current.exists() and current.parent != current:
         chain.append(current)
         current = current.parent
-    anchor = current
 
     for candidate in reversed(chain):
         parent = candidate.parent
         if parent.is_symlink():
             raise PermissionError(f"Refusing symlink private-state component: {parent}")
         candidate.mkdir(mode=0o700, exist_ok=True)
+        _secure_private_dir(candidate)
 
-    cursor = path
-    secure_chain: list[Path] = []
-    while cursor != anchor:
-        secure_chain.append(cursor)
-        cursor = cursor.parent
-    secure_chain.reverse()
-
-    for candidate in secure_chain:
-        try:
-            st = candidate.lstat()
-        except FileNotFoundError as exc:
-            raise PermissionError(f"Private-state component missing: {candidate}") from exc
-        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-            raise PermissionError(f"Private-state component is not a real directory: {candidate}")
-        if os.name != "nt":
-            if st.st_uid != os.getuid():
-                raise PermissionError(f"Private-state component owner mismatch: {candidate}")
-            try:
-                os.chmod(candidate, 0o700)
-            except OSError as exc:
-                raise PermissionError(f"Unable to secure private-state directory {candidate}: {exc}") from exc
+    # Existing private-state directories may have been created by an older KITT
+    # release (or by mkdir under a permissive umask). Harden an owned real
+    # directory in place instead of failing startup forever.
+    _secure_private_dir(path)
     _validate_private_dir(path)
     return path
 
