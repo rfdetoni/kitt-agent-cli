@@ -1,0 +1,90 @@
+name: fix-portable-regressions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-portable-regressions.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply portable regression fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, got {count}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_once(
+              'kitt/skills/loader.py',
+              'self.max_total_chars = max(2000, min(int(max_total_chars), 128000))',
+              'self.max_total_chars = max(256, min(int(max_total_chars), 128000))',
+          )
+          replace_once(
+              'kitt/native/fallback.py',
+              'text = path.read_text(encoding="utf-8", errors="replace")',
+              'text = path.read_bytes().decode("utf-8", errors="replace")',
+          )
+
+          finalizer = Path('.github/workflows/finalize-portable-boundary.yml')
+          text = finalizer.read_text(encoding='utf-8')
+          marker = '# rerun-after-portable-regression-fixes\n'
+          if marker not in text:
+              finalizer.write_text(text + '\n' + marker, encoding='utf-8')
+
+          Path('.github/workflows/fix-portable-regressions.yml').unlink()
+          PY
+      - name: Focused regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip >/dev/null
+          python -m pip install -e '.[dev]' >/dev/null
+          python -m pytest -q tests/test_lazy_skill_loader.py tests/native/test_fallback_engine.py
+          python - <<'PY'
+          import ast
+          import tempfile
+          from pathlib import Path
+          from kitt.native.fallback import PythonFallbackEngine
+
+          with tempfile.TemporaryDirectory() as td:
+              root = Path(td)
+              path = root / 'sample.py'
+              path.write_bytes(b'def first():\r\n    return 1\r\n\r\ndef second():\r\n    return 2\r\n')
+              engine = PythonFallbackEngine(root)
+              symbols = engine.symbols_in_file('sample.py')
+              second = next(s for s in symbols if s.name == 'second')
+              result = engine.replace_symbol(second.symbol_id, 'def second():\n    return 3\n', validate_syntax=True)
+              assert result.ok, result
+              ast.parse(path.read_text(encoding='utf-8'))
+          print('CRLF symbol replacement: ok')
+          PY
+      - name: Commit fixes and retrigger finalizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'KITT Migration Bot'
+          git config user.email '85571449+rfdetoni@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(portable): enforce skill budget and CRLF-safe symbol offsets'
+          git push origin HEAD:main
