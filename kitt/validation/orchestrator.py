@@ -1,12 +1,13 @@
 """Unified, bounded verification for agent edits.
 
 The orchestrator deliberately composes KITT's existing validators and process
-runner instead of introducing a second validation framework.  It is designed
+runner instead of introducing a second validation framework. It is designed
 for the tool loop: failures are returned to the model as ordinary tool
 failures, allowing the existing loop to repair and revalidate before success.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,7 +15,6 @@ from typing import Any, Iterable
 
 from kitt.tools.build_detector import BuildDetector
 from kitt.validation.post_edit import GateDiagnostic, PostEditValidator
-
 
 _TRUE = {"1", "true", "yes", "on", "enabled"}
 
@@ -31,12 +31,8 @@ class VerificationReport:
         return {
             "ok": self.ok,
             "diagnostics": [
-                {
-                    "path": item.path,
-                    "validator": item.validator,
-                    "ok": item.ok,
-                    "message": item.message,
-                }
+                {"path": item.path, "validator": item.validator, "ok": item.ok,
+                 "message": item.message}
                 for item in self.diagnostics
             ],
             "command": self.command,
@@ -47,8 +43,7 @@ class VerificationReport:
     def failure_message(self) -> str:
         parts = [
             f"{item.path}: {item.validator}: {item.message or 'failed'}"
-            for item in self.diagnostics
-            if not item.ok
+            for item in self.diagnostics if not item.ok
         ]
         if self.command_returncode not in (None, 0):
             parts.append(
@@ -68,19 +63,18 @@ class VerificationOrchestrator:
         self.detector = BuildDetector(str(self.root))
 
     def _targeted_command(self, paths: list[str]) -> list[str] | None:
-        # Prefer paired Python tests; this makes verification useful inside the
-        # repair loop without running an arbitrarily large suite after every edit.
-        python_paths = [Path(p) for p in paths if p.endswith(".py")]
-        paired: list[str] = []
-        for path in python_paths:
-            candidate = self.root / "tests" / f"test_{path.stem}.py"
-            if candidate.is_file():
-                paired.append(str(candidate.relative_to(self.root)))
-        if paired:
-            return ["python3", "-m", "pytest", "-q", *paired]
+        # Prefer paired Python tests, but never create a runtime dependency on
+        # pytest. When pytest is unavailable, syntax gates remain active and
+        # project-wide goal gates can still provide the stronger check.
+        if importlib.util.find_spec("pytest") is not None:
+            paired: list[str] = []
+            for path in (Path(p) for p in paths if p.endswith(".py")):
+                candidate = self.root / "tests" / f"test_{path.stem}.py"
+                if candidate.is_file():
+                    paired.append(str(candidate.relative_to(self.root)))
+            if paired:
+                return ["python3", "-m", "pytest", "-q", *paired]
 
-        # Full project verification is opt-in for per-edit loops. Goal quality
-        # gates still provide mandatory project-wide checks at goal completion.
         if os.getenv("KITT_AGENT_VERIFY_FULL", "").strip().lower() in _TRUE:
             return self.detector.detect_test_command(paths)
         return None
