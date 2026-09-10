@@ -237,23 +237,29 @@ class RepositoryIndex:
                     scanned=len(seen_paths), updated=updated_count, deleted=0
                 )
 
-            if seen_paths:
-                stale = self._conn.execute(
-                    "SELECT file_id, path FROM files WHERE path NOT IN (%s)" % ",".join("?" for _ in seen_paths),
-                    tuple(seen_paths),
+            # Only a complete scan can prove that an indexed file disappeared.
+            # A max-files scan is intentionally partial, so unseen entries must
+            # remain until a later complete scan or an explicit update_paths call.
+            scan_complete = len(files) < self.max_files
+            if scan_complete:
+                indexed_rows = self._conn.execute(
+                    "SELECT file_id, path FROM files"
                 ).fetchall()
+                stale = [row for row in indexed_rows if row["path"] not in seen_paths]
             else:
-                stale = self._conn.execute("SELECT file_id, path FROM files").fetchall()
+                stale = []
+
             for row in stale:
                 self._delete_file_locked(row["file_id"])
-            self._rebuild_reference_edges_locked()
-            self._ensure_fts_consistency_locked()
-            changed = updated_count or len(stale)
+
+            changed = bool(updated_count or stale)
             if changed:
+                self._rebuild_reference_edges_locked()
+                self._ensure_fts_consistency_locked()
                 self._conn.execute(
                     "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
                 )
-            state = "READY" if len(files) < self.max_files else "PARTIAL"
+            state = "READY" if scan_complete else "PARTIAL"
             partial_reason = "" if state == "READY" else f"file limit reached ({self.max_files})"
             self._set_meta_locked("state", state)
             self._set_meta_locked("partial_reason", partial_reason)
