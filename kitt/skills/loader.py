@@ -45,7 +45,8 @@ class ProgressiveSkillLoader:
 
     @staticmethod
     def _content(skill: Any) -> str:
-        skill_path = Path(getattr(skill, "path", Path(".")))
+        raw_path = getattr(skill, "path", None)
+        skill_path = Path(raw_path) if raw_path else Path(".")
         skill_md = skill_path / "SKILL.md"
         if skill_md.exists() and skill_md.is_file() and not skill_md.is_symlink():
             try:
