@@ -1,0 +1,43 @@
+name: One-shot fix latency telemetry
+
+on:
+  push:
+    branches: [perf/turn-latency-telemetry]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/turn-latency-telemetry
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply telemetry regression fix
+        run: python scripts/_fix_latency_telemetry_regressions.py
+      - name: Validate affected paths
+        run: |
+          git diff --check
+          python -m pip install -U pip
+          python -m pip install -e '.[dev]'
+          python -m compileall -q kitt tests
+          python -m pytest -q \
+            tests/test_turn_latency_telemetry.py \
+            tests/regression/test_round2_hardening.py \
+            tests/test_reasoning_effort_toggle.py \
+            tests/test_stream_tag_cleaner.py \
+            tests/test_arun_turn_approval_lifecycle.py \
+            tests/test_cancellation_real_stop.py \
+            tests/test_cancellation_unblocks_prompt.py
+      - name: Commit fix
+        run: |
+          rm -f .github/workflows/one-shot-fix-latency-telemetry.yml scripts/_fix_latency_telemetry_regressions.py .latency-fix-trigger
+          git config user.name 'kitt-telemetry-bot'
+          git config user.email 'kitt-telemetry-bot@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(metrics): keep telemetry fail-open'
+          git push origin HEAD:perf/turn-latency-telemetry
