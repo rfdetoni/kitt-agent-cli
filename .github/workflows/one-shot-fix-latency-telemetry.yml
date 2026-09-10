@@ -11,9 +11,17 @@ jobs:
   fix:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Agent
+        uses: actions/checkout@v4
         with:
           ref: perf/turn-latency-telemetry
+      - name: Checkout Assistant runtime companion
+        uses: actions/checkout@v4
+        with:
+          repository: rfdetoni/kitt-assistant
+          ref: main
+          path: assistant-source
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -24,7 +32,8 @@ jobs:
           git diff --check
           python -m pip install -U pip
           python -m pip install -e '.[dev]'
-          python -m compileall -q kitt tests
+          python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
+          python -m compileall -q kitt tests assistant-source/packages/kitt-assistant-runtime/kitt
           python -m pytest -q \
             tests/test_turn_latency_telemetry.py \
             tests/regression/test_round2_hardening.py \
@@ -35,6 +44,7 @@ jobs:
             tests/test_cancellation_unblocks_prompt.py
       - name: Commit fix
         run: |
+          rm -rf assistant-source
           rm -f .github/workflows/one-shot-fix-latency-telemetry.yml scripts/_fix_latency_telemetry_regressions.py .latency-fix-trigger
           git config user.name 'kitt-telemetry-bot'
           git config user.email 'kitt-telemetry-bot@users.noreply.github.com'
