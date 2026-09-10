@@ -58,18 +58,19 @@ class SemanticFilter:
 
     def __init__(self, context_profile: ModelProfile, llm_client: Optional[LLMClient] = None):
         self.profile = context_profile
-        self.llm_client = llm_client or LLMClient(context_profile)
+        self.llm_client = llm_client
         self.extractor = DeterministicExtractor()
         self.fallback_planner = DeterministicFallbackPlanner()
         self.planner = ContextPlanner()
 
     def filter_and_plan(
-        self, prompt: str, session_key: Optional[str] = None
+        self, prompt: str, session_key: Optional[str] = None, *, deterministic_only: bool = False
     ) -> SemanticFilterResult:
         start_t = time.time()
 
-        # Rule 1: Trivial prompt bypass
-        if self.extractor.is_trivial_prompt(prompt):
+        # Rule 1: Deterministic/trivial bypass. Keep this path free of LLM client
+        # construction so reverse-proxy sessions are not opened for internal planning.
+        if deterministic_only or self.extractor.is_trivial_prompt(prompt):
             task = self.fallback_planner.generate_task(prompt)
             plan = self.fallback_planner.generate_plan(task)
             latency = (time.time() - start_t) * 1000.0
@@ -81,8 +82,10 @@ class SemanticFilter:
                 latency_ms=latency
             )
 
-        # Rule 2: Call Context LLM
+        # Rule 2: Call Context LLM lazily.
         try:
+            if self.llm_client is None:
+                self.llm_client = LLMClient(self.profile)
             messages = [{"role": "user", "content": prompt}]
             response_text = self.llm_client.chat(
                 messages,
