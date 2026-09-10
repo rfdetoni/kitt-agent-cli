@@ -52,4 +52,4 @@ jobs:
           git add kitt/core/turn_processor.py tests/test_arun_turn_approval_lifecycle.py
           git diff --cached --check
           git commit -m "fix(turns): preserve approved async continuations"
-          git push origin HEAD:main
+          git push origin HEAD:refs/heads/fix/approval-race
