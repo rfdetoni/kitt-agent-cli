@@ -18,12 +18,7 @@ def runtime_operation_names() -> tuple[str, ...]:
 
 
 def compact_runtime_operation_catalog() -> str:
-    """Encode the live operation catalog compactly without losing exact names.
-
-    Names sharing a namespace are rendered as ``repo.{read,search}`` instead of
-    repeating the prefix for every operation. This keeps the ACI complete while
-    preserving the SafeRuntime token-reduction contract.
-    """
+    """Encode the live operation catalog compactly without losing exact names."""
 
     grouped: dict[str, list[str]] = {}
     literals: list[str] = []
@@ -56,6 +51,20 @@ class ToolRegistry(_core.ToolRegistry):
     @staticmethod
     def runtime_operation_names() -> tuple[str, ...]:
         return runtime_operation_names()
+
+    def attach_processor(self, processor):
+        """Attach the processor and activate KITT-native engineering controls.
+
+        ``registry_core`` remains the canonical implementation.  This facade is
+        the existing composition seam used by ``KittRuntime``, so cross-cutting
+        durability/verification controls can be installed without introducing a
+        second runtime or coupling the core processor to optional services.
+        """
+        result = super().attach_processor(processor)
+        from kitt.core.agent_engineering import install_agent_engineering
+
+        install_agent_engineering(processor, self)
+        return result
 
     def get_tool_definitions(self, enabled_tools=None):
         tools = super().get_tool_definitions(enabled_tools)
