@@ -821,9 +821,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 f"Repository map:\n{context_map_str}" if context_map_str else "",
                 f"Source excerpts:\n{sources}" if sources else "",
             ) if part)
-            # A deterministic bypass must remain LLM-free; otherwise the context
-            # summarizer would reopen the reverse-proxy chat we deliberately skipped.
-            if filter_res.source != "DETERMINISTIC_BYPASS" and sf_client is not None:
+            # A deterministic bypass leaves sf_client unset; keep the summarizer
+            # LLM-free so it cannot reopen the reverse-proxy chat we deliberately skipped.
+            if sf_client is not None:
                 context_map_str = self._summarize_project_context(
                     sf_client, cmd.prompt, context_map_str,
                     session_key=cmd.conversation_id,
