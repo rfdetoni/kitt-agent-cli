@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: prime-architecture-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-prime:
     strategy:
