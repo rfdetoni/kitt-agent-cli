@@ -76,6 +76,79 @@ def _resolve(value: Any, results: dict[str, Any]) -> Any:
     return value
 
 
+def _project_item(value: Any, fields: list[str]) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {field: value[field] for field in fields if field in value}
+
+
+def _transform(value: Any, spec: Any) -> Any:
+    """Apply bounded deterministic selection/projection/aggregation.
+
+    This deliberately supports a tiny data algebra instead of arbitrary code:
+    ``path`` selects a nested value, ``where`` performs exact dict matching,
+    ``project`` keeps named keys, ``limit`` slices arrays, ``unique`` removes
+    duplicate scalar/JSON values, and ``aggregate`` supports count/first/last.
+    """
+    if spec is None:
+        return value
+    if not isinstance(spec, dict):
+        raise ValueError("transform must be an object")
+    result = copy.deepcopy(value)
+
+    path = str(spec.get("path") or "").strip()
+    if path:
+        result = _get_path(result, path)
+
+    where = spec.get("where")
+    if where is not None:
+        if not isinstance(where, dict) or not isinstance(result, list):
+            raise ValueError("transform.where requires an array and object predicate")
+        result = [
+            item for item in result
+            if isinstance(item, dict) and all(item.get(k) == v for k, v in where.items())
+        ]
+
+    project = spec.get("project")
+    if project is not None:
+        if not isinstance(project, list) or not all(isinstance(x, str) for x in project):
+            raise ValueError("transform.project must be an array of field names")
+        fields = project[:32]
+        if isinstance(result, list):
+            result = [_project_item(item, fields) for item in result]
+        else:
+            result = _project_item(result, fields)
+
+    if bool(spec.get("unique", False)) and isinstance(result, list):
+        seen: set[str] = set()
+        unique_items = []
+        for item in result:
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+            if key not in seen:
+                seen.add(key)
+                unique_items.append(item)
+        result = unique_items
+
+    if "limit" in spec:
+        try:
+            limit = max(0, min(int(spec.get("limit", 0)), 1000))
+        except (TypeError, ValueError):
+            raise ValueError("transform.limit must be an integer")
+        if isinstance(result, list):
+            result = result[:limit]
+
+    aggregate = str(spec.get("aggregate") or "").strip().lower()
+    if aggregate:
+        if aggregate == "count":
+            return len(result) if isinstance(result, (list, dict, str)) else int(result is not None)
+        if aggregate == "first":
+            return result[0] if isinstance(result, list) and result else None
+        if aggregate == "last":
+            return result[-1] if isinstance(result, list) and result else None
+        raise ValueError("transform.aggregate must be one of: count, first, last")
+    return result
+
+
 def _bounded(value: Any, max_tokens: int) -> tuple[Any, bool]:
     if _json_tokens(value) <= max_tokens:
         return value, False
@@ -129,9 +202,7 @@ class ProgrammaticToolFlow:
 
         steps = arguments.get("steps", [])
         if not isinstance(steps, list) or not steps:
-            return SafeRuntimeResult(
-                False, "flow.execute", error="steps must be a non-empty array"
-            )
+            return SafeRuntimeResult(False, "flow.execute", error="steps must be a non-empty array")
         try:
             max_calls = max(1, min(int(arguments.get("max_tool_calls", 12)), 32))
         except (TypeError, ValueError):
@@ -147,22 +218,14 @@ class ProgrammaticToolFlow:
         total_saved = 0
         call_count = 0
 
-        def run_call(
-            step_id: str,
-            operation: str,
-            raw_args: dict[str, Any],
-            scope: dict[str, Any],
-        ):
+        def run_call(step_id: str, operation: str, raw_args: dict[str, Any], scope: dict[str, Any]):
             nonlocal call_count, intermediate_tokens, total_saved
             if operation not in READ_ONLY_FLOW_OPERATIONS:
                 raise PermissionError(
-                    f"flow step '{step_id}' operation '{operation}' is not "
-                    "allowed. flow.execute is read-only by design."
+                    f"flow step '{step_id}' operation '{operation}' is not allowed. flow.execute is read-only by design."
                 )
             if call_count >= max_calls:
-                raise RuntimeError(
-                    f"flow exceeded max_tool_calls={max_calls}"
-                )
+                raise RuntimeError(f"flow exceeded max_tool_calls={max_calls}")
             resolved_args = _resolve(raw_args, scope)
             call_count += 1
             result = self.runtime.execute(
@@ -174,13 +237,9 @@ class ProgrammaticToolFlow:
                 security_context=security_context,
             )
             if result.requires_approval:
-                raise PermissionError(
-                    f"flow step '{step_id}' unexpectedly requires approval"
-                )
+                raise PermissionError(f"flow step '{step_id}' unexpectedly requires approval")
             if not result.success:
-                raise RuntimeError(
-                    f"flow step '{step_id}' failed: {result.error}"
-                )
+                raise RuntimeError(f"flow step '{step_id}' failed: {result.error}")
             step_tokens = _json_tokens(result.data)
             intermediate_tokens += step_tokens
             total_saved += int(result.tokens_saved or 0)
@@ -197,48 +256,32 @@ class ProgrammaticToolFlow:
 
         for index, step in enumerate(steps):
             if not isinstance(step, dict):
-                return SafeRuntimeResult(
-                    False, "flow.execute", error=f"step {index + 1} must be an object"
-                )
+                return SafeRuntimeResult(False, "flow.execute", error=f"step {index + 1} must be an object")
             step_id = str(step.get("id") or f"step_{index + 1}")
             operation = str(step.get("operation") or "").strip()
             raw_args = step.get("arguments", {})
             if not isinstance(raw_args, dict):
-                return SafeRuntimeResult(
-                    False,
-                    "flow.execute",
-                    error=f"step '{step_id}' arguments must be an object",
-                )
+                return SafeRuntimeResult(False, "flow.execute", error=f"step '{step_id}' arguments must be an object")
 
             try:
                 if "foreach" in step:
                     collection = _resolve(step["foreach"], values)
                     if not isinstance(collection, list):
-                        raise ValueError(
-                            f"step '{step_id}' foreach must resolve to an array"
-                        )
+                        raise ValueError(f"step '{step_id}' foreach must resolve to an array")
                     try:
-                        foreach_limit = max(
-                            1, min(int(step.get("limit", 5) or 5), 16)
-                        )
+                        foreach_limit = max(1, min(int(step.get("limit", 5) or 5), 16))
                     except (TypeError, ValueError):
                         foreach_limit = 5
                     variable = str(step.get("as") or "item")
                     outputs = []
                     for item_index, item in enumerate(collection[:foreach_limit]):
                         scope = {**values, variable: item}
-                        outputs.append(
-                            run_call(
-                                f"{step_id}[{item_index}]",
-                                operation,
-                                raw_args,
-                                scope,
-                            )
-                        )
-                    values[step_id] = outputs
+                        outputs.append(run_call(f"{step_id}[{item_index}]", operation, raw_args, scope))
+                    values[step_id] = _transform(outputs, step.get("transform"))
                 else:
-                    values[step_id] = run_call(
-                        step_id, operation, raw_args, values
+                    values[step_id] = _transform(
+                        run_call(step_id, operation, raw_args, values),
+                        step.get("transform"),
                     )
             except (KeyError, IndexError, ValueError, RuntimeError, PermissionError) as exc:
                 return SafeRuntimeResult(
@@ -255,20 +298,15 @@ class ProgrammaticToolFlow:
                 output: Any = _resolve(returns, values)
             elif isinstance(returns, list) and returns:
                 output = {
-                    (
-                        ref[1:]
-                        if isinstance(ref, str) and ref.startswith("$")
-                        else str(i)
-                    ): _resolve(ref, values)
+                    (ref[1:] if isinstance(ref, str) and ref.startswith("$") else str(i)): _resolve(ref, values)
                     for i, ref in enumerate(returns)
                 }
             else:
                 last_id = str(steps[-1].get("id") or f"step_{len(steps)}")
                 output = values[last_id]
+            output = _transform(output, arguments.get("transform"))
         except (KeyError, IndexError, ValueError) as exc:
-            return SafeRuntimeResult(
-                False, "flow.execute", error=f"flow return resolution failed: {exc}"
-            )
+            return SafeRuntimeResult(False, "flow.execute", error=f"flow return resolution failed: {exc}")
 
         bounded, truncated = _bounded(output, max_tokens)
         output_tokens = _json_tokens(bounded)
