@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
+import math
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any, Iterable
+
+from kitt.tools.process_runner import ProcessRunner
 
 
 class AstGrepUnavailable(RuntimeError):
@@ -76,25 +77,26 @@ class AstGrepAdapter:
                 command.extend(["--globs", value])
         command.extend(safe_paths)
 
-        env = dict(os.environ)
-        env.update({"NO_COLOR": "1", "CLICOLOR": "0"})
-        completed = subprocess.run(
+        capture_limit = max(4096, min(int(max_output_bytes), 8 * 1024 * 1024))
+        runner = ProcessRunner(str(self.root), max_output_bytes=capture_limit)
+        completed = runner.run(
             command,
-            cwd=self.root,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=False,
-            timeout=max(0.5, min(float(timeout_seconds), 120.0)),
-            check=False,
-            env=env,
+            timeout_seconds=max(1, min(math.ceil(float(timeout_seconds)), 120)),
+            env={"NO_COLOR": "1", "CLICOLOR": "0"},
         )
-        raw = completed.stdout[: max(1024, min(int(max_output_bytes), 8 * 1024 * 1024))]
-        stderr = completed.stderr[:16_384].decode("utf-8", "replace")
-        if completed.returncode not in (0, 1) and not raw:
+        stderr = completed.stderr[:16_384]
+        if completed.timed_out:
+            raise RuntimeError("ast-grep timed out")
+        if completed.cancelled:
+            raise RuntimeError("ast-grep was cancelled")
+        if completed.returncode not in (0, 1) and not completed.stdout:
             raise RuntimeError(f"ast-grep failed ({completed.returncode}): {stderr[:2000]}")
+        if completed.truncated and completed.stdout_total_bytes > len(completed.stdout.encode("utf-8")):
+            raise RuntimeError(
+                f"ast-grep output exceeded the {capture_limit}-byte capture limit"
+            )
         try:
-            payload = json.loads(raw.decode("utf-8", "replace") or "[]")
+            payload = json.loads(completed.stdout or "[]")
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"ast-grep returned invalid JSON: {stderr[:1000]}") from exc
         if not isinstance(payload, list):
@@ -104,6 +106,6 @@ class AstGrepAdapter:
             "backend": "ast-grep",
             "matches": matches,
             "returned": len(matches),
-            "truncated": len(payload) > limit or len(completed.stdout) > len(raw),
+            "truncated": len(payload) > limit or completed.truncated,
             "exit_code": completed.returncode,
         }
