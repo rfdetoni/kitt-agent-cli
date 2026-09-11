@@ -99,6 +99,35 @@ Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update the execution 
 
 ---
 
+## Docker
+
+Docker is an optional execution mode; native installation remains supported. The image packages the Agent control plane and common repository tools without granting privileged access to the host.
+
+Build and run against the current directory:
+
+```bash
+docker build -t kitt-agent-cli .
+docker run --rm -it \
+  -v "$PWD:/workspace" \
+  -v kitt-agent-state:/home/kitt/.kitt \
+  kitt-agent-cli
+```
+
+The image runs as a non-root `kitt` user. UID/GID default to `1000`; on Linux hosts with different IDs, build with matching values so bind-mounted workspaces remain writable:
+
+```bash
+docker build \
+  --build-arg KITT_UID="$(id -u)" \
+  --build-arg KITT_GID="$(id -g)" \
+  -t kitt-agent-cli .
+```
+
+The base image intentionally does not contain every project toolchain. For Java, Node, Rust or other project-specific builds, derive a project image with the required SDKs or use the native runtime. Avoid mounting `/var/run/docker.sock`, the host root filesystem or using `--privileged` unless that authority is explicitly required and understood.
+
+For the integrated Agent + reverse-proxy + browser stack, use the root [`rfdetoni/kitt`](https://github.com/rfdetoni/kitt) `compose.yaml`. Services running on the host, such as Ollama or LM Studio, can be addressed through `host.docker.internal` where supported; the root Compose also defines the Linux `host-gateway` mapping for the Agent container.
+
+---
+
 ## Architecture
 
 `kitt-agent-cli` owns the **hot-path coding-agent control plane**:
