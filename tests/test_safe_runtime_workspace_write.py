@@ -5,7 +5,7 @@ from pathlib import Path
 from kitt.llm.providers.kitt_reverse_proxy import extract_openai_tools
 from kitt.runtime.safe_runtime import OPERATION_SPECS, SafeRuntime
 from kitt.security.capabilities import CAP_REPO_WRITE
-from kitt.tools.registry import ToolRegistry
+from kitt.tools.registry import ToolRegistry, compact_runtime_operation_catalog
 
 
 class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
@@ -91,32 +91,26 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
             finally:
                 registry.close()
 
-    def test_model_contract_explains_workspace_write_vs_artifact_storage(self):
+    def test_model_contract_is_compact_but_native_proxy_schema_is_explicit(self):
         with tempfile.TemporaryDirectory() as temp:
             registry = ToolRegistry(root_dir=temp)
             try:
                 definition = registry.get_tool_definitions(["kitt_runtime"])[0]
                 self.assertIn("repo.write_file", definition["description"])
                 self.assertIn("artifacts.store", definition["description"])
-                self.assertIn("never creates", definition["description"])
-
-                operation_schema = definition["args"]["operation"]
-                arguments_schema = definition["args"]["arguments"]
-                self.assertEqual(operation_schema["type"], "string")
-                self.assertIn("repo.write_file", operation_schema["description"])
-                self.assertEqual(arguments_schema["type"], "object")
-                self.assertIn(
-                    "repo.write_file={path,content",
-                    arguments_schema["description"],
+                self.assertEqual(
+                    definition["args"]["operation"],
+                    compact_runtime_operation_catalog(),
                 )
+                self.assertIsInstance(definition["args"]["arguments"], str)
 
                 tools = extract_openai_tools(f"Available host tools: {[definition]}")
                 native = tools[0]["function"]["parameters"]
-                self.assertIn("repo.write_file", native["properties"]["operation"]["enum"])
                 self.assertIn(
-                    "repo.write_file={path,content",
-                    native["properties"]["arguments"]["description"],
+                    "repo.write_file",
+                    native["properties"]["operation"]["enum"],
                 )
+                self.assertEqual(native["properties"]["arguments"]["type"], "object")
             finally:
                 registry.close()
 
