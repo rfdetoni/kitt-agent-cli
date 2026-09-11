@@ -21,6 +21,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Verify release tag matches package version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -43,9 +46,6 @@ jobs:
           ref: ${{ env.ASSISTANT_RUNTIME_REF }}
           path: assistant-source
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Test portable Agent control plane with companion runtime
         run: |
           python -m pip install -U pip
