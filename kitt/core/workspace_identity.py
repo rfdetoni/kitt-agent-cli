@@ -7,7 +7,7 @@ The project historically mixed three incompatible notions of "workspace":
 - the persisted ``workspaces.id`` row.
 
 Foreign keys for artifacts, children and pending actions broke whenever a
-component passed a path where an id was expected. This module defines the
+component passed a path where an id was expected.  This module defines the
 single contract: ``workspace_id`` always means ``workspaces.id`` and
 ``canonical_root`` always means the normalized absolute path.
 """
@@ -33,16 +33,9 @@ class WorkspaceIdentity:
 
     @classmethod
     def build(cls, root_path: str | Path) -> "WorkspaceIdentity":
-        """Resolve identity without ever creating runtime state in the workspace."""
-        from kitt.history.repository import resolve_workspace_identity
-        from kitt.history.workspace_database import WorkspaceHistoryDatabase
+        from kitt.history.repository import get_or_create_workspace_identity
 
-        canonical_root = canonical_workspace_path(root_path)
-        database = WorkspaceHistoryDatabase(canonical_root)
-        try:
-            return resolve_workspace_identity(database, canonical_root)
-        finally:
-            database.close()
+        return get_or_create_workspace_identity(canonical_workspace_path(root_path))
 
     @staticmethod
     def path_hash(root_path: str | Path) -> str:

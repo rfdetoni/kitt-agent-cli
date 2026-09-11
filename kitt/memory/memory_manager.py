@@ -35,15 +35,8 @@ class MemoryManager:
         self.memory_repo = memory_repo
         self.workspace_id = workspace_id or "default"
         self.shared_client = shared_client
-        state_home = self.root_dir / ".kitt"
-        self.project_mem_path = (
-            state_home
-            / "workspaces"
-            / self.workspace_id
-            / "memory"
-            / "project_memory.md"
-        )
-        self.global_mem_path = state_home / "global_memory.md"
+        self.project_mem_path = self.root_dir / ".kitt" / "memory" / "project_memory.md"
+        self.global_mem_path = Path.home() / ".kitt" / "global_memory.md"
 
         if persistence_enabled:
             self._ensure_files()

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Optional
 
 from kitt.artifacts.store import ArtifactStore
@@ -27,7 +26,6 @@ from kitt.history.database import HistoryDatabase
 from kitt.history.repository import HistoryRepository, resolve_workspace_identity
 from kitt.history.service import HistoryService
 from kitt.history.session_tree import SessionTreeRepository
-from kitt.history.workspace_database import WorkspaceHistoryDatabase
 from kitt.index.repository import RepositoryIndex
 from kitt.llm.client import LLMClient
 from kitt.memory.memory_manager import MemoryManager
@@ -91,33 +89,23 @@ class KittRuntime:
 
     @classmethod
     def build(
-        cls,
-        root_dir: str,
-        config: Optional[RuntimeConfig] = None,
-        state_root_dir: Optional[str] = None,
-        workspace_root_dir: Optional[str] = None,
+        cls, root_dir: str, config: Optional[RuntimeConfig] = None, state_root_dir: Optional[str] = None
     ) -> KittRuntime:
         from kitt.core.workspace_identity import canonical_workspace_path
 
         config = config or RuntimeConfig.from_env()
-        execution_root = canonical_workspace_path(root_dir)
-        # ``state_root_dir`` is retained for the child-worker protocol: it carries
-        # the logical parent workspace when execution happens in a temporary
-        # worktree. Persistent files themselves are always anchored to HOME.
-        workspace_root = canonical_workspace_path(
-            workspace_root_dir or state_root_dir or root_dir
-        )
-        state_root = str(Path.home().resolve(strict=False))
+        canonical_root = canonical_workspace_path(root_dir)
+        state_root = canonical_workspace_path(state_root_dir) if state_root_dir else canonical_root
         ephemeral = config.ephemeral
         in_memory = not config.history_enabled
         persistence_enabled = not ephemeral
-        database = WorkspaceHistoryDatabase(workspace_root, in_memory=in_memory)
+        database = HistoryDatabase(state_root, in_memory=in_memory)
 
         session_tree = SessionTreeRepository(database)
         history_repo = HistoryRepository(database)
-        identity = resolve_workspace_identity(database, workspace_root)
+        identity = resolve_workspace_identity(database, state_root)
         history = HistoryService(
-            workspace_root,
+            state_root,
             db=database,
             repo=history_repo,
             tree=session_tree,
@@ -127,19 +115,19 @@ class KittRuntime:
         )
 
         autonomy_store = AutonomyStore(
-            workspace_root, persistence_enabled=persistence_enabled
+            state_root, persistence_enabled=persistence_enabled
         )
         approval = ApprovalManager(
             db=database, ttl_seconds=config.approval_ttl_seconds
         )
         policy = PolicyEngine(
-            execution_root,
+            canonical_root,
             autonomy=autonomy_store.get(),
             approval_manager=approval,
         )
 
         repository_index = RepositoryIndex(
-            execution_root,
+            canonical_root,
             in_memory=in_memory,
             max_files=config.max_index_files,
             max_file_bytes=config.max_index_file_bytes,
@@ -153,13 +141,13 @@ class KittRuntime:
             state_root, persistence_enabled=persistence_enabled
         )
 
-        registry = ToolRegistry(execution_root, context_engine=context_engine)
+        registry = ToolRegistry(canonical_root, context_engine=context_engine)
         registry.policy = policy
         registry.approval_manager = approval
         registry.runtime_config = config
 
         skills = SkillManager(
-            execution_root, persistence_enabled=persistence_enabled
+            canonical_root, persistence_enabled=persistence_enabled
         )
         skills.executable_enabled = config.executable_skills_enabled
 
@@ -168,7 +156,7 @@ class KittRuntime:
             database,
             inline_limit=config.artifact_inline_limit,
             max_artifact_bytes=config.max_artifact_bytes,
-            page_bytes=config.page_bytes if hasattr(config, "page_bytes") else config.artifact_page_bytes,
+            page_bytes=config.artifact_page_bytes,
             ephemeral=ephemeral,
         )
         metrics = MetricsCollector(history.repo)
@@ -191,10 +179,10 @@ class KittRuntime:
         registry.event_bus = events
 
         children = ChildAgentManager(
-            execution_root,
+            canonical_root,
             ChildRepository(database),
             artifacts,
-            state_root_dir=workspace_root,
+            state_root_dir=state_root,
             max_children=config.max_children,
             max_depth=config.max_child_depth,
             workspace_id=identity.id,
@@ -215,7 +203,7 @@ class KittRuntime:
         # the Python fallback preserves behavior on unsupported platforms.
         from kitt.native.runtime import NativeSubsystem
         native = NativeSubsystem.build(
-            execution_root=execution_root,
+            execution_root=canonical_root,
             state_root=state_root,
             db=database,
             workspace_id=identity.id,
@@ -244,10 +232,10 @@ class KittRuntime:
             mode=getattr(config, "privacy_mode", "hybrid_redacted")
         )
         sensitive_scanner = SensitiveDataScanner()
-        path_policy = PathPolicy(execution_root)
+        path_policy = PathPolicy(canonical_root)
         network_policy = NetworkPolicy()
 
-        task_router = TaskRouter(root_dir=execution_root)
+        task_router = TaskRouter(root_dir=canonical_root)
         _, context_profile = task_router.resolve_profile_for_task("context-gather")
         dream_llm = LLMClient(context_profile)
         dream_service = DreamingService(
@@ -262,7 +250,7 @@ class KittRuntime:
         )
 
         processor = TurnProcessor(
-            execution_root,
+            canonical_root,
             history_service=history,
             registry=registry,
             metrics_collector=metrics,
@@ -315,7 +303,7 @@ class KittRuntime:
         from kitt.extensions.manager import ExtensionManager
 
         extensions = ExtensionManager(
-            workspace_root=execution_root,
+            workspace_root=canonical_root,
             event_bus=events,
             tool_registry=registry,
         )
@@ -367,9 +355,11 @@ class KittRuntime:
                 raise RuntimeError("Cannot start KittRuntime while it is closing")
             if self._started:
                 return
-            self._lifecycle_loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+            self._lifecycle_loop = asyncio.get_running_loop()
 
         if self.config.frontend_only:
+            # UI facade only: database/history/config objects remain available,
+            # but daemon is the sole owner of schedulers, extensions and tools.
             with self._close_lock:
                 self._started = True
             return
@@ -452,7 +442,11 @@ class KittRuntime:
             ("metrics", None, getattr(self.metrics, "close", None)),
             ("artifacts", None, getattr(self.artifacts, "close", None)),
             ("events", None, getattr(self.events, "close", None)),
-            ("repository_index", None, getattr(self.repository_index, "close", None)),
+            (
+                "repository_index",
+                None,
+                getattr(self.repository_index, "close", None),
+            ),
             ("database", None, getattr(self.database, "close", None)),
         ):
             try:
