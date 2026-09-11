@@ -71,6 +71,22 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
             finally:
                 registry.close()
 
+    def test_write_file_without_path_is_rejected_with_retry_guidance(self):
+        with tempfile.TemporaryDirectory() as temp:
+            registry = self._registry(temp)
+            try:
+                result = registry.execute_tool(
+                    "write_file",
+                    {"content": "=== PROJECT STRUCTURE ===\n"},
+                    enabled_tools=["write_file"],
+                )
+                self.assertFalse(result.success)
+                self.assertIn("path", result.error)
+                self.assertIn("repo.write_file", result.error)
+                self.assertIn("retry", result.error.lower())
+            finally:
+                registry.close()
+
     def test_artifact_store_rejects_workspace_path_instead_of_false_success(self):
         with tempfile.TemporaryDirectory() as temp:
             registry = self._registry(temp)
@@ -98,11 +114,14 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                 definition = registry.get_tool_definitions(["kitt_runtime"])[0]
                 self.assertIn("repo.write_file", definition["description"])
                 self.assertIn("artifacts.store", definition["description"])
+                self.assertIn("Do not substitute", definition["description"])
                 self.assertEqual(
                     definition["args"]["operation"],
                     compact_runtime_operation_catalog(),
                 )
-                self.assertIsInstance(definition["args"]["arguments"], str)
+                argument_schema = definition["args"]["arguments"]
+                self.assertEqual(argument_schema["type"], "object")
+                self.assertIn("repo.write_file requires {path,content}", argument_schema["description"])
 
                 tools = extract_openai_tools(f"Available host tools: {[definition]}")
                 native = tools[0]["function"]["parameters"]
@@ -111,6 +130,10 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                     native["properties"]["operation"]["enum"],
                 )
                 self.assertEqual(native["properties"]["arguments"]["type"], "object")
+                self.assertIn(
+                    "repo.write_file requires {path,content}",
+                    native["properties"]["arguments"]["description"],
+                )
             finally:
                 registry.close()
 
