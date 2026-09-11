@@ -65,10 +65,13 @@ class ToolRegistry(_core.ToolRegistry):
                 # Keep the ACI compact while making mutation argument shapes
                 # explicit enough for native providers to call them correctly.
                 tool["description"] = (
-                    "KITT runtime. For requested workspace mutations, execute them: "
-                    "repo.write_file writes files; repo.create_directory creates directories; "
-                    "artifacts.store is internal storage only. Do not substitute shell commands "
-                    "or manual save instructions for a requested file write."
+                    "KITT runtime. Execute requested workspace mutations instead of describing them. "
+                    "For a new or complete file ALWAYS use repo.write_file with {path,content}. "
+                    "repo.create_directory creates directories. patch.apply is only for editing an "
+                    "existing file with KITT SEARCH/REPLACE blocks; NEVER send unified diffs "
+                    "(---/+++/@@ or /dev/null) to patch.apply. artifacts.store is internal storage "
+                    "only. Do not substitute shell commands or manual save instructions for a "
+                    "requested file write."
                 )
                 args = dict(tool.get("args") or {})
                 args["operation"] = operation_hint
@@ -76,9 +79,9 @@ class ToolRegistry(_core.ToolRegistry):
                     "type": "object",
                     "additionalProperties": True,
                     "description": (
-                        "Operation arguments. repo.write_file requires {path,content}; "
-                        "repo.create_directory requires {path}; patch.apply requires "
-                        "{patch} using SEARCH/REPLACE blocks."
+                        "Operation arguments. New/full file: repo.write_file {path,content}. "
+                        "Directory: repo.create_directory {path}. Existing-file edit only: "
+                        "patch.apply {patch} using SEARCH/REPLACE blocks; unified diff is invalid."
                     ),
                 }
                 tool["args"] = args
