@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import MethodType
 from typing import Any, Iterator
 
-from kitt.llm.attachments import AttachmentError, attach_to_first_user_message
+from kitt.llm.attachments import (
+    AttachmentError,
+    attach_to_first_user_message,
+    is_binary_attachment_path,
+)
 
 
 def _is_kitt_reverse_proxy(client: Any) -> bool:
@@ -18,10 +23,23 @@ def install_attachment_runtime(processor: Any) -> None:
     if getattr(processor, "_attachment_runtime_installed", False):
         return
 
+    original_run = processor.run_turn
     original_loop = processor._execute_tool_loop
     original_stream = processor._stream_execution_response
     processor._attachment_paths_by_turn = {}
     processor._attachment_wire_sent = set()
+
+    def run_turn(self, cmd) -> Iterator:
+        explicit = set(getattr(cmd, "explicit_files", ()) or ())
+        implicit_attachments = {path for path in explicit if is_binary_attachment_path(path)}
+        attachments = set(getattr(cmd, "attachments", ()) or ()) | implicit_attachments
+        if attachments != set(getattr(cmd, "attachments", ()) or ()) or implicit_attachments:
+            cmd = replace(
+                cmd,
+                explicit_files=explicit - implicit_attachments,
+                attachments=attachments,
+            )
+        yield from original_run(cmd)
 
     def execute_tool_loop(
         self,
@@ -80,6 +98,7 @@ def install_attachment_runtime(processor: Any) -> None:
             session_key=session_key,
         )
 
+    processor.run_turn = MethodType(run_turn, processor)
     processor._execute_tool_loop = MethodType(execute_tool_loop, processor)
     processor._stream_execution_response = MethodType(stream_execution_response, processor)
     processor._attachment_runtime_installed = True
