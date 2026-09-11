@@ -6,10 +6,14 @@ TOOL_CALL_OPEN = "<kitt-tool>"
 TOOL_CALL_CLOSE = "</kitt-tool>"
 
 CANONICAL_TOOLS = {
+    "kitt_runtime": "kitt_runtime",
     "write_file": "write_file",
     "write": "write_file",
     "create_file": "write_file",
     "save_file": "write_file",
+    "create_directory": "create_directory",
+    "createdirectory": "create_directory",
+    "mkdir": "create_directory",
     "apply_patch": "apply_patch",
     "patch": "apply_patch",
     "edit_file": "apply_patch",
@@ -31,6 +35,16 @@ CANONICAL_TOOLS = {
     "repomap": "repository_map",
     "search": "search",
     "python_compute": "python_compute",
+    "git_status": "git_status",
+    "git_diff": "git_diff",
+    "artifact_store": "artifact_store",
+    "artifact_read": "artifact_read",
+    "artifact_list": "artifact_list",
+    "queue_input": "queue_input",
+    "goal_create": "goal_create",
+    "goal_add_gate": "goal_add_gate",
+    "child_spawn": "child_spawn",
+    "harness_remember": "harness_remember",
 }
 
 
@@ -83,7 +97,6 @@ def _strip_markdown_fences(s: str) -> str:
         m = re.match(r"^```(?:json|xml|html|text)?\s*(.*?)\s*```$", cleaned, re.DOTALL | re.IGNORECASE)
         if m:
             return m.group(1).strip()
-        # If closing ``` is missing or different:
         first_nl = cleaned.find("\n")
         if first_nl != -1:
             cleaned = cleaned[first_nl + 1 :]
@@ -92,12 +105,32 @@ def _strip_markdown_fences(s: str) -> str:
     return cleaned.strip()
 
 
+def _parse_directory_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Normalize direct and namespaced directory calls emitted by tool bridges."""
+    match = re.search(
+        r"\b(?:(?:repo)\.)?(?:create_directory|createdirectory|mkdir)\s*\(\s*"
+        r"(?:(?:operation\s*=\s*[\"']?repo\.create_directory[\"']?\s*,\s*)?)"
+        r"(?:path\s*=\s*)?(?:[\"'](?P<quoted>[^\"']+)[\"']|(?P<bare>[^,\)]+))\s*\)",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    path = (match.group("quoted") or match.group("bare") or "").strip()
+    if not path:
+        return None
+    if re.search(r"operation\s*=\s*[\"']?repo\.create_directory", match.group(0), re.IGNORECASE):
+        return "kitt_runtime", {
+            "operation": "repo.create_directory",
+            "arguments": {"path": path},
+        }
+    return "create_directory", {"path": path}
+
+
 def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     if not text:
         return None
 
-    # Parse the canonical envelope before inspecting its argument strings for
-    # legacy examples, XML, or diffs. Those strings are data, not nested calls.
     canonical = text.strip()
     if canonical.startswith(TOOL_CALL_OPEN):
         if not canonical.endswith(TOOL_CALL_CLOSE):
@@ -114,19 +147,20 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
             raise ValueError("Invalid kitt-tool name")
         if not isinstance(arguments, dict):
             raise ValueError("kitt-tool arguments must be an object")
-        return CANONICAL_TOOLS.get(name, name), arguments
+        return CANONICAL_TOOLS.get(name.lower(), name), arguments
 
     cleaned_text = _strip_think_blocks(text)
     if not cleaned_text:
         return None
 
-    # Strategy 0: Check raw SEARCH/REPLACE diff block directly
+    directory_call = _parse_directory_call(cleaned_text)
+    if directory_call is not None:
+        return directory_call
+
     if "<<<<<<< SEARCH" in cleaned_text and "=======" in cleaned_text and ">>>>>>> REPLACE" in cleaned_text:
-        # Check if wrapped inside tool call or bare
         if not ("<kitt-tool>" in cleaned_text or "<tool>" in cleaned_text or '"name"' in cleaned_text):
             return "apply_patch", {"patch": cleaned_text.strip()}
 
-    # Strategy 1: Check XML-style tool calls (e.g. <write_file path="...">...</write_file>)
     xml_write = re.search(r'<write_file(?:\s+path="([^"]+)")?>(.*?)(?:</write_file>|$)', cleaned_text, re.DOTALL | re.IGNORECASE)
     if xml_write:
         path = xml_write.group(1) or ""
@@ -140,8 +174,7 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
         if path:
             return "write_file", {"path": path, "content": content}
 
-    # Strategy 2: Check function-call style: Write(path="...", content="...") or write_file(...)
-    func_match = re.search(r'\b(write_file|write|apply_patch|patch|read_file|read|run_command|bash|list_files|search)\s*\(\s*(?:path\s*=\s*)?["\']([^"\']+)["\'](?:\s*,\s*(?:content|patch|command|query)\s*=\s*["\']([\s\S]*?)["\'])?\s*\)', cleaned_text, re.IGNORECASE)
+    func_match = re.search(r'\b(write_file|write|apply_patch|patch|read_file|read|run_command|bash|list_files|create_directory|mkdir|search)\s*\(\s*(?:path\s*=\s*)?["\']([^"\']+)["\'](?:\s*,\s*(?:content|patch|command|query)\s*=\s*["\']([\s\S]*?)["\'])?\s*\)', cleaned_text, re.IGNORECASE)
     if func_match:
         tname = CANONICAL_TOOLS.get(func_match.group(1).lower(), func_match.group(1).lower())
         arg1 = func_match.group(2)
@@ -154,10 +187,11 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
             return tname, {"path": arg1}
         elif tname == "run_command":
             return tname, {"command": arg1}
+        elif tname == "create_directory":
+            return tname, {"path": arg1}
         elif tname == "search":
             return tname, {"query": arg1}
 
-    # Strategy 3: Envelope extraction (<kitt-tool>, <tool>, <tool_call>, <function_call>, or JSON block)
     body = ""
     for tag_open, tag_close in [
         (TOOL_CALL_OPEN, TOOL_CALL_CLOSE),
@@ -177,7 +211,6 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
             break
 
     if not body:
-        # Check markdown code blocks with json containing a tool name
         code_blocks = re.findall(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', cleaned_text, re.IGNORECASE)
         for cb in code_blocks:
             if re.search(r'"(?:name|tool|action|function)"\s*:', cb):
@@ -185,7 +218,6 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
                 break
 
     if not body:
-        # Check bare JSON in text
         m = re.search(r'\{\s*"(?:name|tool|action|function)"\s*:\s*"([a-zA-Z0-9_-]+)"', cleaned_text)
         if m:
             raw_body = cleaned_text[m.start() :]
@@ -202,7 +234,6 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
             body = raw_body[:end_pos].strip() if end_pos != -1 else raw_body.strip()
 
     if not body:
-        # Strategy 3b: Code block with explicit file attribute: ```html:apresentacao.html or ```html filename="apresentacao.html"
         cb_tagged = re.search(r'```[a-zA-Z0-9_-]+[:\s]+(?:path|filename|file)?=?["\']?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)["\']?\s*\n([\s\S]*?)```', cleaned_text)
         if cb_tagged:
             path = cb_tagged.group(1).strip()
@@ -211,7 +242,6 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
                 return "apply_patch", {"patch": f"{path}\n{content}"}
             return "write_file", {"path": path, "content": content}
 
-        # Strategy 3c: Header/label/mention of file immediately before code block (e.g., File: `apresentacao.html` or Atualizei o arquivo apresentacao.html:)
         labeled_cb = re.search(
             r'([a-zA-Z0-9_\-./\\]+\.(?:html|htm|py|js|ts|jsx|tsx|css|json|md|txt|sh|bash|toml|yaml|yml|rs|go|sql|c|cpp|h|hpp))\b[^\n]*\n+```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)```',
             cleaned_text,
@@ -230,7 +260,6 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     if not body:
         raise ValueError("Incomplete tool envelope")
 
-    # Strategy 4: Standard json.loads with strict=False
     try:
         val = json.loads(body, strict=False)
         if isinstance(val, dict):
@@ -247,7 +276,6 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
                             return tool_name, parsed_inner
                     except Exception:
                         pass
-                # Top-level arguments dictionary
                 flat_args = {k: v for k, v in val.items() if k not in ("name", "tool", "action", "function", "type", "id")}
                 if flat_args:
                     return tool_name, flat_args
@@ -255,7 +283,6 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     except Exception:
         pass
 
-    # Strategy 5: Robust regex rescue for complex multi-line tools (write_file, apply_patch, etc.)
     name_match = re.search(r'"(?:name|tool|action|function)"\s*:\s*"([a-zA-Z0-9_-]+)"', body)
     if name_match:
         raw_name = name_match.group(1)
@@ -263,13 +290,10 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
 
         if tool_name == "write_file":
             path_match = re.search(r'"(?:path|filename|file|target)"\s*:\s*"([^"]+)"', body)
-            # Find content start
             content_marker = re.search(r'"(?:content|text|body)"\s*:\s*"', body)
             if path_match and content_marker:
                 path = path_match.group(1)
                 c_start = content_marker.end()
-                # Find content end: find the closing quote before the end of the JSON object
-                # Look backwards from the end of body for '"' followed by optional whitespace and '}'
                 trailing_match = re.search(r'"\s*(?:,\s*"[^"]+"\s*:\s*"[^"]+"\s*)?\}\s*\}?$', body)
                 if trailing_match:
                     c_end = trailing_match.start()
@@ -288,10 +312,8 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
                 if p_end > p_start:
                     raw_patch = body[p_start:p_end]
                     return tool_name, {"patch": _unescape_json_string_content(raw_patch)}
-            # If SEARCH/REPLACE diff is in body directly
             if "<<<<<<< SEARCH" in body and "=======" in body and ">>>>>>> REPLACE" in body:
                 diff_start = body.find("<<<<<<< SEARCH")
-                # find previous line with filename
                 lines_before = body[:diff_start].strip().splitlines()
                 filename = lines_before[-1].strip() if lines_before else ""
                 diff_end = body.rfind(">>>>>>> REPLACE") + len(">>>>>>> REPLACE")
@@ -299,13 +321,12 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
                 full_patch = f"{filename}\n{raw_diff}" if filename and not filename.startswith("{") else raw_diff
                 return tool_name, {"patch": full_patch}
 
-        elif tool_name in ("read_file", "list_files", "run_command", "search"):
+        elif tool_name in ("read_file", "list_files", "create_directory", "run_command", "search"):
             path_match = re.search(r'"(?:path|filename|file|command|cmd|query)"\s*:\s*"([^"]+)"', body)
             if path_match:
                 key = "command" if tool_name == "run_command" else ("query" if tool_name == "search" else "path")
                 return tool_name, {key: path_match.group(1)}
 
-    # Strategy 6: Fallback to SemanticFilterSchema robust parser
     try:
         from kitt.context_filter.schema import ContextFilterSchemaValidator
 
