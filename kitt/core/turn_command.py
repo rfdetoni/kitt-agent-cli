@@ -11,9 +11,9 @@ class TurnCommand:
     prompt: str
     mode: str = "auto"
     explicit_files: Set[str] = field(default_factory=set)
-    attachments: Set[str] = field(default_factory=set)
     no_history: bool = False
     dry_run: bool = False
     approval_grant: Optional[ApprovalGrant] = None
     security_context: Optional[Any] = None
     turn_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    attachments: Set[str] = field(default_factory=set)
