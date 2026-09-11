@@ -220,8 +220,37 @@ class TurnProcessor:
         return guard.cancel(turn_id)
 
     def _emit(self, event_name: str, payload: Dict[str, Any]):
-        if self.event_callback and not self._closed:
-            self.event_callback(event_name, payload)
+        callback = getattr(self, "event_callback", None)
+        if callback and not getattr(self, "_closed", False):
+            callback(event_name, payload)
+
+    def _record_latency(
+        self,
+        turn_id: str,
+        phase: str,
+        duration_ms: float,
+        *,
+        elapsed_ms: float = 0.0,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = {
+            "turn_id": turn_id,
+            "phase": phase,
+            "duration_ms": round(max(0.0, float(duration_ms)), 2),
+            "elapsed_ms": round(max(0.0, float(elapsed_ms)), 2),
+            "detail": dict(detail or {}),
+        }
+        logger.info(
+            "latency turn=%s phase=%s duration_ms=%.2f elapsed_ms=%.2f detail=%s",
+            turn_id, phase, payload["duration_ms"], payload["elapsed_ms"], payload["detail"],
+        )
+        try:
+            self._emit("LatencyRecorded", payload)
+        except Exception:
+            # Observability is strictly fail-open: a broken metrics consumer
+            # must never alter tool, approval, cancellation or response flow.
+            logger.debug("latency callback failed", exc_info=True)
+        return payload
 
     @staticmethod
     def _paths_from_tool(tool_name: str, tool_args: Dict[str, Any], tool_result: Any = None) -> List[str]:
@@ -612,7 +641,17 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
         TAG_OPENERS = ("<kitt-python-compute>", "<kitt-tool>", "<think>", "<thought>", "</think>", "</thought>", "</kitt-tool>", "</kitt-python-compute>")
 
+        model_request_started_at = time.perf_counter()
+        first_model_chunk = True
         for chunk in _invoke_chat_stream(messages, system_prompt):
+            if first_model_chunk:
+                first_model_chunk = False
+                self._record_latency(
+                    turn_id,
+                    "model_ttft",
+                    (time.perf_counter() - model_request_started_at) * 1000,
+                    detail={"session": "named" if session_key else "default"},
+                )
             if turn_id and self._cancel_requested(turn_id):
                 break
             full_response += chunk
@@ -990,6 +1029,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
 
             self._rebudget_execution_messages(execution_messages, request.system_prompt, exe_profile)
+            model_round_started_at = time.perf_counter()
             for streamed_response, event in self._stream_execution_response(
                 exe_client,
                 execution_messages,
@@ -1126,10 +1166,17 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     yield TurnFailed(error="python_compute call limit exceeded for this turn."), None, None
                     return
                 python_calls += 1
+            self._record_latency(
+                cmd.turn_id,
+                "tool_proposal",
+                (time.perf_counter() - model_round_started_at) * 1000,
+                detail={"tool": tool_name, "call": tool_calls},
+            )
             call_id = uuid.uuid4().hex[:8]
             if not self.turn_guard.begin(cmd.turn_id):
                 return
             yield ToolStarted(tool_name=tool_name, args=tool_args, call_id=call_id), None, None
+            tool_started_at = time.perf_counter()
             try:
                 tool_result = self.registry.execute_tool(
                     tool_name,
@@ -1142,6 +1189,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 )
             finally:
                 self.turn_guard.end(cmd.turn_id)
+            self._record_latency(
+                cmd.turn_id,
+                "tool_preflight" if tool_result.requires_approval else "tool_execution",
+                (time.perf_counter() - tool_started_at) * 1000,
+                detail={"tool": tool_name, "requires_approval": bool(tool_result.requires_approval)},
+            )
             logger.debug(
                 "host result turn=%s call=%s tool=%s success=%s approval=%s error=%r",
                 cmd.turn_id,
@@ -1512,7 +1565,15 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
 
             # 1. Semantic Filter
+            semantic_started_at = time.perf_counter()
             task, plan, filter_res, sf_client, ctx_profile, agent_addressed = self._run_semantic_filter(cmd)
+            self._record_latency(
+                cmd.turn_id,
+                "semantic",
+                (time.perf_counter() - semantic_started_at) * 1000,
+                elapsed_ms=(time.time() - turn_started_at) * 1000,
+                detail={"source": str(getattr(filter_res, "source", ""))},
+            )
             if cmd.turn_id in self.cancelled_turns:
                 self.cancelled_turns.discard(cmd.turn_id)
                 yield TurnCancelled(reason="Turn cancelled after semantic filter")
@@ -1544,8 +1605,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 self.cancelled_turns.discard(cmd.turn_id)
                 yield TurnCancelled(reason="Turn cancelled before context building")
                 return
+            context_started_at = time.perf_counter()
             context_map_str, explicit_str, agents_str, skills_str, context_blocks, explicit_items, build_stats, needs_project_context = self._build_context(
                 cmd, task, plan, exe_profile, sf_client
+            )
+            self._record_latency(
+                cmd.turn_id,
+                "context_retrieval",
+                (time.perf_counter() - context_started_at) * 1000,
+                elapsed_ms=(time.time() - turn_started_at) * 1000,
+                detail={"selected": len(context_blocks), "explicit": len(explicit_items)},
             )
             if cmd.turn_id in self.cancelled_turns:
                 self.cancelled_turns.discard(cmd.turn_id)
@@ -1702,8 +1771,18 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             yield TurnCancelled(reason="Turn cancelled before approved action execution")
             return
 
+        pending_created_at = getattr(pa, "created_at", None)
+        if isinstance(pending_created_at, (int, float)):
+            self._record_latency(
+                turn_id,
+                "approval_wait",
+                max(0.0, (time.time() - pending_created_at) * 1000),
+                detail={"tool": str(getattr(pa, "tool_name", ""))},
+            )
+
         consume_failed = False
         edit_result = None
+        approved_tool_started_at = time.perf_counter()
         try:
             if hist_svc and not hist_svc.repo.consume_pending_action(pa.id):
                 consume_failed = True
@@ -1741,6 +1820,13 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                             )
         finally:
             self.turn_guard.end(turn_id)
+
+        self._record_latency(
+            turn_id,
+            "tool_execution",
+            (time.perf_counter() - approved_tool_started_at) * 1000,
+            detail={"tool": pa.tool_name, "approved": True},
+        )
 
         if consume_failed:
             yield TurnFailed(error="Pending action was already consumed or cancelled.")
