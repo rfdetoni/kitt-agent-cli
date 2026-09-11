@@ -23,7 +23,7 @@ from kitt.llm.http_security import read_error_body
 @dataclass
 class LLMRequest:
     model: str
-    messages: List[Dict[str, str]]
+    messages: List[Dict[str, Any]]
     system_prompt: Optional[str] = None
     response_format: Optional[str] = None
     temperature: float = 0.0
