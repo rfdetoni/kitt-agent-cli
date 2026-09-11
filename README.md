@@ -1,33 +1,63 @@
 # K.I.T.T. Agent CLI
 
-Local-first autonomous coding-agent **control plane** built in Python with SQLite/FTS5 workspace intelligence and optional shared native acceleration.
+<p align="center">
+  <strong>Local-first autonomous coding-agent control plane.</strong><br>
+  Python orchestration · SQLite/FTS5 workspace intelligence · optional Rust acceleration · MCP · plugins · multi-agent execution
+</p>
 
-## Ownership
+<p align="center">
+  <a href="https://github.com/rfdetoni/kitt-agent-cli/blob/main/LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Local first" src="https://img.shields.io/badge/design-local--first-6f42c1">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-FTS5-003B57?logo=sqlite&logoColor=white">
+</p>
 
-`kitt-agent-cli` owns the hot-path coding-agent orchestration:
+K.I.T.T. Agent CLI is the execution and orchestration layer of the K.I.T.T. ecosystem. It combines repository intelligence, provider/model routing, goals, child agents, memory-aware context, policy enforcement, approvals, plugins and external tools behind a compact model-facing runtime.
 
-- agent loop, routing and model/provider selection;
-- policy, approvals, capabilities and workspace security;
-- goals, child agents, history, Dreaming, state and telemetry;
-- plugins, MCP, hooks and external-tool integrations;
-- `kitt_runtime`, repository adapters and the portable Python native fallback.
+The Agent remains portable Python. Deterministic CPU/data-heavy work can be accelerated by the shared Rust `kitt_native` extension without changing the model-facing API.
 
-Heavy or independently deployable capabilities are intentionally not vendored here:
+---
 
-- **`kitt-toolbox`** owns the Rust `kitt-native-engine`, PyO3 binding and `kitt_native` wheel;
-- **`kitt-assistant`** owns the persistent Rust service/control center plus the Python `kitt-assistant-runtime` package providing `kitt.daemon` and `kitt.remote`;
-- **`kitt-ai-workers`** owns the separate `kitt-evolution` and `kitt-evals` packages plus optional heavy STT/ML workers;
-- **`kitt-reverse-proxy`** owns the authorized browser/API gateway.
+## What’s included
 
-These Python distributions compose through the shared `kitt.*` namespace. The Agent itself remains a portable control-plane wheel; official installers compose the companion packages without duplicating their source.
+- Autonomous agent loop and goal-oriented execution.
+- Provider/model routing for local and remote models.
+- SQLite/FTS5 repository intelligence and history.
+- Compact, policy-governed `kitt_runtime` tool surface.
+- Child agents, retained agents and bounded concurrent execution.
+- Workspace capability policy and single-use approvals.
+- MCP servers/tools, plugins, hooks and external integrations.
+- Dreaming/memory consolidation and context compaction.
+- Quality gates, evaluation hooks and self-evolution integration.
+- Portable Python fallback plus optional native Rust acceleration.
+- Daemon/remote integration through the separately packaged Assistant runtime.
 
-## Native acceleration
+---
 
-`kitt/native/bridge.py` selects the shared `kitt_native` extension when available and otherwise uses the safe Python fallback. The model-facing API does not change: the compact policy-governed `kitt_runtime` surface remains the execution boundary.
+## Quick links
 
-The Rust implementation and its Rust CI belong exclusively to `rfdetoni/kitt-toolbox`; this repository no longer contains or builds Rust crates.
+- **Complete ecosystem installer:** https://github.com/rfdetoni/kitt
+- **Reverse proxy:** https://github.com/rfdetoni/kitt-reverse-proxy
+- **Native engine:** https://github.com/rfdetoni/kitt-toolbox
+- **Resident assistant:** https://github.com/rfdetoni/kitt-assistant
+- **AI workers & evolution:** https://github.com/rfdetoni/kitt-ai-workers
+- **Protocol contracts:** https://github.com/rfdetoni/kitt-protocol
+- **Persistent memory:** https://github.com/rfdetoni/kitt-memory
 
-## Install / update
+---
+
+## Requirements & compatibility
+
+- Python **3.12+**.
+- Git for repository workflows.
+- Rust/Cargo is optional for standalone Agent execution; the pure-Python backend remains available.
+- The complete K.I.T.T. ecosystem installer resolves the native/runtime dependencies automatically.
+
+For the full supported stack, prefer installing through [`rfdetoni/kitt`](https://github.com/rfdetoni/kitt).
+
+---
+
+## Installation
 
 ### Linux / macOS
 
@@ -41,49 +71,142 @@ curl -fsSL https://raw.githubusercontent.com/rfdetoni/kitt-agent-cli/main/instal
 irm https://raw.githubusercontent.com/rfdetoni/kitt-agent-cli/main/install.ps1 | iex
 ```
 
-The standalone installer composes the Agent with the Assistant runtime and Evolution/Evals packages. If Rust/Cargo is available it also builds the shared native wheel from `kitt-toolbox`; otherwise the Agent keeps the portable Python backend. Use `--no-native` / `-NoNative` to explicitly skip native acceleration.
+The standalone installer composes the Agent with the Assistant runtime and Evolution/Evals packages. If Rust/Cargo is available it can also build the shared native wheel from `kitt-toolbox`; otherwise K.I.T.T. keeps the portable Python backend.
 
-For the complete ecosystem, including the resident Assistant service and reverse proxy, use `rfdetoni/kitt`.
+Use `--no-native` / `-NoNative` to explicitly skip native acceleration.
 
-Requirements: Git and Python 3.12+. Rust is optional for Agent execution.
+---
 
-## Usage
+## Running the Agent
 
 ```bash
 kitt
 kitt --root /path/to/project
 kitt models
 kitt doctor
-kitt daemon status
-kitt remote status
-kitt evolve runs
 kitt --help
 ```
 
-Daemon/remote/evolution commands are available in the composed installation through their separately owned companion packages.
+Composed installations also expose companion workflows:
 
-Inside the TUI, `/reasoning 0-100` and the reasoning shortcuts update the execution model. When using `kitt-reverse-proxy`, KITT keeps a stable conversation/session ID and forwards reasoning effort without creating a new browser chat per turn.
+```bash
+kitt daemon status
+kitt remote status
+kitt evolve runs
+```
 
-## Runtime design
+Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update the execution model. With `kitt-reverse-proxy`, the Agent keeps a stable conversation/session ID and forwards reasoning effort without creating a new browser conversation every turn.
 
-KITT stays intentionally hybrid. Flexible orchestration and provider I/O remain Python; deterministic CPU/data-heavy repository work can use the Rust accelerator. Process execution is bounded and diagnostic tails are preserved rather than accumulating unbounded stdout/stderr.
+---
 
-Security invariants include workspace path containment, sanitized subprocess environments, single-use approval grants, capability intersection for child agents, bounded output/artifacts, secret-aware egress policy and fail-closed tool validation.
+## Architecture
+
+`kitt-agent-cli` owns the **hot-path coding-agent control plane**:
+
+```text
+User / TUI
+    │
+    ▼
+Turn Processor
+    │
+    ├── Context / memory / compaction
+    ├── Model & provider routing
+    ├── Policy / approvals / quality gates
+    ├── Goals / child agents / scheduling
+    │
+    ▼
+kitt_runtime
+    │
+    ├── repository operations
+    ├── process execution
+    ├── plugins / MCP / hooks
+    └── optional kitt_native acceleration
+```
+
+Heavy or independently deployable capabilities are intentionally owned elsewhere:
+
+| Repository | Ownership |
+| --- | --- |
+| `kitt-toolbox` | Rust `kitt-native-engine`, PyO3 binding and `kitt_native` wheel |
+| `kitt-assistant` | resident Rust daemon/control center and `kitt-assistant-runtime` Python package |
+| `kitt-ai-workers` | `kitt-evolution`, `kitt-evals` and optional STT/ML workers |
+| `kitt-reverse-proxy` | authorized browser/API gateway |
+| `kitt-memory` | shared persistent memory engine |
+| `kitt-protocol` | cross-component contracts |
+
+These Python distributions compose through the shared `kitt.*` namespace rather than duplicating source.
+
+---
+
+## Native acceleration
+
+`kitt/native/bridge.py` selects the shared `kitt_native` extension when available and otherwise uses the safe Python implementation.
+
+The model-facing contract does not change between backends. Native acceleration is an implementation detail behind the same bounded `kitt_runtime` surface.
+
+Rust implementation and Rust CI belong to `kitt-toolbox`; this repository intentionally does not build Rust crates.
+
+---
+
+## Security & autonomy
+
+K.I.T.T. treats tool execution as an authority boundary rather than a convenience API. Core invariants include:
+
+- workspace path containment;
+- sanitized subprocess environments;
+- single-use approval grants;
+- capability intersection for child agents;
+- bounded tool output and artifacts;
+- secret-aware egress policy;
+- fail-closed tool validation;
+- explicit mutation/exploration policy;
+- model output treated as untrusted input to the runtime.
+
+Autonomy can vary by workspace, but permissions remain explicit and policy-governed.
+
+---
 
 ## Configuration
 
 Configuration precedence is:
 
-1. CLI arguments
-2. environment variables
-3. KITT Control Center overrides
-4. runtime defaults
+1. CLI arguments;
+2. environment variables;
+3. K.I.T.T. Control Center overrides;
+4. runtime defaults.
 
-Useful switches include `KITT_SAFE_RUNTIME`, `KITT_DAEMON`, `KITT_DAEMON_AUTO_START`, `KITT_RETAINED_AGENTS` and `KITT_SCHEDULER`. Runtime-related switches take effect when `kitt-assistant-runtime` is installed.
+Useful runtime switches include:
+
+```text
+KITT_SAFE_RUNTIME
+KITT_DAEMON
+KITT_DAEMON_AUTO_START
+KITT_RETAINED_AGENTS
+KITT_SCHEDULER
+```
+
+Daemon/remote switches become active when `kitt-assistant-runtime` is installed.
+
+---
+
+## Performance philosophy
+
+The Agent keeps flexible orchestration in Python and avoids native complexity where it does not materially help. Native code is reserved for deterministic data-plane work where profiling justifies it.
+
+Hot-path design emphasizes:
+
+- bounded repository/process output;
+- SQLite/FTS5 local indexing;
+- semantic context filtering before model calls;
+- context caching and compaction;
+- minimal model-facing tool schemas;
+- optional native acceleration without mandatory native runtime cost.
+
+---
 
 ## Development
 
-Agent control-plane validation is Python-only:
+Install the development environment and run the Agent-owned validation suite:
 
 ```bash
 python -m pip install -e '.[dev]'
@@ -91,8 +214,33 @@ python -m pytest -q
 python packaging/verify_cleanroom.py
 ```
 
-Rust formatting, Clippy, tests and native wheel builds run in `kitt-toolbox`. Assistant daemon/remote tests run in `kitt-assistant`; Evolution/Evals tests run in `kitt-ai-workers`. The `rfdetoni/kitt` integration workflow freezes every repository to immutable SHAs and validates the composed namespace across repositories.
+Rust formatting, Clippy, tests and native wheel builds run in `kitt-toolbox`. Assistant daemon/remote tests run in `kitt-assistant`; Evolution/Evals tests run in `kitt-ai-workers`.
+
+The root `rfdetoni/kitt` integration workflow freezes every component to immutable SHAs and validates the composed shared namespace across repositories.
+
+---
+
+## Contributing
+
+Keep the hot path small, observable and deterministic. Prefer KISS/DRY/YAGNI over framework accumulation, preserve repository ownership boundaries and add dependencies only when they provide measurable value to execution quality, latency or maintainability.
+
+---
+
+## K.I.T.T. ecosystem
+
+| Repository | Responsibility |
+| --- | --- |
+| [`kitt`](https://github.com/rfdetoni/kitt) | installer and ecosystem composition |
+| [`kitt-agent-cli`](https://github.com/rfdetoni/kitt-agent-cli) | autonomous agent control plane |
+| [`kitt-reverse-proxy`](https://github.com/rfdetoni/kitt-reverse-proxy) | authorized provider gateway |
+| [`kitt-protocol`](https://github.com/rfdetoni/kitt-protocol) | shared contracts and SDKs |
+| [`kitt-memory`](https://github.com/rfdetoni/kitt-memory) | persistent memory engine |
+| [`kitt-toolbox`](https://github.com/rfdetoni/kitt-toolbox) | native data plane |
+| [`kitt-ai-workers`](https://github.com/rfdetoni/kitt-ai-workers) | isolated AI/ML workers and evals |
+| [`kitt-assistant`](https://github.com/rfdetoni/kitt-assistant) | resident assistant and Control Center |
+
+---
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
