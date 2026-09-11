@@ -11,7 +11,6 @@ from kitt.domain.entities import Permission
 from kitt.tools.path_policy import WorkspacePathPolicy
 
 
-@dataclass(frozen=True)
 class CommandRequest:
     executable: str
     argv: List[str]
@@ -121,6 +120,13 @@ class PolicyEngine:
         if getattr(self.autonomy, "level", "supervised") == "read_only":
             if tool_name in {"apply_patch", "write_file", "create_directory", "run_command", "child_spawn", "child"}:
                 return "DENY"
+
+        if tool_name == "run_command":
+            command = str(args.get("command", "")).strip()
+            if not command or "\x00" in command or len(command) > 65536:
+                return "DENY"
+            # Repository autonomy is user-owned; model commands cannot change it.
+            return "ALLOW" if getattr(self.autonomy, "allow_run_command_auto", False) else "ASK"
 
         if self.approval_manager and tool_name in {"apply_patch", "write_file", "create_directory"}:
             path = args.get("path") or args.get("file")

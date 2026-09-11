@@ -8,7 +8,7 @@ AutonomyLevel = Literal["read_only", "supervised", "balanced", "autonomous"]
 
 @dataclass(frozen=True)
 class AutonomyPolicy:
-    """Controls automatic actions without overriding PolicyEngine DENY rules."""
+    """Controls repository actions; autonomous mode permits arbitrary commands."""
 
     level: AutonomyLevel = "supervised"
     allow_file_write_auto: bool = False
@@ -28,6 +28,7 @@ class AutonomyPolicy:
             "files_free": "balanced",
             "always_allow": "autonomous",
             "allow_all": "autonomous",
+            "allow-all": "autonomous",
             "ask": "supervised",
             "deny": "read_only",
         }

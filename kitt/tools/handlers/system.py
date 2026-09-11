@@ -1,7 +1,7 @@
 """System, execution, patch, and git tool handlers."""
 from __future__ import annotations
 
-import shlex
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -190,10 +190,8 @@ class RunCommandHandler:
         command = str(args.get("command", "")).strip()
         if not command:
             return ToolResult(False, "", "Empty command.")
-        try:
-            argv = shlex.split(command)
-        except Exception as exc:
-            return ToolResult(False, "", f"Invalid shell command syntax: {exc}")
+        # The registry authorizes the complete command before reaching this handler.
+        argv = ["cmd.exe", "/d", "/s", "/c", command] if os.name == "nt" else ["/bin/sh", "-c", command]
 
         try:
             result = ctx.registry.process_runner.run(argv, timeout_seconds=30)

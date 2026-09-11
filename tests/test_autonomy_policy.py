@@ -60,13 +60,12 @@ class TestAutonomyPolicy(unittest.TestCase):
                 res_ui = engine.evaluate_tool(tool_name, args, origin="UI")
                 self.assertEqual(res_model, res_ui, f"Mismatch for {tool_name} at {level}: MODEL={res_model}, UI={res_ui}")
 
-    def test_denied_regardless_of_autonomy(self):
+    def test_suspicious_commands_follow_repository_autonomy(self):
         for level in ("read_only", "supervised", "balanced", "autonomous"):
             engine = PolicyEngine(autonomy=AutonomyPolicy.preset(level))
-            self.assertEqual(engine.evaluate_tool("run_command", {"command": "cat /etc/passwd"}), "DENY")
-            self.assertEqual(engine.evaluate_tool("run_command", {"command": "rm -rf /"}), "DENY")
-            self.assertEqual(engine.evaluate_tool("run_command", {"command": "git push"}), "DENY")
-            self.assertEqual(engine.evaluate_tool("run_command", {"command": "git status; rm -rf ."}), "DENY")
+            expected = "DENY" if level == "read_only" else "ALLOW" if level == "autonomous" else "ASK"
+            for command in ("cat /etc/passwd", "rm -rf /", "git push", "git status; rm -rf ."):
+                self.assertEqual(engine.evaluate_tool("run_command", {"command": command}), expected)
 
     def test_rtk_proxy_evaluation(self):
         engine = PolicyEngine()

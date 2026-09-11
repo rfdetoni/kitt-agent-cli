@@ -565,7 +565,7 @@ class KittUIApp:
             else:
                 level = arg.strip().lower()
                 preset_map = {
-                    "allow_all": "autonomous", "always_allow": "autonomous",
+                    "allow_all": "autonomous", "allow-all": "autonomous", "always_allow": "autonomous",
                     "allow": "autonomous", "always": "autonomous",
                     "ask": "supervised", "deny": "read_only",
                     "files_free": "balanced", "1": "autonomous",
