@@ -62,16 +62,11 @@ class ToolRegistry(_core.ToolRegistry):
                 )
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
-                # Keep the ACI compact while making mutation argument shapes
-                # explicit enough for native providers to call them correctly.
                 tool["description"] = (
-                    "KITT runtime. Execute requested workspace mutations instead of describing them. "
-                    "For a new or complete file ALWAYS use repo.write_file with {path,content}. "
-                    "repo.create_directory creates directories. patch.apply is only for editing an "
-                    "existing file with KITT SEARCH/REPLACE blocks; NEVER send unified diffs "
-                    "(---/+++/@@ or /dev/null) to patch.apply. artifacts.store is internal storage "
-                    "only. Do not substitute shell commands or manual save instructions for a "
-                    "requested file write."
+                    "KITT runtime. New/full file: repo.write_file {path,content}; "
+                    "directory: repo.create_directory {path}; patch.apply edits existing files "
+                    "with SEARCH/REPLACE only, never unified diff. Execute writes; no shell/manual-save "
+                    "substitutes. artifacts.store is internal."
                 )
                 args = dict(tool.get("args") or {})
                 args["operation"] = operation_hint
@@ -79,9 +74,8 @@ class ToolRegistry(_core.ToolRegistry):
                     "type": "object",
                     "additionalProperties": True,
                     "description": (
-                        "Operation arguments. New/full file: repo.write_file {path,content}. "
-                        "Directory: repo.create_directory {path}. Existing-file edit only: "
-                        "patch.apply {patch} using SEARCH/REPLACE blocks; unified diff is invalid."
+                        "New/full file=repo.write_file {path,content}; directory=repo.create_directory "
+                        "{path}; existing edit=patch.apply {patch} SEARCH/REPLACE only, not unified diff."
                     ),
                 }
                 tool["args"] = args
