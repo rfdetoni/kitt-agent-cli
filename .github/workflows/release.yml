@@ -174,20 +174,19 @@ jobs:
             exit 0
           fi
 
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
-              echo "Tag $RELEASE_TAG already exists without a release; refusing to retarget it." >&2
-              exit 1
-            fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "$RELEASE_TAG"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             gh release create "$RELEASE_TAG" release/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --generate-notes \
               --title "$RELEASE_TAG"
           else
-            gh release create "$RELEASE_TAG" release/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --generate-notes \
-              --title "$RELEASE_TAG"
+            echo "Expected release tag $RELEASE_TAG was not found." >&2
+            exit 1
           fi
