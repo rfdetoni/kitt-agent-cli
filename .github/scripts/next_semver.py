@@ -113,10 +113,21 @@ def main() -> int:
         return 0
 
     tag, released = latest
-    if current < released:
-        raise SystemExit(f"declared version {current} is older than latest tag {tag}")
 
-    # A version already advanced in source but not tagged should be released as-is.
+    # Published tags are authoritative. A stale source version must never make
+    # semantic versioning move backwards; the next releasable commit advances
+    # from the latest published tag and the release commit repairs source state.
+    if current < released:
+        print(
+            f"warning: declared version {current} trails latest tag {tag}; "
+            f"using {released} as the release baseline",
+            file=sys.stderr,
+        )
+        baseline = released
+    else:
+        baseline = current
+
+    # A version intentionally advanced in source but not tagged is released as-is.
     if current > released:
         print(current)
         return 0
@@ -125,7 +136,7 @@ def main() -> int:
     if level == 0:
         return 0
 
-    print(current.bump(level))
+    print(baseline.bump(level))
     return 0
 
 
