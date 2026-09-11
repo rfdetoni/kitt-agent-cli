@@ -37,7 +37,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 ## Quick links
 
 - **Complete ecosystem installer:** https://github.com/rfdetoni/kitt
-- **Container image (GHCR):** https://github.com/rfdetoni/kitt-agent-cli/pkgs/container/kitt-agent-cli
+- **GHCR packages:** https://github.com/rfdetoni?tab=packages
 - **Reverse proxy:** https://github.com/rfdetoni/kitt-reverse-proxy
 - **Native engine:** https://github.com/rfdetoni/kitt-toolbox
 - **Resident assistant:** https://github.com/rfdetoni/kitt-assistant
@@ -133,7 +133,9 @@ docker run --rm -it \
   ghcr.io/rfdetoni/kitt-agent-cli:latest
 ```
 
-Package page: https://github.com/rfdetoni/kitt-agent-cli/pkgs/container/kitt-agent-cli
+GHCR packages index: https://github.com/rfdetoni?tab=packages
+
+The direct package page is created by GitHub after the image is published for the first time. Until then, use the packages index above and the canonical image name `ghcr.io/rfdetoni/kitt-agent-cli`.
 
 The release image currently targets `linux/amd64`. The image runs as a non-root `kitt` user with UID/GID `1000`.
 
@@ -209,7 +211,7 @@ These Python distributions compose through the shared `kitt.*` namespace rather 
 
 The model-facing contract does not change between backends. Native acceleration is an implementation detail behind the same bounded `kitt_runtime` surface.
 
-Rust implementation and Rust CI belong to `kitt-toolbox`; this repository intentionally does not build Rust crates.
+Rust implementation and Rust CI belong in `kitt-toolbox`; this repository intentionally does not build Rust crates.
 
 ---
 
