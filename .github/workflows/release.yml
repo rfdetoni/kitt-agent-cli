@@ -154,7 +154,7 @@ jobs:
           packages-dir: publish/
 
   github-release:
-    needs: [container, publish]
+    needs: container
     runs-on: ubuntu-latest
     permissions:
       contents: write
