@@ -112,16 +112,18 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
             registry = ToolRegistry(root_dir=temp)
             try:
                 definition = registry.get_tool_definitions(["kitt_runtime"])[0]
-                self.assertIn("repo.write_file", definition["description"])
-                self.assertIn("artifacts.store", definition["description"])
-                self.assertIn("Do not substitute", definition["description"])
+                description = definition["description"]
+                self.assertIn("repo.write_file {path,content}", description)
+                self.assertIn("never unified diff", description)
+                self.assertIn("artifacts.store", description)
                 self.assertEqual(
                     definition["args"]["operation"],
                     compact_runtime_operation_catalog(),
                 )
                 argument_schema = definition["args"]["arguments"]
                 self.assertEqual(argument_schema["type"], "object")
-                self.assertIn("repo.write_file requires {path,content}", argument_schema["description"])
+                self.assertIn("repo.write_file {path,content}", argument_schema["description"])
+                self.assertIn("not unified diff", argument_schema["description"])
 
                 tools = extract_openai_tools(f"Available host tools: {[definition]}")
                 native = tools[0]["function"]["parameters"]
@@ -131,7 +133,7 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                 )
                 self.assertEqual(native["properties"]["arguments"]["type"], "object")
                 self.assertIn(
-                    "repo.write_file requires {path,content}",
+                    "repo.write_file {path,content}",
                     native["properties"]["arguments"]["description"],
                 )
             finally:
