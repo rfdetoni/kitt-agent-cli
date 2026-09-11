@@ -70,12 +70,20 @@ class ToolRegistry(_core.ToolRegistry):
                     "updates workspace files."
                 )
                 args = dict(tool.get("args") or {})
-                args["operation"] = operation_hint
-                args["arguments"] = (
-                    "operation-specific JSON object; repo.write_file={path,content," 
-                    "expected_content_hash?}; repo.create_directory={path}; "
-                    "patch.apply={patch}; artifacts.store={content,artifact_type?,summary?}"
-                )
+                args["operation"] = {
+                    "type": "string",
+                    "description": f"Exact runtime operation. Available: {operation_hint}",
+                }
+                args["arguments"] = {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "description": (
+                        "Operation-specific arguments. repo.write_file={path,content," 
+                        "expected_content_hash?}; repo.create_directory={path}; "
+                        "patch.apply={patch}; artifacts.store={content,artifact_type?,summary?}. "
+                        "Never use artifacts.store to create or update a workspace file."
+                    ),
+                }
                 tool["args"] = args
         return tools
 
