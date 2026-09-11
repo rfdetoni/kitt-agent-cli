@@ -21,23 +21,25 @@ class ProjectStateLocationTests(unittest.TestCase):
             with patch("pathlib.Path.home", return_value=home):
                 runtime = KittRuntime.build(str(workspace))
                 try:
-                    project_state = workspace / ".kitt"
+                    project_state = workspace.resolve(strict=False) / ".kitt"
                     self.assertTrue(project_state.is_dir())
                     self.assertEqual(
-                        Path(runtime.database.db_path),
-                        project_state / "history" / "history.sqlite3",
+                        Path(runtime.database.db_path).resolve(strict=False),
+                        (project_state / "history" / "history.sqlite3").resolve(
+                            strict=False
+                        ),
                     )
                     self.assertEqual(
-                        Path(runtime.repository_index.db_path),
-                        project_state / "index" / "index.db",
+                        Path(runtime.repository_index.db_path).resolve(strict=False),
+                        (project_state / "index" / "index.db").resolve(strict=False),
                     )
                     self.assertEqual(
-                        runtime.working_set.path,
-                        project_state / "working_set.json",
+                        runtime.working_set.path.resolve(strict=False),
+                        (project_state / "working_set.json").resolve(strict=False),
                     )
                     self.assertEqual(
-                        runtime.artifacts.storage,
-                        project_state / "artifacts",
+                        runtime.artifacts.storage.resolve(strict=False),
+                        (project_state / "artifacts").resolve(strict=False),
                     )
                 finally:
                     runtime.close()
@@ -46,12 +48,18 @@ class ProjectStateLocationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp) / "project"
             workspace.mkdir(parents=True)
+            canonical_workspace = workspace.resolve(strict=False)
 
             identity = WorkspaceIdentity.build(workspace)
 
-            self.assertEqual(identity.canonical_root, workspace.resolve())
+            self.assertEqual(identity.canonical_root, canonical_workspace)
             self.assertTrue(
-                (workspace / ".kitt" / "history" / "history.sqlite3").is_file()
+                (
+                    canonical_workspace
+                    / ".kitt"
+                    / "history"
+                    / "history.sqlite3"
+                ).is_file()
             )
 
     def test_global_state_remains_separate_from_project_state(self) -> None:
