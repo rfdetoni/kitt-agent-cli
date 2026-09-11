@@ -18,9 +18,7 @@ class TestDreamE2E(unittest.TestCase):
         self.workspace = self.root / "workspace"
         self.home.mkdir()
         self.workspace.mkdir()
-        self._runtime_home = patch("kitt.core.runtime.Path.home", return_value=self.home)
         self._private_home = patch("kitt.security.private_state.Path.home", return_value=self.home)
-        self._runtime_home.start()
         self._private_home.start()
         self.config = RuntimeConfig(
             dream_enabled=True,
@@ -34,7 +32,6 @@ class TestDreamE2E(unittest.TestCase):
     def tearDown(self):
         self.runtime.close()
         self._private_home.stop()
-        self._runtime_home.stop()
         self.tmp.cleanup()
 
     def test_e2e_dream_consolidation_and_retrieval_lifecycle(self):
@@ -76,9 +73,9 @@ class TestDreamE2E(unittest.TestCase):
         self.assertFalse(run_res.run.dry_run)
         self.assertGreaterEqual(run_res.run.memories_added, 2)
 
-        # 3. Check the workspace-scoped materialized view under private home state.
+        # 3. Project memory projection must remain under this project's .kitt.
         mem_file = (
-            self.home
+            self.workspace
             / ".kitt"
             / "workspaces"
             / self.workspace_id
@@ -86,8 +83,16 @@ class TestDreamE2E(unittest.TestCase):
             / "MEMORY.md"
         )
         self.assertTrue(mem_file.exists())
-        self.assertFalse((self.home / ".kitt" / "memory" / "MEMORY.md").exists())
-        self.assertFalse((self.workspace / ".kitt" / "memory" / "MEMORY.md").exists())
+        self.assertFalse(
+            (
+                self.home
+                / ".kitt"
+                / "workspaces"
+                / self.workspace_id
+                / "memory"
+                / "MEMORY.md"
+            ).exists()
+        )
         mem_content = mem_file.read_text(encoding="utf-8")
         self.assertIn("Always use standard library first", mem_content)
         self.assertIn("Context retrieval uses SQLite + FTS5", mem_content)
