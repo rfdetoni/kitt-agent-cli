@@ -62,10 +62,20 @@ class ToolRegistry(_core.ToolRegistry):
                 )
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
-                tool["description"] = "KITT live runtime contract."
+                tool["description"] = (
+                    "KITT live runtime contract. For workspace files use repo.write_file "
+                    "with {path, content}; for directories use repo.create_directory; for "
+                    "SEARCH/REPLACE edits use patch.apply. artifacts.store only persists "
+                    "internal KITT artifacts outside model context and never creates or "
+                    "updates workspace files."
+                )
                 args = dict(tool.get("args") or {})
                 args["operation"] = operation_hint
-                args["arguments"] = "JSON object"
+                args["arguments"] = (
+                    "operation-specific JSON object; repo.write_file={path,content," 
+                    "expected_content_hash?}; repo.create_directory={path}; "
+                    "patch.apply={patch}; artifacts.store={content,artifact_type?,summary?}"
+                )
                 tool["args"] = args
         return tools
 
