@@ -17,8 +17,9 @@ class TurnEventBridge:
     """TUI bridge.
 
     When daemon mode is enabled this object keeps the old public API but routes
-    turns through DaemonUIBridge. Local execution remains available only when
-    explicitly configured.
+    turns through DaemonUIBridge. Local execution remains available when
+    explicitly configured or when daemon process creation provably never
+    occurred, avoiding split-brain authority while keeping the CLI usable.
     """
 
     def __init__(self, runtime, on_event: Callable[[TurnEvent], None],
@@ -72,6 +73,46 @@ class TurnEventBridge:
                 self._daemon_terminal.set()
         self._request_invalidate()
 
+    async def _start_daemon_process(self) -> dict:
+        """Start the companion daemon while containing legacy pre-spawn ENOENT.
+
+        Older companion runtimes allowed FileNotFoundError from subprocess.Popen
+        to escape. At that point no child exists, so tagging it as a pre-spawn
+        failure lets _ensure_daemon safely use the local processor without
+        creating a second execution authority.
+        """
+        try:
+            from kitt.daemon.process import start_daemon_detached
+        except ModuleNotFoundError as exc:
+            if exc.name and not exc.name.startswith("kitt.daemon"):
+                raise
+            return {
+                "status": "error",
+                "error": "KITT daemon runtime is unavailable",
+                "bootstrap_failed": True,
+                "spawned": False,
+            }
+        try:
+            return await asyncio.to_thread(
+                start_daemon_detached, str(self.runtime.canonical_root)
+            )
+        except FileNotFoundError as exc:
+            return {
+                "status": "error",
+                "error": f"KITT daemon bootstrap failed before process creation: {exc}",
+                "bootstrap_failed": True,
+                "spawned": False,
+                "errno": getattr(exc, "errno", None),
+            }
+
+    @staticmethod
+    def _safe_pre_spawn_failure(result: dict) -> bool:
+        return (
+            result.get("status") != "ok"
+            and result.get("bootstrap_failed") is True
+            and result.get("spawned") is False
+        )
+
     async def _ensure_daemon(self, conversation_id: str) -> bool:
         config = getattr(self.runtime, "config", None)
         if not getattr(config, "daemon_enabled", False):
@@ -89,17 +130,19 @@ class TurnEventBridge:
         if not await bridge.connect():
             if not getattr(config, "daemon_auto_start", True):
                 return False
-            try:
-                from kitt.daemon.process import start_daemon_detached
-            except ModuleNotFoundError as exc:
-                if exc.name and not exc.name.startswith("kitt.daemon"):
-                    raise
-                return False
-            result = await asyncio.to_thread(start_daemon_detached, str(self.runtime.canonical_root))
-            if result.get("status") != "ok" or not await bridge.connect():
+            result = await self._start_daemon_process()
+            if result.get("status") != "ok":
+                await bridge.close()
+                if self._safe_pre_spawn_failure(result):
+                    return False
                 if getattr(config, "daemon_local_fallback", False):
                     return False
-                raise RuntimeError(result.get("error", "Unable to start/connect KITT daemon"))
+                raise RuntimeError(result.get("error", "Unable to start KITT daemon"))
+            if not await bridge.connect():
+                await bridge.close()
+                if getattr(config, "daemon_local_fallback", False):
+                    return False
+                raise RuntimeError("Unable to connect to KITT daemon after successful process start")
         if not await bridge.attach(conversation_id):
             # Session should already exist because the TUI creates it in the shared DB.
             if getattr(config, "daemon_local_fallback", False):
