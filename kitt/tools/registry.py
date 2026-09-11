@@ -47,7 +47,10 @@ class ToolRegistry(_core.ToolRegistry):
     def attach_processor(self, processor):
         result = super().attach_processor(processor)
         from kitt.core.agent_runtime import install_agent_engineering
+        from kitt.core.completion_guard import install_completion_guard
+
         install_agent_engineering(processor, self)
+        install_completion_guard(processor, self)
         return result
 
     def get_tool_definitions(self, enabled_tools=None):
