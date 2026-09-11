@@ -31,8 +31,10 @@ _NEGATED_CLAIM_RE = re.compile(
     re.IGNORECASE,
 )
 _FUTURE_CLAIM_RE = re.compile(
-    r"\b(?:will\s+(?:be\s+)?(?:create|write|save|generate|implement)|"
-    r"would\s+be|should\s+be|vai\s+ser|será|sera)\b",
+    r"\b(?:"
+    r"will\s+(?:be\s+)?(?:creat(?:e|ed)|writ(?:e|ten)|sav(?:e|ed)|generat(?:e|ed)|implement(?:ed)?)|"
+    r"would\s+be|should\s+be|vai\s+ser|será|sera"
+    r")\b",
     re.IGNORECASE,
 )
 _FILE_PATH_RE = re.compile(
