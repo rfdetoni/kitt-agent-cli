@@ -247,6 +247,26 @@ class ReadFileHandler:
         )
 
 
+class CreateDirectoryHandler:
+    def execute(self, args: Dict[str, Any], ctx: ToolContext):
+        from kitt.tools.registry import ToolResult
+
+        requested = str(args.get("path", "") or "").strip()
+        if not requested:
+            return ToolResult(False, "", "Argument 'path' is required.")
+        try:
+            fs = _fs(ctx)
+            relative = _scope(ctx, fs.relative(requested))
+            created = fs.create_directory(relative, parents=True, exist_ok=True)
+        except (OSError, PermissionError, ValueError) as exc:
+            return ToolResult(False, "", f"Workspace directory creation refused: {exc}")
+        return ToolResult(
+            True,
+            f"Created directory {created}.",
+            metadata={"path": created, "changed_paths": [created]},
+        )
+
+
 class WriteFileHandler:
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult

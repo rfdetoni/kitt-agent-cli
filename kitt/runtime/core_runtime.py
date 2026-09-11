@@ -101,6 +101,13 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     "artifacts.read": RuntimeOperationSpec(
         "artifacts.read", CAP_ARTIFACT_READ, "artifact_read"
     ),
+    "repo.create_directory": RuntimeOperationSpec(
+        "repo.create_directory",
+        CAP_REPO_WRITE,
+        "create_directory",
+        sensitive=True,
+        resume_tool_name="create_directory",
+    ),
     "patch.apply": RuntimeOperationSpec(
         "patch.apply",
         CAP_REPO_WRITE,
@@ -381,7 +388,7 @@ class SafeRuntime:
                 result = apply_progressive_search_view(result, args)
             if op in {"repo.read", "repo.search"}:
                 result = self.retrieval_guard.observe(op, args, result)
-            elif result.success and op in {"repo.edit_symbol", "patch.apply"}:
+            elif result.success and op in {"repo.edit_symbol", "repo.create_directory", "patch.apply"}:
                 self.retrieval_guard.invalidate()
         except Exception as exc:
             result = SafeRuntimeResult(
@@ -420,6 +427,7 @@ class SafeRuntime:
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context),
+            "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id),
             "children.spawn": lambda: self._op_registry_tool("children.spawn", "child_spawn", args, turn_id, origin, security_context, grant, expected_approval_id),

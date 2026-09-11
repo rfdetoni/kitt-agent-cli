@@ -190,6 +190,80 @@ class WorkspaceFileSystem:
             os.close(fd)
             os.close(parent_fd)
 
+    def create_directory(
+        self, rel: str | Path, *, parents: bool = True, exist_ok: bool = True
+    ) -> str:
+        """Create a real directory inside the workspace without invoking a shell."""
+        parts = self._normalize(rel)
+        rel_path = "/".join(parts) if parts else "."
+        if not parts:
+            if exist_ok:
+                return rel_path
+            raise FileExistsError(str(self.root))
+
+        if os.name == "nt":
+            current = self.root
+            for index, component in enumerate(parts):
+                current = current / component
+                final = index == len(parts) - 1
+                created = False
+                try:
+                    st = current.lstat()
+                except FileNotFoundError:
+                    if not parents and not final:
+                        raise
+                    current.mkdir()
+                    created = True
+                    st = current.lstat()
+                if self._windows_reparse_point(st) or not stat.S_ISDIR(st.st_mode):
+                    raise PermissionError(
+                        f"Workspace directory traversal refused: {current}"
+                    )
+                if final and not created and not exist_ok:
+                    raise FileExistsError(str(current))
+            return rel_path
+
+        fd = self._open_root_fd()
+        try:
+            for index, component in enumerate(parts):
+                final = index == len(parts) - 1
+                flags = os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0))
+                flags |= int(getattr(os, "O_NOFOLLOW", 0))
+                flags |= int(getattr(os, "O_CLOEXEC", 0))
+                created = False
+                try:
+                    next_fd = os.open(component, flags, dir_fd=fd)
+                except FileNotFoundError:
+                    if not parents and not final:
+                        raise
+                    os.mkdir(component, 0o755, dir_fd=fd)
+                    created = True
+                    next_fd = os.open(component, flags, dir_fd=fd)
+                except OSError as exc:
+                    if exc.errno in (
+                        getattr(errno, "ELOOP", 40),
+                        getattr(errno, "EMLINK", 31),
+                    ):
+                        raise PermissionError(
+                            f"Workspace symlink traversal refused: {component}"
+                        ) from exc
+                    raise
+                try:
+                    if not stat.S_ISDIR(os.fstat(next_fd).st_mode):
+                        raise PermissionError(
+                            f"Workspace component is not a directory: {component}"
+                        )
+                    if final and not created and not exist_ok:
+                        raise FileExistsError(component)
+                except Exception:
+                    os.close(next_fd)
+                    raise
+                os.close(fd)
+                fd = next_fd
+            return rel_path
+        finally:
+            os.close(fd)
+
     def is_safe_directory(self, rel: str | Path) -> bool:
         """Return True only when every path component is a real directory."""
         try:

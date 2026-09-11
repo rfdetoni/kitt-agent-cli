@@ -1,3 +1,5 @@
+import re
+
 from kitt.domain.entities import SemanticTask, ContextPlan, TaskIntent
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 
@@ -14,9 +16,9 @@ class DeterministicFallbackPlanner:
 
         intent: TaskIntent = 'IMPLEMENT'
         prompt_lower = prompt.lower()
-        if (not paths and not symbols and not any(kw in prompt_lower for kw in ("crie o arquivo", "crie um arquivo", "crie a pasta", "execute", "rode"))) or prompt_lower.strip() in {'oi', 'olá', 'ola', 'hello', 'hi'} or any(word in prompt_lower for word in ('explique', 'diga', 'responda', 'como ', 'por que', 'porque', '?')):
+        if (not paths and not symbols and not any(kw in prompt_lower for kw in ("crie o arquivo", "crie um arquivo", "crie a pasta", "crie uma pasta", "crie o diretório", "crie um diretório", "execute", "rode"))) or prompt_lower.strip() in {'oi', 'olá', 'ola', 'hello', 'hi'} or any(word in prompt_lower for word in ('explique', 'diga', 'responda', 'como ', 'por que', 'porque', '?')):
             intent = 'ASK'
-        elif 'test' in prompt_lower or 'unittest' in prompt_lower:
+        elif re.search(r'(?<!\w)(?:test|tests|testing|unittest|pytest|teste|testes|testar)(?!\w)', prompt_lower):
             intent = 'TEST'
         elif 'debug' in prompt_lower or 'fix' in prompt_lower or 'bug' in prompt_lower:
             intent = 'DEBUG'
@@ -49,6 +51,7 @@ class DeterministicFallbackPlanner:
         if task.intent == 'ASK' and not task.paths and not task.symbols:
             return ContextPlan(confidence=1.0)
         tools = [
+            "create_directory",
             "write_file",
             "apply_patch",
             "read_file",
