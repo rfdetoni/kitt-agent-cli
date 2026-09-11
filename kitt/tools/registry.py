@@ -74,6 +74,19 @@ class ToolRegistry(_core.ToolRegistry):
                 tool["args"] = args
         return tools
 
+    def execute_tool(self, tool_name, args=None, *positional, **kwargs):
+        """Enforce command DENY decisions before approval can be requested."""
+        normalized_args = args or {}
+        if tool_name == "run_command":
+            command = str(normalized_args.get("command", "")).strip()
+            if self.policy.evaluate_command(command) == "DENY":
+                return ToolResult(
+                    False,
+                    "",
+                    "Execution denied by PolicyEngine for tool 'run_command'.",
+                )
+        return super().execute_tool(tool_name, normalized_args, *positional, **kwargs)
+
 
 def __getattr__(name: str):
     try:
