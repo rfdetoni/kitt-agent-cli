@@ -44,7 +44,7 @@ _FILE_PATH_RE = re.compile(
     r"(?:py|pyi|js|mjs|cjs|ts|tsx|jsx|java|kt|kts|go|rs|c|cc|cpp|h|hpp|"
     r"cs|php|rb|swift|scala|sql|sh|bash|zsh|ps1|html|htm|css|scss|sass|"
     r"json|jsonl|yaml|yml|toml|ini|cfg|conf|xml|md|txt|properties|gradle))"
-    r"(?![\w/.-])",
+    r"(?![\w/-])",
     re.IGNORECASE,
 )
 
