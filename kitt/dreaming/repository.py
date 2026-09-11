@@ -280,7 +280,7 @@ class MemoryRepository:
         return mem
 
     def rebuild_materialized_view(self, workspace_id: str, root_dir: Optional[Path] = None) -> str:
-        """Reconstructs the workspace-scoped human-readable memory projection."""
+        """Reconstructs the human-readable .kitt/memory/MEMORY.md projection from SQLite."""
         active = self.get_active_memories(workspace_id)
         sections: Dict[str, List[str]] = {
             "PROJECT_RULE": [],
@@ -321,14 +321,7 @@ class MemoryRepository:
         if root_dir:
             import os
             import uuid
-            target = (
-                Path(root_dir)
-                / ".kitt"
-                / "workspaces"
-                / workspace_id
-                / "memory"
-                / "MEMORY.md"
-            )
+            target = Path(root_dir) / ".kitt" / "memory" / "MEMORY.md"
             target.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = target.parent / f".MEMORY.md.{uuid.uuid4().hex[:8]}.tmp"
             try:

@@ -135,14 +135,7 @@ class TestDreamTransactionsAndSecurity(unittest.TestCase):
         self.session_tree.append_entry(conv_id, "USER_TURN", {"content": "Always use ./mvnw"})
         self.session_tree.append_entry(conv_id, "DECISION", {"content": "Decidimos usar SQLite."})
 
-        mem_file = (
-            self.root
-            / ".kitt"
-            / "workspaces"
-            / self.workspace_id
-            / "memory"
-            / "MEMORY.md"
-        )
+        mem_file = self.root / ".kitt" / "memory" / "MEMORY.md"
         self.assertFalse(mem_file.exists())
 
         # Execute dry-run
@@ -225,14 +218,7 @@ class TestDreamTransactionsAndSecurity(unittest.TestCase):
         self.memory_repo.add_direct_memory(self.workspace_id, "Rule: Always test before commit", kind="PROJECT_RULE")
         content = self.memory_repo.rebuild_materialized_view(self.workspace_id, root_dir=self.root)
 
-        mem_file = (
-            self.root
-            / ".kitt"
-            / "workspaces"
-            / self.workspace_id
-            / "memory"
-            / "MEMORY.md"
-        )
+        mem_file = self.root / ".kitt" / "memory" / "MEMORY.md"
         self.assertTrue(mem_file.exists())
         self.assertEqual(mem_file.read_text(encoding="utf-8"), content)
         self.assertIn("Always test before commit", content)

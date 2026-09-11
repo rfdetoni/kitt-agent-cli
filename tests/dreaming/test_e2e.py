@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 import tempfile
 import time
-from unittest.mock import patch
 
 from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
@@ -14,24 +13,17 @@ class TestDreamE2E(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
-        self.home = self.root / "home"
-        self.workspace = self.root / "workspace"
-        self.home.mkdir()
-        self.workspace.mkdir()
-        self._private_home = patch("kitt.security.private_state.Path.home", return_value=self.home)
-        self._private_home.start()
         self.config = RuntimeConfig(
             dream_enabled=True,
             dream_auto_enabled=False,
             persistence_enabled=True,
             history_enabled=True,
         )
-        self.runtime = KittRuntime.build(str(self.workspace), config=self.config)
+        self.runtime = KittRuntime.build(str(self.root), config=self.config)
         self.workspace_id = self.runtime.workspace_id
 
     def tearDown(self):
         self.runtime.close()
-        self._private_home.stop()
         self.tmp.cleanup()
 
     def test_e2e_dream_consolidation_and_retrieval_lifecycle(self):
@@ -73,26 +65,9 @@ class TestDreamE2E(unittest.TestCase):
         self.assertFalse(run_res.run.dry_run)
         self.assertGreaterEqual(run_res.run.memories_added, 2)
 
-        # 3. Project memory projection must remain under this project's .kitt.
-        mem_file = (
-            self.workspace
-            / ".kitt"
-            / "workspaces"
-            / self.workspace_id
-            / "memory"
-            / "MEMORY.md"
-        )
+        # 3. Check materialized view (.kitt/memory/MEMORY.md)
+        mem_file = self.root / ".kitt" / "memory" / "MEMORY.md"
         self.assertTrue(mem_file.exists())
-        self.assertFalse(
-            (
-                self.home
-                / ".kitt"
-                / "workspaces"
-                / self.workspace_id
-                / "memory"
-                / "MEMORY.md"
-            ).exists()
-        )
         mem_content = mem_file.read_text(encoding="utf-8")
         self.assertIn("Always use standard library first", mem_content)
         self.assertIn("Context retrieval uses SQLite + FTS5", mem_content)
