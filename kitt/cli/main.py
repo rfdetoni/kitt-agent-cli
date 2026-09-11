@@ -11,6 +11,7 @@ from dataclasses import replace
 
 from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
+from kitt.update_check import notify_if_update_available
 from kitt.ui.capabilities import create_backend
 from kitt.ui.fallback import HeadlessUI
 
@@ -362,6 +363,7 @@ def main(argv=None) -> int:
     _configure_debug_log()
     parser = build_parser()
     args = parser.parse_args(argv)
+    notify_if_update_available(component="agent-cli")
 
     if args.subcommand == "models":
         from kitt.cli.commands import handle_models_command
