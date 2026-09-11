@@ -52,6 +52,18 @@ jobs:
           p.write_text(text, encoding='utf-8')
           PY
           python .github/scripts/apply_native_directory_fix.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('kitt/context_filter/fallback.py')
+          text = p.read_text(encoding='utf-8')
+          if 'import re\n' not in text:
+              text = text.replace('from kitt.domain.entities import SemanticTask, ContextPlan, TaskIntent\n', 'import re\n\nfrom kitt.domain.entities import SemanticTask, ContextPlan, TaskIntent\n', 1)
+          old = "        elif 'test' in prompt_lower or 'unittest' in prompt_lower:\n"
+          new = "        elif re.search(r'(?<!\\w)(?:test|tests|testing|unittest|pytest|teste|testes|testar)(?!\\w)', prompt_lower):\n"
+          if old not in text:
+              raise SystemExit('test intent matcher anchor missing')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
 
       - name: Install and validate
         shell: bash
