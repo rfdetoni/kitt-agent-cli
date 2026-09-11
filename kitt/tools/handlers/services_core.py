@@ -9,6 +9,12 @@ from kitt.tools.handlers import ToolContext
 class ArtifactStoreHandler:
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult
+        if args.get("path"):
+            return ToolResult(
+                False,
+                "",
+                "artifacts.store persists an internal KITT artifact and does not write workspace files; use repo.write_file with {path, content}.",
+            )
         if not ctx.registry.artifact_tools:
             return ToolResult(False, "", "Artifact tools service unavailable.")
         artifact = ctx.registry.artifact_tools.put(
