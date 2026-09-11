@@ -11,6 +11,7 @@ class TurnCommand:
     prompt: str
     mode: str = "auto"
     explicit_files: Set[str] = field(default_factory=set)
+    attachments: Set[str] = field(default_factory=set)
     no_history: bool = False
     dry_run: bool = False
     approval_grant: Optional[ApprovalGrant] = None
