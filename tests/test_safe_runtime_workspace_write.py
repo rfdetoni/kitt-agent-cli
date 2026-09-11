@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from kitt.llm.providers.kitt_reverse_proxy import extract_openai_tools
 from kitt.runtime.safe_runtime import OPERATION_SPECS, SafeRuntime
 from kitt.security.capabilities import CAP_REPO_WRITE
 from kitt.tools.registry import ToolRegistry
@@ -84,8 +85,24 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                 self.assertIn("repo.write_file", definition["description"])
                 self.assertIn("artifacts.store", definition["description"])
                 self.assertIn("never creates", definition["description"])
-                self.assertIn("repo.write_file", definition["args"]["operation"])
-                self.assertIn("repo.write_file={path,content", definition["args"]["arguments"])
+
+                operation_schema = definition["args"]["operation"]
+                arguments_schema = definition["args"]["arguments"]
+                self.assertEqual(operation_schema["type"], "string")
+                self.assertIn("repo.write_file", operation_schema["description"])
+                self.assertEqual(arguments_schema["type"], "object")
+                self.assertIn(
+                    "repo.write_file={path,content",
+                    arguments_schema["description"],
+                )
+
+                tools = extract_openai_tools(f"Available host tools: {[definition]}")
+                native = tools[0]["function"]["parameters"]
+                self.assertIn("repo.write_file", native["properties"]["operation"]["enum"])
+                self.assertIn(
+                    "repo.write_file={path,content",
+                    native["properties"]["arguments"]["description"],
+                )
             finally:
                 registry.close()
 
