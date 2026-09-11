@@ -37,6 +37,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 ## Quick links
 
 - **Complete ecosystem installer:** https://github.com/rfdetoni/kitt
+- **Container image (GHCR):** https://github.com/rfdetoni/kitt-agent-cli/pkgs/container/kitt-agent-cli
 - **Reverse proxy:** https://github.com/rfdetoni/kitt-reverse-proxy
 - **Native engine:** https://github.com/rfdetoni/kitt-toolbox
 - **Resident assistant:** https://github.com/rfdetoni/kitt-assistant
@@ -101,25 +102,60 @@ Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update the execution 
 
 ## Docker
 
-Docker is an optional execution mode; native installation remains supported. The image packages the Agent control plane and common repository tools without granting privileged access to the host.
+Docker is an optional execution mode; native installation remains supported. Every semantic release tag publishes the Agent image to GitHub Container Registry (GHCR) with OCI provenance/SBOM metadata.
 
-Build and run against the current directory:
+Official image:
+
+```text
+ghcr.io/rfdetoni/kitt-agent-cli
+```
+
+Release tags publish the following aliases:
+
+```text
+vMAJOR.MINOR.PATCH
+MAJOR.MINOR.PATCH
+MAJOR.MINOR
+MAJOR
+latest
+```
+
+`latest` tracks the newest stable release. For reproducible environments, pin the complete `vMAJOR.MINOR.PATCH` tag or an immutable image digest instead.
+
+Pull and run the published image against the current directory:
 
 ```bash
-docker build -t kitt-agent-cli .
+docker pull ghcr.io/rfdetoni/kitt-agent-cli:latest
+
 docker run --rm -it \
   -v "$PWD:/workspace" \
   -v kitt-agent-state:/home/kitt/.kitt \
-  kitt-agent-cli
+  ghcr.io/rfdetoni/kitt-agent-cli:latest
 ```
 
-The image runs as a non-root `kitt` user. UID/GID default to `1000`; on Linux hosts with different IDs, build with matching values so bind-mounted workspaces remain writable:
+Package page: https://github.com/rfdetoni/kitt-agent-cli/pkgs/container/kitt-agent-cli
+
+The release image currently targets `linux/amd64`. The image runs as a non-root `kitt` user with UID/GID `1000`.
+
+### Build from source
+
+To build the current checkout locally:
+
+```bash
+docker build -t kitt-agent-cli:dev .
+docker run --rm -it \
+  -v "$PWD:/workspace" \
+  -v kitt-agent-state:/home/kitt/.kitt \
+  kitt-agent-cli:dev
+```
+
+On Linux hosts with different IDs, build with matching values so bind-mounted workspaces remain writable:
 
 ```bash
 docker build \
   --build-arg KITT_UID="$(id -u)" \
   --build-arg KITT_GID="$(id -g)" \
-  -t kitt-agent-cli .
+  -t kitt-agent-cli:dev .
 ```
 
 The base image intentionally does not contain every project toolchain. For Java, Node, Rust or other project-specific builds, derive a project image with the required SDKs or use the native runtime. Avoid mounting `/var/run/docker.sock`, the host root filesystem or using `--privileged` unless that authority is explicitly required and understood.
