@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from kitt.core.attachment_runtime import _retrieval_prompt
 from kitt.llm.attachments import (
     AttachmentError,
     attach_to_first_user_message,
@@ -56,6 +57,13 @@ class TestLlmAttachments(unittest.TestCase):
         self.assertTrue(is_binary_attachment_path("docs/report.pdf"))
         self.assertTrue(is_binary_attachment_path("diagram.PNG"))
         self.assertFalse(is_binary_attachment_path("src/Main.java"))
+
+    def test_retrieval_prompt_removes_only_attachment_references(self):
+        prompt = "@docs/report.pdf compare com @src/Main.java e explique"
+        sanitized = _retrieval_prompt(prompt, ("docs/report.pdf",))
+        self.assertNotIn("report.pdf", sanitized)
+        self.assertIn("@src/Main.java", sanitized)
+        self.assertIn("compare", sanitized)
 
 
 if __name__ == "__main__":
