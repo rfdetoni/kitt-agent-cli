@@ -97,18 +97,11 @@ class TestDreamPruneAndIndex(unittest.TestCase):
         self.assertIn("Always use standard library first", view)
         self.assertIn("Context retrieval uses SQLite + FTS5", view)
 
-        # Check file on disk
-        mem_file = (
-            self.root
-            / ".kitt"
-            / "workspaces"
-            / self.workspace_id
-            / "memory"
-            / "MEMORY.md"
-        )
+        # Check the project-local materialized view on disk.
+        mem_file = self.root / ".kitt" / "memory" / "MEMORY.md"
         self.assertTrue(mem_file.exists())
         self.assertEqual(mem_file.read_text(encoding="utf-8"), view)
-        self.assertFalse((self.root / ".kitt" / "memory" / "MEMORY.md").exists())
+        self.assertFalse((self.root / ".kitt" / "workspaces").exists())
 
 
 if __name__ == "__main__":
