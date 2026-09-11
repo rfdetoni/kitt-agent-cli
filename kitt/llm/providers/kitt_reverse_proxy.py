@@ -17,6 +17,11 @@ from kitt.llm.providers.openai_chat import OpenAIChatAdapter
 _TOOL_LIST_RE = re.compile(r"Available host tools?:\s*(\[[^\n]*\])", re.IGNORECASE)
 _BRIDGE_RE = re.compile(r"<kitt-tool>\s*(\{[\s\S]*\})\s*</kitt-tool>", re.IGNORECASE)
 _SAFE_CALL_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_TOOL_FEEDBACK_PREFIXES = (
+    "apply_patch was rejected before approval:",
+    "the host tool call is invalid (",
+    "the python_compute call is invalid (",
+)
 _REQUIRED_ARGS = {
     "read_file": ("path",),
     "kitt_runtime": ("operation",),
@@ -149,6 +154,31 @@ def _decode_bridge_call(content: Any) -> Optional[Tuple[str, str, Dict[str, Any]
     return call_id, name, arguments
 
 
+def _is_tool_feedback_message(content: Any) -> bool:
+    """Identify KITT-generated execution/preflight feedback for a prior tool call."""
+    if content is None:
+        return False
+    text = str(content).strip().lower()
+    if "result from the host" in text[:512]:
+        return True
+    return any(text.startswith(prefix) for prefix in _TOOL_FEEDBACK_PREFIXES)
+
+
+def _proxy_error_message(body: str) -> str:
+    """Extract a short proxy error message without echoing an arbitrary response body."""
+    try:
+        value = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(value, dict):
+        return ""
+    error = value.get("error")
+    message = error.get("message") if isinstance(error, dict) else None
+    if not isinstance(message, str):
+        return ""
+    return " ".join(message.split())[:500]
+
+
 def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Restore native assistant.tool_calls -> tool(tool_call_id) from KITT's text loop."""
     normalized: List[Dict[str, Any]] = []
@@ -182,7 +212,7 @@ def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[
                 continue
         if role == "user" and pending_call_id:
             result_text = "" if content is None else str(content)
-            if "result from the host" in result_text[:512].lower():
+            if _is_tool_feedback_message(result_text):
                 tool_msg: Dict[str, Any] = {
                     "role": "tool",
                     "tool_call_id": pending_call_id,
@@ -354,8 +384,10 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             )
             matched = next((code for code in semantic_codes if code in body), None)
             if matched:
+                detail = _proxy_error_message(body)
+                suffix = f": {detail}" if detail else ""
                 raise ProviderProtocolError(
-                    f"KITT reverse proxy rejected the request: {matched}"
+                    f"KITT reverse proxy rejected the request: {matched}{suffix}"
                 ) from exc
             handle_http_error(exc, url, body=body)
         except urllib.error.URLError as exc:
