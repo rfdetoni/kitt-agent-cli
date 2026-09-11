@@ -38,6 +38,20 @@ class ReverseProxyToolFeedbackRegressionTests(unittest.TestCase):
         self.assertEqual(normalized[1]["name"], "kitt_runtime")
         self.assertEqual(normalized[1]["content"], feedback)
 
+    def test_multimodal_user_content_is_preserved(self):
+        content = [
+            {"type": "text", "text": "resuma"},
+            {
+                "type": "input_file",
+                "filename": "relatorio.pdf",
+                "file_data": "data:application/pdf;base64,JVBERg==",
+            },
+        ]
+        normalized = normalize_native_tool_messages([
+            {"role": "user", "content": content},
+        ])
+        self.assertEqual(normalized, [{"role": "user", "content": content}])
+
     def test_invalid_tool_request_surfaces_proxy_error_detail(self):
         class FakeHTTPError(urllib.error.HTTPError):
             def __init__(self):
