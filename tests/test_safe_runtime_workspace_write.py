@@ -20,6 +20,20 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
         self.assertEqual(spec.policy_tool_action, "write_file")
         self.assertEqual(spec.resume_tool_name, "write_file")
 
+    def test_every_runtime_resume_tool_has_an_executable_registry_handler(self):
+        with tempfile.TemporaryDirectory() as temp:
+            registry = ToolRegistry(root_dir=temp)
+            try:
+                missing = {
+                    operation: spec.resume_tool_name
+                    for operation, spec in OPERATION_SPECS.items()
+                    if spec.resume_tool_name
+                    and spec.resume_tool_name not in registry._handlers
+                }
+                self.assertEqual(missing, {})
+            finally:
+                registry.close()
+
     def test_create_directory_then_write_file_creates_real_workspace_script(self):
         with tempfile.TemporaryDirectory() as temp:
             registry = self._registry(temp)
