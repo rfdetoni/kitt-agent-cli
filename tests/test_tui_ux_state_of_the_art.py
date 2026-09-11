@@ -331,6 +331,16 @@ class TestUXStateOfTheArt(unittest.TestCase):
         ev_down = MouseEvent(position=Point(x=10, y=10), event_type=MouseEventType.SCROLL_DOWN, button=MouseButton.NONE, modifiers=frozenset())
         app._transcript_mouse_handler(ev_down)
         self.assertEqual(app.transcript_window.vertical_scroll, 50)
+        self.assertFalse(app.state.follow_tail)
+
+        # Wheel over the editor scrolls transcript instead of multiline input.
+        app.prompt_control.mouse_handler(ev_up)
+        self.assertEqual(app.transcript_window.vertical_scroll, 47)
+
+        app.transcript_window.render_info = MagicMock(bottom_visible=True)
+        app._transcript_mouse_handler(ev_down)
+        self.assertTrue(app.state.follow_tail)
+        self.assertEqual(app.transcript_window.vertical_scroll, 10**9)
 
     def test_turn_mode_toggle_and_f12_status_bar(self):
         import asyncio

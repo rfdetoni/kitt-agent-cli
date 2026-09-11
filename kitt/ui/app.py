@@ -231,6 +231,8 @@ class KittUIApp:
             accept_handler=self._accept_prompt,
         )
         self.prompt_control = BufferControl(buffer=self.prompt_buffer, focusable=True)
+        self._prompt_default_mouse_handler = self.prompt_control.mouse_handler
+        self.prompt_control.mouse_handler = self._prompt_mouse_handler
         self.palette_buffer = Buffer(multiline=False)
         self.palette_buffer.on_text_changed += lambda _: self._palette_changed()
         self.palette_search_control = BufferControl(buffer=self.palette_buffer, focusable=True)
@@ -966,19 +968,36 @@ class KittUIApp:
     def _transcript_mouse_handler(self, mouse_event) -> Any:
         from prompt_toolkit.mouse_events import MouseEventType
         if mouse_event.event_type == MouseEventType.SCROLL_UP:
-            self.state.follow_tail = False
-            if hasattr(self, "transcript_window"):
-                self.transcript_window.vertical_scroll = max(0, self.transcript_window.vertical_scroll - 3)
-            if self.application:
-                self.application.invalidate()
+            self._scroll_transcript(-3)
             return None
         elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            if hasattr(self, "transcript_window"):
-                self.transcript_window.vertical_scroll += 3
-            if self.application:
-                self.application.invalidate()
+            self._scroll_transcript(3)
             return None
         return NotImplemented
+
+    def _prompt_mouse_handler(self, mouse_event) -> Any:
+        from prompt_toolkit.mouse_events import MouseEventType
+        if mouse_event.event_type in {MouseEventType.SCROLL_UP, MouseEventType.SCROLL_DOWN}:
+            return self._transcript_mouse_handler(mouse_event)
+        return self._prompt_default_mouse_handler(mouse_event)
+
+    def _scroll_transcript(self, delta: int) -> None:
+        if not hasattr(self, "transcript_window"):
+            return
+        window = self.transcript_window
+        if delta < 0:
+            self.state.follow_tail = False
+            window.vertical_scroll = max(0, window.vertical_scroll + delta)
+        else:
+            info = getattr(window, "render_info", None)
+            if info is not None and info.bottom_visible:
+                self.state.follow_tail = True
+                self.state.unseen_output = False
+                window.vertical_scroll = 10**9
+            else:
+                window.vertical_scroll += delta
+        if self.application:
+            self.application.invalidate()
 
     def _permission_mouse_handler(self, mouse_event) -> Any:
         from prompt_toolkit.mouse_events import MouseEventType
@@ -2188,35 +2207,21 @@ class KittUIApp:
 
         @kb.add("pageup")
         def _(event):
-            self.state.follow_tail = False
-            if hasattr(self, "transcript_window"):
-                self.transcript_window.vertical_scroll = max(0, self.transcript_window.vertical_scroll - 10)
-            if self.application: self.application.invalidate()
+            self._scroll_transcript(-10)
 
         @kb.add("pagedown")
         def _(event):
-            if hasattr(self, "transcript_window"):
-                self.transcript_window.vertical_scroll += 10
-            self.state.follow_tail = True
-            self.state.unseen_output = False
-            if self.application: self.application.invalidate()
+            self._scroll_transcript(10)
 
         @kb.add("c-up")
         @kb.add("s-up")
         def _(event):
-            self.state.follow_tail = False
-            if hasattr(self, "transcript_window"):
-                self.transcript_window.vertical_scroll = max(0, self.transcript_window.vertical_scroll - 3)
-            if self.application: self.application.invalidate()
+            self._scroll_transcript(-3)
 
         @kb.add("c-down")
         @kb.add("s-down")
         def _(event):
-            if hasattr(self, "transcript_window"):
-                self.transcript_window.vertical_scroll += 3
-            self.state.follow_tail = True
-            self.state.unseen_output = False
-            if self.application: self.application.invalidate()
+            self._scroll_transcript(3)
 
         @kb.add("c-home")
         def _(event):
@@ -2253,10 +2258,7 @@ class KittUIApp:
                 if self.application: self.application.invalidate()
                 return
 
-            self.state.follow_tail = False
-            if hasattr(self, "transcript_window"):
-                self.transcript_window.vertical_scroll = max(0, self.transcript_window.vertical_scroll - 3)
-            if self.application: self.application.invalidate()
+            self._scroll_transcript(-3)
 
         @kb.add("down", filter=editor_focused & Condition(lambda: self.state.active_overlay is None))
         def _(event):
@@ -2277,9 +2279,7 @@ class KittUIApp:
                 if self.application: self.application.invalidate()
                 return
 
-            if hasattr(self, "transcript_window"):
-                self.transcript_window.vertical_scroll += 3
-            if self.application: self.application.invalidate()
+            self._scroll_transcript(3)
 
         @kb.add("f10")
         def _(event):

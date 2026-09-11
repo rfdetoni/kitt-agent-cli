@@ -158,6 +158,12 @@ class TurnEventBridge:
             )
         except Exception:
             pass
+        try:
+            await self._daemon_bridge.set_autonomy(
+                self.runtime.autonomy_store.get().level
+            )
+        except Exception:
+            pass
         return True
 
     async def start(self, prompt, conversation_id, explicit_files=frozenset(),
