@@ -1,0 +1,32 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - kitt/**
+      - .github/workflows/docker.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - kitt/**
+      - .github/workflows/docker.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Agent CLI image
+        run: docker build -t kitt-agent-cli:test .
+      - name: Smoke test CLI
+        run: docker run --rm kitt-agent-cli:test --help
