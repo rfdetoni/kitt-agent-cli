@@ -4,7 +4,7 @@ from typing import Any
 
 from kitt.integrations.semantic import SemanticCodeIntelligence
 from kitt.runtime import core_runtime as _core
-from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_SEARCH
+from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_SEARCH, CAP_REPO_WRITE
 
 RuntimeOperationSpec = _core.RuntimeOperationSpec
 SafeRuntimeResult = _core.SafeRuntimeResult
@@ -18,6 +18,13 @@ OPERATION_SPECS.update({
     "repo.call_hierarchy": RuntimeOperationSpec("repo.call_hierarchy", CAP_REPO_SEARCH, "search"),
     "repo.outline": RuntimeOperationSpec("repo.outline", CAP_REPO_READ, "read_file"),
     "repo.ast_search": RuntimeOperationSpec("repo.ast_search", CAP_REPO_SEARCH, "search"),
+    "repo.write_file": RuntimeOperationSpec(
+        "repo.write_file",
+        CAP_REPO_WRITE,
+        "write_file",
+        sensitive=True,
+        resume_tool_name="write_file",
+    ),
     "security.scan": RuntimeOperationSpec("security.scan", CAP_REPO_SEARCH, "search"),
 })
 
@@ -102,6 +109,20 @@ class SafeRuntime(_core.SafeRuntime):
         return SafeRuntimeResult(True, op, data=data)
 
     def _dispatch(self, op, args, turn_id, origin, security_context, capabilities, grant, expected_approval_id):
+        if op == "repo.write_file":
+            result = self._op_registry_tool(
+                "repo.write_file",
+                "write_file",
+                args,
+                turn_id,
+                origin,
+                security_context,
+                grant,
+                expected_approval_id,
+            )
+            if result.success:
+                self.retrieval_guard.invalidate()
+            return result
         if op in {"repo.definition", "repo.hover", "repo.references_semantic", "repo.diagnostics", "repo.call_hierarchy", "repo.outline", "repo.ast_search", "security.scan"}:
             return self._semantic_dispatch(op, args, security_context)
         return super()._dispatch(op, args, turn_id, origin, security_context, capabilities, grant, expected_approval_id)
