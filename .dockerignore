@@ -1,8 +1,10 @@
 node_modules
 dist
+build
 web
 .git
 .gitignore
+.github
 .env
 .env.*
 !.env.example
@@ -11,7 +13,15 @@ reports
 vscode-extension
 python
 docs
+tests
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
 *.md
 !README.md
-.github
 .tsbuildinfo
