@@ -271,8 +271,22 @@ class WriteFileHandler:
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult
 
-        rel = str(args.get("path", "") or args.get("file", "") or "")
-        content = args.get("content", "")
+        rel = str(args.get("path", "") or args.get("file", "") or "").strip()
+        if not rel:
+            return ToolResult(
+                False,
+                "",
+                "Argument 'path' is required for write_file. "
+                "For repo.write_file use arguments {path, content}; retry the write instead of returning manual save commands.",
+            )
+        if "content" not in args:
+            return ToolResult(
+                False,
+                "",
+                "Argument 'content' is required for write_file. "
+                "For repo.write_file use arguments {path, content}.",
+            )
+        content = args.get("content")
         if not isinstance(content, str):
             return ToolResult(False, "", "write_file content must be a string")
         if len(content.encode("utf-8")) > DEFAULT_MAX_FILE_BYTES:
