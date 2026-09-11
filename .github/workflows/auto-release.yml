@@ -1,0 +1,88 @@
+name: Automatic Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: automatic-release-main
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Calculate next semantic version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(python - <<'PY'
+          import tomllib
+          with open('pyproject.toml', 'rb') as fh:
+              print(tomllib.load(fh)['project']['version'])
+          PY
+          )"
+          next="$(python .github/scripts/next_semver.py "$current")"
+          if [[ -z "$next" ]]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No releasable commits since the latest semantic tag."
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "tag=v$next" >> "$GITHUB_OUTPUT"
+      - name: Update package version
+        if: steps.version.outputs.release == 'true' && steps.version.outputs.next != steps.version.outputs.current
+        env:
+          NEXT_VERSION: ${{ steps.version.outputs.next }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path('pyproject.toml')
+          text = path.read_text()
+          updated, count = re.subn(
+              r'(?m)^version = "[0-9]+\.[0-9]+\.[0-9]+"$',
+              f'version = "{os.environ["NEXT_VERSION"]}"',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit('could not update [project] version in pyproject.toml')
+          path.write_text(updated)
+          PY
+      - name: Commit version bump
+        if: steps.version.outputs.release == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): ${RELEASE_TAG}"
+            git push origin HEAD:main
+          fi
+      - name: Dispatch validated release pipeline
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: gh workflow run release.yml --ref main -f tag="$RELEASE_TAG"
