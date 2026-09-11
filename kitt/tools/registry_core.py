@@ -15,7 +15,7 @@ from kitt.tools.artifact_tools import ArtifactTools
 from kitt.tools.child_tools import ChildTools
 from kitt.tools.goal_tools import GoalTools
 from kitt.tools.handlers import ToolContext, ToolHandler
-from kitt.tools.handlers.files import ListFilesHandler, ReadFileHandler, WriteFileHandler
+from kitt.tools.handlers.files import (CreateDirectoryHandler, ListFilesHandler, ReadFileHandler, WriteFileHandler)
 from kitt.tools.handlers.safe_runtime import SafeRuntimeHandler
 from kitt.tools.handlers.search import RepositoryMapHandler, SearchHandler
 from kitt.tools.handlers.services import (
@@ -98,6 +98,7 @@ class ToolRegistry:
             "kitt_runtime": SafeRuntimeHandler(),
             "list_files": ListFilesHandler(),
             "read_file": ReadFileHandler(),
+            "create_directory": CreateDirectoryHandler(),
             "write_file": WriteFileHandler(),
             "search": SearchHandler(),
             "repository_map": RepositoryMapHandler(),
@@ -284,7 +285,7 @@ class ToolRegistry:
                 "name": "kitt_runtime",
                 "description": (
                     "Execute safe, compact, policy-governed KITT runtime operations "
-                    "(repo.*, artifacts.*, patch.*, process.*, children.*, goal.*, memory.*, state.*, handles.*)."
+                    "(repo.*, artifacts.*, patch.*, process.*, children.*, goal.*, memory.*, state.*, handles.*), including repo.create_directory."
                 ),
             },
             {"name": "list_files", "description": "List files in directory"},
@@ -299,9 +300,10 @@ class ToolRegistry:
                     "reflection, functions, classes, threads, or external packages."
                 ),
             },
+            {"name": "create_directory", "description": "Create a directory inside the workspace without invoking a shell"},
             {"name": "write_file", "description": "Create or overwrite content to a file"},
             {"name": "apply_patch", "description": "Apply SEARCH/REPLACE diff blocks"},
-            {"name": "run_command", "description": "Run shell command within security policy"},
+            {"name": "run_command", "description": "Run an executable directly without a shell; prefer dedicated filesystem tools for mutations"},
             {"name": "git_status", "description": "Show uncommitted git status"},
             {"name": "git_diff", "description": "Show git diff"},
             {"name": "artifact_store", "description": "Persist bounded large output outside model context"},
@@ -352,6 +354,7 @@ class ToolRegistry:
                 "inputs": "JSON object",
                 "result_var": "name, default _result",
             },
+            "create_directory": {"path": "relative directory"},
             "write_file": {
                 "path": "relative file",
                 "content": "full file text",
@@ -359,7 +362,7 @@ class ToolRegistry:
             },
             "apply_patch": {"patch": "SEARCH/REPLACE blocks"},
             "run_command": {
-                "command": "shell command allowed by policy",
+                "command": "executable and arguments allowed by policy (no shell)",
                 "max_tokens": "output token budget, default 1200",
             },
             "git_status": {"max_tokens": "output token budget, default 600"},

@@ -56,6 +56,7 @@ TOOL_TO_CAPABILITY = {
     "git_status": CAP_REPO_READ,
     "git_diff": CAP_REPO_READ,
     "search": CAP_REPO_SEARCH,
+    "create_directory": CAP_REPO_WRITE,
     "write_file": CAP_REPO_WRITE,
     "apply_patch": CAP_REPO_WRITE,
     "run_command": CAP_PROCESS_RUN,

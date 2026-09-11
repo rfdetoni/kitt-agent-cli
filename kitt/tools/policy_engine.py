@@ -97,7 +97,7 @@ class PolicyEngine:
             "child_spawn", "harness_remember",
         }:
             return "ALLOW"
-        if tool_name in {"apply_patch", "write_file"}:
+        if tool_name in {"apply_patch", "write_file", "create_directory"}:
             return "ASK"
         if tool_name == "run_command":
             decision = self.evaluate_command(str(args.get("command", "")).strip())
@@ -119,10 +119,10 @@ class PolicyEngine:
     ) -> Permission:
         args = args or {}
         if getattr(self.autonomy, "level", "supervised") == "read_only":
-            if tool_name in {"apply_patch", "write_file", "run_command", "child_spawn", "child"}:
+            if tool_name in {"apply_patch", "write_file", "create_directory", "run_command", "child_spawn", "child"}:
                 return "DENY"
 
-        if self.approval_manager and tool_name in {"apply_patch", "write_file"}:
+        if self.approval_manager and tool_name in {"apply_patch", "write_file", "create_directory"}:
             path = args.get("path") or args.get("file")
             remembered = self.approval_manager.check_remembered(tool_name, path, conversation_id)
             if remembered in {"allow", "deny"}:
@@ -139,7 +139,7 @@ class PolicyEngine:
         args: dict,
         base: Permission,
     ) -> Permission:
-        if tool_name in {"apply_patch", "write_file"} and getattr(
+        if tool_name in {"apply_patch", "write_file", "create_directory"} and getattr(
             self.autonomy, "allow_file_write_auto", False
         ):
             return "ALLOW"

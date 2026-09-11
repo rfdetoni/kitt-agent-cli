@@ -195,7 +195,12 @@ class RunCommandHandler:
         except Exception as exc:
             return ToolResult(False, "", f"Invalid shell command syntax: {exc}")
 
-        result = ctx.registry.process_runner.run(argv, timeout_seconds=30)
+        try:
+            result = ctx.registry.process_runner.run(argv, timeout_seconds=30)
+        except FileNotFoundError as exc:
+            return ToolResult(False, "", f"Executable not found: {exc}")
+        except OSError as exc:
+            return ToolResult(False, "", f"Command execution failed: {exc}")
         output, metadata, compacted = _optimized_process_output(
             ctx, argv, result, _token_budget(args, 1200)
         )
