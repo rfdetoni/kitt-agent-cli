@@ -34,7 +34,24 @@ jobs:
           python-version: '3.14'
 
       - name: Apply fix
-        run: python .github/scripts/apply_native_directory_fix.py
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/apply_native_directory_fix.py')
+          text = p.read_text(encoding='utf-8')
+          anchor = '\ndef replace_all_required(path: str, old: str, new: str) -> None:\n'
+          helper = '''\ndef replace_first(path: str, old: str, new: str) -> None:\n    p = Path(path)\n    text = p.read_text(encoding="utf-8")\n    if old not in text:\n        raise RuntimeError(f"{path}: missing expected first pattern {old[:80]!r}")\n    p.write_text(text.replace(old, new, 1), encoding="utf-8")\n\n'''
+          if anchor not in text:
+              raise SystemExit('helper insertion anchor missing')
+          text = text.replace(anchor, helper + anchor, 1)
+          marker = 'replace_once(\n    "kitt/tools/handlers/system.py",'
+          if marker not in text:
+              raise SystemExit('system replacement marker missing')
+          text = text.replace(marker, 'replace_first(\n    "kitt/tools/handlers/system.py",', 1)
+          p.write_text(text, encoding='utf-8')
+          PY
+          python .github/scripts/apply_native_directory_fix.py
 
       - name: Install and validate
         shell: bash
