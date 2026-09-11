@@ -62,28 +62,15 @@ class ToolRegistry(_core.ToolRegistry):
                 )
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
+                # Keep the model-facing ACI compact. The reverse-proxy adapter
+                # expands this catalog into a native enum without paying the
+                # cost of verbose duplicated JSON-schema descriptions here.
                 tool["description"] = (
-                    "KITT live runtime contract. For workspace files use repo.write_file "
-                    "with {path, content}; for directories use repo.create_directory; for "
-                    "SEARCH/REPLACE edits use patch.apply. artifacts.store only persists "
-                    "internal KITT artifacts outside model context and never creates or "
-                    "updates workspace files."
+                    "KITT runtime; repo.write_file writes workspace files; "
+                    "artifacts.store is internal storage only."
                 )
                 args = dict(tool.get("args") or {})
-                args["operation"] = {
-                    "type": "string",
-                    "description": f"Exact runtime operation. Available: {operation_hint}",
-                }
-                args["arguments"] = {
-                    "type": "object",
-                    "additionalProperties": True,
-                    "description": (
-                        "Operation-specific arguments. repo.write_file={path,content," 
-                        "expected_content_hash?}; repo.create_directory={path}; "
-                        "patch.apply={patch}; artifacts.store={content,artifact_type?,summary?}. "
-                        "Never use artifacts.store to create or update a workspace file."
-                    ),
-                }
+                args["operation"] = operation_hint
                 tool["args"] = args
         return tools
 
