@@ -44,6 +44,23 @@ class ToolRegistry(_core.ToolRegistry):
     def runtime_operation_names() -> tuple[str, ...]:
         return runtime_operation_names()
 
+    @staticmethod
+    def _safe_and_chain(policy, command: str) -> bool:
+        """Allow an ``&&`` chain only when every individual command is non-DENY.
+
+        ``PolicyEngine.evaluate_command`` intentionally rejects shell operators.
+        This facade preserves that fail-closed default while permitting the one
+        short-circuit operator supported by ProcessRunner. Dangerous segments,
+        malformed chains and all other shell operators remain denied.
+        """
+        if "&&" not in command:
+            return False
+        parts = [part.strip() for part in command.split("&&")]
+        return bool(parts) and all(
+            part and policy.evaluate_command(part) != "DENY"
+            for part in parts
+        )
+
     def attach_processor(self, processor):
         result = super().attach_processor(processor)
         from kitt.core.agent_runtime import install_agent_engineering
@@ -68,19 +85,16 @@ class ToolRegistry(_core.ToolRegistry):
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
                 tool["description"] = (
-                    "KITT runtime. New/full file: repo.write_file {path,content}; "
-                    "directory: repo.create_directory {path}; patch.apply edits existing files "
-                    "with SEARCH/REPLACE only, never unified diff. Execute writes; no shell/manual-save "
-                    "substitutes. artifacts.store is internal."
+                    "KITT live runtime contract; repo.write_file {path,content}; "
+                    "patch.apply: never unified diff; artifacts.store internal."
                 )
                 args = dict(tool.get("args") or {})
                 args["operation"] = operation_hint
                 args["arguments"] = {
                     "type": "object",
-                    "additionalProperties": True,
                     "description": (
-                        "New/full file=repo.write_file {path,content}; directory=repo.create_directory "
-                        "{path}; existing edit=patch.apply {patch} SEARCH/REPLACE only, not unified diff."
+                        "repo.write_file {path,content}; repo.create_directory {path}; "
+                        "patch.apply {patch}: not unified diff."
                     ),
                 }
                 tool["args"] = args
@@ -91,7 +105,10 @@ class ToolRegistry(_core.ToolRegistry):
         normalized_args = args or {}
         if tool_name == "run_command":
             command = str(normalized_args.get("command", "")).strip()
-            if self.policy.evaluate_command(command) == "DENY":
+            if (
+                self.policy.evaluate_command(command) == "DENY"
+                and not self._safe_and_chain(self.policy, command)
+            ):
                 return ToolResult(
                     False,
                     "",
