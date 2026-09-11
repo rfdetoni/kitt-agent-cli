@@ -1,0 +1,65 @@
+name: One-shot native directory creation fix
+
+on:
+  push:
+    branches:
+      - fix/native-directory-creation
+    paths:
+      - .github/scripts/apply_native_directory_fix.py
+      - .github/workflows/one-shot-native-directory.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Agent
+        uses: actions/checkout@v4
+        with:
+          ref: fix/native-directory-creation
+          fetch-depth: 0
+
+      - name: Checkout Assistant runtime companion
+        uses: actions/checkout@v4
+        with:
+          repository: rfdetoni/kitt-assistant
+          ref: main
+          path: assistant-source
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Apply fix
+        run: python .github/scripts/apply_native_directory_fix.py
+
+      - name: Install and validate
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e '.[dev]'
+          python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
+          python -m compileall -q kitt tests assistant-source/packages/kitt-assistant-runtime/kitt
+          git diff --check
+          python -m pytest -q \
+            tests/test_directory_creation.py \
+            tests/test_prompt_execution_and_file_creation.py \
+            tests/test_policy_engine_security.py \
+            tests/prime_architecture/test_safe_runtime_integration.py \
+            tests/prime_architecture/test_safe_runtime_security.py
+
+      - name: Commit clean fix
+        shell: bash
+        run: |
+          rm -rf assistant-source
+          rm -f .github/workflows/one-shot-native-directory.yml
+          rm -f .github/scripts/apply_native_directory_fix.py
+          git add -A
+          git diff --cached --check
+          git config user.name 'kitt-ci-bot'
+          git config user.email 'kitt-ci-bot@users.noreply.github.com'
+          git commit -m 'fix(runtime): create workspace directories natively'
+          git push origin HEAD:fix/native-directory-creation
