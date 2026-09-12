@@ -7,6 +7,27 @@ from kitt.core.runtime_config import RuntimeConfig
 from kitt.domain.entities import ContextPlan
 
 
+class _SafeRuntimeSurface(list[str]):
+    """Compact model-visible surface with internal fallback capabilities.
+
+    Iteration intentionally exposes only ``kitt_runtime`` to the model.  Membership
+    checks for legacy mutation names are treated as execution capabilities so the
+    TurnProcessor can reuse its deterministic text-to-file fallback without
+    widening the prompt/tool schema.
+    """
+
+    _FALLBACK_CAPABILITIES = frozenset({"write_file", "apply_patch"})
+
+    def __contains__(self, item: object) -> bool:
+        if list.__contains__(self, item):
+            return True
+        return (
+            isinstance(item, str)
+            and item in self._FALLBACK_CAPABILITIES
+            and list.__contains__(self, "kitt_runtime")
+        )
+
+
 class ToolSurfaceSelector:
     """Select the legacy or compact model-facing tool surface."""
 
@@ -49,6 +70,10 @@ class ToolSurfaceSelector:
             return True
         return False
 
+    @staticmethod
+    def _safe_runtime_surface() -> List[str]:
+        return _SafeRuntimeSurface(["kitt_runtime"])
+
     def select_tools(
         self,
         plan: ContextPlan,
@@ -61,9 +86,9 @@ class ToolSurfaceSelector:
         if mode == "legacy":
             return list(plan.enabled_tools)
         if mode == "safe_runtime":
-            return ["kitt_runtime"]
+            return self._safe_runtime_surface()
         return (
-            ["kitt_runtime"]
+            self._safe_runtime_surface()
             if self._prefer_safe_runtime(model_capabilities)
             else list(plan.enabled_tools)
         )

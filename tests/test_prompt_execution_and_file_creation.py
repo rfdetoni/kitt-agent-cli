@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from kitt.core.runtime import KittRuntime
 from kitt.core.turn_command import TurnCommand
+from kitt.tools.surface_selector import ToolSurfaceSelector
+
 
 class TestPromptExecutionAndFileCreation(unittest.TestCase):
     def test_file_creation_tool_execution_with_autonomy(self):
@@ -35,6 +37,13 @@ class TestPromptExecutionAndFileCreation(unittest.TestCase):
                 self.assertTrue(res.success)
                 self.assertTrue((Path(tmp_dir) / "com_regra.py").exists())
 
+    def test_safe_runtime_surface_keeps_fallback_write_capabilities_internal(self):
+        surface = ToolSurfaceSelector._safe_runtime_surface()
+        self.assertEqual(list(surface), ["kitt_runtime"])
+        self.assertIn("write_file", surface)
+        self.assertIn("apply_patch", surface)
+        self.assertNotIn("run_command", surface)
+
     def test_turn_processor_enables_file_writing_tools_for_general_prompts(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
@@ -46,6 +55,7 @@ class TestPromptExecutionAndFileCreation(unittest.TestCase):
                 self.assertIsNotNone(plan)
                 self.assertIn("write_file", plan.enabled_tools)
                 self.assertIn("apply_patch", plan.enabled_tools)
+
 
 if __name__ == "__main__":
     unittest.main()
