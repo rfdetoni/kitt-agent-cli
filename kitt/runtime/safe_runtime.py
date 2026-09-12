@@ -4,6 +4,7 @@ from typing import Any
 
 from kitt.integrations.semantic import SemanticCodeIntelligence
 from kitt.runtime import core_runtime as _core
+from kitt.runtime.search_fallback import full_scan_search
 from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_SEARCH, CAP_REPO_WRITE
 from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt.security.workspace_mutations import delete_path, list_entries, move_path
@@ -119,6 +120,29 @@ class SafeRuntime(_core.SafeRuntime):
         else:
             raise ValueError(f"Unsupported semantic operation: {op}")
         return SafeRuntimeResult(True, op, data=data)
+
+    def _op_repo_search(self, args, turn_id, origin, security_context):
+        result = super()._op_repo_search(args, turn_id, origin, security_context)
+        if not result.success or str((result.metadata or {}).get("method", "")) != "scanner":
+            return result
+        allowed = (
+            (lambda path: security_context.allows_path(path))
+            if security_context is not None
+            else None
+        )
+        data = full_scan_search(self.root, args, path_allowed=allowed)
+        return SafeRuntimeResult(
+            True,
+            "repo.search",
+            data=data,
+            tokens_saved=max(0, int(data.get("omitted_matches", 0)) * 8),
+            metadata={
+                "backend": "scanner",
+                "method": "scanner_full",
+                "complete_file_scan": True,
+                "max_tokens": int(args.get("max_tokens", args.get("token_budget", 1200)) or 1200),
+            },
+        )
 
     def _op_repo_list(self, args: dict[str, Any], security_context):
         rel = str(args.get("path") or ".")
