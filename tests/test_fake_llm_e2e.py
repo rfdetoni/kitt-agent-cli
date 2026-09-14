@@ -182,6 +182,8 @@ def hello(): return 'hello K.I.T.T.'
         processor = TurnProcessor(root_dir=self.tmp_dir.name)
         try:
             instructions = processor._tool_instructions(["kitt_runtime"])
+            self.assertIn('"operation":"repo.write_file"', instructions)
+            self.assertIn('"path":"path/to/file.ext"', instructions)
             self.assertIn('"operation":"patch.apply"', instructions)
             self.assertIn('"patch":', instructions)
             self.assertIn("<<<<<<< SEARCH", instructions)
