@@ -13,8 +13,9 @@ from kitt.llm.domain import ProviderConnectionError, ProviderProtocolError, Prov
 from kitt.llm.http_security import read_error_body, secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
 from kitt.llm.providers.openai_chat import OpenAIChatAdapter
+from kitt.prompts import KITT_AGENT_PERSONA
 
-_TOOL_LIST_RE = re.compile(r"Available host tools?:\s*(\[[^\n]*\])", re.IGNORECASE)
+_TOOL_LIST_MARKER_RE = re.compile(r"Available host tools?:\s*", re.IGNORECASE)
 _BRIDGE_RE = re.compile(r"<kitt-tool>\s*(\{[\s\S]*\})\s*</kitt-tool>", re.IGNORECASE)
 _SAFE_CALL_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _TOOL_FEEDBACK_PREFIXES = (
@@ -39,6 +40,10 @@ _REQUIRED_ARGS = {
     "child_spawn": ("task",),
     "harness_remember": ("text",),
 }
+_CONCISE_AGENT_PREFIXES = (
+    "Answer directly and concisely.",
+    "Answer in one direct, concise sentence. Do not expose reasoning.",
+)
 
 
 def _property_schema(name: str, hint: Any) -> Dict[str, Any]:
@@ -81,15 +86,54 @@ def _normalize_parameters(name: str, raw: Any) -> Dict[str, Any]:
     return schema
 
 
+def _extract_host_tool_literal(system_prompt: str) -> Optional[str]:
+    """Return the complete Python-list literal after the host-tool marker.
+
+    The old single-line regex silently lost tools when prompt budgeting or
+    formatting wrapped the descriptor. Scan the bracketed literal instead so
+    nested schemas and multi-line tool catalogs remain parseable.
+    """
+    marker = _TOOL_LIST_MARKER_RE.search(system_prompt)
+    if not marker:
+        return None
+    start = system_prompt.find("[", marker.end())
+    if start < 0:
+        return None
+
+    depth = 0
+    quote: Optional[str] = None
+    escaped = False
+    for index in range(start, len(system_prompt)):
+        char = system_prompt[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return system_prompt[start:index + 1]
+    return None
+
+
 def extract_openai_tools(system_prompt: Optional[str]) -> List[Dict[str, Any]]:
     """Convert TurnProcessor's existing host-tool descriptor into OpenAI tools."""
     if not system_prompt:
         return []
-    match = _TOOL_LIST_RE.search(system_prompt)
-    if not match:
+    literal = _extract_host_tool_literal(system_prompt)
+    if not literal:
         return []
     try:
-        value = ast.literal_eval(match.group(1))
+        value = ast.literal_eval(literal)
     except (SyntaxError, ValueError):
         return []
     if not isinstance(value, list):
@@ -127,6 +171,35 @@ def strip_legacy_tool_contract(system_prompt: Optional[str]) -> Optional[str]:
         count=1,
     )
     return cleaned.strip()
+
+
+def _ensure_agent_execution_prompt(system_prompt: Optional[str]) -> str:
+    """Promote tool-enabled reverse-proxy turns to an execution-agent contract."""
+    text = (system_prompt or "").strip()
+    for prefix in _CONCISE_AGENT_PREFIXES:
+        if text.startswith(prefix):
+            text = text[len(prefix):].lstrip()
+            break
+    if KITT_AGENT_PERSONA not in text:
+        text = f"{KITT_AGENT_PERSONA}\n\n{text}".strip()
+    return text
+
+
+def prepare_reverse_proxy_system_prompt(
+    system_prompt: Optional[str],
+) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+    """Prepare a fail-safe system prompt and native tools for the browser proxy.
+
+    Only remove the legacy textual contract after native tool extraction has
+    succeeded. If conversion fails, preserve the legacy contract so the model
+    can still emit <kitt-tool> and the TurnProcessor retains an executable path.
+    """
+    tools = extract_openai_tools(system_prompt)
+    has_tool_contract = bool(system_prompt and "Tool Contract:" in system_prompt)
+    native_prompt = strip_legacy_tool_contract(system_prompt) if tools else system_prompt
+    if tools or has_tool_contract:
+        native_prompt = _ensure_agent_execution_prompt(native_prompt)
+    return native_prompt, tools
 
 
 def _decode_bridge_call(content: Any) -> Optional[Tuple[str, str, Dict[str, Any]]]:
@@ -246,13 +319,12 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
         else:
             url = f"{base}/v1/chat/completions"
 
+        native_system_prompt, tools = prepare_reverse_proxy_system_prompt(request.system_prompt)
         messages: List[Dict[str, Any]] = []
-        native_system_prompt = strip_legacy_tool_contract(request.system_prompt)
         if native_system_prompt:
             messages.append({"role": "system", "content": native_system_prompt})
         messages.extend(normalize_native_tool_messages([dict(m) for m in request.messages]))
 
-        tools = extract_openai_tools(request.system_prompt)
         payload: Dict[str, Any] = {
             "model": request.model,
             "messages": messages,
