@@ -83,18 +83,23 @@ class ToolRegistry(_core.ToolRegistry):
                 )
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
-                # Keep the model-visible composite tool intentionally small.  The
-                # TurnProcessor already provides the supported operation list and
-                # concrete repo.write_file/patch.apply examples in its Tool Contract,
-                # while native adapters derive an exact operation enum directly from
-                # OPERATION_SPECS. Repeating the full catalog here wasted prompt
-                # budget and could crowd out the actual workspace context.
-                tool["description"] = "Safe KITT workspace runtime."
+                # Keep the model-visible composite tool intentionally small. The
+                # TurnProcessor already provides operation examples/listing in its
+                # textual Tool Contract, while native adapters derive the exact enum
+                # directly from OPERATION_SPECS. Retain only the mutation guidance
+                # that prevents common misrouting (artifact storage vs workspace
+                # writes, or unified diff vs SEARCH/REPLACE patches).
+                tool["description"] = (
+                    "repo.write_file {path,content}; patch.apply never unified diff; "
+                    "artifacts.store internal only."
+                )
                 tool["args"] = {
                     "operation": "runtime operation name",
                     "arguments": {
                         "type": "object",
-                        "description": "operation-specific arguments",
+                        "description": (
+                            "repo.write_file {path,content}; patch.apply not unified diff."
+                        ),
                     },
                 }
         return tools
