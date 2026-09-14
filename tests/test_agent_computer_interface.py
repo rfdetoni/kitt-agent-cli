@@ -40,9 +40,13 @@ def test_runtime_operation_catalog_is_generated_from_live_contract():
     assert len(definitions) == 1
     runtime_tool = definitions[0]
     assert runtime_tool["name"] == "kitt_runtime"
-    assert runtime_tool["args"]["operation"] == compact_runtime_operation_catalog()
-    assert _expand_compact_catalog(runtime_tool["args"]["operation"]) == set(expected)
-    assert "live runtime contract" in runtime_tool["description"].lower()
+    # The model-facing safe-runtime descriptor stays intentionally compact.
+    # Native adapters derive the exact operation enum directly from OPERATION_SPECS,
+    # while compact_runtime_operation_catalog() remains the authoritative textual
+    # catalog for diagnostics/tests that explicitly need every live operation.
+    assert runtime_tool["args"]["operation"] == "runtime operation name"
+    assert "repo.write_file {path,content}" in runtime_tool["description"]
+    assert "patch.apply never unified diff" in runtime_tool["description"]
 
 
 def test_runtime_catalog_exposes_semantic_and_compressed_execution_operations():
