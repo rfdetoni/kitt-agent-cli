@@ -385,7 +385,7 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             matched = next((code for code in semantic_codes if code in body), None)
             if matched:
                 detail = _proxy_error_message(body)
-                if matched == "tool_required_but_not_called" and not any(
+                if matched in {"tool_required_but_not_called", "tool_parse_failed", "invalid_tool_call"} and not any(
                     message.get("role") == "user"
                     and "KITT TOOL RETRY" in str(message.get("content", ""))
                     for message in request.messages
@@ -395,8 +395,9 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                         "role": "user",
                         "content": (
                             "[KITT TOOL RETRY] A solicitação ainda não foi concluída. "
-                            "Emita agora uma chamada de mutação válida para executar a alteração; "
-                            "não responda com código, leitura ou explicação."
+                            "Emita agora um único envelope <tool_call> JSON válido, com escape "
+                            "correto de aspas, barras e quebras de linha; execute a mutação solicitada. "
+                            "Não responda com código, leitura ou explicação."
                         ),
                     })
                     retry_request = LLMRequest(
