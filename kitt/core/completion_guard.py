@@ -14,7 +14,14 @@ from pathlib import Path
 from types import MethodType
 from typing import Any, Iterator
 
-from kitt.core.turn_events import TurnFailed
+from kitt.core.turn_events import ToolCompleted, TurnFailed
+
+
+_MUTATION_TOOLS = frozenset({
+    "write_file", "apply_patch", "create_directory", "move", "rename", "delete",
+    "repo.write_file", "patch.apply", "repo.create_directory", "repo.move",
+    "repo.rename", "repo.delete",
+})
 
 
 _MUTATION_CLAIM_RE = re.compile(
@@ -130,6 +137,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
 
         while True:
             terminal: tuple[str, list] | None = None
+            failed_mutations: dict[str, str] = {}
             for event, response, messages in original_loop(
                 cmd,
                 current_request,
@@ -144,6 +152,11 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 if event is None and response is not None and messages is not None:
                     terminal = (response, messages)
                     continue
+                if isinstance(event, ToolCompleted) and event.tool_name in _MUTATION_TOOLS:
+                    if event.success:
+                        failed_mutations.pop(event.tool_name, None)
+                    else:
+                        failed_mutations[event.tool_name] = event.error or "resultado sem detalhes"
                 yield event, response, messages
 
             if terminal is None:
@@ -151,7 +164,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
 
             response, messages = terminal
             missing = missing_claimed_workspace_files(registry.root_path, response)
-            if not missing:
+            if not missing and not failed_mutations:
                 yield None, response, messages
                 return
 
@@ -166,10 +179,17 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
 
             retries += 1
             retry_messages = list(messages)
+            failed_note = ""
+            if failed_mutations:
+                failed_note = (
+                    " Uma mutação falhou e ainda não foi concluída: "
+                    + "; ".join(f"{name}: {error}" for name, error in failed_mutations.items())
+                    + "."
+                )
             retry_messages.extend(
                 [
                     {"role": "assistant", "content": response},
-                    {"role": "user", "content": _retry_message(missing)},
+                    {"role": "user", "content": _retry_message(missing) + failed_note},
                 ]
             )
             current_request = replace(request, messages=retry_messages)

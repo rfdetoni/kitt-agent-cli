@@ -7,7 +7,7 @@ from kitt.core.completion_guard import (
     missing_claimed_workspace_files,
 )
 from kitt.core.execution_request import ExecutionRequest
-from kitt.core.turn_events import TurnFailed
+from kitt.core.turn_events import ToolCompleted, TurnFailed
 
 
 class _Registry:
@@ -60,6 +60,31 @@ class _Processor:
 
 
 class CompletionGuardTests(unittest.TestCase):
+    def test_guard_retries_after_failed_mutation_even_without_success_claim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            class Processor(_Processor):
+                def _execute_tool_loop(self, cmd, request, exe_profile, exe_client, workspace_id, security_context):
+                    self.calls += 1
+                    if self.calls == 1:
+                        yield ToolCompleted(tool_name="write_file", success=False, error="validation failed"), None, None
+                        yield None, "Não foi possível concluir a operação.", list(request.messages)
+                        return
+                    correction = request.messages[-1]["content"]
+                    assert "KITT COMPLETION VERIFICATION" in correction
+                    assert "repo.write_file" in correction
+                    target = self.root / "scriptContext" / "generate_context.py"
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text("print('ok')\n", encoding="utf-8")
+                    yield ToolCompleted(tool_name="write_file", success=True), None, None
+                    yield None, "Operação concluída.", list(request.messages)
+
+            processor = Processor(temp)
+            install_completion_guard(processor, _Registry(temp))
+            request = ExecutionRequest(system_prompt="test", messages=[{"role": "user", "content": "crie o script"}], enabled_tools=["kitt_runtime"])
+            items = list(processor._execute_tool_loop(object(), request, object(), object(), "workspace", object()))
+            self.assertEqual(processor.calls, 2)
+            self.assertFalse(any(isinstance(item[0], TurnFailed) for item in items))
+
     def test_portuguese_false_completion_claim_detects_missing_file(self):
         with tempfile.TemporaryDirectory() as temp:
             missing = missing_claimed_workspace_files(
