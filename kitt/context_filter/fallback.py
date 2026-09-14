@@ -3,6 +3,26 @@ import re
 from kitt.domain.entities import SemanticTask, ContextPlan, TaskIntent
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 
+_WORKSPACE_CREATION_VERBS = (
+    "crie", "criar", "create", "build", "implemente", "implementar",
+    "gere", "gerar", "construa", "adicione",
+)
+_WORKSPACE_CREATION_NOUNS = (
+    "projeto", "project", "site", "app", "aplicação", "aplicacao",
+    "pasta", "folder", "diretório", "diretorio", "directory",
+    "arquivo", "file", "backend", "frontend", "front end",
+)
+
+
+def is_workspace_creation_request(prompt: str) -> bool:
+    """Detect explicit requests to create workspace/project content without an LLM."""
+    text = prompt.lower()
+    return (
+        any(term in text for term in _WORKSPACE_CREATION_VERBS)
+        and any(term in text for term in _WORKSPACE_CREATION_NOUNS)
+    )
+
+
 class DeterministicFallbackPlanner:
     """Generates conservative, deterministic SemanticTask and ContextPlan without LLM calls."""
 
@@ -16,7 +36,19 @@ class DeterministicFallbackPlanner:
 
         intent: TaskIntent = 'IMPLEMENT'
         prompt_lower = prompt.lower()
-        if (not paths and not symbols and not any(kw in prompt_lower for kw in ("crie o arquivo", "crie um arquivo", "crie a pasta", "crie uma pasta", "crie o diretório", "crie um diretório", "execute", "rode"))) or prompt_lower.strip() in {'oi', 'olá', 'ola', 'hello', 'hi'} or any(word in prompt_lower for word in ('explique', 'diga', 'responda', 'como ', 'por que', 'porque', '?')):
+        creation_request = is_workspace_creation_request(prompt)
+        direct_execution = any(kw in prompt_lower for kw in (
+            "crie o arquivo", "crie um arquivo", "crie a pasta", "crie uma pasta",
+            "crie o diretório", "crie um diretório", "execute", "rode",
+        ))
+        conversational_request = any(word in prompt_lower for word in (
+            'explique', 'diga', 'responda', 'como ', 'por que', 'porque', '?',
+        ))
+        if (
+            (not paths and not symbols and not direct_execution and not creation_request)
+            or prompt_lower.strip() in {'oi', 'olá', 'ola', 'hello', 'hi'}
+            or conversational_request
+        ):
             intent = 'ASK'
         elif re.search(r'(?<!\w)(?:test|tests|testing|unittest|pytest|teste|testes|testar)(?!\w)', prompt_lower):
             intent = 'TEST'
