@@ -8,7 +8,7 @@ from kitt.context_filter.schema import ContextFilterSchemaValidator
 from kitt.context_filter.fallback import DeterministicFallbackPlanner
 from kitt.context_filter.context_planner import ContextPlanner
 
-SYSTEM_CONTEXT_FILTER_PROMPT = """You are K.I.T.T.'s Semantic Task Compiler.
+SYSTEM_CONTEXT_FILTER_PROMPT = """You are a Semantic Task Compiler.
 Convert the user's request into a minimal, execution-oriented canonical semantic representation.
 
 Emit ONLY a valid JSON object matching this schema:
