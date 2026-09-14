@@ -162,6 +162,18 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertEqual(messages[1]["content"], tool_call_msg)
         self.assertEqual(messages[2]["content"], tool_res_msg)
 
+    def test_proxy_rebudget_preserves_user_history_identity(self):
+        profile = type("Profile", (), {
+            "context_window": 900, "max_output_tokens": 300,
+            "backend": "kitt-reverse-proxy", "protocol": "kitt-reverse-proxy",
+            "base_url": "http://127.0.0.1:3000",
+        })()
+        messages = [{"role": "user", "content": "old request"},
+                    {"role": "user", "content": "current request " * 1000}]
+        original = messages[1]["content"]
+        self.processor._rebudget_execution_messages(messages, "system", profile)
+        self.assertEqual(messages[1]["content"], original)
+
     def test_security_context_grants_artifact_capabilities(self):
         from kitt.core.turn_command import TurnCommand
         from kitt.security.capabilities import CAP_ARTIFACT_READ, CAP_ARTIFACT_WRITE, CAP_REPO_READ

@@ -302,6 +302,10 @@ class TurnProcessor:
                 break
             message = messages[index]
             current = message.get("content", "")
+            # The browser proxy uses user history to identify conversation resets.
+            # Keep that identity stable across follow-up tool requests.
+            if _reverse_proxy_identity(profile) is not None and message.get("role") == "user":
+                continue
             # Preserve structural tool envelopes: truncating bridge tags or tool result
             # envelopes corrupts JSON/tool protocol and causes reverse-proxy session resets.
             if message.get("role") == "assistant" and ("<kitt-tool>" in current or "</kitt-tool>" in current):
