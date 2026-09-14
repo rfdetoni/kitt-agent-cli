@@ -797,6 +797,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             task = replace(task, intent="IMPLEMENT", actions=["analyze", "edit"])
             if not plan.enabled_tools:
                 plan.enabled_tools = ["create_directory", "write_file", "apply_patch", "read_file", "run_command", "repository_map"]
+            # Keep the emitted filter result consistent with the effective
+            # task/plan consumed by the execution loop and daemon UI.
+            filter_res.task = task
+            filter_res.plan = plan
         agent_addressed = self._addresses_kitt(cmd.prompt)
         if cmd.mode == "plan":
             READ_ONLY_TOOLS = {"read_file", "search", "repository_map", "git_status", "git_diff", "list_files"}
