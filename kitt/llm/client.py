@@ -28,6 +28,7 @@ from kitt.llm.kitt_proxy_capabilities import (
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.registry import ProviderRegistry
 from kitt.llm.retry import RetryConfig, RetryPolicy
+from kitt.prompts import normalize_execution_system_prompt
 from kitt.router.models import ModelCapabilities
 
 
@@ -238,6 +239,12 @@ class LLMClient:
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
     ) -> Generator[str, None, None]:
+        # Normalize the final provider-bound prompt once, independently of the
+        # selected backend. Agent behavior is capability-driven (Tool Contract)
+        # and never depends on whether the user happened to address the product
+        # by name.
+        system_prompt = normalize_execution_system_prompt(system_prompt)
+
         backend = (self.profile.backend or "").strip().lower()
         base_url = (self.profile.base_url or "").strip()
 
