@@ -784,6 +784,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         )
         sf_client = semantic_filter.llm_client
         task, plan = filter_res.task, filter_res.plan
+        # The UI model occasionally labels explicit creation requests as a
+        # conversational ASK (especially when prefixed with /ponytail).  Keep
+        # workspace mutations autonomous by applying a small deterministic
+        # safety override before tool planning.
+        prompt_lower = cmd.prompt.lower()
+        creation_request = any(term in prompt_lower for term in (
+            "crie ", "criar ", "create ", "build ", "implemente ", "implementar ",
+            "gere ", "gerar ", "construa ", "adicione ",
+        )) and any(term in prompt_lower for term in ("projeto", "pasta", "arquivo", "backend", "frontend", "front end"))
+        if creation_request and task.intent == "ASK":
+            task = replace(task, intent="IMPLEMENT", actions=["analyze", "edit"])
+            if not plan.enabled_tools:
+                plan.enabled_tools = ["create_directory", "write_file", "apply_patch", "read_file", "run_command", "repository_map"]
         agent_addressed = self._addresses_kitt(cmd.prompt)
         if cmd.mode == "plan":
             READ_ONLY_TOOLS = {"read_file", "search", "repository_map", "git_status", "git_diff", "list_files"}
