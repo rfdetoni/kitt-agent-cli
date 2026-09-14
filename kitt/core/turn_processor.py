@@ -789,14 +789,22 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         # workspace mutations autonomous by applying a small deterministic
         # safety override before tool planning.
         prompt_lower = cmd.prompt.lower()
-        creation_request = any(term in prompt_lower for term in (
-            "crie ", "criar ", "create ", "build ", "implemente ", "implementar ",
-            "gere ", "gerar ", "construa ", "adicione ",
-        )) and any(term in prompt_lower for term in ("projeto", "pasta", "arquivo", "backend", "frontend", "front end"))
-        if creation_request and task.intent == "ASK":
-            task = replace(task, intent="IMPLEMENT", actions=["analyze", "edit"])
-            if not plan.enabled_tools:
-                plan.enabled_tools = ["create_directory", "write_file", "apply_patch", "read_file", "run_command", "repository_map"]
+        creation_request = (
+            any(term in prompt_lower for term in (
+                "crie", "criar", "create", "build", "implemente", "implementar",
+                "gere", "gerar", "construa", "adicione",
+            ))
+            and any(term in prompt_lower for term in (
+                "projeto", "pasta", "arquivo", "backend", "frontend", "front end",
+            ))
+        )
+        if creation_request:
+            if task.intent != "IMPLEMENT":
+                task = replace(task, intent="IMPLEMENT", actions=["analyze", "edit"])
+            plan.enabled_tools = list(dict.fromkeys([
+                "create_directory", "write_file", "apply_patch", "read_file",
+                "run_command", "repository_map", *plan.enabled_tools,
+            ]))
             # Keep the emitted filter result consistent with the effective
             # task/plan consumed by the execution loop and daemon UI.
             filter_res.task = task
