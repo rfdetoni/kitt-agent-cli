@@ -5,7 +5,7 @@ from pathlib import Path
 from kitt.llm.providers.kitt_reverse_proxy import extract_openai_tools
 from kitt.runtime.safe_runtime import OPERATION_SPECS, SafeRuntime
 from kitt.security.capabilities import CAP_REPO_WRITE
-from kitt.tools.registry import ToolRegistry, compact_runtime_operation_catalog
+from kitt.tools.registry import ToolRegistry
 
 
 class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
@@ -118,7 +118,7 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                 self.assertIn("artifacts.store", description)
                 self.assertEqual(
                     definition["args"]["operation"],
-                    compact_runtime_operation_catalog(),
+                    "runtime operation name",
                 )
                 argument_schema = definition["args"]["arguments"]
                 self.assertEqual(argument_schema["type"], "object")
