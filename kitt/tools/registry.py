@@ -74,7 +74,6 @@ class ToolRegistry(_core.ToolRegistry):
 
     def get_tool_definitions(self, enabled_tools=None):
         tools = super().get_tool_definitions(enabled_tools)
-        operation_hint = compact_runtime_operation_catalog()
         for tool in tools:
             if tool.get("name") == "child_spawn":
                 args = dict(tool.get("args") or {})
@@ -84,20 +83,20 @@ class ToolRegistry(_core.ToolRegistry):
                 )
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
-                tool["description"] = (
-                    "KITT live runtime contract; repo.write_file {path,content}; "
-                    "patch.apply: never unified diff; artifacts.store internal."
-                )
-                args = dict(tool.get("args") or {})
-                args["operation"] = operation_hint
-                args["arguments"] = {
-                    "type": "object",
-                    "description": (
-                        "repo.write_file {path,content}; repo.create_directory {path}; "
-                        "patch.apply {patch}: not unified diff."
-                    ),
+                # Keep the model-visible composite tool intentionally small.  The
+                # TurnProcessor already provides the supported operation list and
+                # concrete repo.write_file/patch.apply examples in its Tool Contract,
+                # while native adapters derive an exact operation enum directly from
+                # OPERATION_SPECS. Repeating the full catalog here wasted prompt
+                # budget and could crowd out the actual workspace context.
+                tool["description"] = "Safe KITT workspace runtime."
+                tool["args"] = {
+                    "operation": "runtime operation name",
+                    "arguments": {
+                        "type": "object",
+                        "description": "operation-specific arguments",
+                    },
                 }
-                tool["args"] = args
         return tools
 
     def execute_tool(self, tool_name, args=None, *positional, **kwargs):
