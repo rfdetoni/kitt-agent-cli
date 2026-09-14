@@ -385,6 +385,36 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             matched = next((code for code in semantic_codes if code in body), None)
             if matched:
                 detail = _proxy_error_message(body)
+                if matched == "tool_required_but_not_called" and not any(
+                    message.get("role") == "user"
+                    and "KITT TOOL RETRY" in str(message.get("content", ""))
+                    for message in request.messages
+                ):
+                    retry_messages = [dict(message) for message in request.messages]
+                    retry_messages.append({
+                        "role": "user",
+                        "content": (
+                            "[KITT TOOL RETRY] A solicitação ainda não foi concluída. "
+                            "Emita agora uma chamada de mutação válida para executar a alteração; "
+                            "não responda com código, leitura ou explicação."
+                        ),
+                    })
+                    retry_request = LLMRequest(
+                        model=request.model,
+                        messages=retry_messages,
+                        system_prompt=request.system_prompt,
+                        response_format=request.response_format,
+                        temperature=request.temperature,
+                        context_window=request.context_window,
+                        max_output_tokens=request.max_output_tokens,
+                        keep_alive=request.keep_alive,
+                        api_key=request.api_key,
+                        base_url=request.base_url,
+                        timeout_seconds=request.timeout_seconds,
+                        extra_headers=request.extra_headers,
+                    )
+                    yield from self.stream(retry_request)
+                    return
                 suffix = f": {detail}" if detail else ""
                 raise ProviderProtocolError(
                     f"KITT reverse proxy rejected the request: {matched}{suffix}"
