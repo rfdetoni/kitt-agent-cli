@@ -165,6 +165,10 @@ class TurnProcessor:
         self.cancelled_turns: set[str] = set()
         self.turn_guard = TurnExecutionGuard(self.cancelled_turns)
         self.reasoning_effort: int = 50
+        # One browser-tab affinity for the lifetime of this Agent CLI window.
+        # Conversation history remains scoped in KITT, while provider UI state
+        # is reused after completion/failure instead of opening another tab.
+        self._proxy_session_key = f"agent-window:{uuid.uuid4().hex}"
         self._closed = False
 
         self.context_client = context_client
@@ -178,6 +182,9 @@ class TurnProcessor:
         self.enable_context_summary = enable_context_summary
         self._context_summary_cache: Dict[str, str] = {}
         self._cache_lock = threading.Lock()
+
+    def _provider_session_key(self, profile, conversation_id: str) -> str:
+        return self._proxy_session_key if _reverse_proxy_identity(profile) else conversation_id
 
     @property
     def workspace_id(self) -> str:
@@ -779,7 +786,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         semantic_filter = SemanticFilter(context_profile=ctx_profile, llm_client=sf_client)
         filter_res = semantic_filter.filter_and_plan(
             cmd.prompt,
-            session_key=cmd.conversation_id,
+            session_key=self._provider_session_key(ctx_profile, cmd.conversation_id),
             deterministic_only=shared_reverse_proxy,
         )
         sf_client = semantic_filter.llm_client
@@ -898,7 +905,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             if sf_client is not None:
                 context_map_str = self._summarize_project_context(
                     sf_client, cmd.prompt, context_map_str,
-                    session_key=cmd.conversation_id,
+                    session_key=self._provider_session_key(getattr(sf_client, "profile", None), cmd.conversation_id),
                 )
 
         working_context = self.working_set.context(cmd.conversation_id)
@@ -1069,7 +1076,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 request.system_prompt,
                 turn_id=cmd.turn_id,
                 started_at=thinking_started_at,
-                session_key=cmd.conversation_id,
+                session_key=self._provider_session_key(exe_profile, cmd.conversation_id),
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)
