@@ -496,6 +496,15 @@ class KittUIApp:
             await self._open_diff_overlay()
         elif found.id == "status":
             handle_status_command(self)
+        elif found.id in {"restart_reverse_proxy", "stop_reverse_proxy"}:
+            from kitt.ui.reverse_proxy_commands import manage_reverse_proxy
+            try:
+                message = await self._run_blocking(
+                    manage_reverse_proxy, found.id == "restart_reverse_proxy"
+                )
+            except RuntimeError as error:
+                message = f"Falha ao controlar KITT Reverse Proxy: {error}"
+            self._show_result(message)
         elif found.id == "stats":
             await handle_stats_command(self)
         elif found.id == "gain":

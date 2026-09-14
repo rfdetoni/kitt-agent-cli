@@ -183,6 +183,16 @@ class PlainLineUI:
             if text == "/help":
                 self._write("\n".join(f"{c.aliases[0]} - {c.description}" for c in self.commands.commands.values()) + "\n")
                 continue
+            if text in {"/restart-reverse-proxy", "/stop-reverse-proxy"}:
+                from kitt.ui.reverse_proxy_commands import manage_reverse_proxy
+                try:
+                    message = await asyncio.to_thread(
+                        manage_reverse_proxy, text == "/restart-reverse-proxy"
+                    )
+                except RuntimeError as error:
+                    message = f"Falha ao controlar KITT Reverse Proxy: {error}"
+                self._write(message + "\n")
+                continue
             if text == "/gain" or text.startswith("/gain "):
                 from kitt.metrics.gain_report import render_gain
 
