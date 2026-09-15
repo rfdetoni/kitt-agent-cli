@@ -2,7 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from prompt_toolkit.mouse_events import MouseEventType
 
@@ -44,14 +44,23 @@ class TestLiveStreamingAndScroll(unittest.TestCase):
     def test_footer_displays_agent_cli_version(self):
         self.assertEqual(_version_text().strip(), f"KITT Agent CLI v{KITT_VERSION}")
 
-    def test_transcript_mouse_scrolling_is_enabled_for_interactive_terminal(self):
+    def test_native_terminal_text_selection_is_default(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
                 app = KittUIApp(runtime=runtime)
-                with patch("kitt.ui.layout._interactive_terminal", return_value=True):
-                    app.build_application()
+                app.build_application()
 
-                self.assertTrue(app.mouse_support_enabled)
+                self.assertFalse(app.mouse_support_enabled)
+
+    def test_transcript_mouse_scrolling_remains_available_when_explicitly_enabled(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            with KittRuntime.build(root_dir=tmp_dir) as runtime:
+                app = KittUIApp(runtime=runtime)
+                app.build_application()
+
+                # /mouse toggles this flag at runtime. Application-level wheel
+                # handling remains available when the user explicitly opts in.
+                app.mouse_support_enabled = True
                 app.transcript_window.vertical_scroll = 9
                 app.state.follow_tail = True
 
@@ -61,15 +70,6 @@ class TestLiveStreamingAndScroll(unittest.TestCase):
 
                 self.assertEqual(app.transcript_window.vertical_scroll, 6)
                 self.assertFalse(app.state.follow_tail)
-
-    def test_non_interactive_session_preserves_native_mouse_default(self):
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
-            with KittRuntime.build(root_dir=tmp_dir) as runtime:
-                app = KittUIApp(runtime=runtime)
-                with patch("kitt.ui.layout._interactive_terminal", return_value=False):
-                    app.build_application()
-
-                self.assertFalse(app.mouse_support_enabled)
 
 
 if __name__ == "__main__":
