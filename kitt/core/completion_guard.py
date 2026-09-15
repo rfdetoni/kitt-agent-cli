@@ -230,6 +230,11 @@ class _ExecutionProgressLedger:
     def complete(self, event: ToolCompleted) -> tuple[bool, bool]:
         mutation = self.pending_mutations.pop(event.call_id, None)
         validation = self.pending_validations.pop(event.call_id, None)
+        # Preserve the historical event contract for adapters/tests that only emit
+        # ToolCompleted. Native TurnProcessor paths still use the stronger
+        # ToolStarted signature, so repeated real mutations are deduplicated by args.
+        if mutation is None and event.tool_name in _MUTATION_TOOLS:
+            mutation = f"completed:{event.tool_name}:{event.call_id or 'legacy'}"
         new_mutation = bool(event.success and mutation and mutation not in self.successful_mutations)
         new_validation = bool(event.success and validation and validation not in self.successful_validations)
         if new_mutation and mutation:
@@ -548,7 +553,10 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                         ), None, None
                         return
                 elif isinstance(event, ToolCompleted):
-                    was_mutation = event.call_id in ledger.pending_mutations
+                    was_mutation = (
+                        event.call_id in ledger.pending_mutations
+                        or event.tool_name in _MUTATION_TOOLS
+                    )
                     ledger.complete(event)
                     if was_mutation:
                         if event.success:
