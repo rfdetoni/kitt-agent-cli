@@ -65,6 +65,18 @@ _FILE_PATH_RE = re.compile(
     r"(?![\w/-])",
     re.IGNORECASE,
 )
+_DEFERRED_IMPLEMENTATION_RE = re.compile(
+    r"(?:"
+    r"\b(?:ask|send|give|provide)\s+me\b.{0,80}\b(?:code|files?|components?|details?|requirements?)\b|"
+    r"\b(?:then|after(?:wards)?|once)\b.{0,60}\b(?:i\s+(?:can|will)|we\s+(?:can|will))\b.{0,80}"
+    r"\b(?:implement|generate|create|write|build)\b|"
+    r"\b(?:me\s+(?:solicite|peça|peca|envie|mande|forneça|forneca))\b.{0,80}"
+    r"\b(?:c[oó]dig(?:o|os)|arquiv(?:o|os)|component(?:e|es)|detalh(?:e|es)|requisit(?:o|os))\b|"
+    r"\b(?:ent[aã]o|depois|ap[oó]s)\b.{0,60}\b(?:eu\s+)?(?:posso|vou|poderei)\b.{0,80}"
+    r"\b(?:implementar|gerar|criar|escrever|montar)\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _safe_workspace_file(root: Path, raw_path: str) -> tuple[str, Path] | None:
@@ -142,6 +154,13 @@ def requires_workspace_mutation(processor: Any, cmd: Any) -> bool:
     return is_workspace_creation_request(prompt)
 
 
+def is_deferred_implementation_response(response: str) -> bool:
+    """Return True when an implementation answer hands execution back to the user."""
+    if not response:
+        return False
+    return bool(_DEFERRED_IMPLEMENTATION_RE.search(response))
+
+
 def _is_mutating_process_call(args: dict[str, Any]) -> bool:
     operation_args = args.get("arguments", {}) if isinstance(args.get("arguments"), dict) else {}
     raw = operation_args.get("argv") or operation_args.get("command") or operation_args.get("cmd")
@@ -196,15 +215,15 @@ def _claimed_files_retry_message(missing: list[str]) -> str:
 def _required_mutation_retry_message() -> str:
     return (
         "[KITT EXECUTION REQUIRED]\n"
-        "The user requested implementation that changes the workspace, but no workspace "
-        "mutation has succeeded in this turn. Do not answer with setup instructions, a plan, "
-        "commands for the user to run, or a request for the user to provide component code. "
-        "Use the available host tools now and perform the implementation yourself. You may "
-        "inspect the workspace first when needed, but read/list/search results never satisfy "
-        "this requirement. For files use kitt_runtime repo.write_file or patch.apply; for "
-        "directories use repo.create_directory; process.run may be used for an appropriate "
-        "project scaffold command. Continue executing until the requested implementation is "
-        "materially applied, then summarize only what actually succeeded."
+        "The user requested implementation that changes the workspace, but the implementation "
+        "is not complete yet. Do not answer with setup instructions, a plan, commands for the "
+        "user to run, or a request for the user to provide component code. Use the available "
+        "host tools now and perform the implementation yourself. You may inspect the workspace "
+        "first when needed, but read/list/search results never satisfy this requirement. For "
+        "files use kitt_runtime repo.write_file or patch.apply; for directories use "
+        "repo.create_directory; process.run may be used for an appropriate project scaffold "
+        "command. Continue executing until the requested implementation is materially applied, "
+        "then summarize only what actually succeeded."
     )
 
 
@@ -279,9 +298,18 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 return
 
             response, messages = terminal
+            mutation_required = requires_workspace_mutation(self, cmd)
             missing = missing_claimed_workspace_files(registry.root_path, response)
-            mutation_missing = requires_workspace_mutation(self, cmd) and not successful_mutation
-            if not missing and not failed_mutations and not mutation_missing:
+            mutation_missing = mutation_required and not successful_mutation
+            deferred_implementation = (
+                mutation_required and is_deferred_implementation_response(response)
+            )
+            if (
+                not missing
+                and not failed_mutations
+                and not mutation_missing
+                and not deferred_implementation
+            ):
                 yield None, response, messages
                 return
 
@@ -289,6 +317,8 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 reasons: list[str] = []
                 if mutation_missing:
                     reasons.append("the task required a workspace mutation but no mutation tool succeeded")
+                if deferred_implementation:
+                    reasons.append("the response deferred required implementation work back to the user")
                 if missing:
                     reasons.append("claimed files are still missing after recovery: " + ", ".join(missing))
                 if failed_mutations:
@@ -302,7 +332,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
             retries += 1
             retry_messages = list(messages)
             recovery_parts: list[str] = []
-            if mutation_missing:
+            if mutation_missing or deferred_implementation:
                 recovery_parts.append(_required_mutation_retry_message())
             if missing:
                 recovery_parts.append(_claimed_files_retry_message(missing))
@@ -320,6 +350,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
 
 __all__ = [
     "install_completion_guard",
+    "is_deferred_implementation_response",
     "missing_claimed_workspace_files",
     "requires_workspace_mutation",
 ]
