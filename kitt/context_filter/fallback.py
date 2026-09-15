@@ -35,19 +35,25 @@ def is_workspace_creation_request(prompt: str) -> bool:
 
 
 def _execution_actions(prompt_lower: str, intent: TaskIntent, creation_request: bool) -> list[str]:
-    """Build host-oriented steps for the execution model without inventing project details."""
+    """Build host-oriented steps while preserving stable semantic action markers."""
     if intent == 'ASK':
-        return ['analyze the request and answer without changing the workspace']
+        return ['analyze', 'answer without changing the workspace']
+
+    # ``analyze`` and ``edit`` are stable semantic markers consumed by existing
+    # routing/completion logic. Keep them in addition to the richer execution
+    # checklist so detailed planning does not silently change task semantics.
+    actions = ['analyze', 'edit']
+
     if intent == 'PLAN':
-        return [
+        return actions + [
             'inspect the relevant workspace structure and existing implementation',
             'produce an ordered implementation checklist with target files, risks, and validation',
         ]
 
-    actions = [
+    actions.extend((
         'inspect the relevant workspace structure and existing implementation before changing files',
         'build an ordered execution checklist from the explicit user requirements and repository evidence',
-    ]
+    ))
 
     if creation_request:
         explicit_scopes = False
