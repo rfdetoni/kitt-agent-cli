@@ -2,7 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from prompt_toolkit.mouse_events import MouseEventType
 
@@ -39,11 +39,12 @@ class TestLiveStreamingAndScroll(unittest.TestCase):
 
         asyncio.run(run_test())
 
-    def test_transcript_mouse_scrolling_is_enabled_by_default(self):
+    def test_transcript_mouse_scrolling_is_enabled_for_interactive_terminal(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
                 app = KittUIApp(runtime=runtime)
-                app.build_application()
+                with patch("kitt.ui.layout._interactive_terminal", return_value=True):
+                    app.build_application()
 
                 self.assertTrue(app.mouse_support_enabled)
                 app.transcript_window.vertical_scroll = 9
@@ -55,6 +56,15 @@ class TestLiveStreamingAndScroll(unittest.TestCase):
 
                 self.assertEqual(app.transcript_window.vertical_scroll, 6)
                 self.assertFalse(app.state.follow_tail)
+
+    def test_non_interactive_session_preserves_native_mouse_default(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            with KittRuntime.build(root_dir=tmp_dir) as runtime:
+                app = KittUIApp(runtime=runtime)
+                with patch("kitt.ui.layout._interactive_terminal", return_value=False):
+                    app.build_application()
+
+                self.assertFalse(app.mouse_support_enabled)
 
 
 if __name__ == "__main__":
