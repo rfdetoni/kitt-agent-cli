@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import sys
 
+from kitt import KITT_VERSION
+
 
 @dataclass(frozen=True)
 class LayoutDimensions:
@@ -30,6 +32,11 @@ def _interactive_terminal() -> bool:
         return False
 
 
+def _version_text() -> str:
+    """Return the compact version label rendered at the right edge of the TUI footer."""
+    return f" KITT Agent CLI v{KITT_VERSION} "
+
+
 def build_root_container(ui):
     """Build retained prompt_toolkit container tree around live UI state."""
     from prompt_toolkit.filters import Condition
@@ -54,6 +61,20 @@ def build_root_container(ui):
     tablet_sidebar = Condition(lambda: ui.state.route == "session" and ui.dimensions.mode == "tablet" and ui.state.sidebar_open)
     short = Condition(lambda: ui.state.height < 18)
 
+    def status_bar():
+        version_text = _version_text()
+        return VSplit([
+            Window(ui.status_control, height=1, wrap_lines=False, style="class:status"),
+            Window(
+                FormattedTextControl(version_text),
+                width=len(version_text),
+                height=1,
+                wrap_lines=False,
+                align=WindowAlign.RIGHT,
+                style="class:status",
+            ),
+        ])
+
     transcript = Window(
         ui.transcript_control, wrap_lines=True, right_margins=[ScrollbarMargin(display_arrows=True)],
         style="class:surface", allow_scroll_beyond_bottom=False,
@@ -69,7 +90,7 @@ def build_root_container(ui):
         prompt_window,
         title=lambda: f"Prompt [{ui.state.turn_mode.upper()}]  │  F4: Alternar Modo  │  F12: Modelos  │  Alt+Enter: Nova Linha"
     )
-    session = HSplit([header, body, live_agents, prompt, Window(ui.status_control, height=1, wrap_lines=False, style="class:status")])
+    session = HSplit([header, body, live_agents, prompt, status_bar()])
 
     home = HSplit([
         Window(height=Dimension(weight=1)),
@@ -77,7 +98,7 @@ def build_root_container(ui):
         Box(Frame(prompt_window, title=lambda: f"K.I.T.T. [{ui.state.turn_mode.upper()}]  │  F4: Modo  │  F12: Modelos"), padding_left=4, padding_right=4),
         Window(ui.hints_control, height=2, align=WindowAlign.CENTER),
         Window(height=Dimension(weight=1)),
-        Window(ui.status_control, height=1, wrap_lines=False, style="class:status"),
+        status_bar(),
     ])
     content = DynamicContainer(lambda: home if ui.state.route == "home" else session)
 
