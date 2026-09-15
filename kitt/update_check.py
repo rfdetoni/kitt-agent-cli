@@ -16,6 +16,7 @@ INSTALL_PS1_URL = "https://raw.githubusercontent.com/rfdetoni/kitt/main/install.
 _MAX_RESPONSE_BYTES = 64 * 1024
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _MODULE_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_LOCKED_REFS = frozenset({"lock", "locked"})
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -65,6 +66,19 @@ def _fetch_lock(timeout: float) -> dict[str, Any] | None:
         return None
     payload = json.loads(raw.decode("utf-8"))
     return payload if isinstance(payload, dict) else None
+
+
+def _source_ref(state: Mapping[str, Any]) -> str | None:
+    for key in ("source_ref", "ref"):
+        value = state.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _tracks_tested_ecosystem(state: Mapping[str, Any]) -> bool:
+    source_ref = _source_ref(state)
+    return source_ref is not None and source_ref.lower() in _LOCKED_REFS
 
 
 def find_outdated_components(
@@ -142,6 +156,10 @@ def build_update_command(
         common.append("--with-ai-workers")
     if bool(state.get("portable")):
         common.append("--portable")
+    if _tracks_tested_ecosystem(state):
+        # The warning compares against ecosystem.lock.json, so the suggested
+        # command must converge to that exact tested ecosystem as well.
+        common.extend(["--ref", "locked"])
 
     if windows:
         rendered: list[str] = []
@@ -187,9 +205,11 @@ def notify_if_update_available(
         if state is None:
             return False
 
-        # Explicit --ref installs intentionally track a custom branch/tag/SHA.
-        # Do not tell those users to switch back to the tested ecosystem lock.
-        if state.get("ref") or state.get("source_ref"):
+        # This checker advertises updates for the tested/locked ecosystem only.
+        # Main/custom installations intentionally track a moving ref and must not
+        # be compared against ecosystem.lock.json. Legacy state without a source
+        # ref is fail-open to avoid the previous permanent false-positive loop.
+        if not _tracks_tested_ecosystem(state):
             return False
 
         lock_payload = _fetch_lock(timeout)
