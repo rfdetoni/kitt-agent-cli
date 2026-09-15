@@ -1,17 +1,18 @@
 """Deterministic completion checks for workspace mutation tasks.
 
-The model is not a source of truth for filesystem effects. This adapter wraps the
-existing tool loop and only allows terminal prose to pass when required workspace
-mutations actually produced successful host-tool evidence. It also verifies files
-that the model explicitly claims were created/implemented. A bounded recovery
-round asks the model to execute the missing mutation; repeated non-execution fails
-closed instead of returning setup instructions as if the task were complete.
+The model is not a source of truth for filesystem effects.  A successful mutation
+is evidence of progress, not evidence that a multi-file implementation is done.
+This adapter therefore tracks meaningful host progress, verifies conservative
+completion contracts against the real workspace, rejects deferred hand-offs, and
+fails closed when the model loops on exploration without making progress.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import shlex
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MethodType
 from typing import Any, Iterator
@@ -29,11 +30,24 @@ _RUNTIME_MUTATION_OPERATIONS = frozenset({
     "repo.write_file", "patch.apply", "repo.create_directory", "repo.move",
     "repo.rename", "repo.delete", "repo.edit_symbol",
 })
+_RUNTIME_EXPLORATION_OPERATIONS = frozenset({
+    "repo.read", "repo.search", "repo.inspect_symbol", "repo.read_symbol",
+    "repo.references", "repo.context_map", "repo.definition", "repo.hover",
+    "repo.references_semantic", "repo.diagnostics", "repo.call_hierarchy",
+    "repo.outline", "repo.ast_search", "repo.list", "goal.inspect", "memory.query",
+    "session.search", "state.get", "state.list", "handles.resolve", "artifacts.read",
+})
+_EXPLORATION_TOOLS = frozenset({
+    "read_file", "search", "repository_map", "list_files", "git_status", "git_diff",
+})
 _EXPLICIT_FIX_TERMS = (
     "fix", "corrija", "corrigir", "conserte", "consertar", "repare", "reparar",
     "atualize", "atualizar", "modifique", "modificar", "edite", "editar",
 )
 _READ_ONLY_INTENTS = frozenset({"ASK", "PLAN", "REVIEW", "TEST"})
+_MAX_IDENTICAL_EXPLORATIONS_WITHOUT_PROGRESS = 3
+_MAX_EXPLORATIONS_WITHOUT_PROGRESS = 12
+_MAX_PROGRESS_RECOVERIES = 6
 
 _MUTATION_CLAIM_RE = re.compile(
     r"\b(?:"
@@ -77,6 +91,215 @@ _DEFERRED_IMPLEMENTATION_RE = re.compile(
     r")",
     re.IGNORECASE | re.DOTALL,
 )
+_VALIDATION_COMMAND_RE = re.compile(
+    r"(?:^|\s)(?:"
+    r"(?:\./)?mvnw?\s+(?:test|verify|package)|"
+    r"(?:\./)?gradlew?\s+(?:test|check|build)|"
+    r"npm\s+(?:test|run\s+(?:test|build|check|lint))|"
+    r"pnpm\s+(?:test|run\s+(?:test|build|check|lint)|build)|"
+    r"yarn\s+(?:test|build|lint)|"
+    r"(?:npx\s+)?ng\s+(?:test|build)|"
+    r"pytest(?:\s|$)|python(?:3)?\s+-m\s+pytest|"
+    r"go\s+test(?:\s|$)|cargo\s+(?:test|check|build)|dotnet\s+(?:test|build)"
+    r")",
+    re.IGNORECASE,
+)
+_IGNORED_PROJECT_DIRS = frozenset({
+    ".git", ".idea", ".vscode", "node_modules", "dist", "build", "target",
+    ".gradle", ".mvn", ".venv", "venv", "__pycache__", "coverage",
+})
+_BACKEND_MARKERS = (
+    "pom.xml", "build.gradle", "build.gradle.kts", "package.json",
+    "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml",
+)
+_BACKEND_SOURCE_SUFFIXES = (
+    ".java", ".kt", ".kts", ".py", ".js", ".mjs", ".cjs", ".ts",
+    ".go", ".rs", ".cs", ".php", ".rb",
+)
+_FRONTEND_MARKERS = (
+    "package.json", "angular.json", "vite.config.ts", "vite.config.js",
+    "next.config.js", "next.config.mjs", "next.config.ts",
+)
+_FRONTEND_SOURCE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".scss")
+
+
+@dataclass(frozen=True)
+class _ScopeRequirement:
+    name: str
+    root: str
+    required_markers: tuple[str, ...] = ()
+    any_markers: tuple[str, ...] = ()
+    source_suffixes: tuple[str, ...] = ()
+    source_under: str | None = None
+
+
+@dataclass(frozen=True)
+class CompletionContract:
+    """Small host-verifiable contract derived only from explicit project scope."""
+
+    scopes: tuple[_ScopeRequirement, ...] = ()
+    require_validation: bool = False
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.scopes or self.require_validation)
+
+    def evaluate(self, root_dir: str | Path, *, validation_succeeded: bool = False) -> list[str]:
+        root = Path(root_dir).resolve()
+        issues: list[str] = []
+        for requirement in self.scopes:
+            scope_root = root / requirement.root
+            if not scope_root.is_dir():
+                issues.append(f"missing required {requirement.name} directory: {requirement.root}/")
+                continue
+
+            for marker in requirement.required_markers:
+                if not (scope_root / marker).is_file():
+                    issues.append(
+                        f"{requirement.name} is missing required project marker: "
+                        f"{requirement.root}/{marker}"
+                    )
+
+            if requirement.any_markers and not any(
+                (scope_root / marker).is_file() for marker in requirement.any_markers
+            ):
+                issues.append(
+                    f"{requirement.name} has no recognized project manifest/build file under "
+                    f"{requirement.root}/"
+                )
+
+            if requirement.source_suffixes:
+                source_root = scope_root / requirement.source_under if requirement.source_under else scope_root
+                if not source_root.is_dir() or not _contains_source_file(source_root, requirement.source_suffixes):
+                    location = (
+                        f"{requirement.root}/{requirement.source_under}"
+                        if requirement.source_under else requirement.root
+                    )
+                    issues.append(
+                        f"{requirement.name} has no implementation source file under {location}/"
+                    )
+
+        if self.require_validation and not validation_succeeded:
+            issues.append(
+                "project implementation has not been validated by a successful build/test/check command"
+            )
+        return issues
+
+
+class _ExecutionProgressLedger:
+    """Track meaningful progress instead of treating every tool call as completion."""
+
+    def __init__(self) -> None:
+        self.successful_mutations: set[str] = set()
+        self.successful_validations: set[str] = set()
+        self.pending_mutations: dict[str, str] = {}
+        self.pending_validations: dict[str, str] = {}
+        self.exploration_counts: dict[str, int] = {}
+        self.explorations_since_progress = 0
+
+    @property
+    def revision(self) -> int:
+        return len(self.successful_mutations) + len(self.successful_validations)
+
+    @property
+    def validation_succeeded(self) -> bool:
+        return bool(self.successful_validations)
+
+    def start(self, event: ToolStarted) -> str | None:
+        signature = _tool_signature(event.tool_name, event.args)
+        if _is_mutation_call(event.tool_name, event.args):
+            self.pending_mutations[event.call_id] = signature
+        if _is_validation_call(event.tool_name, event.args):
+            self.pending_validations[event.call_id] = signature
+        if _is_exploration_call(event.tool_name, event.args):
+            self.explorations_since_progress += 1
+            count = self.exploration_counts.get(signature, 0) + 1
+            self.exploration_counts[signature] = count
+            if count >= _MAX_IDENTICAL_EXPLORATIONS_WITHOUT_PROGRESS:
+                return (
+                    "identical exploration repeated without progress: "
+                    f"{event.tool_name} ({count} times)"
+                )
+            if self.explorations_since_progress > _MAX_EXPLORATIONS_WITHOUT_PROGRESS:
+                return (
+                    "too many exploration calls without a successful mutation "
+                    f"({_MAX_EXPLORATIONS_WITHOUT_PROGRESS} allowed)"
+                )
+        return None
+
+    def complete(self, event: ToolCompleted) -> tuple[bool, bool]:
+        mutation = self.pending_mutations.pop(event.call_id, None)
+        validation = self.pending_validations.pop(event.call_id, None)
+        new_mutation = bool(event.success and mutation and mutation not in self.successful_mutations)
+        new_validation = bool(event.success and validation and validation not in self.successful_validations)
+        if new_mutation and mutation:
+            self.successful_mutations.add(mutation)
+        if new_validation and validation:
+            self.successful_validations.add(validation)
+        if new_mutation:
+            self.exploration_counts.clear()
+            self.explorations_since_progress = 0
+        return new_mutation, new_validation
+
+
+def _contains_source_file(root: Path, suffixes: tuple[str, ...]) -> bool:
+    suffix_set = {suffix.lower() for suffix in suffixes}
+    try:
+        for path in root.rglob("*"):
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                continue
+            if any(part in _IGNORED_PROJECT_DIRS for part in relative.parts[:-1]):
+                continue
+            if path.is_file() and path.suffix.lower() in suffix_set:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def build_completion_contract(prompt: str, task: Any = None) -> CompletionContract:
+    """Derive a conservative contract for explicit backend/frontend project creation."""
+    intent = str(getattr(task, "intent", "") or "").upper()
+    if intent and intent not in {"IMPLEMENT", "REFACTOR", "DOCUMENT", "DEBUG"}:
+        return CompletionContract()
+
+    text = (prompt or "").lower()
+    creation = any(word in text for word in (
+        "crie", "criar", "create", "build", "implemente", "implementar",
+        "implementação", "implementacao", "implementation", "gere", "gerar", "construa",
+    ))
+    if not creation:
+        return CompletionContract()
+
+    scopes: list[_ScopeRequirement] = []
+    has_backend = "backend" in text or "back end" in text
+    has_frontend = "frontend" in text or "front end" in text
+    angular = "angular" in text
+
+    if has_backend:
+        scopes.append(_ScopeRequirement(
+            name="backend",
+            root="backend",
+            any_markers=_BACKEND_MARKERS,
+            source_suffixes=_BACKEND_SOURCE_SUFFIXES,
+        ))
+    if has_frontend:
+        scopes.append(_ScopeRequirement(
+            name="frontend",
+            root="frontend",
+            required_markers=("package.json", "angular.json") if angular else (),
+            any_markers=() if angular else _FRONTEND_MARKERS,
+            source_suffixes=(".ts",) if angular else _FRONTEND_SOURCE_SUFFIXES,
+            source_under="src",
+        ))
+
+    full_project = any(word in text for word in (
+        "projeto", "project", "site", "aplicação", "aplicacao", "application",
+    ))
+    require_validation = bool(scopes) and full_project and (len(scopes) > 1 or angular)
+    return CompletionContract(tuple(scopes), require_validation=require_validation)
 
 
 def _safe_workspace_file(root: Path, raw_path: str) -> tuple[str, Path] | None:
@@ -121,14 +344,7 @@ def missing_claimed_workspace_files(root_dir: str | Path, response: str) -> list
 
 
 def requires_workspace_mutation(processor: Any, cmd: Any) -> bool:
-    """Return whether this turn must produce a real workspace mutation.
-
-    Explicit read-only modes and semantic read-only intents win over creation-like
-    wording in questions such as "como criar um projeto?". Real project/file
-    creation is still detected deterministically when no trustworthy compiled task
-    is available. Implementation/refactor/document tasks require an ``edit`` action;
-    debug requires both ``edit`` and an explicit fix/update request.
-    """
+    """Return whether this turn must produce a real workspace mutation."""
     mode = str(getattr(cmd, "mode", "auto") or "auto").lower()
     if mode in {"plan", "ask"}:
         return False
@@ -161,22 +377,26 @@ def is_deferred_implementation_response(response: str) -> bool:
     return bool(_DEFERRED_IMPLEMENTATION_RE.search(response))
 
 
-def _is_mutating_process_call(args: dict[str, Any]) -> bool:
-    operation_args = args.get("arguments", {}) if isinstance(args.get("arguments"), dict) else {}
+def _command_tokens(args: dict[str, Any]) -> tuple[list[str], str]:
+    operation_args = args.get("arguments", {}) if isinstance(args.get("arguments"), dict) else args
     raw = operation_args.get("argv") or operation_args.get("command") or operation_args.get("cmd")
     if isinstance(raw, (list, tuple)):
         tokens = [str(token) for token in raw if str(token)]
-    elif isinstance(raw, str):
+        return tokens, " ".join(tokens)
+    if isinstance(raw, str):
         try:
             tokens = shlex.split(raw)
         except ValueError:
             tokens = raw.split()
-    else:
-        return False
+        return tokens, raw
+    return [], ""
+
+
+def _is_mutating_process_call(args: dict[str, Any]) -> bool:
+    tokens, raw = _command_tokens(args)
     if not tokens:
         return False
-
-    joined = " ".join(tokens).lower()
+    joined = raw.lower().strip()
     head = tokens[0].lower()
     if head in {"mkdir", "touch", "cp", "mv", "rm", "install"}:
         return True
@@ -197,6 +417,33 @@ def _is_mutation_call(tool_name: str, args: Any) -> bool:
     if operation == "process.run":
         return _is_mutating_process_call(args)
     return False
+
+
+def _is_exploration_call(tool_name: str, args: Any) -> bool:
+    if tool_name in _EXPLORATION_TOOLS:
+        return True
+    if tool_name != "kitt_runtime" or not isinstance(args, dict):
+        return False
+    return str(args.get("operation") or "") in _RUNTIME_EXPLORATION_OPERATIONS
+
+
+def _is_validation_call(tool_name: str, args: Any) -> bool:
+    if not isinstance(args, dict):
+        return False
+    if tool_name == "kitt_runtime" and str(args.get("operation") or "") != "process.run":
+        return False
+    if tool_name not in {"kitt_runtime", "run_command", "process.run"}:
+        return False
+    _, raw = _command_tokens(args)
+    return bool(raw and _VALIDATION_COMMAND_RE.search(raw.strip()))
+
+
+def _tool_signature(tool_name: str, args: Any) -> str:
+    try:
+        payload = json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        payload = repr(args)
+    return hashlib.sha256(f"{tool_name}\0{payload}".encode("utf-8", "replace")).hexdigest()
 
 
 def _claimed_files_retry_message(missing: list[str]) -> str:
@@ -227,6 +474,18 @@ def _required_mutation_retry_message() -> str:
     )
 
 
+def _contract_retry_message(issues: list[str]) -> str:
+    rendered = "\n".join(f"- {issue}" for issue in issues)
+    return (
+        "[KITT COMPLETION CONTRACT]\n"
+        "Host verification shows that the requested project is still incomplete:\n"
+        f"{rendered}\n"
+        "Continue the implementation with host tools. Do not claim completion until these "
+        "host-verifiable requirements are satisfied. If validation is missing, run the "
+        "appropriate build/test/check command with process.run after creating the required files."
+    )
+
+
 def _failed_mutation_retry_message(failed_mutations: dict[str, str]) -> str:
     failures = "; ".join(f"{name}: {error}" for name, error in failed_mutations.items())
     return (
@@ -239,7 +498,7 @@ def _failed_mutation_retry_message(failed_mutations: dict[str, str]) -> str:
 
 
 def install_completion_guard(processor: Any, registry: Any, *, max_retries: int = 1) -> None:
-    """Install a bounded fail-closed completion check on a processor."""
+    """Install a bounded, progress-aware fail-closed completion check on a processor."""
     if getattr(processor, "_completion_guard_installed", False):
         return
 
@@ -256,13 +515,16 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
         security_context,
     ) -> Iterator:
         current_request = request
-        retries = 0
-        successful_mutation = False
+        recoveries = 0
+        last_recovery_revision = 0
+        ledger = _ExecutionProgressLedger()
         failed_mutations: dict[str, str] = {}
+        mutation_required = requires_workspace_mutation(self, cmd)
+        task = getattr(getattr(self, "session_state", None), "last_task", None)
+        contract = build_completion_contract(str(getattr(cmd, "prompt", "") or ""), task)
 
         while True:
             terminal: tuple[str, list] | None = None
-            pending_mutation_calls: set[str] = set()
             for event, response, messages in original_loop(
                 cmd,
                 current_request,
@@ -271,54 +533,67 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 workspace_id,
                 security_context,
             ):
-                # _execute_tool_loop uses (None, response, messages) as its final
-                # hand-off to _finalize_turn. Hold only that sentinel until the
-                # execution requirement and filesystem claims are checked.
                 if event is None and response is not None and messages is not None:
                     terminal = (response, messages)
                     continue
 
-                if isinstance(event, ToolStarted) and _is_mutation_call(event.tool_name, event.args):
-                    pending_mutation_calls.add(event.call_id)
+                if isinstance(event, ToolStarted):
+                    stall = ledger.start(event)
+                    if stall and mutation_required:
+                        yield TurnFailed(
+                            error=(
+                                "Execution stalled: " + stall + ". The implementation requires "
+                                "forward progress; repeated read/list/search calls cannot complete it."
+                            )
+                        ), None, None
+                        return
                 elif isinstance(event, ToolCompleted):
-                    is_mutation = (
-                        event.tool_name in _MUTATION_TOOLS
-                        or event.call_id in pending_mutation_calls
-                    )
-                    if is_mutation:
+                    was_mutation = event.call_id in ledger.pending_mutations
+                    ledger.complete(event)
+                    if was_mutation:
                         if event.success:
-                            successful_mutation = True
                             failed_mutations.pop(event.tool_name, None)
                         else:
                             failed_mutations[event.tool_name] = event.error or "resultado sem detalhes"
-                    pending_mutation_calls.discard(event.call_id)
                 yield event, response, messages
 
             if terminal is None:
                 return
 
             response, messages = terminal
-            mutation_required = requires_workspace_mutation(self, cmd)
             missing = missing_claimed_workspace_files(registry.root_path, response)
-            mutation_missing = mutation_required and not successful_mutation
-            deferred_implementation = (
-                mutation_required and is_deferred_implementation_response(response)
+            mutation_missing = mutation_required and not ledger.successful_mutations
+            deferred_implementation = mutation_required and is_deferred_implementation_response(response)
+            contract_issues = (
+                contract.evaluate(
+                    registry.root_path,
+                    validation_succeeded=ledger.validation_succeeded,
+                )
+                if mutation_required and contract.enabled
+                else []
             )
+
             if (
                 not missing
                 and not failed_mutations
                 and not mutation_missing
                 and not deferred_implementation
+                and not contract_issues
             ):
                 yield None, response, messages
                 return
 
-            if retries >= retries_allowed:
+            progress_since_recovery = ledger.revision > last_recovery_revision
+            normal_budget_exhausted = recoveries >= retries_allowed
+            progress_budget_exhausted = recoveries >= _MAX_PROGRESS_RECOVERIES
+            if progress_budget_exhausted or (normal_budget_exhausted and not progress_since_recovery):
                 reasons: list[str] = []
                 if mutation_missing:
                     reasons.append("the task required a workspace mutation but no mutation tool succeeded")
                 if deferred_implementation:
                     reasons.append("the response deferred required implementation work back to the user")
+                if contract_issues:
+                    reasons.append("completion contract remains unsatisfied: " + "; ".join(contract_issues))
                 if missing:
                     reasons.append("claimed files are still missing after recovery: " + ", ".join(missing))
                 if failed_mutations:
@@ -329,11 +604,14 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 yield TurnFailed(error="Completion verification failed: " + "; ".join(reasons)), None, None
                 return
 
-            retries += 1
+            recoveries += 1
+            last_recovery_revision = ledger.revision
             retry_messages = list(messages)
             recovery_parts: list[str] = []
             if mutation_missing or deferred_implementation:
                 recovery_parts.append(_required_mutation_retry_message())
+            if contract_issues:
+                recovery_parts.append(_contract_retry_message(contract_issues))
             if missing:
                 recovery_parts.append(_claimed_files_retry_message(missing))
             if failed_mutations:
@@ -349,6 +627,8 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
 
 
 __all__ = [
+    "CompletionContract",
+    "build_completion_contract",
     "install_completion_guard",
     "is_deferred_implementation_response",
     "missing_claimed_workspace_files",
