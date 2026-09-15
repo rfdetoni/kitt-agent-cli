@@ -1,6 +1,6 @@
 """Deterministic completion checks for workspace mutation tasks.
 
-The model is not a source of truth for filesystem effects.  A successful mutation
+The model is not a source of truth for filesystem effects. A successful mutation
 is evidence of progress, not evidence that a multi-file implementation is done.
 This adapter therefore tracks meaningful host progress, verifies conservative
 completion contracts against the real workspace, rejects deferred hand-offs, and
@@ -104,6 +104,10 @@ _VALIDATION_COMMAND_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_VALIDATION_CD_SCOPE_RE = re.compile(
+    r"(?:^|(?:&&|;|\|\|)\s*)cd\s+(?:\./)?(?P<scope>[A-Za-z0-9_.@-]+)(?:/[^\s;&|]*)?\s*(?:&&|;)",
+    re.IGNORECASE,
+)
 _IGNORED_PROJECT_DIRS = frozenset({
     ".git", ".idea", ".vscode", "node_modules", "dist", "build", "target",
     ".gradle", ".mvn", ".venv", "venv", "__pycache__", "coverage",
@@ -139,12 +143,19 @@ class CompletionContract:
 
     scopes: tuple[_ScopeRequirement, ...] = ()
     require_validation: bool = False
+    validation_scopes: tuple[str, ...] = ()
 
     @property
     def enabled(self) -> bool:
-        return bool(self.scopes or self.require_validation)
+        return bool(self.scopes or self.require_validation or self.validation_scopes)
 
-    def evaluate(self, root_dir: str | Path, *, validation_succeeded: bool = False) -> list[str]:
+    def evaluate(
+        self,
+        root_dir: str | Path,
+        *,
+        validation_succeeded: bool = False,
+        validated_scopes: frozenset[str] = frozenset(),
+    ) -> list[str]:
         root = Path(root_dir).resolve()
         issues: list[str] = []
         for requirement in self.scopes:
@@ -183,6 +194,14 @@ class CompletionContract:
             issues.append(
                 "project implementation has not been validated by a successful build/test/check command"
             )
+        elif self.validation_scopes and not validation_succeeded:
+            issues.append(
+                "project implementation has not been validated by a successful build/test/check command"
+            )
+        elif self.validation_scopes and "workspace" not in validated_scopes:
+            for scope in self.validation_scopes:
+                if scope not in validated_scopes:
+                    issues.append(f"{scope} has not been validated by a successful build/test/check command")
         return issues
 
 
@@ -192,8 +211,9 @@ class _ExecutionProgressLedger:
     def __init__(self) -> None:
         self.successful_mutations: set[str] = set()
         self.successful_validations: set[str] = set()
+        self.successful_validation_scopes: set[str] = set()
         self.pending_mutations: dict[str, str] = {}
-        self.pending_validations: dict[str, str] = {}
+        self.pending_validations: dict[str, tuple[str, str]] = {}
         self.exploration_counts: dict[str, int] = {}
         self.explorations_since_progress = 0
 
@@ -205,12 +225,16 @@ class _ExecutionProgressLedger:
     def validation_succeeded(self) -> bool:
         return bool(self.successful_validations)
 
+    @property
+    def validated_scopes(self) -> frozenset[str]:
+        return frozenset(self.successful_validation_scopes)
+
     def start(self, event: ToolStarted) -> str | None:
         signature = _tool_signature(event.tool_name, event.args)
         if _is_mutation_call(event.tool_name, event.args):
             self.pending_mutations[event.call_id] = signature
         if _is_validation_call(event.tool_name, event.args):
-            self.pending_validations[event.call_id] = signature
+            self.pending_validations[event.call_id] = (signature, _validation_scope(event.args))
         if _is_exploration_call(event.tool_name, event.args):
             self.explorations_since_progress += 1
             count = self.exploration_counts.get(signature, 0) + 1
@@ -229,10 +253,9 @@ class _ExecutionProgressLedger:
 
     def complete(self, event: ToolCompleted) -> tuple[bool, bool]:
         mutation = self.pending_mutations.pop(event.call_id, None)
-        validation = self.pending_validations.pop(event.call_id, None)
-        # Preserve the historical event contract for adapters/tests that only emit
-        # ToolCompleted. Native TurnProcessor paths still use the stronger
-        # ToolStarted signature, so repeated real mutations are deduplicated by args.
+        validation_entry = self.pending_validations.pop(event.call_id, None)
+        validation = validation_entry[0] if validation_entry else None
+        validation_scope = validation_entry[1] if validation_entry else None
         if mutation is None and event.tool_name in _MUTATION_TOOLS:
             mutation = f"completed:{event.tool_name}:{event.call_id or 'legacy'}"
         new_mutation = bool(event.success and mutation and mutation not in self.successful_mutations)
@@ -241,6 +264,8 @@ class _ExecutionProgressLedger:
             self.successful_mutations.add(mutation)
         if new_validation and validation:
             self.successful_validations.add(validation)
+            if validation_scope:
+                self.successful_validation_scopes.add(validation_scope)
         if new_mutation:
             self.exploration_counts.clear()
             self.explorations_since_progress = 0
@@ -264,18 +289,28 @@ def _contains_source_file(root: Path, suffixes: tuple[str, ...]) -> bool:
     return False
 
 
+def _effective_prompt(prompt: str, task: Any = None) -> str:
+    original = str(getattr(task, "original_prompt", "") or "").strip()
+    current = str(prompt or "").strip()
+    if original and current and original != current:
+        return f"{original}\n{current}"
+    return original or current
+
+
 def build_completion_contract(prompt: str, task: Any = None) -> CompletionContract:
     """Derive a conservative contract for explicit backend/frontend project creation."""
-    intent = str(getattr(task, "intent", "") or "").upper()
-    if intent and intent not in {"IMPLEMENT", "REFACTOR", "DOCUMENT", "DEBUG"}:
-        return CompletionContract()
-
-    text = (prompt or "").lower()
-    creation = any(word in text for word in (
+    effective_prompt = _effective_prompt(prompt, task)
+    text = effective_prompt.lower()
+    explicit_creation = is_workspace_creation_request(effective_prompt)
+    creation = explicit_creation or any(word in text for word in (
         "crie", "criar", "create", "build", "implemente", "implementar",
         "implementação", "implementacao", "implementation", "gere", "gerar", "construa",
     ))
     if not creation:
+        return CompletionContract()
+
+    intent = str(getattr(task, "intent", "") or "").upper()
+    if intent and intent not in {"IMPLEMENT", "REFACTOR", "DOCUMENT", "DEBUG"} and not explicit_creation:
         return CompletionContract()
 
     scopes: list[_ScopeRequirement] = []
@@ -304,7 +339,12 @@ def build_completion_contract(prompt: str, task: Any = None) -> CompletionContra
         "projeto", "project", "site", "aplicação", "aplicacao", "application",
     ))
     require_validation = bool(scopes) and full_project and (len(scopes) > 1 or angular)
-    return CompletionContract(tuple(scopes), require_validation=require_validation)
+    validation_scopes = tuple(scope.root for scope in scopes) if require_validation else ()
+    return CompletionContract(
+        tuple(scopes),
+        require_validation=require_validation,
+        validation_scopes=validation_scopes,
+    )
 
 
 def _safe_workspace_file(root: Path, raw_path: str) -> tuple[str, Path] | None:
@@ -357,6 +397,14 @@ def requires_workspace_mutation(processor: Any, cmd: Any) -> bool:
     prompt = str(getattr(cmd, "prompt", "") or "")
     session_state = getattr(processor, "session_state", None)
     task = getattr(session_state, "last_task", None)
+    effective_prompt = _effective_prompt(prompt, task)
+
+    # Explicit creation/implementation text is stronger evidence than an LLM
+    # semantic label. A misclassified ASK/REVIEW task must never disable host
+    # completion verification for an unequivocal "create the project" request.
+    if is_workspace_creation_request(effective_prompt):
+        return True
+
     if task is not None:
         intent = str(getattr(task, "intent", "") or "").upper()
         actions = {str(action).lower() for action in (getattr(task, "actions", None) or ())}
@@ -366,13 +414,13 @@ def requires_workspace_mutation(processor: Any, cmd: Any) -> bool:
             if intent in {"IMPLEMENT", "REFACTOR", "DOCUMENT"}:
                 return True
             if intent == "DEBUG":
-                lowered = prompt.lower()
+                lowered = effective_prompt.lower()
                 return any(term in lowered for term in _EXPLICIT_FIX_TERMS)
 
-    lowered = prompt.lower().strip()
+    lowered = effective_prompt.lower().strip()
     if lowered.endswith("?") or lowered.startswith(("como ", "how ", "explique ", "explain ")):
         return False
-    return is_workspace_creation_request(prompt)
+    return is_workspace_creation_request(effective_prompt)
 
 
 def is_deferred_implementation_response(response: str) -> bool:
@@ -395,6 +443,21 @@ def _command_tokens(args: dict[str, Any]) -> tuple[list[str], str]:
             tokens = raw.split()
         return tokens, raw
     return [], ""
+
+
+def _validation_scope(args: Any) -> str:
+    if not isinstance(args, dict):
+        return "workspace"
+    operation_args = args.get("arguments", {}) if isinstance(args.get("arguments"), dict) else args
+    for key in ("cwd", "workdir", "working_directory", "directory"):
+        value = operation_args.get(key)
+        if isinstance(value, str) and value.strip():
+            normalized = value.strip().replace("\\", "/").strip("./")
+            if normalized:
+                return normalized.split("/", 1)[0].lower()
+    _, raw = _command_tokens(args)
+    match = _VALIDATION_CD_SCOPE_RE.search(raw)
+    return match.group("scope").lower() if match else "workspace"
 
 
 def _is_mutating_process_call(args: dict[str, Any]) -> bool:
@@ -487,7 +550,8 @@ def _contract_retry_message(issues: list[str]) -> str:
         f"{rendered}\n"
         "Continue the implementation with host tools. Do not claim completion until these "
         "host-verifiable requirements are satisfied. If validation is missing, run the "
-        "appropriate build/test/check command with process.run after creating the required files."
+        "appropriate build/test/check command with process.run for every requested project scope "
+        "after creating the required files."
     )
 
 
@@ -576,6 +640,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 contract.evaluate(
                     registry.root_path,
                     validation_succeeded=ledger.validation_succeeded,
+                    validated_scopes=ledger.validated_scopes,
                 )
                 if mutation_required and contract.enabled
                 else []
