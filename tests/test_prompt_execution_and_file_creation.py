@@ -1,8 +1,16 @@
 import tempfile
 import unittest
 from pathlib import Path
+
 from kitt.core.runtime import KittRuntime
 from kitt.core.turn_command import TurnCommand
+from kitt.security.capabilities import (
+    CAP_PROCESS_RUN,
+    CAP_REPO_READ,
+    CAP_REPO_SEARCH,
+    CAP_REPO_WRITE,
+    capabilities_for_tools,
+)
 from kitt.tools.surface_selector import ToolSurfaceSelector
 
 
@@ -43,6 +51,29 @@ class TestPromptExecutionAndFileCreation(unittest.TestCase):
         self.assertIn("write_file", surface)
         self.assertIn("apply_patch", surface)
         self.assertNotIn("run_command", surface)
+
+    def test_compact_runtime_grants_only_repository_capability_family(self):
+        capabilities = capabilities_for_tools(["kitt_runtime"])
+
+        self.assertIn(CAP_REPO_READ, capabilities)
+        self.assertIn(CAP_REPO_SEARCH, capabilities)
+        self.assertIn(CAP_REPO_WRITE, capabilities)
+        self.assertNotIn(CAP_PROCESS_RUN, capabilities)
+
+    def test_compact_runtime_write_capability_is_available_for_code_turns(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            with KittRuntime.build(root_dir=tmp_dir) as runtime:
+                code_context = runtime.processor._security_context_for_turn(
+                    TurnCommand(conversation_id="code-turn", prompt="continue a implementação", mode="code"),
+                    ["kitt_runtime"],
+                )
+                ask_context = runtime.processor._security_context_for_turn(
+                    TurnCommand(conversation_id="ask-turn", prompt="explique o projeto", mode="ask"),
+                    ["kitt_runtime"],
+                )
+
+                self.assertTrue(code_context.has_capability(CAP_REPO_WRITE))
+                self.assertFalse(ask_context.has_capability(CAP_REPO_WRITE))
 
     def test_turn_processor_enables_file_writing_tools_for_general_prompts(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
