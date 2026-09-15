@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import sys
 
 from kitt import KITT_VERSION
 
@@ -24,14 +23,6 @@ class LayoutDimensions:
         return self.width - self.sidebar_width
 
 
-def _interactive_terminal() -> bool:
-    """Return whether prompt_toolkit is attached to a real interactive terminal."""
-    try:
-        return bool(sys.stdin.isatty() and sys.stdout.isatty())
-    except (AttributeError, OSError):
-        return False
-
-
 def _version_text() -> str:
     """Return the compact version label rendered at the right edge of the TUI footer."""
     return f" KITT Agent CLI v{KITT_VERSION} "
@@ -48,12 +39,12 @@ def build_root_container(ui):
     from prompt_toolkit.widgets import Box, Frame
     from prompt_toolkit.layout.menus import CompletionsMenu
 
-    # prompt_toolkit only dispatches wheel events while mouse reporting is enabled.
-    # Auto-enable it for the real interactive terminal where users expect wheel
-    # scrolling. Non-interactive/test sessions keep native mouse mode, and /mouse
-    # remains an explicit runtime override after the first retained-layout build.
+    # Enabling prompt_toolkit mouse reporting makes the terminal send mouse drag
+    # events to the application, which prevents native terminal text selection.
+    # Keep native selection as the default; /mouse remains the explicit opt-in
+    # for application-level wheel scrolling and mouse interactions.
     if not getattr(ui, "_mouse_support_initialized", False):
-        ui.mouse_support_enabled = _interactive_terminal()
+        ui.mouse_support_enabled = False
         ui._mouse_support_initialized = True
 
     visible = lambda name: Condition(lambda: ui.state.active_overlay == name)
