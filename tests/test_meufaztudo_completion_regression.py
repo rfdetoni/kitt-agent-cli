@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from kitt.context_filter.fallback import DeterministicFallbackPlanner
 from kitt.core.completion_guard import (
     build_completion_contract,
     requires_workspace_mutation,
@@ -28,6 +29,18 @@ class MeufaztudoCompletionRegressionTests(unittest.TestCase):
         cmd = SimpleNamespace(mode='auto', prompt=MEUFAZTUDO_PROMPT)
 
         self.assertTrue(requires_workspace_mutation(processor, cmd))
+
+    def test_deterministic_planner_expands_full_stack_creation_into_execution_steps(self):
+        task = DeterministicFallbackPlanner().generate_task(MEUFAZTUDO_PROMPT)
+        actions = '\n'.join(task.actions)
+
+        self.assertEqual(task.intent, 'IMPLEMENT')
+        self.assertIn('workspace structure', actions)
+        self.assertIn('ordered execution checklist', actions)
+        self.assertIn('backend scope', actions)
+        self.assertIn('frontend scope', actions)
+        self.assertIn('every changed project scope', actions)
+        self.assertTrue(task.validation_hints)
 
     def test_contract_uses_original_prompt_even_when_semantic_task_is_misclassified(self):
         task = SimpleNamespace(
