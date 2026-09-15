@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from kitt.core.completion_guard import (
     install_completion_guard,
+    is_deferred_implementation_response,
     requires_workspace_mutation,
 )
 from kitt.core.execution_request import ExecutionRequest
@@ -49,11 +50,14 @@ class _Processor:
     ):
         self.calls.append(request)
         response = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
-        if response == "__MUTATE__":
-            call_id = "write-1"
+        if response in {"__MUTATE__", "__MUTATE_DEFER__"}:
+            call_id = f"write-{len(self.calls)}"
             args = {
                 "operation": "repo.write_file",
-                "arguments": {"path": "frontend/src/app/app.component.ts", "content": "export class App {}"},
+                "arguments": {
+                    "path": "frontend/src/app/app.component.ts",
+                    "content": "export class App {}",
+                },
             }
             yield ToolStarted(tool_name="kitt_runtime", args=args, call_id=call_id), None, None
             yield ToolCompleted(
@@ -62,7 +66,12 @@ class _Processor:
                 output="written",
                 call_id=call_id,
             ), None, None
-            yield None, "Projeto implementado no workspace.", list(request.messages)
+            final_response = (
+                GEMINI_DEFERRED_RESPONSE
+                if response == "__MUTATE_DEFER__"
+                else "Projeto implementado no workspace."
+            )
+            yield None, final_response, list(request.messages)
             return
         yield None, response, list(request.messages)
 
@@ -91,6 +100,19 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
 
         self.assertTrue(requires_workspace_mutation(processor, cmd))
 
+    def test_detects_deferred_implementation_handoff(self):
+        self.assertTrue(is_deferred_implementation_response(GEMINI_DEFERRED_RESPONSE))
+        self.assertTrue(
+            is_deferred_implementation_response(
+                "Create the folders first, then send me the component code and I will implement it."
+            )
+        )
+        self.assertFalse(
+            is_deferred_implementation_response(
+                "Implementei frontend e backend; os testes relevantes passaram."
+            )
+        )
+
     def test_deferred_project_response_is_retried_until_mutation_succeeds(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor = _Processor([GEMINI_DEFERRED_RESPONSE, "__MUTATE__"])
@@ -112,6 +134,43 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
                 )
             )
             self.assertFalse(any(isinstance(event, TurnFailed) for event, _, _ in events))
+
+    def test_partial_mutation_does_not_allow_deferred_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor = _Processor(["__MUTATE_DEFER__", "__MUTATE__"])
+            install_completion_guard(processor, _Registry(Path(tmp_dir)))
+            cmd = SimpleNamespace(prompt=PROJECT_PROMPT, mode="auto")
+
+            events = list(
+                processor._execute_tool_loop(cmd, _request(), None, None, "local", None)
+            )
+
+            self.assertEqual(len(processor.calls), 2)
+            recovery_prompt = processor.calls[1].messages[-1]["content"]
+            self.assertIn("[KITT EXECUTION REQUIRED]", recovery_prompt)
+            self.assertIn("perform the implementation yourself", recovery_prompt)
+            self.assertFalse(any(isinstance(event, TurnFailed) for event, _, _ in events))
+            self.assertTrue(
+                any(
+                    event is None and response == "Projeto implementado no workspace."
+                    for event, response, _ in events
+                )
+            )
+
+    def test_repeated_deferred_handoff_after_mutation_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor = _Processor(["__MUTATE_DEFER__", "__MUTATE_DEFER__"])
+            install_completion_guard(processor, _Registry(Path(tmp_dir)), max_retries=1)
+            cmd = SimpleNamespace(prompt=PROJECT_PROMPT, mode="auto")
+
+            events = list(
+                processor._execute_tool_loop(cmd, _request(), None, None, "local", None)
+            )
+
+            failures = [event for event, _, _ in events if isinstance(event, TurnFailed)]
+            self.assertEqual(len(processor.calls), 2)
+            self.assertEqual(len(failures), 1)
+            self.assertIn("deferred required implementation work", failures[0].error)
 
     def test_repeated_deferred_project_response_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
