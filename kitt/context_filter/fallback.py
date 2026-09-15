@@ -34,6 +34,41 @@ def is_workspace_creation_request(prompt: str) -> bool:
     )
 
 
+def _execution_actions(prompt_lower: str, intent: TaskIntent, creation_request: bool) -> list[str]:
+    """Build host-oriented steps for the execution model without inventing project details."""
+    if intent == 'ASK':
+        return ['analyze the request and answer without changing the workspace']
+    if intent == 'PLAN':
+        return [
+            'inspect the relevant workspace structure and existing implementation',
+            'produce an ordered implementation checklist with target files, risks, and validation',
+        ]
+
+    actions = [
+        'inspect the relevant workspace structure and existing implementation before changing files',
+        'build an ordered execution checklist from the explicit user requirements and repository evidence',
+    ]
+
+    if creation_request:
+        explicit_scopes = False
+        if 'backend' in prompt_lower or 'back end' in prompt_lower:
+            actions.append('create and implement the requested backend scope using host mutation tools')
+            explicit_scopes = True
+        if 'frontend' in prompt_lower or 'front end' in prompt_lower:
+            actions.append('create and implement the requested frontend scope using host mutation tools')
+            explicit_scopes = True
+        if not explicit_scopes:
+            actions.append('create and implement the requested project structure using host mutation tools')
+    else:
+        actions.append('apply the requested workspace change using the available host mutation tools')
+
+    actions.extend((
+        'run the relevant build, test, lint, or check commands for every changed project scope',
+        'review host tool results and fix remaining failures before reporting completion',
+    ))
+    return actions
+
+
 class DeterministicFallbackPlanner:
     """Generates conservative, deterministic SemanticTask and ContextPlan without LLM calls."""
 
@@ -58,7 +93,7 @@ class DeterministicFallbackPlanner:
         if (
             (not paths and not symbols and not direct_execution and not creation_request)
             or prompt_lower.strip() in {'oi', 'olá', 'ola', 'hello', 'hi'}
-            or conversational_request
+            or (conversational_request and not creation_request)
         ):
             intent = 'ASK'
         elif re.search(r'(?<!\w)(?:test|tests|testing|unittest|pytest|teste|testes|testar)(?!\w)', prompt_lower):
@@ -75,8 +110,14 @@ class DeterministicFallbackPlanner:
             intent = 'PLAN'
 
         goal = prompt.strip()[:300]
-        actions = ['analyze'] if intent == 'ASK' else ['analyze', 'edit']
-        validation_hints = ['run tests'] if intent == 'TEST' else []
+        actions = _execution_actions(prompt_lower, intent, creation_request)
+        validation_hints = []
+        if intent == 'TEST':
+            validation_hints = ['run the requested tests and inspect their results']
+        elif intent not in {'ASK', 'PLAN'}:
+            validation_hints = [
+                'run relevant build, test, lint, or check commands for every changed project scope'
+            ]
 
         return SemanticTask(
             original_prompt=prompt,
@@ -109,5 +150,6 @@ class DeterministicFallbackPlanner:
             candidate_symbols=task.symbols,
             preferred_paths=task.paths,
             enabled_tools=tools,
+            validation_commands=task.validation_hints,
             confidence=1.0
         )
