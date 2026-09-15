@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from kitt.domain.entities import ModelProfile
 from kitt.llm.client import LLMClient
+from kitt.llm.kitt_proxy_capabilities import KittProxyCapabilities
 from kitt.llm.domain import ProviderProtocolError
 from kitt.tools.protocol import parse_tool_call
 from kitt.llm.providers.base import LLMRequest
@@ -234,7 +235,8 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
 
 
 
-    def test_llm_client_uses_stable_session_per_conversation_and_unique_request_ids(self):
+    @patch("kitt.llm.client.discover_kitt_proxy_capabilities", return_value=KittProxyCapabilities())
+    def test_llm_client_uses_stable_session_per_conversation_and_unique_request_ids(self, _discover):
         captured = []
 
         class CaptureAdapter:
