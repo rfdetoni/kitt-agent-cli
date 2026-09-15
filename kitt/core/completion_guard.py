@@ -33,6 +33,7 @@ _EXPLICIT_FIX_TERMS = (
     "fix", "corrija", "corrigir", "conserte", "consertar", "repare", "reparar",
     "atualize", "atualizar", "modifique", "modificar", "edite", "editar",
 )
+_READ_ONLY_INTENTS = frozenset({"ASK", "PLAN", "REVIEW", "TEST"})
 
 _MUTATION_CLAIM_RE = re.compile(
     r"\b(?:"
@@ -110,35 +111,35 @@ def missing_claimed_workspace_files(root_dir: str | Path, response: str) -> list
 def requires_workspace_mutation(processor: Any, cmd: Any) -> bool:
     """Return whether this turn must produce a real workspace mutation.
 
-    Planning/ask modes are always read-only. Explicit project/file creation is
-    deterministic and takes precedence over occasionally-wrong model intent.
-    For compiled tasks, implementation/refactor/document intents require an
-    ``edit`` action; debug only becomes mandatory when the user explicitly asks
-    for a fix/update rather than merely asking for diagnosis.
+    Explicit read-only modes and semantic read-only intents win over creation-like
+    wording in questions such as "como criar um projeto?". Real project/file
+    creation is still detected deterministically when no trustworthy compiled task
+    is available. Implementation/refactor/document tasks require an ``edit`` action;
+    debug requires both ``edit`` and an explicit fix/update request.
     """
     mode = str(getattr(cmd, "mode", "auto") or "auto").lower()
     if mode in {"plan", "ask"}:
         return False
 
     prompt = str(getattr(cmd, "prompt", "") or "")
-    if is_workspace_creation_request(prompt):
-        return True
-
     session_state = getattr(processor, "session_state", None)
     task = getattr(session_state, "last_task", None)
-    if task is None:
-        return False
+    if task is not None:
+        intent = str(getattr(task, "intent", "") or "").upper()
+        actions = {str(action).lower() for action in (getattr(task, "actions", None) or ())}
+        if intent in _READ_ONLY_INTENTS:
+            return False
+        if "edit" in actions:
+            if intent in {"IMPLEMENT", "REFACTOR", "DOCUMENT"}:
+                return True
+            if intent == "DEBUG":
+                lowered = prompt.lower()
+                return any(term in lowered for term in _EXPLICIT_FIX_TERMS)
 
-    intent = str(getattr(task, "intent", "") or "").upper()
-    actions = {str(action).lower() for action in (getattr(task, "actions", None) or ())}
-    if "edit" not in actions:
+    lowered = prompt.lower().strip()
+    if lowered.endswith("?") or lowered.startswith(("como ", "how ", "explique ", "explain ")):
         return False
-    if intent in {"IMPLEMENT", "REFACTOR", "DOCUMENT"}:
-        return True
-    if intent == "DEBUG":
-        lowered = prompt.lower()
-        return any(term in lowered for term in _EXPLICIT_FIX_TERMS)
-    return False
+    return is_workspace_creation_request(prompt)
 
 
 def _is_mutating_process_call(args: dict[str, Any]) -> bool:
@@ -204,6 +205,17 @@ def _required_mutation_retry_message() -> str:
         "directories use repo.create_directory; process.run may be used for an appropriate "
         "project scaffold command. Continue executing until the requested implementation is "
         "materially applied, then summarize only what actually succeeded."
+    )
+
+
+def _failed_mutation_retry_message(failed_mutations: dict[str, str]) -> str:
+    failures = "; ".join(f"{name}: {error}" for name, error in failed_mutations.items())
+    return (
+        "[KITT COMPLETION VERIFICATION]\n"
+        "A workspace mutation failed and the requested change is not complete: "
+        f"{failures}. Retry or replace the failed mutation before completing. "
+        "For a complete/new file prefer kitt_runtime operation=repo.write_file; use "
+        "patch.apply only for SEARCH/REPLACE edits to existing files."
     )
 
 
@@ -278,7 +290,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 if mutation_missing:
                     reasons.append("the task required a workspace mutation but no mutation tool succeeded")
                 if missing:
-                    reasons.append("claimed files are still missing: " + ", ".join(missing))
+                    reasons.append("claimed files are still missing after recovery: " + ", ".join(missing))
                 if failed_mutations:
                     reasons.append(
                         "mutation tool failures remain: "
@@ -295,10 +307,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
             if missing:
                 recovery_parts.append(_claimed_files_retry_message(missing))
             if failed_mutations:
-                recovery_parts.append(
-                    "[KITT MUTATION FAILURE]\nRetry or replace the failed mutation before completing: "
-                    + "; ".join(f"{name}: {error}" for name, error in failed_mutations.items())
-                )
+                recovery_parts.append(_failed_mutation_retry_message(failed_mutations))
             retry_messages.extend([
                 {"role": "assistant", "content": response},
                 {"role": "user", "content": "\n\n".join(recovery_parts)},
