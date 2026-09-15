@@ -81,7 +81,15 @@ TOOL_TO_CAPABILITY = {
     "memory_recall": CAP_MEMORY_READ,
     "memory_save": CAP_MEMORY_WRITE,
     "mcp_call": CAP_MCP_CALL,
-    "kitt_runtime": CAP_REPO_READ,
+}
+
+# ``kitt_runtime`` is a compact facade, not a read-only tool. Its repository
+# operations include read/search/write and each dispatched operation still has
+# its own capability, policy, approval, and path-containment checks. Keep this
+# expansion deliberately limited to repository capabilities: process, network,
+# MCP, memory and other sensitive capabilities must still be planned explicitly.
+TOOL_TO_CAPABILITIES = {
+    "kitt_runtime": frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_REPO_WRITE}),
 }
 
 
@@ -91,6 +99,8 @@ def canonicalize_capabilities(requested: Iterable[str]) -> Set[str]:
     for item in requested:
         if item in ALL_CAPABILITIES:
             canon.add(item)
+        elif item in TOOL_TO_CAPABILITIES:
+            canon.update(TOOL_TO_CAPABILITIES[item])
         elif item in TOOL_TO_CAPABILITY:
             canon.add(TOOL_TO_CAPABILITY[item])
         else:
