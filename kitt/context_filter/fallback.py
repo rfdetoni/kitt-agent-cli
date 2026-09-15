@@ -12,11 +12,22 @@ _WORKSPACE_CREATION_NOUNS = (
     "pasta", "folder", "diretório", "diretorio", "directory",
     "arquivo", "file", "backend", "frontend", "front end",
 )
+_WORKSPACE_HOW_TO_PREFIXES = (
+    "como ", "how ", "explique ", "explain ", "qual a forma de ",
+    "qual é a forma de ", "qual e a forma de ", "como faço para ", "como faco para ",
+)
 
 
 def is_workspace_creation_request(prompt: str) -> bool:
-    """Detect explicit requests to create workspace/project content without an LLM."""
-    text = prompt.lower()
+    """Detect explicit requests to create workspace/project content without an LLM.
+
+    Imperative creation requests are mutations. Explanatory how-to questions such as
+    "como criar um projeto Angular?" are deliberately read-only even though they
+    contain the same creation verbs and nouns.
+    """
+    text = prompt.lower().strip()
+    if text.startswith(_WORKSPACE_HOW_TO_PREFIXES):
+        return False
     return (
         any(term in text for term in _WORKSPACE_CREATION_VERBS)
         and any(term in text for term in _WORKSPACE_CREATION_NOUNS)
