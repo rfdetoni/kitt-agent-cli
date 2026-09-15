@@ -32,12 +32,25 @@ class _Registry:
 
 
 class _Processor:
-    def __init__(self, responses):
+    def __init__(self, responses, root_path: Path):
         self.responses = list(responses)
         self.calls = []
+        self.root_path = root_path
         self.session_state = SimpleNamespace(
             last_task=SimpleNamespace(intent="IMPLEMENT", actions=["analyze", "edit"])
         )
+
+    def _write(self, relative_path: str, content: str):
+        target = self.root_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    def _materialize_complete_project(self):
+        self._write("backend/pom.xml", "<project/>")
+        self._write("backend/src/main/java/App.java", "class App {}")
+        self._write("frontend/package.json", "{}")
+        self._write("frontend/angular.json", "{}")
+        self._write("frontend/src/app/app.component.ts", "export class AppComponent {}")
 
     def _execute_tool_loop(
         self,
@@ -59,6 +72,10 @@ class _Processor:
                     "content": "export class App {}",
                 },
             }
+            if response == "__MUTATE__":
+                self._materialize_complete_project()
+            else:
+                self._write("frontend/src/app/app.component.ts", "export class App {}")
             yield ToolStarted(tool_name="kitt_runtime", args=args, call_id=call_id), None, None
             yield ToolCompleted(
                 tool_name="kitt_runtime",
@@ -66,6 +83,23 @@ class _Processor:
                 output="written",
                 call_id=call_id,
             ), None, None
+            if response == "__MUTATE__":
+                validation_id = f"build-{len(self.calls)}"
+                validation_args = {
+                    "operation": "process.run",
+                    "arguments": {"command": "npm run build"},
+                }
+                yield ToolStarted(
+                    tool_name="kitt_runtime",
+                    args=validation_args,
+                    call_id=validation_id,
+                ), None, None
+                yield ToolCompleted(
+                    tool_name="kitt_runtime",
+                    success=True,
+                    output="build ok",
+                    call_id=validation_id,
+                ), None, None
             final_response = (
                 GEMINI_DEFERRED_RESPONSE
                 if response == "__MUTATE_DEFER__"
@@ -115,8 +149,9 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
 
     def test_deferred_project_response_is_retried_until_mutation_succeeds(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            processor = _Processor([GEMINI_DEFERRED_RESPONSE, "__MUTATE__"])
-            install_completion_guard(processor, _Registry(Path(tmp_dir)))
+            root = Path(tmp_dir)
+            processor = _Processor([GEMINI_DEFERRED_RESPONSE, "__MUTATE__"], root)
+            install_completion_guard(processor, _Registry(root))
             cmd = SimpleNamespace(prompt=PROJECT_PROMPT, mode="auto")
 
             events = list(
@@ -137,8 +172,9 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
 
     def test_partial_mutation_does_not_allow_deferred_handoff(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            processor = _Processor(["__MUTATE_DEFER__", "__MUTATE__"])
-            install_completion_guard(processor, _Registry(Path(tmp_dir)))
+            root = Path(tmp_dir)
+            processor = _Processor(["__MUTATE_DEFER__", "__MUTATE__"], root)
+            install_completion_guard(processor, _Registry(root))
             cmd = SimpleNamespace(prompt=PROJECT_PROMPT, mode="auto")
 
             events = list(
@@ -149,6 +185,7 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
             recovery_prompt = processor.calls[1].messages[-1]["content"]
             self.assertIn("[KITT EXECUTION REQUIRED]", recovery_prompt)
             self.assertIn("perform the implementation yourself", recovery_prompt)
+            self.assertIn("[KITT COMPLETION CONTRACT]", recovery_prompt)
             self.assertFalse(any(isinstance(event, TurnFailed) for event, _, _ in events))
             self.assertTrue(
                 any(
@@ -159,8 +196,9 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
 
     def test_repeated_deferred_handoff_after_mutation_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            processor = _Processor(["__MUTATE_DEFER__", "__MUTATE_DEFER__"])
-            install_completion_guard(processor, _Registry(Path(tmp_dir)), max_retries=1)
+            root = Path(tmp_dir)
+            processor = _Processor(["__MUTATE_DEFER__", "__MUTATE_DEFER__"], root)
+            install_completion_guard(processor, _Registry(root), max_retries=1)
             cmd = SimpleNamespace(prompt=PROJECT_PROMPT, mode="auto")
 
             events = list(
@@ -174,8 +212,9 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
 
     def test_repeated_deferred_project_response_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            processor = _Processor([GEMINI_DEFERRED_RESPONSE, GEMINI_DEFERRED_RESPONSE])
-            install_completion_guard(processor, _Registry(Path(tmp_dir)), max_retries=1)
+            root = Path(tmp_dir)
+            processor = _Processor([GEMINI_DEFERRED_RESPONSE, GEMINI_DEFERRED_RESPONSE], root)
+            install_completion_guard(processor, _Registry(root), max_retries=1)
             cmd = SimpleNamespace(prompt=PROJECT_PROMPT, mode="auto")
 
             events = list(
