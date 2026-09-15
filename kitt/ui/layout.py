@@ -32,6 +32,14 @@ def build_root_container(ui):
     from prompt_toolkit.widgets import Box, Frame
     from prompt_toolkit.layout.menus import CompletionsMenu
 
+    # prompt_toolkit only dispatches wheel events while mouse support is enabled.
+    # Enable it on the first retained-layout build so the transcript's existing
+    # mouse handler actually receives scroll events. A later /mouse toggle remains
+    # authoritative because rebuilding the layout does not reset the user's choice.
+    if not getattr(ui, "_mouse_support_initialized", False):
+        ui.mouse_support_enabled = True
+        ui._mouse_support_initialized = True
+
     visible = lambda name: Condition(lambda: ui.state.active_overlay == name)
     desktop_sidebar = Condition(lambda: ui.state.route == "session" and ui.dimensions.mode == "desktop")
     tablet_sidebar = Condition(lambda: ui.state.route == "session" and ui.dimensions.mode == "tablet" and ui.state.sidebar_open)
