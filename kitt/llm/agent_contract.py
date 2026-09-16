@@ -74,11 +74,17 @@ def inject_agent_turn_context(
     workspace_context: Any,
     route: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Add a fresh, structured turn envelope without mutating caller-owned messages."""
-    payload = {
-        "route": normalize_agent_route(route),
+    """Add a fresh, structured turn envelope without mutating caller-owned messages.
+
+    When route is omitted the reverse-proxy adapter derives it from the same
+    TaskClassifier taxonomy used by .kitt-router.json after it has materialized
+    the real native tool surface for the turn.
+    """
+    payload: Dict[str, Any] = {
         "workspace_context": workspace_context,
     }
+    if route is not None:
+        payload["route"] = normalize_agent_route(route)
     context_message = {
         "role": "developer",
         "content": f"{TURN_CONTEXT_MARKER}\n{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}",
