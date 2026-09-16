@@ -9,6 +9,7 @@ AGENT_CONTRACT_HEADER = "X-Kitt-Agent-Contract"
 AGENT_CONTRACT_VERSION = "v1"
 AGENT_ROUTE_HEADER = "X-Kitt-Route"
 TURN_CONTEXT_MARKER = "[KITT TURN CONTEXT]"
+UNTRUSTED_WORKSPACE_LABEL = "UNTRUSTED_WORKSPACE_DATA"
 SUPPORTED_ROUTES = frozenset(
     {
         "context-gather",
@@ -58,6 +59,7 @@ def split_workspace_context(system_prompt: Optional[str]) -> Tuple[Optional[str]
     workspace_text = system_prompt[index + len(marker) :].strip()
     workspace_context: Any = (
         {
+            "trust": UNTRUSTED_WORKSPACE_LABEL,
             "source": "kitt-agent-cli",
             "data": workspace_text,
         }
