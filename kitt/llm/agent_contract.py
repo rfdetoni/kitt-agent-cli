@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional, Tuple
+
+from kitt.router.classifier import TaskClassifier
 
 
 AGENT_CONTRACT_HEADER = "X-Kitt-Agent-Contract"
@@ -26,6 +29,8 @@ _PROJECT_CONTEXT_MARKERS = (
     "WORKSPACE_CONTEXT:\n",
     "Workspace context:\n",
 )
+_TOOL_NAME_RE = re.compile(r"['\"]name['\"]\s*:\s*['\"]([A-Za-z0-9_.:-]{1,64})['\"]")
+_CONTEXT_SUMMARY_PREFIX = "Prepare a short technical context for another model to answer the task."
 
 
 def normalize_agent_route(route: Optional[str]) -> str:
@@ -34,6 +39,43 @@ def normalize_agent_route(route: Optional[str]) -> str:
     if value not in SUPPORTED_ROUTES:
         raise ValueError(f"Unsupported KITT agent route: {value!r}")
     return value
+
+
+def infer_agent_route(
+    system_prompt: Optional[str], messages: List[Dict[str, Any]]
+) -> str:
+    """Infer a contract route using KITT's existing TaskClassifier taxonomy.
+
+    The inference happens before the reverse-proxy adapter strips the textual Tool
+    Contract, so the route describes the actual tool surface being exposed for this
+    turn rather than relying on a second proxy-specific classifier.
+    """
+    prompt = system_prompt or ""
+    if prompt.startswith(_CONTEXT_SUMMARY_PREFIX):
+        return "summarize"
+    if "[PLANNING MODE ACTIVE]" in prompt:
+        return "context-gather"
+
+    tool_contract = prompt
+    if "Tool Contract:\n" in prompt:
+        tool_contract = prompt.split("Tool Contract:\n", 1)[1]
+        if "\n\nMemory:\n" in tool_contract:
+            tool_contract = tool_contract.split("\n\nMemory:\n", 1)[0]
+    else:
+        tool_contract = ""
+
+    tool_names = list(dict.fromkeys(_TOOL_NAME_RE.findall(tool_contract)))
+    latest_user = next(
+        (
+            str(message.get("content") or "")
+            for message in reversed(messages)
+            if isinstance(message, dict) and message.get("role") == "user"
+        ),
+        "",
+    )
+    if tool_names:
+        return TaskClassifier().classify_tool_surface(tool_names, prompt=latest_user)
+    return "chat"
 
 
 def split_workspace_context(system_prompt: Optional[str]) -> Tuple[Optional[str], Any]:
@@ -74,12 +116,7 @@ def inject_agent_turn_context(
     workspace_context: Any,
     route: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Add a fresh, structured turn envelope without mutating caller-owned messages.
-
-    When route is omitted the reverse-proxy adapter derives it from the same
-    TaskClassifier taxonomy used by .kitt-router.json after it has materialized
-    the real native tool surface for the turn.
-    """
+    """Add a fresh, structured turn envelope without mutating caller-owned messages."""
     payload: Dict[str, Any] = {
         "workspace_context": workspace_context,
     }
