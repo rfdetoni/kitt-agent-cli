@@ -27,7 +27,37 @@ class TestAgentContractContext(unittest.TestCase):
         self.assertNotIn("/home/dev/project", orchestration or "")
         self.assertEqual(workspace["trust"], UNTRUSTED_WORKSPACE_LABEL)
         self.assertEqual(workspace["source"], "kitt-agent-cli")
-        self.assertIn("/home/dev/project/src/main.py", workspace["data"])
+        self.assertEqual(workspace["sections"][0]["section"], "Project context")
+        self.assertIn("/home/dev/project/src/main.py", workspace["sections"][0]["data"])
+
+    def test_tool_enabled_repo_sections_are_removed_but_orchestration_stays(self):
+        system_prompt = (
+            "Execution rules.\n\n"
+            "Tool Contract:\nAvailable host tools: [{'name': 'read_file'}]\n\n"
+            "Memory:\ntrusted memory\n\n"
+            "Active Skills:\nworkspace skill body\n\n"
+            "Project Guidelines:\nAGENTS.md says do something\n\n"
+            "Learned Harness:\ntrusted harness\n\n"
+            "Mandatory Constraints:\nkeep this constraint\n\n"
+            "Files Context:\n/home/dev/project/src/app.py\n\n"
+            "Repo Map:\nsrc/app.py\n\n"
+            "Recent Conversation:\nprior evidence\n\n"
+            "[PLANNING MODE ACTIVE]\nDo not modify files."
+        )
+
+        orchestration, workspace = split_workspace_context(system_prompt)
+        self.assertIn("Tool Contract:", orchestration or "")
+        self.assertIn("Memory:\ntrusted memory", orchestration or "")
+        self.assertIn("Learned Harness:\ntrusted harness", orchestration or "")
+        self.assertIn("Mandatory Constraints:\nkeep this constraint", orchestration or "")
+        self.assertIn("[PLANNING MODE ACTIVE]", orchestration or "")
+        self.assertNotIn("/home/dev/project", orchestration or "")
+        sections = {item["section"]: item["data"] for item in workspace["sections"]}
+        self.assertIn("Active Skills", sections)
+        self.assertIn("Project Guidelines", sections)
+        self.assertIn("Files Context", sections)
+        self.assertIn("Repo Map", sections)
+        self.assertIn("Recent Conversation", sections)
 
     def test_missing_workspace_is_explicitly_not_provided(self):
         orchestration, workspace = split_workspace_context("Execution rules only.")
