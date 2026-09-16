@@ -9,6 +9,14 @@ import uuid
 from typing import Dict, Generator, List, Optional
 
 from kitt.domain.entities import ModelProfile
+from kitt.llm.agent_contract import (
+    AGENT_CONTRACT_HEADER,
+    AGENT_CONTRACT_VERSION,
+    AGENT_ROUTE_HEADER,
+    inject_agent_turn_context,
+    normalize_agent_route,
+    split_workspace_context,
+)
 from kitt.llm.auth import ProviderAuthService
 from kitt.llm.endpoint_security import (
     ProviderEndpointTrustStore,
@@ -164,6 +172,7 @@ class LLMClient:
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
+        route: Optional[str] = None,
     ) -> str:
         full_text = "".join(
             self.chat_stream(
@@ -172,6 +181,7 @@ class LLMClient:
                 response_format=response_format,
                 session_key=session_key,
                 reasoning_effort=reasoning_effort,
+                route=route,
             )
         )
         if not full_text.strip():
@@ -185,6 +195,7 @@ class LLMClient:
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
+        route: Optional[str] = None,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
@@ -199,6 +210,7 @@ class LLMClient:
                     response_format=response_format,
                     session_key=session_key,
                     reasoning_effort=reasoning_effort,
+                    route=route,
                 ):
                     if stop.is_set():
                         break
@@ -238,6 +250,7 @@ class LLMClient:
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
+        route: Optional[str] = None,
     ) -> Generator[str, None, None]:
         # Normalize the final provider-bound prompt once, independently of the
         # selected backend. Agent behavior is capability-driven (Tool Contract)
@@ -278,6 +291,16 @@ class LLMClient:
         )
         extra_headers: Dict[str, str] = {}
         if is_kitt_proxy:
+            contract_route = normalize_agent_route(route)
+            system_prompt, workspace_context = split_workspace_context(system_prompt)
+            messages = inject_agent_turn_context(
+                messages,
+                workspace_context=workspace_context,
+                route=contract_route,
+            )
+            extra_headers[AGENT_CONTRACT_HEADER] = AGENT_CONTRACT_VERSION
+            extra_headers[AGENT_ROUTE_HEADER] = contract_route
+
             discovered = discover_kitt_proxy_capabilities(
                 base_url,
                 api_key=api_key,
