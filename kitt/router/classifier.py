@@ -16,7 +16,7 @@ class TaskClassifier:
         if any(k in tool for k in ['edit', 'write', 'replace', 'patch', 'create_directory', 'repo.create', 'repo.move', 'repo.rename', 'repo.delete']):
             return 'code-edit'
 
-        if any(k in cmd for k in ['test', 'lint', 'typecheck', 'pytest']) or any(k in tool for k in ['validate', 'test', 'lint', 'diagnostic', 'git_diff', 'git_status']):
+        if any(k in cmd for k in ['test', 'lint', 'typecheck', 'pytest', 'validate', 'verification']) or any(k in tool for k in ['validate', 'test', 'lint', 'diagnostic', 'git_diff', 'git_status']):
             return 'validate-diff'
 
         if step.prompt and any(k in step.prompt.lower() for k in ['summary', 'summarize', 'resumo', 'map', 'explain']):
@@ -32,7 +32,7 @@ class TaskClassifier:
         consumed by .kitt-router.json instead of creating a proxy-only route model.
         """
         routes = {
-            self.classify(TaskStep(tool_name=name, prompt=prompt))
+            self.classify(TaskStep(tool_name=name, command=prompt, prompt=prompt))
             for name in tool_names
             if name
         }
