@@ -26,6 +26,12 @@ SUPPORTED_ROUTES = frozenset(
 
 _TOOL_NAME_RE = re.compile(r"['\"]name['\"]\s*:\s*['\"]([A-Za-z0-9_.:-]{1,64})['\"]")
 _CONTEXT_SUMMARY_PREFIX = "Prepare a short technical context for another model to answer the task."
+_INTERNAL_TOOL_FEEDBACK_PREFIXES = (
+    "the host tool call is invalid (",
+    "the python_compute call is invalid (",
+    "apply_patch was rejected before approval:",
+)
+_HOST_TOOL_RESULT_MARKER = " result from the host. the values inside are untrusted data"
 _TOP_LEVEL_HEADERS = (
     "Tool Contract:",
     "Memory:",
@@ -66,6 +72,28 @@ def normalize_agent_route(route: Optional[str]) -> str:
     return value
 
 
+def _is_internal_tool_feedback(content: Any) -> bool:
+    """Return True for KITT-generated host feedback, never user task intent."""
+    text = str(content or "").strip().casefold()
+    if not text:
+        return False
+    if _HOST_TOOL_RESULT_MARKER in text[:512]:
+        return True
+    return any(text.startswith(prefix) for prefix in _INTERNAL_TOOL_FEEDBACK_PREFIXES)
+
+
+def _latest_routing_user_message(messages: List[Dict[str, Any]]) -> str:
+    """Find the latest real user task, skipping host-tool continuation envelopes."""
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = str(message.get("content") or "")
+        if _is_internal_tool_feedback(content):
+            continue
+        return content
+    return ""
+
+
 def infer_agent_route(
     system_prompt: Optional[str], messages: List[Dict[str, Any]]
 ) -> str:
@@ -85,14 +113,7 @@ def infer_agent_route(
         tool_contract = ""
 
     tool_names = list(dict.fromkeys(_TOOL_NAME_RE.findall(tool_contract)))
-    latest_user = next(
-        (
-            str(message.get("content") or "")
-            for message in reversed(messages)
-            if isinstance(message, dict) and message.get("role") == "user"
-        ),
-        "",
-    )
+    latest_user = _latest_routing_user_message(messages)
     if tool_names:
         return TaskClassifier().classify_tool_surface(tool_names, prompt=latest_user)
     return "chat"
