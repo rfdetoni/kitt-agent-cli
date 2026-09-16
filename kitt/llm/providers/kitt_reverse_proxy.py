@@ -44,6 +44,18 @@ _CONCISE_AGENT_PREFIXES = (
     "Answer directly and concisely.",
     "Answer in one direct, concise sentence. Do not expose reasoning.",
 )
+_WORKSPACE_ACTION_TERMS = (
+    "crie", "criar", "implemente", "implementar", "gere", "gerar", "construa",
+    "adicione", "adicionar", "edite", "editar", "altere", "alterar", "corrija",
+    "corrigir", "refatore", "refatorar", "remova", "remover", "create", "build",
+    "implement", "generate", "add", "edit", "modify", "fix", "refactor", "remove",
+    "delete", "write", "mkdir",
+)
+_WORKSPACE_TARGET_TERMS = (
+    "projeto", "pasta", "arquivo", "backend", "frontend", "front end", "workspace",
+    "repositório", "repositorio", "repository", "repo", "file", "folder", "directory",
+    "código", "codigo", "code",
+)
 
 
 def _property_schema(name: str, hint: Any) -> Dict[str, Any]:
@@ -185,6 +197,52 @@ def _ensure_agent_execution_prompt(system_prompt: Optional[str]) -> str:
     return text
 
 
+def _requires_workspace_execution(messages: List[Dict[str, Any]]) -> bool:
+    """Fail-safe detection for mutation requests that lost their textual Tool Contract."""
+    user_text = "\n".join(
+        str(message.get("content") or "")
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "user"
+    ).casefold()
+    if not user_text:
+        return False
+    return (
+        any(term in user_text for term in _WORKSPACE_ACTION_TERMS)
+        and any(term in user_text for term in _WORKSPACE_TARGET_TERMS)
+    )
+
+
+def _safe_runtime_openai_tool() -> Dict[str, Any]:
+    """Return the canonical compact runtime surface without depending on prompt text."""
+    from kitt.runtime.safe_runtime import OPERATION_SPECS
+
+    return {
+        "type": "function",
+        "function": {
+            "name": "kitt_runtime",
+            "description": (
+                "Execute safe, policy-governed KITT workspace operations for repository "
+                "inspection, mutation, validation, artifacts, goals, memory and state."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": list(OPERATION_SPECS),
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                },
+                "required": ["operation"],
+                "additionalProperties": True,
+            },
+        },
+    }
+
+
 def prepare_reverse_proxy_system_prompt(
     system_prompt: Optional[str],
 ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
@@ -320,6 +378,10 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             url = f"{base}/v1/chat/completions"
 
         native_system_prompt, tools = prepare_reverse_proxy_system_prompt(request.system_prompt)
+        if not tools and _requires_workspace_execution(request.messages):
+            tools = [_safe_runtime_openai_tool()]
+            native_system_prompt = _ensure_agent_execution_prompt(native_system_prompt)
+
         messages: List[Dict[str, Any]] = []
         if native_system_prompt:
             messages.append({"role": "system", "content": native_system_prompt})
