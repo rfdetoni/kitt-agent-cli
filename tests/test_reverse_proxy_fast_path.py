@@ -31,12 +31,13 @@ class TestReverseProxyFastPath(unittest.TestCase):
             'com o conteudo de backend e pasta de front end com todo o front em angular. '
             'Crie o projeto e a implementação'
         )
+        browser_client = _FailIfCalled()
+        semantic_filter = SemanticFilter(profile, browser_client)
 
-        result = SemanticFilter(profile, _FailIfCalled()).filter_and_plan(
-            prompt, session_key="conv"
-        )
+        result = semantic_filter.filter_and_plan(prompt, session_key="conv")
 
         self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+        self.assertIsNone(semantic_filter.llm_client)
         self.assertEqual(result.task.intent, "IMPLEMENT")
         self.assertIn("repository_map", result.plan.enabled_tools)
         self.assertIn("write_file", result.plan.enabled_tools)
@@ -50,10 +51,12 @@ class TestReverseProxyFastPath(unittest.TestCase):
             base_url="http://127.0.0.1:3000",
             supports_tools=False,
         )
-        result = SemanticFilter(profile, _FailIfCalled()).filter_and_plan(
+        semantic_filter = SemanticFilter(profile, _FailIfCalled())
+        result = semantic_filter.filter_and_plan(
             "crie uma pasta teste", session_key="conv"
         )
         self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+        self.assertIsNone(semantic_filter.llm_client)
         self.assertTrue(result.plan.enabled_tools)
 
     def test_same_reverse_proxy_endpoint_ignores_profile_role(self):
