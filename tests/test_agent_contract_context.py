@@ -3,6 +3,8 @@ import unittest
 
 from kitt.llm.agent_contract import (
     TURN_CONTEXT_MARKER,
+    UNTRUSTED_WORKSPACE_LABEL,
+    infer_agent_route,
     inject_agent_turn_context,
     normalize_agent_route,
     split_workspace_context,
@@ -23,6 +25,7 @@ class TestAgentContractContext(unittest.TestCase):
 
         self.assertIn("Tool Contract:", orchestration or "")
         self.assertNotIn("/home/dev/project", orchestration or "")
+        self.assertEqual(workspace["trust"], UNTRUSTED_WORKSPACE_LABEL)
         self.assertEqual(workspace["source"], "kitt-agent-cli")
         self.assertIn("/home/dev/project/src/main.py", workspace["data"])
 
@@ -52,6 +55,35 @@ class TestAgentContractContext(unittest.TestCase):
         self.assertEqual(normalize_agent_route("validate-diff"), "validate-diff")
         with self.assertRaises(ValueError):
             normalize_agent_route("write-anything")
+
+    def test_route_is_inferred_from_existing_tool_classifier_taxonomy(self):
+        messages = [{"role": "user", "content": "Edit src/app.py and fix the bug"}]
+        prompt = (
+            "Execution rules.\n\nTool Contract:\n"
+            "Available host tools: [{'name': 'read_file'}, {'name': 'write_file'}]\n\n"
+            "Memory:\nnone"
+        )
+        self.assertEqual(infer_agent_route(prompt, messages), "code-edit")
+
+        validation_prompt = (
+            "Execution rules.\n\nTool Contract:\n"
+            "Available host tools: [{'name': 'run_command'}, {'name': 'git_diff'}]\n\n"
+            "Memory:\nnone"
+        )
+        validation_messages = [{"role": "user", "content": "Run tests and validate the diff"}]
+        self.assertEqual(
+            infer_agent_route(validation_prompt, validation_messages),
+            "validate-diff",
+        )
+
+    def test_route_is_chat_without_a_tool_contract(self):
+        self.assertEqual(
+            infer_agent_route(
+                "Answer directly and concisely.",
+                [{"role": "user", "content": "Hello"}],
+            ),
+            "chat",
+        )
 
 
 if __name__ == "__main__":
