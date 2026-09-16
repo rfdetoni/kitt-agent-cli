@@ -38,6 +38,12 @@ _PROFILE_FIELDS = {
 }
 
 
+def _is_reverse_proxy_profile(backend: object, protocol: object = None) -> bool:
+    backend_name = str(backend or "").strip().lower()
+    protocol_name = str(protocol or "").strip().lower()
+    return backend_name in {"kitt-reverse-proxy", "kitt-proxy"} or protocol_name == "kitt-reverse-proxy"
+
+
 def _safe_ref_for_provider(ref: object, provider: str) -> str | None:
     if not isinstance(ref, str):
         return None
@@ -167,6 +173,16 @@ class TaskRouter:
                 item["backend"] = backend
                 item["model"] = model
 
+                reverse_proxy = _is_reverse_proxy_profile(backend, item.get("protocol"))
+                if reverse_proxy and item.get("supports_tools") is not True:
+                    # KITT reverse proxy exposes the host tool surface through
+                    # OpenAI-compatible tools[] even when the browser model does
+                    # not provide website-native function calling. Persist the
+                    # effective KITT capability so project context never tells
+                    # the execution model that tools are unavailable.
+                    item["supports_tools"] = True
+                    changed = True
+
                 raw_key = item.get("api_key", "")
                 safe_ref = _safe_ref_for_provider(item.get("credential_ref"), backend)
                 if isinstance(raw_key, str) and raw_key.startswith(_CREDENTIAL_REFERENCE_PREFIXES):
@@ -193,7 +209,7 @@ class TaskRouter:
                         changed = True
                 if "enforce_local_limits" in item:
                     item["enforce_local_limits"] = bool(item["enforce_local_limits"])
-                elif backend in {"kitt-reverse-proxy", "kitt-proxy"} or item.get("protocol") == "kitt-reverse-proxy":
+                elif reverse_proxy:
                     item["enforce_local_limits"] = False
 
                 name = key[:64]
@@ -263,6 +279,9 @@ class TaskRouter:
                         if state.is_valid
                         else None
                     )
+            reverse_proxy = _is_reverse_proxy_profile(backend, profile.protocol)
+            if reverse_proxy:
+                profile.supports_tools = True
             profiles_data[name] = {
                 "backend": profile.backend,
                 "model": profile.model,
