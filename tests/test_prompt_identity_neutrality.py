@@ -3,6 +3,7 @@ import unittest
 from kitt.prompts import (
     AGENT_EXECUTION_PERSONA,
     CONCISE_PERSONA,
+    CONTEXT_SUMMARY_SYSTEM,
     normalize_execution_system_prompt,
 )
 
@@ -22,6 +23,20 @@ none
         self.assertTrue(normalized.startswith(AGENT_EXECUTION_PERSONA))
         self.assertIn("Tool Contract:", normalized)
         self.assertNotIn("K.I.T.T.", normalized)
+
+    def test_context_summary_cannot_be_promoted_by_appended_tool_contract(self):
+        source = (
+            f"{CONTEXT_SUMMARY_SYSTEM}\n\n"
+            "Tool Contract:\nAvailable host tool: [{'name': 'kitt_runtime'}]\n\n"
+            "Memory:\nexecution context"
+        )
+
+        normalized = normalize_execution_system_prompt(source)
+
+        self.assertEqual(normalized, CONTEXT_SUMMARY_SYSTEM)
+        self.assertNotIn("Tool Contract:", normalized)
+        self.assertNotIn(AGENT_EXECUTION_PERSONA, normalized)
+        self.assertIn("do not use or request host tools", normalized)
 
     def test_legacy_name_addressed_prompt_does_not_change_plain_chat_mode(self):
         source = (

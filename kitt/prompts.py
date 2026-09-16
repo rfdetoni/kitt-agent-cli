@@ -1,9 +1,12 @@
 """System prompts and provider-bound prompt normalization."""
 
+_CONTEXT_SUMMARY_PREFIX = "Prepare a short technical context for another model to answer the task."
+
 CONTEXT_SUMMARY_SYSTEM = (
-    "Prepare a short technical context for another model to answer the task. "
+    f"{_CONTEXT_SUMMARY_PREFIX} "
     "Use only facts from the project map. Cite relevant files, components, and relationships. "
-    "Do not answer the task, do not use agent identity, do not expose reasoning. Maximum: 12 lines."
+    "Do not answer the task, do not use or request host tools, do not use agent identity, and do not expose reasoning. "
+    "Return only the context summary. Maximum: 12 lines."
 )
 
 CONTEXT_SUMMARY_USER_TEMPLATE = (
@@ -52,15 +55,21 @@ _LEGACY_NAMED_AGENT_PREFIXES = (
 def normalize_execution_system_prompt(system_prompt: str | None) -> str | None:
     """Make execution behavior depend on capabilities, never on the agent name.
 
-    Tool-enabled turns always receive the neutral execution-agent contract.
-    Legacy name-addressed chat prompts without a tool contract are normalized
-    back to the ordinary concise persona so mentioning "KITT" cannot change
-    routing, autonomy, or tool behavior at the provider boundary.
+    Context-summary calls are canonicalized before tool-contract handling so an
+    accidentally appended Tool Contract can never promote a summary subcall to
+    an execution-agent turn. Tool-enabled execution turns still receive the
+    neutral execution-agent contract. Legacy name-addressed chat prompts without
+    a tool contract are normalized back to the ordinary concise persona so
+    mentioning "KITT" cannot change routing, autonomy, or tool behavior at the
+    provider boundary.
     """
     if not system_prompt:
         return system_prompt
 
     text = system_prompt.strip()
+    if text.startswith(_CONTEXT_SUMMARY_PREFIX):
+        return CONTEXT_SUMMARY_SYSTEM
+
     tool_marker = "Tool Contract:"
     if tool_marker in text:
         _prefix, contract_and_context = text.split(tool_marker, 1)
