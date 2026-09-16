@@ -83,6 +83,11 @@ class SemanticFilter:
         # the host Tool Contract that the proxy converts into native tools[].
         reverse_proxy = _is_reverse_proxy_profile(self.profile)
         if deterministic_only or reverse_proxy or self.extractor.is_trivial_prompt(prompt):
+            # An injected reverse-proxy client must not leak into the later
+            # project-context summarization phase after this bypass. Clearing it
+            # guarantees that no hidden browser turn can precede execution.
+            if reverse_proxy:
+                self.llm_client = None
             task = self.fallback_planner.generate_task(prompt)
             plan = self.fallback_planner.generate_plan(task)
             latency = (time.time() - start_t) * 1000.0
