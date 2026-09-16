@@ -45,6 +45,14 @@ RULES:
 
 FilterSource = Literal['LLM', 'DETERMINISTIC_BYPASS', 'FALLBACK']
 
+
+def _is_reverse_proxy_profile(profile: ModelProfile) -> bool:
+    """Return whether semantic planning would consume a browser-backed API turn."""
+    backend = str(getattr(profile, "backend", "") or "").strip().lower()
+    protocol = str(getattr(profile, "protocol", "") or "").strip().lower()
+    return backend in {"kitt-reverse-proxy", "kitt-proxy"} or protocol == "kitt-reverse-proxy"
+
+
 @dataclass
 class SemanticFilterResult:
     task: SemanticTask
@@ -52,6 +60,7 @@ class SemanticFilterResult:
     source: FilterSource
     fallback_reason: Optional[str] = None
     latency_ms: float = 0.0
+
 
 class SemanticFilter:
     """Orchestrates dual-model context filtering: deterministic bypass, context LLM call, schema validation, and fallback."""
@@ -68,9 +77,12 @@ class SemanticFilter:
     ) -> SemanticFilterResult:
         start_t = time.time()
 
-        # Rule 1: Deterministic/trivial bypass. Keep this path free of LLM client
-        # construction so reverse-proxy sessions are not opened for internal planning.
-        if deterministic_only or self.extractor.is_trivial_prompt(prompt):
+        # Browser-backed reverse-proxy sessions are execution transports, not
+        # hidden planning channels. Keep semantic planning deterministic so the
+        # first provider-visible turn is the actual execution request, carrying
+        # the host Tool Contract that the proxy converts into native tools[].
+        reverse_proxy = _is_reverse_proxy_profile(self.profile)
+        if deterministic_only or reverse_proxy or self.extractor.is_trivial_prompt(prompt):
             task = self.fallback_planner.generate_task(prompt)
             plan = self.fallback_planner.generate_plan(task)
             latency = (time.time() - start_t) * 1000.0
