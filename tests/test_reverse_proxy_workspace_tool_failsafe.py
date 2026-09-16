@@ -83,6 +83,17 @@ class ReverseProxyWorkspaceToolFailsafeTests(unittest.TestCase):
 
         self.assertEqual(payload['tools'][0]['function']['name'], 'kitt_runtime')
 
+    def test_meufaztudo_context_summary_never_gains_mutation_tool(self):
+        payload = self._capture_payload(LLMRequest(
+            model='gemini-web',
+            system_prompt='Prepare a short technical context for another model to answer the task.',
+            messages=[{'role': 'user', 'content': MEUFAZTUDO_PROMPT}],
+            extra_headers={'X-Kitt-Route': 'summarize'},
+        ))
+
+        self.assertNotIn('tools', payload)
+        self.assertNotIn('tool_choice', payload)
+
     def test_plain_question_without_contract_does_not_gain_workspace_tool(self):
         payload = self._capture_payload(LLMRequest(
             model='gemini-web',

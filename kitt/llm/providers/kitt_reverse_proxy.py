@@ -56,6 +56,7 @@ _WORKSPACE_TARGET_TERMS = (
     "repositório", "repositorio", "repository", "repo", "file", "folder", "directory",
     "código", "codigo", "code",
 )
+_READ_ONLY_CONTRACT_ROUTES = {"context-gather", "summarize"}
 
 
 def _property_schema(name: str, hint: Any) -> Dict[str, Any]:
@@ -210,6 +211,15 @@ def _requires_workspace_execution(messages: List[Dict[str, Any]]) -> bool:
         any(term in user_text for term in _WORKSPACE_ACTION_TERMS)
         and any(term in user_text for term in _WORKSPACE_TARGET_TERMS)
     )
+
+
+def _allows_workspace_execution(extra_headers: Dict[str, str]) -> bool:
+    route = next(
+        (str(value).strip().lower() for name, value in extra_headers.items()
+         if name.lower() == "x-kitt-route"),
+        "",
+    )
+    return route not in _READ_ONLY_CONTRACT_ROUTES
 
 
 def _safe_runtime_openai_tool() -> Dict[str, Any]:
@@ -378,7 +388,7 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             url = f"{base}/v1/chat/completions"
 
         native_system_prompt, tools = prepare_reverse_proxy_system_prompt(request.system_prompt)
-        if not tools and _requires_workspace_execution(request.messages):
+        if not tools and _allows_workspace_execution(request.extra_headers) and _requires_workspace_execution(request.messages):
             tools = [_safe_runtime_openai_tool()]
             native_system_prompt = _ensure_agent_execution_prompt(native_system_prompt)
 
