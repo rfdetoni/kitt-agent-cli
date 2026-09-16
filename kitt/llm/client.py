@@ -9,6 +9,15 @@ import uuid
 from typing import Dict, Generator, List, Optional
 
 from kitt.domain.entities import ModelProfile
+from kitt.llm.agent_contract import (
+    AGENT_CONTRACT_HEADER,
+    AGENT_CONTRACT_VERSION,
+    AGENT_ROUTE_HEADER,
+    infer_agent_route,
+    inject_agent_turn_context,
+    normalize_agent_route,
+    split_workspace_context,
+)
 from kitt.llm.auth import ProviderAuthService
 from kitt.llm.endpoint_security import (
     ProviderEndpointTrustStore,
@@ -113,14 +122,7 @@ class LLMClient:
 
     @property
     def capabilities(self) -> ModelCapabilities:
-        """Expose the existing routing capability contract to runtime selectors.
-
-        KITT's host-tool protocol is textual and does not require a provider's
-        native function-calling API. ``supports_native_tools`` therefore means
-        that the KITT tool surface can be used by this client, while
-        ``tool_call_reliability`` still reflects the profile's explicit tool
-        support hint.
-        """
+        """Expose the existing routing capability contract to runtime selectors."""
         profile = self.profile
         backend = (profile.backend or "").lower()
         is_local = backend in self.LOCAL_BACKENDS
@@ -164,6 +166,7 @@ class LLMClient:
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
+        route: Optional[str] = None,
     ) -> str:
         full_text = "".join(
             self.chat_stream(
@@ -172,6 +175,7 @@ class LLMClient:
                 response_format=response_format,
                 session_key=session_key,
                 reasoning_effort=reasoning_effort,
+                route=route,
             )
         )
         if not full_text.strip():
@@ -185,6 +189,7 @@ class LLMClient:
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
+        route: Optional[str] = None,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
@@ -199,6 +204,7 @@ class LLMClient:
                     response_format=response_format,
                     session_key=session_key,
                     reasoning_effort=reasoning_effort,
+                    route=route,
                 ):
                     if stop.is_set():
                         break
@@ -238,11 +244,8 @@ class LLMClient:
         response_format: Optional[str] = None,
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
+        route: Optional[str] = None,
     ) -> Generator[str, None, None]:
-        # Normalize the final provider-bound prompt once, independently of the
-        # selected backend. Agent behavior is capability-driven (Tool Contract)
-        # and never depends on whether the user happened to address the product
-        # by name.
         system_prompt = normalize_execution_system_prompt(system_prompt)
 
         backend = (self.profile.backend or "").strip().lower()
@@ -278,6 +281,20 @@ class LLMClient:
         )
         extra_headers: Dict[str, str] = {}
         if is_kitt_proxy:
+            contract_route = (
+                normalize_agent_route(route)
+                if route is not None
+                else infer_agent_route(system_prompt, messages)
+            )
+            system_prompt, workspace_context = split_workspace_context(system_prompt)
+            messages = inject_agent_turn_context(
+                messages,
+                workspace_context=workspace_context,
+                route=contract_route,
+            )
+            extra_headers[AGENT_CONTRACT_HEADER] = AGENT_CONTRACT_VERSION
+            extra_headers[AGENT_ROUTE_HEADER] = contract_route
+
             discovered = discover_kitt_proxy_capabilities(
                 base_url,
                 api_key=api_key,
