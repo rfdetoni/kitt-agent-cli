@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict
 
 @dataclass
@@ -9,3 +9,4 @@ class ExecutionRequest:
     enabled_tools: List[str]
     max_output_tokens: int = 1200
     estimated_input_tokens: int = 0
+    route: str = "chat"
