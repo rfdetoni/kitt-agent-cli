@@ -24,13 +24,38 @@ SUPPORTED_ROUTES = frozenset(
     }
 )
 
-_PROJECT_CONTEXT_MARKERS = (
-    "Project context:\n",
-    "WORKSPACE_CONTEXT:\n",
-    "Workspace context:\n",
-)
 _TOOL_NAME_RE = re.compile(r"['\"]name['\"]\s*:\s*['\"]([A-Za-z0-9_.:-]{1,64})['\"]")
 _CONTEXT_SUMMARY_PREFIX = "Prepare a short technical context for another model to answer the task."
+_TOP_LEVEL_HEADERS = (
+    "Tool Contract:",
+    "Memory:",
+    "Active Skills:",
+    "Project Guidelines:",
+    "Learned Harness:",
+    "Mandatory Constraints:",
+    "Files Context:",
+    "Repo Map:",
+    "Recent Conversation:",
+    "Project context:",
+    "WORKSPACE_CONTEXT:",
+    "Workspace context:",
+    "[PLANNING MODE ACTIVE]",
+)
+_UNTRUSTED_HEADERS = frozenset(
+    {
+        "Active Skills:",
+        "Project Guidelines:",
+        "Files Context:",
+        "Repo Map:",
+        "Recent Conversation:",
+        "Project context:",
+        "WORKSPACE_CONTEXT:",
+        "Workspace context:",
+    }
+)
+_HEADER_RE = re.compile(
+    r"(?m)^(" + "|".join(re.escape(header) for header in _TOP_LEVEL_HEADERS) + r")"
+)
 
 
 def normalize_agent_route(route: Optional[str]) -> str:
@@ -44,12 +69,7 @@ def normalize_agent_route(route: Optional[str]) -> str:
 def infer_agent_route(
     system_prompt: Optional[str], messages: List[Dict[str, Any]]
 ) -> str:
-    """Infer a contract route using KITT's existing TaskClassifier taxonomy.
-
-    The inference happens before the reverse-proxy adapter strips the textual Tool
-    Contract, so the route describes the actual tool surface being exposed for this
-    turn rather than relying on a second proxy-specific classifier.
-    """
+    """Infer a contract route using KITT's existing TaskClassifier taxonomy."""
     prompt = system_prompt or ""
     if prompt.startswith(_CONTEXT_SUMMARY_PREFIX):
         return "summarize"
@@ -79,33 +99,44 @@ def infer_agent_route(
 
 
 def split_workspace_context(system_prompt: Optional[str]) -> Tuple[Optional[str], Any]:
-    """Detach repository/project evidence from the system prompt.
+    """Move repository-derived sections out of the provider system prompt.
 
-    The returned first value contains orchestration/tool-contract text only. Repository
-    evidence is returned separately so it can be sent as untrusted per-turn data rather
-    than as a model system instruction.
+    Tool contracts, KITT memory/harness constraints and explicit planning mode stay in
+    orchestration context. Repository files/maps/guidelines, workspace skills and the
+    embedded recent conversation are data and are emitted separately with an explicit
+    UNTRUSTED_WORKSPACE_DATA trust label.
     """
     if not system_prompt:
         return system_prompt, "not_provided"
 
-    indexes = [
-        (system_prompt.find(marker), marker)
-        for marker in _PROJECT_CONTEXT_MARKERS
-        if system_prompt.find(marker) >= 0
-    ]
-    if not indexes:
+    matches = list(_HEADER_RE.finditer(system_prompt))
+    if not matches:
         return system_prompt, "not_provided"
 
-    index, marker = min(indexes, key=lambda item: item[0])
-    orchestration = system_prompt[:index].rstrip()
-    workspace_text = system_prompt[index + len(marker) :].strip()
+    trusted_parts: List[str] = []
+    untrusted_sections: List[Dict[str, str]] = []
+    if matches[0].start() > 0:
+        trusted_parts.append(system_prompt[: matches[0].start()].rstrip())
+
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(system_prompt)
+        section = system_prompt[match.start() : end].strip()
+        header = match.group(1)
+        if header in _UNTRUSTED_HEADERS:
+            body = section[len(header) :].strip()
+            if body:
+                untrusted_sections.append({"section": header[:-1], "data": body})
+        elif section:
+            trusted_parts.append(section)
+
+    orchestration = "\n\n".join(part for part in trusted_parts if part).strip()
     workspace_context: Any = (
         {
             "trust": UNTRUSTED_WORKSPACE_LABEL,
             "source": "kitt-agent-cli",
-            "data": workspace_text,
+            "sections": untrusted_sections,
         }
-        if workspace_text
+        if untrusted_sections
         else "not_provided"
     )
     return orchestration or None, workspace_context
