@@ -291,7 +291,7 @@ class LLMClient:
         )
         extra_headers: Dict[str, str] = {}
         if is_kitt_proxy:
-            contract_route = normalize_agent_route(route)
+            contract_route = normalize_agent_route(route) if route is not None else None
             system_prompt, workspace_context = split_workspace_context(system_prompt)
             messages = inject_agent_turn_context(
                 messages,
@@ -299,7 +299,8 @@ class LLMClient:
                 route=contract_route,
             )
             extra_headers[AGENT_CONTRACT_HEADER] = AGENT_CONTRACT_VERSION
-            extra_headers[AGENT_ROUTE_HEADER] = contract_route
+            if contract_route is not None:
+                extra_headers[AGENT_ROUTE_HEADER] = contract_route
 
             discovered = discover_kitt_proxy_capabilities(
                 base_url,
