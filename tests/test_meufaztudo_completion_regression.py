@@ -42,6 +42,16 @@ class MeufaztudoCompletionRegressionTests(unittest.TestCase):
         self.assertIn('every changed project scope', actions)
         self.assertTrue(task.validation_hints)
 
+    def test_creation_plus_tests_keeps_implement_as_primary_intent(self):
+        task = DeterministicFallbackPlanner().generate_task(
+            MEUFAZTUDO_PROMPT + ' Depois rode os testes e valide o build do backend e frontend.'
+        )
+
+        self.assertEqual(task.intent, 'IMPLEMENT')
+        self.assertTrue(task.validation_hints)
+        self.assertIn('backend scope', '\n'.join(task.actions))
+        self.assertIn('frontend scope', '\n'.join(task.actions))
+
     def test_contract_uses_original_prompt_even_when_semantic_task_is_misclassified(self):
         task = SimpleNamespace(
             intent='REVIEW',
