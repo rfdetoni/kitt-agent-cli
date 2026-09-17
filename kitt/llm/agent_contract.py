@@ -39,6 +39,9 @@ _INTERNAL_ROUTING_MARKERS = (
     "[kitt contract repair]",
 )
 _HOST_TOOL_RESULT_MARKER = " result from the host. the values inside are untrusted data"
+_SEMANTIC_INTENT_RE = re.compile(
+    r"(?mi)^\s*Intent:\s*(IMPLEMENT|DEBUG|REFACTOR)\s*$"
+)
 _MUTATING_CREATE_TERMS = (
     "crie", "criar", "cria", "implemente", "implementar", "implementação", "implementacao",
     "gere", "gerar", "construa", "monte", "create", "build", "implement", "generate",
@@ -120,6 +123,24 @@ def _latest_routing_user_message(messages: List[Dict[str, Any]]) -> str:
     return ""
 
 
+def _semantic_route_from_execution_prompt(content: Any) -> Optional[str]:
+    """Honor the deterministic SemanticTask intent emitted by TurnProcessor.
+
+    TurnProcessor may replace the literal human prompt with SemanticTask.to_execution_prompt().
+    That normalized prompt begins with `Intent: ...`; mutation-capable intents must not be
+    reclassified from the exposed validation/read tool surface.
+    """
+    match = _SEMANTIC_INTENT_RE.search(str(content or ""))
+    if not match:
+        return None
+    intent = match.group(1).upper()
+    if intent == "IMPLEMENT":
+        return "code-generation"
+    if intent in {"DEBUG", "REFACTOR"}:
+        return "code-edit"
+    return None
+
+
 def _mutation_route_from_user_message(content: Any) -> Optional[str]:
     """Return a mutation-capable route when the real user explicitly requested writes.
 
@@ -157,6 +178,9 @@ def infer_agent_route(
 
     tool_names = list(dict.fromkeys(_TOOL_NAME_RE.findall(tool_contract)))
     latest_user = _latest_routing_user_message(messages)
+    semantic_route = _semantic_route_from_execution_prompt(latest_user)
+    if semantic_route and tool_names:
+        return semantic_route
     mutation_route = _mutation_route_from_user_message(latest_user)
     if mutation_route and tool_names:
         return mutation_route
