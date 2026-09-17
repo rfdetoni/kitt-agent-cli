@@ -4,7 +4,9 @@ import asyncio
 from types import SimpleNamespace
 
 from kitt.ui.commands import CommandRegistry
+from kitt.ui.components.status_bar import StatusBarComponent
 from kitt.ui.reasoning_policy import install_reverse_proxy_reasoning_policy
+from kitt.ui.state import UIState
 
 
 class _Router:
@@ -23,6 +25,7 @@ class _FakeApp:
                 reasoning_effort=50,
             )
         )
+        self.state = UIState(reasoning_effort=50, workspace_path=".")
         self.commands = CommandRegistry()
         self.reasoning_updates = []
 
@@ -42,11 +45,14 @@ class _FakeApp:
     def _sidebar_text(self):
         return " MODELS\n chatgpt-web\n 🧠 Reasoning: 50%\n CONTEXT\n"
 
+    def _status_text(self):
+        return "SYSTEM ONLINE"
+
 
 install_reverse_proxy_reasoning_policy(_FakeApp)
 
 
-def test_reverse_proxy_hides_reasoning_command_and_displays():
+def test_reverse_proxy_hides_reasoning_command_and_all_displays():
     app = _FakeApp()
 
     assert app.commands.find("/reasoning") is None
@@ -54,22 +60,52 @@ def test_reverse_proxy_hides_reasoning_command_and_displays():
     assert "reasoning" not in app.commands.commands
     assert "Reasoning" not in "".join(text for _style, text in app._header_text())
     assert "Reasoning" not in app._sidebar_text()
+    app._status_text()  # synchronizes retained state before status-bar rendering
+    assert app.state.reasoning_controls_visible is False
+    assert "🧠" not in StatusBarComponent().render(app.state, width=120)
 
 
 def test_reverse_proxy_consumes_legacy_reasoning_command_without_changing_state():
     app = _FakeApp()
 
     assert asyncio.run(app._execute_command("/reasoning 90")) is True
+    assert asyncio.run(app._execute_command("/think 90")) is True
+    assert asyncio.run(app._execute_command("/effort 90")) is True
     asyncio.run(app._set_reasoning_effort(90))
 
     assert app.reasoning_updates == []
     assert app.runtime.processor.reasoning_effort == 50
+    assert app.state.reasoning_effort == 50
 
 
-def test_api_provider_keeps_existing_reasoning_controls():
+def test_api_provider_keeps_existing_reasoning_controls_and_display():
     app = _FakeApp(backend="openai", protocol="openai-chat-completions")
 
     assert app.commands.find("/reasoning") is not None
     assert "Reasoning" in "".join(text for _style, text in app._header_text())
+    app._status_text()
+    assert app.state.reasoning_controls_visible is True
+    assert "🧠" in StatusBarComponent().render(app.state, width=120)
     asyncio.run(app._set_reasoning_effort(80, notify=False))
     assert app.reasoning_updates == [(80, False)]
+
+
+def test_visibility_follows_provider_switch_dynamically():
+    app = _FakeApp()
+    assert app.state.reasoning_controls_visible is False
+
+    app.runtime.processor.router.profile = SimpleNamespace(
+        backend="openai",
+        protocol="openai-chat-completions",
+    )
+    app._status_text()
+    assert app.state.reasoning_controls_visible is True
+    assert app.commands.find("/reasoning") is not None
+
+    app.runtime.processor.router.profile = SimpleNamespace(
+        backend="kitt-reverse-proxy",
+        protocol="kitt-reverse-proxy",
+    )
+    app._status_text()
+    assert app.state.reasoning_controls_visible is False
+    assert app.commands.find("/reasoning") is None
