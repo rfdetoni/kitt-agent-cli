@@ -111,16 +111,23 @@ def _is_internal_tool_feedback(content: Any) -> bool:
     return any(text.startswith(prefix) for prefix in _INTERNAL_TOOL_FEEDBACK_PREFIXES)
 
 
-def _latest_routing_user_message(messages: List[Dict[str, Any]]) -> str:
-    """Find the latest real user task, skipping KITT-generated continuation envelopes."""
-    for message in reversed(messages):
+def _routing_user_messages(messages: List[Dict[str, Any]]) -> List[str]:
+    """Return real user task messages in chronological order, excluding KITT feedback."""
+    result: List[str] = []
+    for message in messages:
         if not isinstance(message, dict) or message.get("role") != "user":
             continue
         content = str(message.get("content") or "")
         if _is_internal_tool_feedback(content):
             continue
-        return content
-    return ""
+        result.append(content)
+    return result
+
+
+def _latest_routing_user_message(messages: List[Dict[str, Any]]) -> str:
+    """Find the latest real user task, skipping KITT-generated continuation envelopes."""
+    routable = _routing_user_messages(messages)
+    return routable[-1] if routable else ""
 
 
 def _semantic_route_from_execution_prompt(content: Any) -> Optional[str]:
@@ -158,6 +165,23 @@ def _mutation_route_from_user_message(content: Any) -> Optional[str]:
     return None
 
 
+def _pinned_execution_route(messages: List[Dict[str, Any]]) -> Optional[str]:
+    """Preserve the first mutation-capable intent for the lifetime of one tool loop.
+
+    Execution follow-ups append tool results, repair messages and validation nudges to the
+    original task. The original task remains the authority for whether mutations are
+    allowed; later read/validation surfaces must never downgrade it to validate-diff.
+    """
+    for content in _routing_user_messages(messages):
+        semantic_route = _semantic_route_from_execution_prompt(content)
+        if semantic_route:
+            return semantic_route
+        mutation_route = _mutation_route_from_user_message(content)
+        if mutation_route:
+            return mutation_route
+    return None
+
+
 def infer_agent_route(
     system_prompt: Optional[str], messages: List[Dict[str, Any]]
 ) -> str:
@@ -177,13 +201,10 @@ def infer_agent_route(
         tool_contract = ""
 
     tool_names = list(dict.fromkeys(_TOOL_NAME_RE.findall(tool_contract)))
+    pinned_route = _pinned_execution_route(messages)
+    if pinned_route and tool_names:
+        return pinned_route
     latest_user = _latest_routing_user_message(messages)
-    semantic_route = _semantic_route_from_execution_prompt(latest_user)
-    if semantic_route and tool_names:
-        return semantic_route
-    mutation_route = _mutation_route_from_user_message(latest_user)
-    if mutation_route and tool_names:
-        return mutation_route
     if tool_names:
         return TaskClassifier().classify_tool_surface(tool_names, prompt=latest_user)
     return "chat"
