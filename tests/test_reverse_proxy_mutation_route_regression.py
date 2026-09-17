@@ -113,6 +113,44 @@ class ReverseProxyMutationRouteRegressionTests(unittest.TestCase):
                 )
                 self.assertEqual(route, "code-generation")
 
+    def test_isolated_execution_recovery_stays_mutation_capable(self):
+        route = infer_agent_route(
+            _system_prompt("kitt_runtime", "git_status", "git_diff"),
+            [{
+                "role": "user",
+                "content": (
+                    "[KITT EXECUTION REQUIRED]\n"
+                    "The user requested implementation that changes the workspace, but the "
+                    "implementation is not complete yet. Continue the implementation with host tools."
+                ),
+            }],
+        )
+        self.assertEqual(route, "code-edit")
+
+    def test_isolated_completion_contract_stays_mutation_capable(self):
+        route = infer_agent_route(
+            _system_prompt("kitt_runtime", "git_status", "git_diff"),
+            [{
+                "role": "user",
+                "content": (
+                    "[KITT COMPLETION CONTRACT]\n"
+                    "Host verification shows the requested project implementation is incomplete. "
+                    "Continue the implementation with host tools."
+                ),
+            }],
+        )
+        self.assertEqual(route, "code-edit")
+
+    def test_isolated_completion_verification_remains_validation_only(self):
+        route = infer_agent_route(
+            _system_prompt("run_command", "git_diff"),
+            [{
+                "role": "user",
+                "content": "[KITT COMPLETION VERIFICATION]\nRun tests and validate the diff.",
+            }],
+        )
+        self.assertEqual(route, "validate-diff")
+
     def test_edit_plus_tests_cannot_be_downgraded_to_validate_diff(self):
         route = infer_agent_route(
             _system_prompt("kitt_runtime", "git_diff"),

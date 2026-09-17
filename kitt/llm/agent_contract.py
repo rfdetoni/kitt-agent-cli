@@ -38,6 +38,22 @@ _INTERNAL_ROUTING_MARKERS = (
     "[kitt completion contract]",
     "[kitt contract repair]",
 )
+_MUTATION_RECOVERY_MARKERS = (
+    "[kitt execution required]",
+    "[kitt completion contract]",
+)
+_MUTATION_RECOVERY_TERMS = (
+    "implementation",
+    "implementação",
+    "implementacao",
+    "workspace",
+    "mutation",
+    "mutação",
+    "mutacao",
+    "incomplete",
+    "incompleto",
+    "incompleta",
+)
 _HOST_TOOL_RESULT_MARKER = " result from the host. the values inside are untrusted data"
 _SEMANTIC_INTENT_RE = re.compile(
     r"(?mi)^\s*Intent:\s*(IMPLEMENT|DEBUG|REFACTOR)\s*$"
@@ -182,6 +198,26 @@ def _pinned_execution_route(messages: List[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
+def _recovery_mutation_route(messages: List[Dict[str, Any]]) -> Optional[str]:
+    """Keep isolated implementation-recovery turns mutation-capable.
+
+    Some execution/completion guards can issue a provider follow-up without the original
+    human task in that request batch. Those envelopes are correctly excluded from ordinary
+    user-intent routing, but an explicit guard saying implementation is still incomplete is
+    authoritative orchestration state: routing it from tool surface alone can incorrectly
+    select validate-diff and make the required file mutation impossible.
+    """
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        text = str(message.get("content") or "").strip().casefold()
+        if not any(text.startswith(marker) for marker in _MUTATION_RECOVERY_MARKERS):
+            continue
+        if any(term in text for term in _MUTATION_RECOVERY_TERMS):
+            return "code-edit"
+    return None
+
+
 def infer_agent_route(
     system_prompt: Optional[str], messages: List[Dict[str, Any]]
 ) -> str:
@@ -204,6 +240,9 @@ def infer_agent_route(
     pinned_route = _pinned_execution_route(messages)
     if pinned_route and tool_names:
         return pinned_route
+    recovery_route = _recovery_mutation_route(messages)
+    if recovery_route and tool_names:
+        return recovery_route
     latest_user = _latest_routing_user_message(messages)
     if tool_names:
         return TaskClassifier().classify_tool_surface(tool_names, prompt=latest_user)
