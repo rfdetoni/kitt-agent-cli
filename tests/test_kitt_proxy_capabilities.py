@@ -5,13 +5,19 @@ from kitt.llm.client import LLMClient
 from kitt.llm.kitt_proxy_capabilities import KittProxyCapabilities, _capabilities_url, _parse
 
 
-def test_capability_parser_derives_reasoning_from_advertised_provider():
+def test_capability_parser_never_exposes_proxy_reasoning_control():
     payload = {
         "kitt_agent_cli": {
             "session_header": "X-Kitt-Session-Id",
             "request_id_header": "X-Kitt-Request-Id",
             "reasoning_header": "X-Kitt-Reasoning-Effort",
             "reasoning_range": [0, 100],
+            "reasoning_supported": True,
+            "reasoning": {
+                "supported": True,
+                "header": "X-Kitt-Reasoning-Effort",
+                "range": [0, 100],
+            },
             "session_management": {
                 "version": 1,
                 "provider": "chatgpt",
@@ -25,12 +31,10 @@ def test_capability_parser_derives_reasoning_from_advertised_provider():
     parsed = _parse(payload)
     assert parsed.discovered is True
     assert parsed.provider == "chatgpt"
-    assert parsed.reasoning_supported is True
+    assert parsed.reasoning_supported is False
+    assert parsed.reasoning_header is None
     assert parsed.max_sessions == 4
     assert parsed.idle_timeout_ms == 120000
-
-    payload["kitt_agent_cli"]["session_management"]["provider"] = "claude"
-    assert _parse(payload).reasoning_supported is False
 
 
 def test_capabilities_url_accepts_root_v1_and_chat_endpoints():
@@ -39,7 +43,7 @@ def test_capabilities_url_accepts_root_v1_and_chat_endpoints():
     assert _capabilities_url("http://127.0.0.1:3000/v1/chat/completions") == "http://127.0.0.1:3000/v1/capabilities"
 
 
-def test_llm_client_uses_advertised_headers_and_reasoning_support(monkeypatch):
+def test_llm_client_uses_session_headers_but_never_reasoning_header(monkeypatch):
     captured = []
 
     class Adapter:
@@ -62,6 +66,8 @@ def test_llm_client_uses_advertised_headers_and_reasoning_support(monkeypatch):
         "kitt.llm.client.resolve_endpoint_credential",
         lambda *args, **kwargs: None,
     )
+    # Even a stale/older proxy advertising reasoning control must not make the
+    # CLI send a reasoning header. WebChat remains authoritative.
     monkeypatch.setattr(
         "kitt.llm.client.discover_kitt_proxy_capabilities",
         lambda *args, **kwargs: KittProxyCapabilities(
@@ -105,13 +111,13 @@ def test_llm_client_uses_advertised_headers_and_reasoning_support(monkeypatch):
     headers = captured[0].extra_headers
     assert "X-Test-Session" in headers
     assert "X-Test-Request" in headers
-    assert headers["X-Test-Reasoning"] == "80"
-    assert "X-Kitt-Session-Id" not in headers
+    assert "X-Test-Reasoning" not in headers
+    assert "X-Kitt-Reasoning-Effort" not in headers
     assert client.kitt_proxy_capabilities is not None
     assert client.kitt_proxy_capabilities.max_sessions == 3
 
 
-def test_llm_client_suppresses_reasoning_when_provider_does_not_support_it(monkeypatch):
+def test_llm_client_does_not_fallback_to_legacy_reasoning_header_when_discovery_fails(monkeypatch):
     captured = []
 
     class Adapter:
@@ -130,20 +136,13 @@ def test_llm_client_suppresses_reasoning_when_provider_does_not_support_it(monke
     monkeypatch.setattr("kitt.llm.client.resolve_endpoint_credential", lambda *a, **k: None)
     monkeypatch.setattr(
         "kitt.llm.client.discover_kitt_proxy_capabilities",
-        lambda *a, **k: KittProxyCapabilities(
-            discovered=True,
-            session_header="X-Kitt-Session-Id",
-            request_id_header="X-Kitt-Request-Id",
-            reasoning_header="X-Kitt-Reasoning-Effort",
-            reasoning_supported=False,
-            session_management={"provider": "claude", "accepts_named_sessions": True},
-        ),
+        lambda *a, **k: KittProxyCapabilities(discovered=False),
     )
 
     client = LLMClient(
         ModelProfile(
             backend="kitt-reverse-proxy",
-            model="claude-web",
+            model="chatgpt-web",
             base_url="http://127.0.0.1:3000",
             protocol="kitt-reverse-proxy",
         ),
