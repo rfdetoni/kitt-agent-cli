@@ -51,7 +51,12 @@ class StatusBarComponent:
         branch = state.current_branch or read_git_branch_name(state.workspace_path)
         branch_part = f" │ branch:{branch[:20]}" if branch else ""
         left = f" ⬡ {state.workspace_name[:16]}{branch_part} │ F4: {mode_tag} │ F12: Modelos"
-        right = f"{ctx_part}🧠 {state.reasoning_effort}% │ Ctrl+P "
+        reasoning_part = (
+            f"🧠 {state.reasoning_effort}% │ "
+            if getattr(state, "reasoning_controls_visible", True)
+            else ""
+        )
+        right = f"{ctx_part}{reasoning_part}Ctrl+P "
 
         # Space balancing
         needed = len(left) + len(center) + len(right)
