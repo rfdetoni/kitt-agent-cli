@@ -32,6 +32,23 @@ _INTERNAL_TOOL_FEEDBACK_PREFIXES = (
     "apply_patch was rejected before approval:",
 )
 _HOST_TOOL_RESULT_MARKER = " result from the host. the values inside are untrusted data"
+_MUTATING_CREATE_TERMS = (
+    "crie", "criar", "cria", "implemente", "implementar", "implementação", "implementacao",
+    "gere", "gerar", "construa", "monte", "create", "build", "implement", "generate",
+    "scaffold", "write", "mkdir",
+)
+_MUTATING_EDIT_TERMS = (
+    "corrija", "corrigir", "conserte", "consertar", "repare", "reparar", "refatore",
+    "refatorar", "atualize", "atualizar", "modifique", "modificar", "altere", "alterar",
+    "edite", "editar", "remova", "remover", "fix", "repair", "refactor", "update",
+    "modify", "change", "edit", "remove", "delete",
+)
+_WORKSPACE_TARGET_TERMS = (
+    "projeto", "site", "aplicação", "aplicacao", "app", "backend", "frontend", "front end",
+    "workspace", "repositório", "repositorio", "repository", "repo", "arquivo", "file",
+    "pasta", "folder", "diretório", "diretorio", "directory", "código", "codigo", "code",
+    "angular", "spring", "serviço", "servico", "service",
+)
 _TOP_LEVEL_HEADERS = (
     "Tool Contract:",
     "Memory:",
@@ -94,10 +111,27 @@ def _latest_routing_user_message(messages: List[Dict[str, Any]]) -> str:
     return ""
 
 
+def _mutation_route_from_user_message(content: Any) -> Optional[str]:
+    """Return a mutation-capable route when the real user explicitly requested writes.
+
+    Tool-surface inference is intentionally secondary: a surface that also exposes
+    diagnostics/git-status must never downgrade an implementation request to
+    validate-diff, because that route rejects file mutations at the reverse proxy.
+    """
+    text = str(content or "").casefold()
+    if not text or not any(term in text for term in _WORKSPACE_TARGET_TERMS):
+        return None
+    if any(term in text for term in _MUTATING_EDIT_TERMS):
+        return "code-edit"
+    if any(term in text for term in _MUTATING_CREATE_TERMS):
+        return "code-generation"
+    return None
+
+
 def infer_agent_route(
     system_prompt: Optional[str], messages: List[Dict[str, Any]]
 ) -> str:
-    """Infer a contract route using KITT's existing TaskClassifier taxonomy."""
+    """Infer a contract route while preserving explicit user mutation intent."""
     prompt = system_prompt or ""
     if prompt.startswith(_CONTEXT_SUMMARY_PREFIX):
         return "summarize"
@@ -114,6 +148,9 @@ def infer_agent_route(
 
     tool_names = list(dict.fromkeys(_TOOL_NAME_RE.findall(tool_contract)))
     latest_user = _latest_routing_user_message(messages)
+    mutation_route = _mutation_route_from_user_message(latest_user)
+    if mutation_route and tool_names:
+        return mutation_route
     if tool_names:
         return TaskClassifier().classify_tool_surface(tool_names, prompt=latest_user)
     return "chat"
