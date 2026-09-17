@@ -28,6 +28,10 @@ class RetryPolicy:
             return self.config.retry_timeouts
         if isinstance(exc, LLMConnectionError):
             msg = str(exc).lower()
+            # Contract failures are deterministic after the browser request already ran.
+            # Retrying them risks duplicate side effects and UI-history divergence.
+            if "agent_contract_invalid" in msg or "violou o contrato de saída" in msg:
+                return False
             status_strings = tuple(str(code) for code in self.config.retryable_status)
             keywords = ("rate limit", "quota", "too many requests", "overloaded", "temporarily unavailable")
             return any(s in msg for s in status_strings) or any(k in msg for k in keywords)
