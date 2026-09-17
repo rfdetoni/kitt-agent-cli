@@ -18,7 +18,7 @@ class KittProxyCapabilities:
     session_header: Optional[str] = None
     request_id_header: Optional[str] = None
     reasoning_header: Optional[str] = None
-    reasoning_supported: Optional[bool] = None
+    reasoning_supported: Optional[bool] = False
     reasoning_range: Tuple[int, int] = (0, 100)
     session_management: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -96,30 +96,16 @@ def _parse(payload: Any) -> KittProxyCapabilities:
 
     session = contract.get("session_management")
     session_management = dict(session) if isinstance(session, dict) else {}
-    reasoning = contract.get("reasoning")
-    reasoning_obj = reasoning if isinstance(reasoning, dict) else {}
 
-    reasoning_supported = reasoning_obj.get("supported")
-    if not isinstance(reasoning_supported, bool):
-        explicit = contract.get("reasoning_supported")
-        reasoning_supported = explicit if isinstance(explicit, bool) else None
-    if reasoning_supported is None:
-        provider = session_management.get("provider")
-        if isinstance(provider, str) and provider.strip():
-            # The reverse proxy currently exposes native UI reasoning only for ChatGPT.
-            reasoning_supported = provider.strip().lower() == "chatgpt"
-
-    reasoning_header = _safe_header(reasoning_obj.get("header"))
-    if reasoning_header is None:
-        reasoning_header = _safe_header(contract.get("reasoning_header"))
+    # Reverse-proxy reasoning is owned by the authenticated WebChat session.
+    # Ignore legacy capability/header declarations so the CLI never attempts to
+    # change the WebChat reasoning level.
+    reasoning_supported = False
+    reasoning_header = None
 
     session_header = _safe_header(session_management.get("header"))
     if session_header is None:
         session_header = _safe_header(contract.get("session_header"))
-
-    reasoning_range = _range(reasoning_obj.get("range"))
-    if reasoning_range == (0, 100):
-        reasoning_range = _range(contract.get("reasoning_range"))
 
     return KittProxyCapabilities(
         discovered=True,
@@ -127,7 +113,7 @@ def _parse(payload: Any) -> KittProxyCapabilities:
         request_id_header=_safe_header(contract.get("request_id_header")),
         reasoning_header=reasoning_header,
         reasoning_supported=reasoning_supported,
-        reasoning_range=reasoning_range,
+        reasoning_range=(0, 100),
         session_management=session_management,
         raw=dict(payload),
     )
@@ -143,8 +129,8 @@ def discover_kitt_proxy_capabilities(
     """Fetch and cache the proxy capability contract.
 
     Discovery is advisory: connection/protocol failures return an undiscovered
-    snapshot so callers can retain backwards-compatible behavior without
-    making the proxy a new startup dependency.
+    snapshot. Reverse-proxy reasoning remains WebChat-owned regardless of
+    discovery success or server version.
     """
     url = _capabilities_url(base_url)
     now = time.monotonic()
