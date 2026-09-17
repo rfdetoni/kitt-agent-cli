@@ -44,8 +44,8 @@ jobs:
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "next=$next" >> "$GITHUB_OUTPUT"
           echo "tag=v$next" >> "$GITHUB_OUTPUT"
-      - name: Update package version in release commit
-        if: steps.version.outputs.release == 'true' && steps.version.outputs.next != steps.version.outputs.current
+      - name: Synchronize package version in release commit
+        if: steps.version.outputs.release == 'true'
         env:
           NEXT_VERSION: ${{ steps.version.outputs.next }}
         run: |
@@ -81,6 +81,24 @@ jobs:
           if count != 1:
               raise SystemExit("could not update kitt-agent-cli version in uv.lock")
           lock.write_text(lock_updated)
+
+          init_file = Path("kitt/__init__.py")
+          init_text = init_file.read_text()
+          init_text, version_count = re.subn(
+              r'(?m)^__version__ = "[0-9]+\.[0-9]+\.[0-9]+"$',
+              f'__version__ = "{version}"',
+              init_text,
+              count=1,
+          )
+          init_text, kitt_count = re.subn(
+              r'(?m)^KITT_VERSION = "[0-9]+\.[0-9]+\.[0-9]+"$',
+              f'KITT_VERSION = "{version}"',
+              init_text,
+              count=1,
+          )
+          if version_count != 1 or kitt_count != 1:
+              raise SystemExit("could not update runtime version in kitt/__init__.py")
+          init_file.write_text(init_text)
           PY
       - name: Create immutable release tag
         if: steps.version.outputs.release == 'true'
@@ -95,9 +113,9 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml uv.lock
+          git add pyproject.toml uv.lock kitt/__init__.py
           git commit --allow-empty -m "chore(release): ${RELEASE_TAG}"
-          git tag -a "$RELEASE_TAG" -m "Release ${RELEASE_TAG}"
+          git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
           git push origin "refs/tags/$RELEASE_TAG"
       - name: Dispatch validated release pipeline
         if: steps.version.outputs.release == 'true'
