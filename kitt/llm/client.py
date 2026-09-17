@@ -219,7 +219,7 @@ class LLMClient:
                 try:
                     asyncio.run_coroutine_threadsafe(
                         queue.put(("error", exc)), loop
-                    ).result(timeout=10.0)
+                    )
                 except RuntimeError:
                     pass
 
