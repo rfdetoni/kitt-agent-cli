@@ -9,8 +9,8 @@ from pkgutil import extend_path
 
 __path__ = extend_path(__path__, __name__)
 
-__version__ = "0.40.18"
-KITT_VERSION = "0.40.18"
+__version__ = "0.40.21"
+KITT_VERSION = "0.40.21"
 STATE_SCHEMA_VERSION = 1
 DAEMON_PROTOCOL_VERSION = 1
 NATIVE_PROTOCOL_VERSION = 1
