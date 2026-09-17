@@ -1,7 +1,7 @@
 import unittest
 
 from kitt.domain.entities import ModelProfile
-from kitt.llm.client import LLMClient, LLMTimeoutError
+from kitt.llm.client import LLMClient, LLMConnectionError, LLMTimeoutError
 from kitt.llm.retry import RetryConfig, RetryPolicy
 
 
@@ -45,6 +45,20 @@ class ReverseProxyRetryPolicyTests(unittest.TestCase):
 
     def test_default_policy_keeps_timeout_retry_behavior_for_other_providers(self):
         self.assertTrue(RetryPolicy().config.retry_timeouts)
+
+    def test_terminal_reverse_proxy_contract_errors_are_not_retryable(self):
+        policy = RetryPolicy()
+        for code in (
+            "agent_contract_invalid",
+            "request_id_conflict",
+            "conversation_state_conflict",
+        ):
+            with self.subTest(code=code):
+                error = LLMConnectionError(f'HTTP 502: {{"error":{{"code":"{code}"}}}}')
+                self.assertFalse(policy.is_retryable(error))
+
+    def test_generic_502_remains_retryable(self):
+        self.assertTrue(RetryPolicy().is_retryable(LLMConnectionError("HTTP 502: Bad Gateway")))
 
 
 if __name__ == "__main__":
