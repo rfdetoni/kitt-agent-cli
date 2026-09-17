@@ -186,6 +186,16 @@ class _ProgressAwareExecutionLedger:
 
         return new_mutation, new_validation
 
+    def renew_exploration_budget(self) -> None:
+        """Grant a fresh aggregate exploration window after a guard redirect.
+
+        Preserve result/signature history so an identical read/search loop remains
+        blocked. Only the aggregate budget is renewed; otherwise the very first
+        legitimate exploration after a redirect would immediately stall again.
+        """
+        self.pending_explorations.clear()
+        self.explorations_since_progress = 0
+
 
 def _forward_progress_retry_message(stall: str) -> str:
     return (
@@ -284,6 +294,10 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                     stream.close()
 
             if restart_for_stall is not None:
+                # A redirect is a bounded recovery attempt, so it must grant a real
+                # exploration window. Preserve identical-call history to keep the
+                # guard fail-closed against repeating the exact same exploration.
+                ledger.renew_exploration_budget()
                 retry_messages = list(current_request.messages)
                 retry_messages.append(
                     {
