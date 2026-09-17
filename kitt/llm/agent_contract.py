@@ -199,19 +199,21 @@ def _pinned_execution_route(messages: List[Dict[str, Any]]) -> Optional[str]:
 
 
 def _recovery_mutation_route(messages: List[Dict[str, Any]]) -> Optional[str]:
-    """Keep isolated implementation-recovery turns mutation-capable.
+    """Keep implementation-recovery turns mutation-capable.
 
     Some execution/completion guards can issue a provider follow-up without the original
-    human task in that request batch. Those envelopes are correctly excluded from ordinary
-    user-intent routing, but an explicit guard saying implementation is still incomplete is
-    authoritative orchestration state: routing it from tool surface alone can incorrectly
-    select validate-diff and make the required file mutation impossible.
+    human task in that request batch. The canonical execution prompt may prefix the raw
+    guard envelope with normalized Intent/Goal text, so recovery markers are matched
+    anywhere in the message instead of only at byte zero. An explicit guard saying the
+    implementation is still incomplete is authoritative orchestration state: routing it
+    from tool surface alone can incorrectly select validate-diff and make the required
+    file mutation impossible.
     """
     for message in reversed(messages):
         if not isinstance(message, dict) or message.get("role") != "user":
             continue
         text = str(message.get("content") or "").strip().casefold()
-        if not any(text.startswith(marker) for marker in _MUTATION_RECOVERY_MARKERS):
+        if not any(marker in text for marker in _MUTATION_RECOVERY_MARKERS):
             continue
         if any(term in text for term in _MUTATION_RECOVERY_TERMS):
             return "code-edit"
