@@ -54,6 +54,44 @@ class ReverseProxyMutationRouteRegressionTests(unittest.TestCase):
         )
         self.assertEqual(route, "code-generation")
 
+    def test_forward_progress_recovery_does_not_replace_original_user_intent(self):
+        messages = [
+            {"role": "user", "content": MEUFAZTUDO_PROMPT},
+            {"role": "assistant", "content": "I need to inspect more."},
+            {
+                "role": "user",
+                "content": (
+                    "[KITT FORWARD PROGRESS REQUIRED]\n"
+                    "The previous exploration is now blocked because it made no new progress. "
+                    "Choose a genuinely new action: perform the required workspace mutation, "
+                    "run an appropriate validation, or finish."
+                ),
+            },
+        ]
+        route = infer_agent_route(
+            _system_prompt("kitt_runtime", "git_status", "git_diff"),
+            messages,
+        )
+        self.assertEqual(route, "code-generation")
+
+    def test_completion_recovery_does_not_downgrade_creation_to_validate_diff(self):
+        recovery_messages = (
+            "[KITT EXECUTION REQUIRED]\nContinue the implementation with host tools.",
+            "[KITT COMPLETION VERIFICATION]\nDo not report success yet.",
+            "[KITT COMPLETION CONTRACT]\nHost verification shows the project is incomplete.",
+        )
+        for recovery in recovery_messages:
+            with self.subTest(recovery=recovery.splitlines()[0]):
+                route = infer_agent_route(
+                    _system_prompt("kitt_runtime", "git_status", "git_diff"),
+                    [
+                        {"role": "user", "content": MEUFAZTUDO_PROMPT},
+                        {"role": "assistant", "content": "Continuing."},
+                        {"role": "user", "content": recovery},
+                    ],
+                )
+                self.assertEqual(route, "code-generation")
+
     def test_edit_plus_tests_cannot_be_downgraded_to_validate_diff(self):
         route = infer_agent_route(
             _system_prompt("kitt_runtime", "git_diff"),

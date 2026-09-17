@@ -31,6 +31,13 @@ _INTERNAL_TOOL_FEEDBACK_PREFIXES = (
     "the python_compute call is invalid (",
     "apply_patch was rejected before approval:",
 )
+_INTERNAL_ROUTING_MARKERS = (
+    "[kitt forward progress required]",
+    "[kitt execution required]",
+    "[kitt completion verification]",
+    "[kitt completion contract]",
+    "[kitt contract repair]",
+)
 _HOST_TOOL_RESULT_MARKER = " result from the host. the values inside are untrusted data"
 _MUTATING_CREATE_TERMS = (
     "crie", "criar", "cria", "implemente", "implementar", "implementação", "implementacao",
@@ -90,17 +97,19 @@ def normalize_agent_route(route: Optional[str]) -> str:
 
 
 def _is_internal_tool_feedback(content: Any) -> bool:
-    """Return True for KITT-generated host feedback, never user task intent."""
+    """Return True for KITT-generated continuation feedback, never user task intent."""
     text = str(content or "").strip().casefold()
     if not text:
         return False
     if _HOST_TOOL_RESULT_MARKER in text[:512]:
         return True
+    if any(text.startswith(marker) for marker in _INTERNAL_ROUTING_MARKERS):
+        return True
     return any(text.startswith(prefix) for prefix in _INTERNAL_TOOL_FEEDBACK_PREFIXES)
 
 
 def _latest_routing_user_message(messages: List[Dict[str, Any]]) -> str:
-    """Find the latest real user task, skipping host-tool continuation envelopes."""
+    """Find the latest real user task, skipping KITT-generated continuation envelopes."""
     for message in reversed(messages):
         if not isinstance(message, dict) or message.get("role") != "user":
             continue
