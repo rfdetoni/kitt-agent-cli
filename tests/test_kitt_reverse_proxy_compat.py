@@ -126,7 +126,6 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         source = [{"role": "user", "content": "hello"}]
         self.assertEqual(normalize_native_tool_messages(source), source)
 
-
     def test_strips_only_legacy_tool_contract(self):
         source = (
             "You are K.I.T.T.\n\n"
@@ -233,8 +232,6 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertEqual(headers["x-kitt-session-id"], "abc123")
         self.assertEqual(headers["x-kitt-request-id"], "req123")
 
-
-
     @patch("kitt.llm.client.discover_kitt_proxy_capabilities", return_value=KittProxyCapabilities())
     def test_llm_client_uses_stable_session_per_conversation_and_unique_request_ids(self, _discover):
         captured = []
@@ -293,8 +290,8 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertEqual(first["X-Kitt-Session-Id"], second["X-Kitt-Session-Id"])
         self.assertNotEqual(first["X-Kitt-Session-Id"], third["X-Kitt-Session-Id"])
         self.assertNotEqual(first["X-Kitt-Request-Id"], second["X-Kitt-Request-Id"])
-        self.assertEqual(first["X-Kitt-Reasoning-Effort"], "80")
-        self.assertEqual(second["X-Kitt-Reasoning-Effort"], "20")
+        self.assertNotIn("X-Kitt-Reasoning-Effort", first)
+        self.assertNotIn("X-Kitt-Reasoning-Effort", second)
         self.assertNotIn("X-Kitt-Reasoning-Effort", third)
         self.assertRegex(first["X-Kitt-Session-Id"], r"^[a-f0-9]{32}$")
 
