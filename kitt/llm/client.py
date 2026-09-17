@@ -109,6 +109,7 @@ class LLMClient:
                     max_retries=2,
                     base_delay_ms=200,
                     max_delay_ms=1500,
+                    retry_timeouts=False,
                 ))
             else:
                 self.retry_policy = RetryPolicy()

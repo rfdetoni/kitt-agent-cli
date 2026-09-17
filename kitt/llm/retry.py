@@ -15,6 +15,7 @@ class RetryConfig:
     base_delay_ms: int = 500
     max_delay_ms: int = 60000
     retryable_status: Tuple[int, ...] = (429, 500, 502, 503, 529)
+    retry_timeouts: bool = True
 
 
 class RetryPolicy:
@@ -24,7 +25,7 @@ class RetryPolicy:
     def is_retryable(self, exc: Exception) -> bool:
         from kitt.llm.client import LLMTimeoutError, LLMConnectionError
         if isinstance(exc, LLMTimeoutError):
-            return True
+            return self.config.retry_timeouts
         if isinstance(exc, LLMConnectionError):
             msg = str(exc).lower()
             status_strings = tuple(str(code) for code in self.config.retryable_status)
