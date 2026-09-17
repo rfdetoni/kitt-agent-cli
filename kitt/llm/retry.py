@@ -9,6 +9,13 @@ from typing import Callable, Generator, TypeVar, Tuple
 T = TypeVar("T")
 
 
+_TERMINAL_PROVIDER_ERROR_CODES = (
+    "agent_contract_invalid",
+    "request_id_conflict",
+    "conversation_state_conflict",
+)
+
+
 @dataclass(frozen=True)
 class RetryConfig:
     max_retries: int = 10
@@ -28,9 +35,11 @@ class RetryPolicy:
             return self.config.retry_timeouts
         if isinstance(exc, LLMConnectionError):
             msg = str(exc).lower()
-            # Contract failures are deterministic after the browser request already ran.
+            # These failures are deterministic after the browser request already ran.
             # Retrying them risks duplicate side effects and UI-history divergence.
-            if "agent_contract_invalid" in msg or "violou o contrato de saída" in msg:
+            if any(code in msg for code in _TERMINAL_PROVIDER_ERROR_CODES):
+                return False
+            if "violou o contrato de saída" in msg:
                 return False
             status_strings = tuple(str(code) for code in self.config.retryable_status)
             keywords = ("rate limit", "quota", "too many requests", "overloaded", "temporarily unavailable")
