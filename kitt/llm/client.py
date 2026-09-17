@@ -219,7 +219,7 @@ class LLMClient:
                 try:
                     asyncio.run_coroutine_threadsafe(
                         queue.put(("error", exc)), loop
-                    )
+                    ).result(timeout=10.0)
                 except RuntimeError:
                     pass
 
@@ -327,23 +327,9 @@ class LLMClient:
             if request_header:
                 extra_headers[request_header] = uuid.uuid4().hex
 
-            effort = _normalize_reasoning_effort(reasoning_effort)
-            if effort is not None:
-                legacy_chatgpt = (self.profile.model or "").strip().lower() == "chatgpt-web"
-                if discovered.discovered:
-                    reasoning_allowed = (
-                        discovered.reasoning_supported is True
-                        or (discovered.reasoning_supported is None and legacy_chatgpt)
-                    )
-                    reasoning_header = discovered.reasoning_header or (
-                        "X-Kitt-Reasoning-Effort" if legacy_chatgpt else None
-                    )
-                    if reasoning_allowed and reasoning_header:
-                        low, high = discovered.reasoning_range
-                        effective_effort = max(low, min(high, effort))
-                        extra_headers[reasoning_header] = str(effective_effort)
-                elif legacy_chatgpt:
-                    extra_headers["X-Kitt-Reasoning-Effort"] = str(effort)
+            # WebChat is the sole source of truth for reasoning. The reverse
+            # proxy must never receive an agent-side reasoning header or prompt
+            # control, even if a legacy caller still supplies reasoning_effort.
 
         request = LLMRequest(
             model=self.profile.model,
