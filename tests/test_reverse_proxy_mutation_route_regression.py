@@ -28,6 +28,27 @@ class ReverseProxyMutationRouteRegressionTests(unittest.TestCase):
         )
         self.assertEqual(route, "code-generation")
 
+    def test_normalized_implement_prompt_outranks_validation_surface(self):
+        normalized = (
+            "Intent: IMPLEMENT\n\n"
+            "Goal:\nCreate MeuFazTudo with backend and Angular frontend.\n\n"
+            "Targets:\n- backend\n- frontend"
+        )
+        route = infer_agent_route(
+            _system_prompt("kitt_runtime", "git_status", "git_diff"),
+            [{"role": "user", "content": normalized}],
+        )
+        self.assertEqual(route, "code-generation")
+
+    def test_normalized_refactor_and_debug_prompts_keep_code_edit(self):
+        for intent in ("REFACTOR", "DEBUG"):
+            with self.subTest(intent=intent):
+                route = infer_agent_route(
+                    _system_prompt("kitt_runtime", "git_status", "git_diff"),
+                    [{"role": "user", "content": f"Intent: {intent}\n\nGoal:\nFix backend routing."}],
+                )
+                self.assertEqual(route, "code-edit")
+
     def test_meufaztudo_route_stays_mutation_capable_after_repo_list(self):
         messages = [
             {"role": "user", "content": MEUFAZTUDO_PROMPT},
