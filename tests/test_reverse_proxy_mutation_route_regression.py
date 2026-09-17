@@ -141,6 +141,23 @@ class ReverseProxyMutationRouteRegressionTests(unittest.TestCase):
         )
         self.assertEqual(route, "code-edit")
 
+    def test_normalized_completion_contract_stays_mutation_capable(self):
+        route = infer_agent_route(
+            _system_prompt("kitt_runtime", "git_status", "git_diff"),
+            [{
+                "role": "user",
+                "content": (
+                    "Intent: TEST\n\n"
+                    "Goal:\nValidate the current project state.\n\n"
+                    "Original Request:\n"
+                    "[KITT COMPLETION CONTRACT]\n"
+                    "Host verification shows the requested project implementation is incomplete. "
+                    "Continue the implementation with host tools and validate it afterward."
+                ),
+            }],
+        )
+        self.assertEqual(route, "code-edit")
+
     def test_isolated_completion_verification_remains_validation_only(self):
         route = infer_agent_route(
             _system_prompt("run_command", "git_diff"),
