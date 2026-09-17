@@ -46,12 +46,13 @@ class ReverseProxyRetryPolicyTests(unittest.TestCase):
     def test_default_policy_keeps_timeout_retry_behavior_for_other_providers(self):
         self.assertTrue(RetryPolicy().config.retry_timeouts)
 
-    def test_terminal_reverse_proxy_contract_errors_are_not_retryable(self):
+    def test_terminal_reverse_proxy_errors_are_not_retryable(self):
         policy = RetryPolicy()
         for code in (
             "agent_contract_invalid",
             "request_id_conflict",
             "conversation_state_conflict",
+            "ui_automation_error",
         ):
             with self.subTest(code=code):
                 error = LLMConnectionError(f'HTTP 502: {{"error":{{"code":"{code}"}}}}')

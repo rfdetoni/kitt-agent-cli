@@ -13,6 +13,7 @@ _TERMINAL_PROVIDER_ERROR_CODES = (
     "agent_contract_invalid",
     "request_id_conflict",
     "conversation_state_conflict",
+    "ui_automation_error",
 )
 
 
