@@ -96,10 +96,15 @@ class DeterministicFallbackPlanner:
         conversational_request = any(word in prompt_lower for word in (
             'explique', 'diga', 'responda', 'como ', 'por que', 'porque', '?',
         ))
-        if (
-            (not paths and not symbols and not direct_execution and not creation_request)
+        if creation_request:
+            # Creation is the primary workspace intent even when the same request also
+            # asks to run tests/builds afterward. Validation is a completion step, not
+            # a reason to downgrade the execution route to validate-diff.
+            intent = 'IMPLEMENT'
+        elif (
+            (not paths and not symbols and not direct_execution)
             or prompt_lower.strip() in {'oi', 'olá', 'ola', 'hello', 'hi'}
-            or (conversational_request and not creation_request)
+            or conversational_request
         ):
             intent = 'ASK'
         elif re.search(r'(?<!\w)(?:test|tests|testing|unittest|pytest|teste|testes|testar)(?!\w)', prompt_lower):
@@ -134,6 +139,7 @@ class DeterministicFallbackPlanner:
             paths=paths,
             constraints=constraints,
             validation_hints=validation_hints,
+            risk='LOW',
             confidence=1.0
         )
 
