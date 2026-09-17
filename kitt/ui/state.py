@@ -89,6 +89,7 @@ class UIState:
     small_model: str = "context"
     large_model: str = "execution"
     reasoning_effort: int = 50
+    reasoning_controls_visible: bool = True
     status_text: str = "SYSTEM ONLINE"
     is_thinking: bool = False
     is_executing_tool: bool = False
