@@ -28,6 +28,15 @@ def reverse_proxy_execution_active(app: Any) -> bool:
         return False
 
 
+def _sync_reasoning_visibility(app: Any) -> bool:
+    """Keep retained UI state aligned with the currently selected provider."""
+    hidden = reverse_proxy_execution_active(app)
+    state = getattr(app, "state", None)
+    if state is not None and hasattr(state, "reasoning_controls_visible"):
+        state.reasoning_controls_visible = not hidden
+    return hidden
+
+
 def _strip_reasoning_display(value: Any) -> Any:
     """Remove reasoning-specific UI fragments while preserving the surface type."""
     if isinstance(value, str):
@@ -94,40 +103,49 @@ def install_reverse_proxy_reasoning_policy(app_cls: type) -> None:
     original_set_reasoning = app_cls._set_reasoning_effort
     original_header_text = app_cls._header_text
     original_sidebar_text = app_cls._sidebar_text
+    original_status_text = app_cls._status_text
 
     def patched_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
         self.commands = ReverseProxyAwareCommandRegistry(
             self.commands,
-            lambda: reverse_proxy_execution_active(self),
+            lambda: _sync_reasoning_visibility(self),
         )
+        _sync_reasoning_visibility(self)
 
     async def patched_execute_command(self, raw: str) -> bool:
         first = str(raw or "").strip().split(maxsplit=1)[0].casefold() if str(raw or "").strip() else ""
-        if reverse_proxy_execution_active(self) and first in _REASONING_ALIASES:
+        if _sync_reasoning_visibility(self) and first in _REASONING_ALIASES:
             # Consume legacy commands silently. They must never become WebChat
             # prompts and must never suggest that KITT controls WebChat reasoning.
             return True
         return await original_execute_command(self, raw)
 
     async def patched_set_reasoning(self, value: int, *, notify: bool = True) -> None:
-        if reverse_proxy_execution_active(self):
+        if _sync_reasoning_visibility(self):
             return
         await original_set_reasoning(self, value, notify=notify)
 
     def patched_header_text(self):
+        hidden = _sync_reasoning_visibility(self)
         value = original_header_text(self)
-        return _strip_reasoning_display(value) if reverse_proxy_execution_active(self) else value
+        return _strip_reasoning_display(value) if hidden else value
 
     def patched_sidebar_text(self):
+        hidden = _sync_reasoning_visibility(self)
         value = original_sidebar_text(self)
-        return _strip_reasoning_display(value) if reverse_proxy_execution_active(self) else value
+        return _strip_reasoning_display(value) if hidden else value
+
+    def patched_status_text(self):
+        _sync_reasoning_visibility(self)
+        return original_status_text(self)
 
     app_cls.__init__ = patched_init
     app_cls._execute_command = patched_execute_command
     app_cls._set_reasoning_effort = patched_set_reasoning
     app_cls._header_text = patched_header_text
     app_cls._sidebar_text = patched_sidebar_text
+    app_cls._status_text = patched_status_text
     app_cls._reverse_proxy_reasoning_policy_installed = True
 
 
