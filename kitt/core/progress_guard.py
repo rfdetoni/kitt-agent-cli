@@ -226,6 +226,8 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
         exe_client,
         workspace_id,
         security_context,
+        agent_route=None,
+        **loop_kwargs,
     ) -> Iterator:
         current_request = request
         recoveries = 0
@@ -250,6 +252,8 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 exe_client,
                 workspace_id,
                 security_context,
+                agent_route=agent_route,
+                **loop_kwargs,
             )
             try:
                 for event, response, messages in stream:
