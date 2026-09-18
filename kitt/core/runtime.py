@@ -379,7 +379,7 @@ class KittRuntime:
                 started_goal_scheduler = True
             with self._close_lock:
                 self._started = True
-        except Exception:
+        except Exception as startup_exc:
             errors = []
             if started_goal_scheduler and self.goal_scheduler is not None:
                 try:
@@ -395,7 +395,7 @@ class KittRuntime:
                 self._started = False
                 self._lifecycle_loop = None
             if errors:
-                raise RuntimeError("; ".join(errors))
+                raise RuntimeError("; ".join(errors)) from startup_exc
             raise
 
     @property
