@@ -6,6 +6,7 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from kitt.remote.server import RemoteServer
     from kitt.ui.app import KittUIApp
 
 
