@@ -6,6 +6,10 @@ from typing import Any, Dict
 
 from kitt.security.workspace_fs import DEFAULT_MAX_FILE_BYTES, WorkspaceFileSystem
 from kitt.tools.handlers import ToolContext
+from kitt.validation.generated_content import (
+    GeneratedContentError,
+    prepare_generated_content,
+)
 
 
 def _fs(ctx: ToolContext) -> WorkspaceFileSystem:
@@ -309,6 +313,28 @@ class WriteFileHandler:
             if supplied_hash is not None and supplied_hash != before_hash:
                 return ToolResult(False, "", "expected_content_hash mismatch")
 
+            try:
+                prepared = prepare_generated_content(
+                    relative,
+                    content,
+                    existing_content=before_content,
+                )
+            except GeneratedContentError as exc:
+                return ToolResult(
+                    False,
+                    "",
+                    "Generated content quality gate rejected the write: "
+                    f"{exc}. Retry repo.write_file with normal language/project "
+                    "indentation and line breaks.",
+                )
+            content = prepared.content
+            if len(content.encode("utf-8")) > DEFAULT_MAX_FILE_BYTES:
+                return ToolResult(
+                    False,
+                    "",
+                    f"formatted write_file content exceeds {DEFAULT_MAX_FILE_BYTES} bytes",
+                )
+
             from kitt.domain.entities import FileSnapshot
             from kitt.edit_format.transaction import workspace_mutation_lock
 
@@ -344,5 +370,13 @@ class WriteFileHandler:
         return ToolResult(
             True,
             f"Successfully wrote {len(content.encode('utf-8'))} bytes to {relative}.",
-            metadata={"content_hash": digest, "path": relative, "changeset": changeset},
+            metadata={
+                "content_hash": digest,
+                "path": relative,
+                "changeset": changeset,
+                "formatting": {
+                    "normalized": prepared.normalized,
+                    "strategy": prepared.strategy,
+                },
+            },
         )
