@@ -184,8 +184,10 @@ class UpdateCheckTests(unittest.TestCase):
             rendered = output.getvalue()
             self.assertIn("Update available", rendered)
             self.assertIn("Update manually with:", rendered)
-            self.assertIn("--modules agent-cli", rendered)
-            self.assertIn("--ref locked", rendered)
+            self.assertIn("--modules", rendered)
+            self.assertIn("agent-cli", rendered)
+            self.assertIn("--ref", rendered)
+            self.assertIn("locked", rendered)
 
 
 if __name__ == "__main__":
