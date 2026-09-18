@@ -4,11 +4,17 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from pathlib import Path
 from typing import Sequence
 
 from kitt.context.candidates import ContextCandidate
 from kitt.context.query_plan import QueryPlan
 from kitt.native.bridge import NativeCodeEngine
+
+
+def _ignored_context_path(path: str) -> bool:
+    candidate = Path(path.replace("\\", "/"))
+    return candidate.suffix.lower() == ".log" or ".kitt" in candidate.parts
 
 
 class NativeLexicalRetriever:
@@ -57,6 +63,8 @@ class NativeLexicalRetriever:
                 continue
             try:
                 path = str(hit["path"]).replace("\\", "/")
+                if _ignored_context_path(path):
+                    continue
                 line = max(1, int(hit.get("line") or 1))
                 raw_before = hit.get("before", [])
                 raw_after = hit.get("after", [])
