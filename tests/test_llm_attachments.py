@@ -113,7 +113,7 @@ class TestLlmAttachments(unittest.TestCase):
 
         list(
             processor._execute_tool_loop(
-                object(),
+                type("Cmd", (), {"turn_id": "turn"})(),
                 object(),
                 object(),
                 object(),
