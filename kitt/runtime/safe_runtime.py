@@ -144,28 +144,72 @@ class SafeRuntime(_core.SafeRuntime):
             },
         )
 
+    @staticmethod
+    def _is_diagnostic_log(path: str) -> bool:
+        name = path.rsplit("/", 1)[-1].lower()
+        return (
+            name.endswith(".log")
+            and (
+                name.startswith("kitt-agent")
+                or name.startswith("kitt-reverse-proxy")
+            )
+        )
+
     def _op_repo_list(self, args: dict[str, Any], security_context):
         rel = str(args.get("path") or ".")
         limit = max(1, min(int(args.get("limit", 100) or 100), 500))
+        depth = max(1, min(int(args.get("depth", 1) or 1), 32))
         fs = WorkspaceFileSystem(self.root)
         relative = fs.relative(rel)
         if security_context is not None:
             if not security_context.allows_path(relative) and not security_context.is_ancestor_of_allowed_path(relative):
                 raise PermissionError(f"Path '{relative}' is outside the principal path scope")
-        entries = list_entries(fs, relative, limit=min(500, limit + 1))
-        if security_context is not None and security_context.is_path_scoped:
-            entries = [
-                entry
-                for entry in entries
-                if security_context.allows_path(str(entry["path"]))
-                or security_context.is_ancestor_of_allowed_path(str(entry["path"]))
-            ]
-        truncated = len(entries) > limit
-        entries = entries[:limit]
+
+        entries: list[dict[str, Any]] = []
+        queue: list[tuple[str, int]] = [(relative, 1)]
+        truncated = False
+
+        while queue and len(entries) < limit:
+            current, level = queue.pop(0)
+            remaining = limit - len(entries)
+            children = list_entries(fs, current, limit=min(500, remaining + 1))
+            if len(children) > remaining:
+                truncated = True
+                children = children[:remaining]
+
+            for entry in children:
+                path = str(entry["path"])
+                if self._is_diagnostic_log(path):
+                    continue
+                if security_context is not None and security_context.is_path_scoped:
+                    if not (
+                        security_context.allows_path(path)
+                        or security_context.is_ancestor_of_allowed_path(path)
+                    ):
+                        continue
+                entries.append(entry)
+                if (
+                    entry.get("type") == "directory"
+                    and level < depth
+                    and len(entries) < limit
+                ):
+                    queue.append((path, level + 1))
+                if len(entries) >= limit:
+                    truncated = truncated or bool(queue)
+                    break
+
+        if queue:
+            truncated = True
+
         return SafeRuntimeResult(
             True,
             "repo.list",
-            data={"entries": entries, "truncated": truncated, "path": relative},
+            data={
+                "entries": entries,
+                "truncated": truncated,
+                "path": relative,
+                "depth": depth,
+            },
             metadata={"method": "workspace_fs", "output_family": "listing"},
         )
 
