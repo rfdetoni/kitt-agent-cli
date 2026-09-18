@@ -9,6 +9,10 @@ from kitt.edit_format.changeset import ChangeSetTracker
 from kitt.edit_format.transaction import workspace_mutation_lock
 from kitt.security.workspace_fs import DEFAULT_MAX_FILE_BYTES, WorkspaceFileSystem
 from kitt.tools.path_policy import WorkspacePathPolicy
+from kitt.validation.generated_content import (
+    GeneratedContentError,
+    prepare_generated_content,
+)
 
 
 _MAX_CHANGESET_FILES = 128
@@ -157,6 +161,21 @@ class DiffApplier:
                             f"Ambiguous SEARCH block in '{rel}': matched {count} occurrences"
                         )
                     working = working.replace(target, block.replace_content, 1)
+
+                if working_exists and any(block.is_new_file for block in path_blocks):
+                    try:
+                        generated = prepare_generated_content(
+                            rel,
+                            working,
+                            existing_content=initial_content if initial_exists else None,
+                        )
+                    except GeneratedContentError as exc:
+                        raise ValueError(
+                            "Generated content quality gate rejected "
+                            f"'{rel}': {exc}. Preserve normal language/project "
+                            "indentation and line breaks."
+                        ) from exc
+                    working = generated.content
 
                 prepared.append(
                     {
