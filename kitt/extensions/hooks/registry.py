@@ -186,10 +186,10 @@ class HookRegistry:
         if reg.is_async:
             try:
                 return await asyncio.wait_for(handler(*args), timeout=reg.timeout_seconds)
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as exc:
                 raise HookTimeoutError(
                     f"Hook handler from '{reg.plugin_id}' for '{reg.hook_name}' timed out after {reg.timeout_seconds}s."
-                )
+                ) from exc
         else:
             # Run sync handler directly or in thread pool if needed
             return handler(*args)
