@@ -422,6 +422,9 @@ class TurnEventBridge:
         except Exception:
             pass
         try:
-            self._executor.shutdown(wait=True, cancel_futures=True)
+            # A provider/tool worker may still be unwinding after cancellation.
+            # Never block the UI event loop waiting for a thread that Python cannot
+            # forcibly terminate; the generation guard prevents stale delivery.
+            self._executor.shutdown(wait=False, cancel_futures=True)
         except Exception:
             pass
