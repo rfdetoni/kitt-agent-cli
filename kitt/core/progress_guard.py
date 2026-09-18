@@ -230,6 +230,9 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
         **loop_kwargs,
     ) -> Iterator:
         current_request = request
+        legacy_route = agent_route or loop_kwargs.pop("agent_route", None)
+        if legacy_route and not getattr(current_request, "agent_route", None):
+            current_request = replace(current_request, agent_route=legacy_route)
         recoveries = 0
         stall_redirects = 0
         last_recovery_revision = 0
@@ -252,7 +255,6 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 exe_client,
                 workspace_id,
                 security_context,
-                agent_route=agent_route,
                 **loop_kwargs,
             )
             try:
