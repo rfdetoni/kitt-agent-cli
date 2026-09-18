@@ -31,7 +31,7 @@ class TestToolRegistry(unittest.TestCase):
         description = runtime.get("description", "")
         args_description = runtime.get("args", {}).get("arguments", {}).get("description", "")
 
-        self.assertIn("never use process.run", description)
+        self.assertIn("file edits use repo.write_file or patch.apply", description)
         self.assertIn("process.run {argv:[...],cwd?,timeout_seconds?}", description)
         self.assertIn("process.run never accepts command/cmd/args", args_description)
 
