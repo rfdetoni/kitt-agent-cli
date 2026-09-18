@@ -4,17 +4,20 @@ import argparse
 import asyncio
 import importlib.util
 from importlib.metadata import PackageNotFoundError, version as package_version
-import logging
-import logging.handlers
 import os
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
+from kitt.core.logging import configure_logging, debug_event, get_logger
 from kitt.update_check import notify_if_update_available
 from kitt.ui.capabilities import create_backend
 from kitt.ui.fallback import HeadlessUI
+
+
+logger = get_logger(__name__)
 
 
 def _agent_version() -> str:
@@ -40,19 +43,40 @@ def _missing_companion(feature: str, package: str) -> int:
     return 2
 
 
-def _configure_debug_log() -> None:
-    path = os.getenv("KITT_DEBUG_LOG", "").strip()
-    if not path:
-        return
-    handler = logging.handlers.RotatingFileHandler(
-        path, maxBytes=1_000_000, backupCount=2, encoding="utf-8"
+def _default_log_level() -> int:
+    raw = os.getenv("KITT_LOG_LEVEL", "").strip()
+    if not raw:
+        return 1 if os.getenv("KITT_DEBUG_LOG", "").strip() else 0
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("KITT_LOG_LEVEL must be 0, 1 or 2") from exc
+    if value not in {0, 1, 2}:
+        raise ValueError("KITT_LOG_LEVEL must be 0, 1 or 2")
+    return value
+
+
+def _configure_debug_log(args) -> Path | None:
+    level = int(getattr(args, "log_level", 0))
+    requested = str(getattr(args, "log_file", "") or "").strip()
+    if not requested:
+        requested = os.getenv("KITT_LOG_FILE", "").strip() or os.getenv("KITT_DEBUG_LOG", "").strip()
+    if level > 0 and not requested:
+        requested = str(Path(args.root).resolve() / ".kitt" / "logs" / "agent-cli.log")
+
+    path = configure_logging(level=level, path=requested or None)
+    os.environ["KITT_LOG_LEVEL"] = str(level)
+    if path is not None:
+        os.environ["KITT_LOG_FILE"] = str(path)
+        os.environ["KITT_DEBUG_LOG"] = str(path)
+    debug_event(
+        logger,
+        "cli.logging.configured",
+        level=level,
+        path=str(path) if path is not None else None,
+        root=str(Path(args.root).resolve()),
     )
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-    )
-    logger = logging.getLogger("kitt")
-    logger.setLevel(logging.DEBUG)
-    logger.addHandler(handler)
+    return path
 
 
 def _add_common_options(parser: argparse.ArgumentParser, *, defaults: bool) -> None:
@@ -85,6 +109,22 @@ def _add_common_options(parser: argparse.ArgumentParser, *, defaults: bool) -> N
         "--no-animation",
         action="store_true",
         default=default(False),
+    )
+    parser.add_argument(
+        "--log-level",
+        type=int,
+        choices=[0, 1, 2],
+        default=default(_default_log_level()),
+        help="Logging: 0=normal, 1=debug, 2=full trace",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=default(
+            os.getenv("KITT_LOG_FILE", "").strip()
+            or os.getenv("KITT_DEBUG_LOG", "").strip()
+            or None
+        ),
+        help="Diagnostic log file (default with level>0: <workspace>/.kitt/logs/agent-cli.log)",
     )
 
 
@@ -373,9 +413,9 @@ async def async_main(args) -> int:
 
 
 def main(argv=None) -> int:
-    _configure_debug_log()
     parser = build_parser()
     args = parser.parse_args(argv)
+    _configure_debug_log(args)
     notify_if_update_available(component="agent-cli")
 
     if args.subcommand == "models":
