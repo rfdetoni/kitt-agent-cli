@@ -100,7 +100,9 @@ def configure_logging(level: int = 0, path: str | Path | None = None) -> Path | 
             except Exception:
                 pass
 
-    if numeric == 0 and path is None:
+    if numeric == 0:
+        logger.setLevel(logging.NOTSET)
+        logger.propagate = True
         return None
 
     if path is None:
