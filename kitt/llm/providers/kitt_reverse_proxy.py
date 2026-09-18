@@ -93,7 +93,11 @@ def _normalize_parameters(name: str, raw: Any) -> Dict[str, Any]:
     }
     if required:
         schema["required"] = required
-    if name == "kitt_runtime" and "operation" in properties:
+    if (
+        name == "kitt_runtime"
+        and "operation" in properties
+        and "enum" not in properties["operation"]
+    ):
         from kitt.runtime.safe_runtime import OPERATION_SPECS
         properties["operation"]["enum"] = list(OPERATION_SPECS)
     return schema
