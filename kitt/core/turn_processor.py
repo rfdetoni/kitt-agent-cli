@@ -535,8 +535,8 @@ To edit an existing file, patch.apply requires one or more complete SEARCH/REPLA
 <kitt-tool>
 {{"name":"kitt_runtime","arguments":{{"operation":"patch.apply","arguments":{{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original text, or empty for a new file\\n=======\\nreplacement content\\n>>>>>>> REPLACE"}}}}}}
 </kitt-tool>
-{{process_example}}
-Supported operations for this turn: {{operations_text}}.
+{process_example}
+Supported operations for this turn: {operations_text}.
 RULES:
 - Never use process.run, shell redirection, printf, cat, echo, heredocs, or mkdir to create/edit workspace files. Use repo.write_file, repo.create_directory, or patch.apply instead.
 1. Focus strictly on user request.
