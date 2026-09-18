@@ -120,11 +120,11 @@ class _CredentialFileLock:
                         1,
                     )
                     break
-                except OSError:
+                except OSError as exc:
                     if time.monotonic() >= deadline:
                         raise TimeoutError(
                             f"Timed out acquiring credential lock {self.path}"
-                        )
+                        ) from exc
                     time.sleep(0.05)
         else:
             import fcntl
@@ -136,11 +136,11 @@ class _CredentialFileLock:
                         fcntl.LOCK_EX | fcntl.LOCK_NB,
                     )
                     break
-                except BlockingIOError:
+                except BlockingIOError as exc:
                     if time.monotonic() >= deadline:
                         raise TimeoutError(
                             f"Timed out acquiring credential lock {self.path}"
-                        )
+                        ) from exc
                     time.sleep(0.05)
         return self
 

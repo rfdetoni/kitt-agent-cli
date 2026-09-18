@@ -7,7 +7,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from kitt.extensions.errors import PluginPermissionError
 from kitt.security.credentials import CredentialResolver

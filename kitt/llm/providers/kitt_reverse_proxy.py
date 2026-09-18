@@ -485,10 +485,10 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                                 state["arguments"] += arguments
                             if len(state["name"]) > 64 or len(state["arguments"].encode("utf-8")) > 64 * 1024:
                                 raise ProviderProtocolError("KITT reverse proxy tool call exceeds protocol limits")
-        except socket.timeout:
+        except socket.timeout as exc:
             raise ProviderTimeoutError(
                 f"KITT reverse proxy timed out after {request.timeout_seconds}s"
-            )
+            ) from exc
         except urllib.error.HTTPError as exc:
             body = read_error_body(exc)
             if "X-Kitt-Reasoning-Effort" in request.extra_headers and (
@@ -569,10 +569,10 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             if isinstance(exc.reason, socket.timeout):
                 raise ProviderTimeoutError(
                     f"KITT reverse proxy timed out after {request.timeout_seconds}s"
-                )
+                ) from exc
             raise ProviderConnectionError(
                 f"Could not connect to KITT reverse proxy at {url}: {exc}"
-            )
+            ) from exc
 
         if not stream_complete:
             raise ProviderProtocolError("KITT reverse proxy stream ended before [DONE]")

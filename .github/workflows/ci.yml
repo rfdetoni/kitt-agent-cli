@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: python ${{ matrix.python-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install Agent development dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Compose Assistant runtime namespace
+        run: >-
+          python -m pip install --no-deps
+          "git+https://github.com/rfdetoni/kitt-assistant.git@main#subdirectory=packages/kitt-assistant-runtime"
+      - name: Regression suite
+        run: python -m unittest discover -s tests -v
+      - name: Pytest suite
+        run: python -m pytest -q
+      - name: Compile package
+        run: python -m compileall -q kitt
+      - name: Static critical checks
+        run: |
+          python -m pip install ruff
+          ruff check kitt --select F821,E9,B904,B905,S314

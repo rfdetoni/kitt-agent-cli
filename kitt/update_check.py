@@ -147,7 +147,13 @@ def build_update_command(
     path_type = PureWindowsPath if windows else PurePosixPath
 
     modules = ",".join(_requested_modules(state, fallback_module))
-    root = str(path_type(str(state_path)).parent)
+    raw_state_path = str(state_path)
+    if not windows:
+        # Tests and orchestration may render a POSIX installation path while
+        # running on Windows. Normalize host separators before applying the
+        # target platform's lexical path semantics.
+        raw_state_path = raw_state_path.replace("\\", "/")
+    root = str(path_type(raw_state_path).parent)
     bin_dir = _bin_dir(state, windows=windows)
     common: list[str] = ["--yes", "--modules", modules, "--root", root]
     if bin_dir is not None:

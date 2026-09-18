@@ -132,8 +132,8 @@ def _transform(value: Any, spec: Any) -> Any:
     if "limit" in spec:
         try:
             limit = max(0, min(int(spec.get("limit", 0)), 1000))
-        except (TypeError, ValueError):
-            raise ValueError("transform.limit must be an integer")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("transform.limit must be an integer") from exc
         if isinstance(result, list):
             result = result[:limit]
 

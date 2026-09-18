@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from kitt.artifacts.store import ArtifactStore
 from kitt.children.manager import ChildAgentManager
@@ -41,6 +41,9 @@ from kitt.skills.skill_manager import SkillManager
 from kitt.tools.approval import ApprovalManager
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from kitt.extensions.manager import ExtensionManager
 
 
 @dataclass
@@ -376,7 +379,7 @@ class KittRuntime:
                 started_goal_scheduler = True
             with self._close_lock:
                 self._started = True
-        except Exception:
+        except Exception as startup_exc:
             errors = []
             if started_goal_scheduler and self.goal_scheduler is not None:
                 try:
@@ -392,7 +395,7 @@ class KittRuntime:
                 self._started = False
                 self._lifecycle_loop = None
             if errors:
-                raise RuntimeError("; ".join(errors))
+                raise RuntimeError("; ".join(errors)) from startup_exc
             raise
 
     @property

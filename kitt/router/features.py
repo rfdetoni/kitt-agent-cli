@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from pathlib import Path
-from typing import Set, List
+from typing import Any, Set, List
 from kitt.router.models import TaskFeatures
 
 READ_KEYWORDS = {

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kitt.core.attachment_runtime import _retrieval_prompt
+from kitt.core.attachment_runtime import _retrieval_prompt, install_attachment_runtime
 from kitt.llm.attachments import (
     AttachmentError,
     attach_to_first_user_message,
@@ -64,6 +64,79 @@ class TestLlmAttachments(unittest.TestCase):
         self.assertNotIn("report.pdf", sanitized)
         self.assertIn("@src/Main.java", sanitized)
         self.assertIn("compare", sanitized)
+
+
+    def test_attachment_runtime_preserves_routing_contract(self):
+        class Processor:
+            def __init__(self):
+                self.root_path = Path(".")
+                self.loop_call = None
+                self.stream_call = None
+
+            def run_turn(self, cmd):
+                return iter(())
+
+            def _build_context(self, *args, **kwargs):
+                return ()
+
+            def _execute_tool_loop(
+                self,
+                cmd,
+                request,
+                exe_profile,
+                exe_client,
+                workspace_id,
+                security_context,
+                agent_route=None,
+                **loop_kwargs,
+            ):
+                self.loop_call = (agent_route, loop_kwargs)
+                yield None, "done", []
+
+            def _stream_execution_response(
+                self,
+                exe_client,
+                messages,
+                system_prompt,
+                *,
+                turn_id,
+                started_at,
+                session_key=None,
+                route=None,
+                **stream_kwargs,
+            ):
+                self.stream_call = (route, stream_kwargs)
+                yield "done", None
+
+        processor = Processor()
+        install_attachment_runtime(processor)
+
+        list(
+            processor._execute_tool_loop(
+                type("Cmd", (), {"turn_id": "turn"})(),
+                object(),
+                object(),
+                object(),
+                "workspace",
+                object(),
+                agent_route="code-edit",
+                trace_token="loop",
+            )
+        )
+        list(
+            processor._stream_execution_response(
+                object(),
+                [],
+                "system",
+                turn_id="turn",
+                started_at=0.0,
+                route="chat",
+                trace_token="stream",
+            )
+        )
+
+        self.assertEqual(processor.loop_call, ("code-edit", {"trace_token": "loop"}))
+        self.assertEqual(processor.stream_call, ("chat", {"trace_token": "stream"}))
 
 
 if __name__ == "__main__":

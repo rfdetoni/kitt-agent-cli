@@ -3,8 +3,11 @@ import uuid
 import time
 import hashlib
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from kitt.history.database import HistoryDatabase
+
+if TYPE_CHECKING:
+    from kitt.core.pending_action import PendingAction
 
 def json_dumps(obj) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -64,7 +67,8 @@ def get_or_create_workspace_identity(root_path: str | Path):
     import sqlite3
     db_path = Path(canon) / ".kitt" / "history" / "history.sqlite3"
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(str(db_path), timeout=10.0) as conn:
+    conn = sqlite3.connect(str(db_path), timeout=10.0)
+    try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL;")
         MigrationRunner().migrate(conn)
@@ -75,6 +79,9 @@ def get_or_create_workspace_identity(root_path: str | Path):
             ws = row
         else:
             ws = _create_workspace_row(conn, canon, path_hash)
+        conn.commit()
+    finally:
+        conn.close()
     from kitt.core.workspace_identity import WorkspaceIdentity
     return WorkspaceIdentity(id=ws["id"], canonical_root=Path(canon), canonical_path_hash=ws["canonical_path_hash"])
 

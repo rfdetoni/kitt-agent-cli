@@ -12,6 +12,12 @@ from kitt.ui.app import KittUIApp
 
 
 class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
+    async def _wait_until(self, predicate, timeout=1.0):
+        async def wait():
+            while not predicate():
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(wait(), timeout)
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.runtime = KittRuntime.build(self.temp.name, RuntimeConfig(history_enabled=False, persistence_enabled=False))
@@ -120,9 +126,11 @@ class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
             ui.state.is_thinking = True
             ui.bridge._active_turn_id = "mock_turn_1"
 
-            # Press Ctrl+C
+            # Press Ctrl+C and synchronize on the observable cancelled state.
             pipe.send_bytes(b"\x03")
-            await asyncio.sleep(0.05)
+            await self._wait_until(
+                lambda: not ui.state.is_thinking and not ui.bridge.is_active
+            )
 
             self.assertFalse(ui.state.is_thinking)
             self.assertFalse(ui.bridge.is_active)

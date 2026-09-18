@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Tuple, List, Optional, Set, Dict
+from typing import Any, Tuple, List, Optional, Set, Dict
 
 from kitt.dreaming.models import (
     DreamOperation,

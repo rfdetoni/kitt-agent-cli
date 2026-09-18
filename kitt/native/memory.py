@@ -45,7 +45,7 @@ class HashProjectionEmbedder:
 def _cosine(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
-    return max(-1.0, min(1.0, sum(x*y for x, y in zip(a, b))))
+    return max(-1.0, min(1.0, sum(x*y for x, y in zip(a, b, strict=True))))
 
 
 def _tokens(text: str) -> set[str]:

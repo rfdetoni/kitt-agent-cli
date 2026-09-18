@@ -6,10 +6,13 @@ import json
 import os
 import shutil
 import tomllib
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
+
+from defusedxml import ElementTree as DefusedET
+from defusedxml.common import DefusedXmlException
+from xml.etree.ElementTree import ParseError
 
 from kitt.security.workspace_fs import WorkspaceFileSystem
 
@@ -78,9 +81,9 @@ class PostEditValidator:
                 tomllib.loads(text)
                 return GateDiagnostic(relative, "tomllib", True), False
             if suffix in {".xml", ".xhtml", ".svg"}:
-                ET.fromstring(text)
+                DefusedET.fromstring(text)
                 return GateDiagnostic(relative, "xml", True), False
-        except (SyntaxError, ValueError, UnicodeError, ET.ParseError) as exc:
+        except (SyntaxError, ValueError, UnicodeError, ParseError, DefusedXmlException) as exc:
             return GateDiagnostic(relative, validator_name, False, str(exc)), False
         if suffix in {".js", ".mjs", ".cjs"}:
             return self._external(["node", "--check", relative], relative, "node --check"), False

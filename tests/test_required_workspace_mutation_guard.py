@@ -60,6 +60,8 @@ class _Processor:
         exe_client,
         workspace_id,
         security_context,
+        agent_route=None,
+        **loop_kwargs,
     ):
         self.calls.append(request)
         response = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
