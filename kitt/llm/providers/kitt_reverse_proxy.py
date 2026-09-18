@@ -32,7 +32,7 @@ _REQUIRED_ARGS = {
     "search": ("pattern",),
     "write_file": ("path", "content"),
     "apply_patch": ("patch",),
-    "run_command": ("command",),
+    "run_command": ("argv",),
     "python_compute": ("code",),
     "artifact_read": ("artifact_id",),
     "goal_create": ("objective",),
