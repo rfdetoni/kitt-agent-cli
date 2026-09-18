@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import re
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Any, Tuple
 
 from kitt.router.features import TaskFeatureExtractor
 
