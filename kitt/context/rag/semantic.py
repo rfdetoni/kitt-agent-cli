@@ -62,7 +62,7 @@ class SemanticCandidateReranker:
             return SemanticRankResult(tuple(), {})
 
         docs = [self._render_candidate(candidate) for candidate in pool]
-        keys = [self._cache_key(candidate, doc) for candidate, doc in zip(pool, docs)]
+        keys = [self._cache_key(candidate, doc) for candidate, doc in zip(pool, docs, strict=True)]
         cached_vectors: list[list[float] | None] = [self._cache_get(key) for key in keys]
         missing_indexes = [idx for idx, vector in enumerate(cached_vectors) if vector is None]
 
@@ -80,7 +80,7 @@ class SemanticCandidateReranker:
             return SemanticRankResult(tuple(), {}, degraded=True, reason=str(exc)[:240])
 
         scored: list[tuple[float, ContextCandidate]] = []
-        for candidate, vector in zip(pool, cached_vectors):
+        for candidate, vector in zip(pool, cached_vectors, strict=True):
             if vector is None:
                 return SemanticRankResult(
                     tuple(), {}, degraded=True, reason="missing cached embedding"
@@ -149,7 +149,7 @@ class SemanticCandidateReranker:
             return -1.0
         if not all(math.isfinite(value) for value in (*left, *right)):
             return float("nan")
-        dot = sum(a * b for a, b in zip(left, right))
+        dot = sum(a * b for a, b in zip(left, right, strict=True))
         left_norm = math.sqrt(sum(a * a for a in left))
         right_norm = math.sqrt(sum(b * b for b in right))
         denom = left_norm * right_norm
