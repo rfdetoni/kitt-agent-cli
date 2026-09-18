@@ -20,6 +20,7 @@ class _Processor:
         self.root = Path(root)
         self.calls = 0
         self.recover = recover
+        self.agent_routes = []
 
     def _execute_tool_loop(
         self,
@@ -29,8 +30,11 @@ class _Processor:
         exe_client,
         workspace_id,
         security_context,
+        agent_route=None,
+        **kwargs,
     ):
         self.calls += 1
+        self.agent_routes.append(agent_route)
         if self.calls == 1:
             yield (
                 None,
@@ -63,8 +67,12 @@ class CompletionGuardTests(unittest.TestCase):
     def test_guard_retries_after_failed_mutation_even_without_success_claim(self):
         with tempfile.TemporaryDirectory() as temp:
             class Processor(_Processor):
-                def _execute_tool_loop(self, cmd, request, exe_profile, exe_client, workspace_id, security_context):
+                def _execute_tool_loop(
+                    self, cmd, request, exe_profile, exe_client, workspace_id,
+                    security_context, agent_route=None, **kwargs
+                ):
                     self.calls += 1
+                    self.agent_routes.append(agent_route)
                     if self.calls == 1:
                         yield ToolCompleted(tool_name="write_file", success=False, error="validation failed"), None, None
                         yield None, "Não foi possível concluir a operação.", list(request.messages)
@@ -84,6 +92,31 @@ class CompletionGuardTests(unittest.TestCase):
             items = list(processor._execute_tool_loop(object(), request, object(), object(), "workspace", object()))
             self.assertEqual(processor.calls, 2)
             self.assertFalse(any(isinstance(item[0], TurnFailed) for item in items))
+
+    def test_guard_accepts_and_forwards_agent_route(self):
+        with tempfile.TemporaryDirectory() as temp:
+            processor = _Processor(temp, recover=True)
+            registry = _Registry(temp)
+            install_completion_guard(processor, registry)
+            request = ExecutionRequest(
+                system_prompt="test",
+                messages=[{"role": "user", "content": "crie o script"}],
+                enabled_tools=["kitt_runtime"],
+            )
+
+            list(
+                processor._execute_tool_loop(
+                    object(),
+                    request,
+                    object(),
+                    object(),
+                    "workspace",
+                    object(),
+                    agent_route="code-generation",
+                )
+            )
+
+            self.assertEqual(processor.agent_routes, ["code-generation", "code-generation"])
 
     def test_portuguese_false_completion_claim_detects_missing_file(self):
         with tempfile.TemporaryDirectory() as temp:
