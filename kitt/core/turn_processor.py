@@ -165,9 +165,10 @@ class TurnProcessor:
         self.cancelled_turns: set[str] = set()
         self.turn_guard = TurnExecutionGuard(self.cancelled_turns)
         self.reasoning_effort: int = 50
-        # One browser-tab affinity for the lifetime of this Agent CLI window.
-        # Conversation history remains scoped in KITT, while provider UI state
-        # is reused after completion/failure instead of opening another tab.
+        # Browser-session namespace for this Agent CLI window. The actual
+        # reverse-proxy session is also scoped by KITT conversation_id so two
+        # logical conversations can never queue incompatible cumulative
+        # histories into the same browser chat.
         self._proxy_session_key = f"agent-window:{uuid.uuid4().hex}"
         self._closed = False
 
@@ -184,7 +185,9 @@ class TurnProcessor:
         self._cache_lock = threading.Lock()
 
     def _provider_session_key(self, profile, conversation_id: str) -> str:
-        return self._proxy_session_key if _reverse_proxy_identity(profile) else conversation_id
+        if _reverse_proxy_identity(profile):
+            return f"{self._proxy_session_key}:conversation:{conversation_id}"
+        return conversation_id
 
     @property
     def workspace_id(self) -> str:
