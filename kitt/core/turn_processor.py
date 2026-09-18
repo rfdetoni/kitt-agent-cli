@@ -191,11 +191,12 @@ class TurnProcessor:
 
     @staticmethod
     def _agent_route_for_task(task, mode: str = "", prompt: str = "") -> str:
-        """Pin the proxy route, with explicit user mutation intent as the highest signal."""
+        """Pin the proxy route, with the original user mutation intent as the highest signal."""
         if mode == "plan":
             return "context-gather"
 
-        text = (prompt or "").casefold()
+        original_prompt = str(getattr(task, "original_prompt", "") or "")
+        text = (original_prompt or prompt or "").casefold()
         workspace_targets = (
             "projeto", "project", "site", "app", "aplicação", "aplicacao",
             "backend", "frontend", "front end", "repositório", "repositorio",
