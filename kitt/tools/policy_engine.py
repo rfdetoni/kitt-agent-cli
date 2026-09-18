@@ -189,7 +189,7 @@ class PolicyEngine:
                     quote = ""
             elif char in {"'", '"'}:
                 quote = char
-            elif char in ";&|\`$\n":
+            elif char in ";&|`$\n":
                 return True
         return False
 
