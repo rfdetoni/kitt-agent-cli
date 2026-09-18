@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from kitt.core.attachment_runtime import _retrieval_prompt, install_attachment_runtime
+from kitt.core.execution_request import ExecutionRequest
 from kitt.llm.attachments import (
     AttachmentError,
     attach_to_first_user_message,
@@ -87,10 +88,9 @@ class TestLlmAttachments(unittest.TestCase):
                 exe_client,
                 workspace_id,
                 security_context,
-                agent_route=None,
                 **loop_kwargs,
             ):
-                self.loop_call = (agent_route, loop_kwargs)
+                self.loop_call = (request.agent_route, loop_kwargs)
                 yield None, "done", []
 
             def _stream_execution_response(
@@ -114,12 +114,16 @@ class TestLlmAttachments(unittest.TestCase):
         list(
             processor._execute_tool_loop(
                 type("Cmd", (), {"turn_id": "turn"})(),
-                object(),
+                ExecutionRequest(
+                    system_prompt="test",
+                    messages=[],
+                    enabled_tools=[],
+                    agent_route="code-edit",
+                ),
                 object(),
                 object(),
                 "workspace",
                 object(),
-                agent_route="code-edit",
                 trace_token="loop",
             )
         )
