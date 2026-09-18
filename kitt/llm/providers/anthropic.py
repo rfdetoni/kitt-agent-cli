@@ -75,14 +75,14 @@ class AnthropicAdapter:
                                     yield delta
                         except json.JSONDecodeError:
                             pass
-        except socket.timeout:
-            raise ProviderTimeoutError(f"Anthropic request timed out after {request.timeout_seconds}s")
+        except socket.timeout as exc:
+            raise ProviderTimeoutError(f"Anthropic request timed out after {request.timeout_seconds}s") from exc
         except urllib.error.HTTPError as e:
             handle_http_error(e, url)
         except urllib.error.URLError as e:
             if isinstance(e.reason, socket.timeout):
-                raise ProviderTimeoutError(f"Anthropic request timed out after {request.timeout_seconds}s")
-            raise ProviderConnectionError(f"Could not connect to endpoint at {url}: {e}")
+                raise ProviderTimeoutError(f"Anthropic request timed out after {request.timeout_seconds}s") from e
+            raise ProviderConnectionError(f"Could not connect to endpoint at {url}: {e}") from e
 
     def list_models(
         self, base_url: Optional[str] = None, api_key: Optional[str] = None, timeout: float = 5.0
