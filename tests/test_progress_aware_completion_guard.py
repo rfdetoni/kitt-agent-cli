@@ -1,6 +1,6 @@
 import unittest
 
-from kitt.core.progress_guard import _ProgressAwareExecutionLedger
+from kitt.core.completion_guard import _ExecutionProgressLedger
 from kitt.core.turn_events import ToolCompleted, ToolStarted
 
 
@@ -14,7 +14,7 @@ def _started(call_id: str):
 
 class ProgressAwareCompletionGuardTests(unittest.TestCase):
     def test_same_call_with_changed_result_is_legitimate_progress(self):
-        ledger = _ProgressAwareExecutionLedger()
+        ledger = _ExecutionProgressLedger()
 
         for index, output in enumerate(("one", "two", "three"), start=1):
             call_id = f"list-{index}"
@@ -29,7 +29,7 @@ class ProgressAwareCompletionGuardTests(unittest.TestCase):
             )
 
     def test_third_identical_result_is_blocked_before_execution(self):
-        ledger = _ProgressAwareExecutionLedger()
+        ledger = _ExecutionProgressLedger()
 
         for index in (1, 2):
             call_id = f"list-{index}"
@@ -49,7 +49,7 @@ class ProgressAwareCompletionGuardTests(unittest.TestCase):
         self.assertIn("repo.list", stall)
 
     def test_deterministic_capability_failure_is_not_retried_unchanged(self):
-        ledger = _ProgressAwareExecutionLedger()
+        ledger = _ExecutionProgressLedger()
         first = ToolStarted(
             tool_name="kitt_runtime",
             args={"operation": "repo.diagnostics", "arguments": {"path": "."}},

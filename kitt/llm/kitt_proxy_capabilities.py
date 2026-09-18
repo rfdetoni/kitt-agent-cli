@@ -15,6 +15,10 @@ from kitt.llm.http_security import secure_urlopen
 @dataclass(frozen=True)
 class KittProxyCapabilities:
     discovered: bool = False
+    agent_contract_version: Optional[str] = None
+    agent_contract_header: Optional[str] = None
+    agent_route_header: Optional[str] = None
+    agent_routes: Tuple[str, ...] = ()
     session_header: Optional[str] = None
     request_id_header: Optional[str] = None
     reasoning_header: Optional[str] = None
@@ -94,6 +98,15 @@ def _parse(payload: Any) -> KittProxyCapabilities:
     if not isinstance(contract, dict):
         return KittProxyCapabilities(raw=dict(payload))
 
+    agent_contract = contract.get("agent_contract")
+    agent_contract = dict(agent_contract) if isinstance(agent_contract, dict) else {}
+    raw_routes = agent_contract.get("routes")
+    agent_routes = tuple(
+        route.strip()
+        for route in raw_routes
+        if isinstance(route, str) and route.strip()
+    ) if isinstance(raw_routes, list) else ()
+
     session = contract.get("session_management")
     session_management = dict(session) if isinstance(session, dict) else {}
 
@@ -109,6 +122,14 @@ def _parse(payload: Any) -> KittProxyCapabilities:
 
     return KittProxyCapabilities(
         discovered=True,
+        agent_contract_version=(
+            str(agent_contract.get("version")).strip()
+            if isinstance(agent_contract.get("version"), str) and str(agent_contract.get("version")).strip()
+            else None
+        ),
+        agent_contract_header=_safe_header(agent_contract.get("header")),
+        agent_route_header=_safe_header(agent_contract.get("route_header")),
+        agent_routes=agent_routes,
         session_header=session_header,
         request_id_header=_safe_header(contract.get("request_id_header")),
         reasoning_header=reasoning_header,

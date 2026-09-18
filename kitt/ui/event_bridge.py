@@ -32,6 +32,7 @@ class TurnEventBridge:
         self._queue = queue.Queue(maxsize=max_queue)
         self._consumer = None
         self._producer_future = None
+        self._cancel_task = None
         self._closed = threading.Event()
         self._active_turn_id = None
         self._active_conversation_id = None
@@ -168,6 +169,9 @@ class TurnEventBridge:
 
     async def start(self, prompt, conversation_id, explicit_files=frozenset(),
                     no_history=False, mode="auto"):
+        pending_cancel = self._cancel_task
+        if pending_cancel is not None and not pending_cancel.done():
+            await pending_cancel
         if self._closed.is_set() or self.is_active:
             raise RuntimeError("A turn is already active")
         self._active_conversation_id = conversation_id
@@ -281,38 +285,80 @@ class TurnEventBridge:
         if self._daemon_bridge:
             await self._daemon_bridge.detach()
 
-    async def cancel(self, reason="Cancelled by user"):
+    def _begin_cancel(self):
+        """Synchronously deactivate a turn before asynchronous cancellation I/O."""
         turn_id = self._active_turn_id
+        conversation_id = self._active_conversation_id
+        daemon_bridge = self._daemon_bridge
         self._active_turn_id = None
         self._turn_generation += 1
 
-        # Cancel tasks and consumer immediately so is_active flips to False right away
         if self._producer_future and not self._producer_future.done():
             self._producer_future.cancel()
         if self._consumer and not self._consumer.done():
             self._consumer.cancel()
         self._consumer = None
 
-        if self._daemon_bridge:
-            if turn_id:
-                await self._daemon_bridge.cancel_turn(turn_id)
-            self.invalidate()
-            return
-
-        if turn_id:
-            for event in self.runtime.processor.cancel_turn(
-                turn_id, reason, conversation_id=self._active_conversation_id
-            ):
-                self._deliver(event)
-        else:
-            self._deliver(TurnCancelled(reason=reason))
-
+        # Drop only events belonging to the cancelled generation before a new
+        # turn is allowed to start.
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
             except queue.Empty:
                 break
         self.invalidate()
+        return turn_id, conversation_id, daemon_bridge
+
+    async def _finish_cancel(self, context, reason: str) -> None:
+        turn_id, conversation_id, daemon_bridge = context
+        if daemon_bridge:
+            if turn_id:
+                await daemon_bridge.cancel_turn(turn_id)
+            self.invalidate()
+            return
+
+        if turn_id:
+            for event in self.runtime.processor.cancel_turn(
+                turn_id, reason, conversation_id=conversation_id
+            ):
+                self._deliver(event)
+        else:
+            self._deliver(TurnCancelled(reason=reason))
+        self.invalidate()
+
+    def request_cancel(self, reason="Cancelled by user"):
+        """Deactivate immediately and schedule cancellation cleanup on this loop."""
+        pending = self._cancel_task
+        if pending is not None and not pending.done():
+            return pending
+
+        context = self._begin_cancel()
+        task = asyncio.get_running_loop().create_task(
+            self._finish_cancel(context, reason)
+        )
+        self._cancel_task = task
+
+        def clear(completed):
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                self._deliver(TurnFailed(error=f"Cancellation failed: {exc}"))
+            finally:
+                if self._cancel_task is completed:
+                    self._cancel_task = None
+
+        task.add_done_callback(clear)
+        return task
+
+    async def cancel(self, reason="Cancelled by user"):
+        pending = self._cancel_task
+        if pending is not None and not pending.done():
+            await pending
+            return
+        context = self._begin_cancel()
+        await self._finish_cancel(context, reason)
 
     def _drop_oldest_non_critical(self):
         try:

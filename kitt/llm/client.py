@@ -293,15 +293,35 @@ class LLMClient:
                 workspace_context=workspace_context,
                 route=contract_route,
             )
-            extra_headers[AGENT_CONTRACT_HEADER] = AGENT_CONTRACT_VERSION
-            extra_headers[AGENT_ROUTE_HEADER] = contract_route
-
             discovered = discover_kitt_proxy_capabilities(
                 base_url,
                 api_key=api_key,
                 timeout=min(1.0, max(0.2, float(self.profile.request_timeout_seconds))),
             )
             self._last_kitt_proxy_capabilities = discovered
+
+            contract_header = AGENT_CONTRACT_HEADER
+            contract_version = AGENT_CONTRACT_VERSION
+            route_header = AGENT_ROUTE_HEADER
+            if discovered.discovered:
+                if (
+                    discovered.agent_contract_version != AGENT_CONTRACT_VERSION
+                    or not discovered.agent_contract_header
+                    or not discovered.agent_route_header
+                ):
+                    raise ProviderProtocolError(
+                        "KITT reverse proxy agent contract is incompatible with this Agent CLI"
+                    )
+                if contract_route not in discovered.agent_routes:
+                    raise ProviderProtocolError(
+                        f"KITT reverse proxy does not advertise route {contract_route!r}"
+                    )
+                contract_header = discovered.agent_contract_header
+                contract_version = discovered.agent_contract_version
+                route_header = discovered.agent_route_header
+
+            extra_headers[contract_header] = contract_version
+            extra_headers[route_header] = contract_route
 
             if session_key:
                 session_id = uuid.uuid5(

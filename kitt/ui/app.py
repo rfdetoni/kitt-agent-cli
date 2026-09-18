@@ -2312,7 +2312,7 @@ class KittUIApp:
                 self.state.is_thinking = False
                 self.state.status_text = "SYSTEM ONLINE"
                 if self.bridge:
-                    asyncio.create_task(self.bridge.cancel())
+                    self.bridge.request_cancel()
                 self.prompt_buffer.reset()
                 if self.application:
                     try:
