@@ -71,6 +71,129 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
             finally:
                 registry.close()
 
+    def test_write_file_pretty_prints_json_before_persisting(self):
+        with tempfile.TemporaryDirectory() as temp:
+            registry = self._registry(temp)
+            try:
+                runtime = SafeRuntime(
+                    temp,
+                    "workspace",
+                    "conversation",
+                    tool_registry=registry,
+                )
+                result = runtime.execute(
+                    "repo.write_file",
+                    {
+                        "path": "frontend/angular.json",
+                        "content": '{"version":1,"projects":{"app":{"projectType":"application"}}}',
+                    },
+                    effective_capabilities={CAP_REPO_WRITE},
+                )
+
+                self.assertTrue(result.success, result.error)
+                target = Path(temp) / "frontend" / "angular.json"
+                self.assertEqual(
+                    target.read_text(encoding="utf-8"),
+                    '{\n  "version": 1,\n  "projects": {\n    "app": {\n      "projectType": "application"\n    }\n  }\n}\n',
+                )
+                self.assertTrue(result.metadata["formatting"]["normalized"])
+                self.assertEqual(
+                    result.metadata["formatting"]["strategy"],
+                    "json.pretty",
+                )
+            finally:
+                registry.close()
+
+    def test_write_file_rejects_invalid_python_indentation_before_creation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            registry = self._registry(temp)
+            try:
+                runtime = SafeRuntime(
+                    temp,
+                    "workspace",
+                    "conversation",
+                    tool_registry=registry,
+                )
+                result = runtime.execute(
+                    "repo.write_file",
+                    {
+                        "path": "src/app.py",
+                        "content": 'def main():\nprint("broken")\n',
+                    },
+                    effective_capabilities={CAP_REPO_WRITE},
+                )
+
+                self.assertFalse(result.success)
+                self.assertIn("indentation", result.error.lower())
+                self.assertFalse((Path(temp) / "src" / "app.py").exists())
+            finally:
+                registry.close()
+
+    def test_write_file_rejects_fully_flattened_block_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            registry = self._registry(temp)
+            try:
+                runtime = SafeRuntime(
+                    temp,
+                    "workspace",
+                    "conversation",
+                    tool_registry=registry,
+                )
+                flattened = (
+                    "package demo;\n"
+                    "public class App {\n"
+                    "private int value;\n"
+                    "public void run() {\n"
+                    "System.out.println(value);\n"
+                    "}\n"
+                    "}\n"
+                )
+                result = runtime.execute(
+                    "repo.write_file",
+                    {"path": "src/App.java", "content": flattened},
+                    effective_capabilities={CAP_REPO_WRITE},
+                )
+
+                self.assertFalse(result.success)
+                self.assertIn("fully left-aligned", result.error)
+                self.assertFalse((Path(temp) / "src" / "App.java").exists())
+            finally:
+                registry.close()
+
+    def test_write_file_accepts_readably_indented_block_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            registry = self._registry(temp)
+            try:
+                runtime = SafeRuntime(
+                    temp,
+                    "workspace",
+                    "conversation",
+                    tool_registry=registry,
+                )
+                source = (
+                    "package demo;\n"
+                    "public class App {\n"
+                    "    private int value;\n"
+                    "    public void run() {\n"
+                    "        System.out.println(value);\n"
+                    "    }\n"
+                    "}\n"
+                )
+                result = runtime.execute(
+                    "repo.write_file",
+                    {"path": "src/App.java", "content": source},
+                    effective_capabilities={CAP_REPO_WRITE},
+                )
+
+                self.assertTrue(result.success, result.error)
+                self.assertEqual(
+                    (Path(temp) / "src" / "App.java").read_text(encoding="utf-8"),
+                    source,
+                )
+                self.assertFalse(result.metadata["formatting"]["normalized"])
+            finally:
+                registry.close()
+
     def test_write_file_without_path_is_rejected_with_retry_guidance(self):
         with tempfile.TemporaryDirectory() as temp:
             registry = self._registry(temp)
