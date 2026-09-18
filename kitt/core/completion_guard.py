@@ -714,7 +714,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
         recoveries = 0
         stall_redirects = 0
         last_recovery_revision = 0
-        ledger = _ProgressAwareExecutionLedger()
+        ledger = _ExecutionProgressLedger()
         failed_mutations: dict[str, str] = {}
         mutation_required = requires_workspace_mutation(self, cmd)
         task = getattr(getattr(self, "session_state", None), "last_task", None)
