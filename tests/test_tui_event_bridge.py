@@ -57,6 +57,31 @@ class TestTurnEventBridge(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(bridge._queue.maxsize, 128)
         await bridge.shutdown()
 
+
+    async def test_request_cancel_deactivates_before_async_cleanup(self):
+        cancelled = asyncio.Event()
+        release = asyncio.Event()
+
+        class SlowDaemonBridge:
+            async def cancel_turn(self, turn_id):
+                cancelled.set()
+                await release.wait()
+
+        bridge = TurnEventBridge(self._runtime(), lambda event: None, lambda: None)
+        bridge._daemon_bridge = SlowDaemonBridge()
+        bridge._active_turn_id = "turn-1"
+        bridge._active_conversation_id = "conversation"
+
+        task = bridge.request_cancel()
+        self.assertFalse(bridge.is_active)
+        self.assertIsNone(bridge.active_turn_id)
+
+        await asyncio.wait_for(cancelled.wait(), 1)
+        self.assertFalse(task.done())
+        release.set()
+        await asyncio.wait_for(task, 1)
+        await bridge.shutdown()
+
     async def test_ola_uses_local_processor_when_daemon_never_spawned(self):
         events = []
         daemon = OfflineDaemonBridge()
