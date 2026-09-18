@@ -29,6 +29,42 @@ class TestSafeRuntimeFilesystemOps(unittest.TestCase):
             self.assertEqual(by_path["src"], "directory")
             self.assertEqual(by_path["README.md"], "file")
 
+    def test_list_honors_depth_and_hides_kitt_diagnostic_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "backend" / "src" / "main").mkdir(parents=True)
+            (root / "backend" / "src" / "main" / "App.java").write_text(
+                "class App {}\n",
+                encoding="utf-8",
+            )
+            (root / "kitt-agent-full.log").write_text("trace", encoding="utf-8")
+            (root / "kitt-reverse-proxy-full.log").write_text("trace", encoding="utf-8")
+            runtime = self._runtime(tmp)
+
+            shallow = runtime.execute(
+                "repo.list",
+                {"path": ".", "depth": 1},
+                effective_capabilities={CAP_REPO_READ},
+            )
+            self.assertTrue(shallow.success, shallow.error)
+            shallow_paths = {entry["path"] for entry in shallow.data["entries"]}
+            self.assertIn("backend", shallow_paths)
+            self.assertNotIn("backend/src", shallow_paths)
+            self.assertNotIn("kitt-agent-full.log", shallow_paths)
+            self.assertNotIn("kitt-reverse-proxy-full.log", shallow_paths)
+
+            recursive = runtime.execute(
+                "repo.list",
+                {"path": ".", "depth": 4},
+                effective_capabilities={CAP_REPO_READ},
+            )
+            self.assertTrue(recursive.success, recursive.error)
+            recursive_paths = {entry["path"] for entry in recursive.data["entries"]}
+            self.assertIn("backend/src", recursive_paths)
+            self.assertIn("backend/src/main", recursive_paths)
+            self.assertIn("backend/src/main/App.java", recursive_paths)
+            self.assertEqual(recursive.data["depth"], 4)
+
     def test_move_and_rename_file_without_overwriting(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
