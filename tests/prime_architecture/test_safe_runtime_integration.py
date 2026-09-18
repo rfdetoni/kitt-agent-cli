@@ -45,7 +45,7 @@ class TestSafeRuntimeIntegration(unittest.TestCase):
             registry=self.registry, origin="MODEL",
         )
         res = SafeRuntimeHandler().execute(
-            {"operation": "process.run", "arguments": {"command": "echo test"}}, ctx
+            {"operation": "process.run", "arguments": {"argv": ["python", "--version"]}}, ctx
         )
         self.assertFalse(res.success)
         self.assertFalse(res.requires_approval)
@@ -60,9 +60,9 @@ class TestSafeRuntimeIntegration(unittest.TestCase):
             registry=self.registry, origin="MODEL", security_context=sec,
         )
         res = SafeRuntimeHandler().execute(
-            {"operation": "process.run", "arguments": {"command": "echo test"}}, ctx
+            {"operation": "process.run", "arguments": {"argv": ["python", "--version"]}}, ctx
         )
         self.assertFalse(res.success)
         self.assertTrue(res.requires_approval)
         self.assertEqual(res.metadata["approval_action"], "run_command")
-        self.assertEqual(res.metadata["approval_payload"], {"command": "echo test"})
+        self.assertEqual(res.metadata["approval_payload"], {"argv": ["python", "--version"]})
