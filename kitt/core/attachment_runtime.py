@@ -100,6 +100,8 @@ def install_attachment_runtime(processor: Any) -> None:
         exe_client,
         workspace_id,
         security_context,
+        agent_route=None,
+        **loop_kwargs,
     ) -> Iterator:
         attachments = tuple(self._attachment_paths_by_turn.get(cmd.turn_id, ()))
         if attachments and not _is_kitt_reverse_proxy(exe_client):
@@ -113,6 +115,8 @@ def install_attachment_runtime(processor: Any) -> None:
             exe_client,
             workspace_id,
             security_context,
+            agent_route=agent_route,
+            **loop_kwargs,
         )
 
     def stream_execution_response(
@@ -124,6 +128,8 @@ def install_attachment_runtime(processor: Any) -> None:
         turn_id,
         started_at,
         session_key=None,
+        route=None,
+        **stream_kwargs,
     ):
         wire_messages = messages
         paths = self._attachment_paths_by_turn.get(turn_id)
@@ -141,6 +147,8 @@ def install_attachment_runtime(processor: Any) -> None:
             turn_id=turn_id,
             started_at=started_at,
             session_key=session_key,
+            route=route,
+            **stream_kwargs,
         )
 
     processor.run_turn = MethodType(run_turn, processor)
