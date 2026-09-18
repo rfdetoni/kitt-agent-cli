@@ -32,8 +32,8 @@ class TestToolRegistry(unittest.TestCase):
         args_description = runtime.get("args", {}).get("arguments", {}).get("description", "")
 
         self.assertIn("never use process.run", description)
-        self.assertIn("process.run is argv-only", description)
-        self.assertIn("command/cmd/args shell-style forms are unsupported", args_description)
+        self.assertIn("process.run {argv:[...],cwd?,timeout_seconds?}", description)
+        self.assertIn("process.run never accepts command/cmd/args", args_description)
 
     def test_execute_tool_disabled_rejection(self):
         res = self.registry.execute_tool("apply_patch", {}, enabled_tools=["read_file"])
