@@ -339,8 +339,15 @@ class TurnEventBridge:
         self._cancel_task = task
 
         def clear(completed):
-            if self._cancel_task is completed:
-                self._cancel_task = None
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                self._deliver(TurnFailed(error=f"Cancellation failed: {exc}"))
+            finally:
+                if self._cancel_task is completed:
+                    self._cancel_task = None
 
         task.add_done_callback(clear)
         return task
