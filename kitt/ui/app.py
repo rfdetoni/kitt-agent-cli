@@ -12,6 +12,7 @@ import uuid
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, Optional, Tuple
 
 from kitt import __version__
 from kitt.core.turn_events import ApprovalRequired
