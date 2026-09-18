@@ -100,6 +100,19 @@ class TestPrimeRuntime(unittest.TestCase):
         events=asyncio.run(asyncio.wait_for(collect(), timeout=2.0))
         self.assertTrue(events)
 
+    def test_safe_runtime_prompt_scopes_capabilities_and_process_contract(self):
+        instructions = self.runtime.processor._tool_instructions(
+            ["kitt_runtime"],
+            planned_tools=["read_file", "run_command"],
+        )
+
+        self.assertIn("repo.read", instructions)
+        self.assertIn("process.run", instructions)
+        self.assertIn('"argv":["npm","run","build"]', instructions)
+        self.assertNotIn("repo.search", instructions)
+        self.assertNotIn("goal.inspect", instructions)
+        self.assertNotIn("live compact catalog", instructions)
+
     def test_general_tool_protocol_reads_then_continues(self):
         (self.root/"note.txt").write_text("important",encoding="utf-8")
         context=FakeClient('{"intent":"ASK","confidence":1.0}')
