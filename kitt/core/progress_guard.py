@@ -19,6 +19,16 @@ from kitt.core.turn_events import ToolCompleted, ToolStarted, TurnFailed
 
 
 _MAX_STALL_REDIRECTS = 2
+_FOCUSED_EXPLORATION_OPERATIONS = frozenset({
+    "repo.read",
+    "repo.read_symbol",
+    "repo.inspect_symbol",
+    "repo.definition",
+    "repo.hover",
+    "repo.diagnostics",
+    "repo.outline",
+    "artifacts.read",
+})
 _TERMINAL_EXPLORATION_ERROR_RE = re.compile(
     r"(?:unknown (?:runtime )?operation|not supported|unsupported|not available|"
     r"not granted|no such tool|does not allow|não permite|nao permite|"
@@ -86,7 +96,7 @@ class _ProgressAwareExecutionLedger:
         self.successful_validation_scopes: set[str] = set()
         self.pending_mutations: dict[str, str] = {}
         self.pending_validations: dict[str, tuple[str, str]] = {}
-        self.pending_explorations: dict[str, tuple[str, str]] = {}
+        self.pending_explorations: dict[str, tuple[str, str, bool]] = {}
         self.exploration_results: dict[str, tuple[str, int]] = {}
         self.explorations_since_progress = 0
 
@@ -116,7 +126,14 @@ class _ProgressAwareExecutionLedger:
         if exploration_signature is None:
             return None
 
-        if self.explorations_since_progress >= _base._MAX_EXPLORATIONS_WITHOUT_PROGRESS:
+        canonical = _canonical_exploration(event.tool_name, event.args)
+        operation = canonical[0] if canonical else str(event.tool_name or "").strip().lower()
+        counts_toward_stall = operation not in _FOCUSED_EXPLORATION_OPERATIONS
+
+        if (
+            counts_toward_stall
+            and self.explorations_since_progress >= _base._MAX_EXPLORATIONS_WITHOUT_PROGRESS
+        ):
             return (
                 "too many exploration calls without a successful mutation "
                 f"({_base._MAX_EXPLORATIONS_WITHOUT_PROGRESS} allowed)"
@@ -125,8 +142,6 @@ class _ProgressAwareExecutionLedger:
         previous = self.exploration_results.get(exploration_signature)
         previous_count = previous[1] if previous else 0
         if previous_count >= _base._MAX_IDENTICAL_EXPLORATIONS_WITHOUT_PROGRESS - 1:
-            canonical = _canonical_exploration(event.tool_name, event.args)
-            operation = canonical[0] if canonical else event.tool_name
             return (
                 "identical exploration repeated without progress: "
                 f"{operation} ({previous_count + 1} attempted times)"
@@ -135,6 +150,7 @@ class _ProgressAwareExecutionLedger:
         self.pending_explorations[event.call_id] = (
             exploration_signature,
             event.tool_name,
+            counts_toward_stall,
         )
         return None
 
@@ -163,7 +179,7 @@ class _ProgressAwareExecutionLedger:
                 self.successful_validation_scopes.add(validation_scope)
 
         if exploration_entry is not None:
-            exploration_signature, _ = exploration_entry
+            exploration_signature, _, counts_toward_stall = exploration_entry
             fingerprint = _result_fingerprint(event)
             previous = self.exploration_results.get(exploration_signature)
             count = previous[1] + 1 if previous and previous[0] == fingerprint else 1
@@ -177,7 +193,12 @@ class _ProgressAwareExecutionLedger:
                 )
 
             self.exploration_results[exploration_signature] = (fingerprint, count)
-            self.explorations_since_progress += 1
+            if counts_toward_stall:
+                self.explorations_since_progress += 1
+            elif event.success:
+                # Reading a concrete file/symbol is meaningful narrowing progress,
+                # even before the first mutation. Grant a fresh broad-discovery window.
+                self.explorations_since_progress = 0
 
         if new_mutation:
             self.exploration_results.clear()
