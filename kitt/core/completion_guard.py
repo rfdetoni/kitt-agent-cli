@@ -567,141 +567,16 @@ def _failed_mutation_retry_message(failed_mutations: dict[str, str]) -> str:
 
 
 def install_completion_guard(processor: Any, registry: Any, *, max_retries: int = 1) -> None:
-    """Install a bounded, progress-aware fail-closed completion check on a processor."""
-    if getattr(processor, "_completion_guard_installed", False):
-        return
+    """Install the canonical result-aware completion guard.
 
-    original_loop = processor._execute_tool_loop
-    retries_allowed = max(0, int(max_retries))
+    Verification helpers and contracts live in this module. Runtime loop wrapping
+    has a single implementation in :mod:`kitt.core.progress_guard`, imported
+    lazily here to avoid an import cycle while preserving one stable internal
+    entry point for runtime composition and tests.
+    """
+    from kitt.core.progress_guard import install_completion_guard as _install
 
-    def guarded_tool_loop(
-        self,
-        cmd,
-        request,
-        exe_profile,
-        exe_client,
-        workspace_id,
-        security_context,
-        agent_route=None,
-        **loop_kwargs,
-    ) -> Iterator:
-        current_request = request
-        recoveries = 0
-        last_recovery_revision = 0
-        ledger = _ExecutionProgressLedger()
-        failed_mutations: dict[str, str] = {}
-        mutation_required = requires_workspace_mutation(self, cmd)
-        task = getattr(getattr(self, "session_state", None), "last_task", None)
-        contract = build_completion_contract(str(getattr(cmd, "prompt", "") or ""), task)
-
-        while True:
-            terminal: tuple[str, list] | None = None
-            for event, response, messages in original_loop(
-                cmd,
-                current_request,
-                exe_profile,
-                exe_client,
-                workspace_id,
-                security_context,
-                agent_route=agent_route,
-                **loop_kwargs,
-            ):
-                if event is None and response is not None and messages is not None:
-                    terminal = (response, messages)
-                    continue
-
-                if isinstance(event, ToolStarted):
-                    stall = ledger.start(event)
-                    if stall and mutation_required:
-                        yield TurnFailed(
-                            error=(
-                                "Execution stalled: " + stall + ". The implementation requires "
-                                "forward progress; repeated read/list/search calls cannot complete it."
-                            )
-                        ), None, None
-                        return
-                elif isinstance(event, ToolCompleted):
-                    was_mutation = (
-                        event.call_id in ledger.pending_mutations
-                        or event.tool_name in _MUTATION_TOOLS
-                    )
-                    ledger.complete(event)
-                    if was_mutation:
-                        if event.success:
-                            failed_mutations.pop(event.tool_name, None)
-                        else:
-                            failed_mutations[event.tool_name] = event.error or "resultado sem detalhes"
-                yield event, response, messages
-
-            if terminal is None:
-                return
-
-            response, messages = terminal
-            missing = missing_claimed_workspace_files(registry.root_path, response)
-            mutation_missing = mutation_required and not ledger.successful_mutations
-            deferred_implementation = mutation_required and is_deferred_implementation_response(response)
-            contract_issues = (
-                contract.evaluate(
-                    registry.root_path,
-                    validation_succeeded=ledger.validation_succeeded,
-                    validated_scopes=ledger.validated_scopes,
-                )
-                if mutation_required and contract.enabled
-                else []
-            )
-
-            if (
-                not missing
-                and not failed_mutations
-                and not mutation_missing
-                and not deferred_implementation
-                and not contract_issues
-            ):
-                yield None, response, messages
-                return
-
-            progress_since_recovery = ledger.revision > last_recovery_revision
-            normal_budget_exhausted = recoveries >= retries_allowed
-            progress_budget_exhausted = recoveries >= _MAX_PROGRESS_RECOVERIES
-            if progress_budget_exhausted or (normal_budget_exhausted and not progress_since_recovery):
-                reasons: list[str] = []
-                if mutation_missing:
-                    reasons.append("the task required a workspace mutation but no mutation tool succeeded")
-                if deferred_implementation:
-                    reasons.append("the response deferred required implementation work back to the user")
-                if contract_issues:
-                    reasons.append("completion contract remains unsatisfied: " + "; ".join(contract_issues))
-                if missing:
-                    reasons.append("claimed files are still missing after recovery: " + ", ".join(missing))
-                if failed_mutations:
-                    reasons.append(
-                        "mutation tool failures remain: "
-                        + "; ".join(f"{name}: {error}" for name, error in failed_mutations.items())
-                    )
-                yield TurnFailed(error="Completion verification failed: " + "; ".join(reasons)), None, None
-                return
-
-            recoveries += 1
-            last_recovery_revision = ledger.revision
-            retry_messages = list(messages)
-            recovery_parts: list[str] = []
-            if mutation_missing or deferred_implementation:
-                recovery_parts.append(_required_mutation_retry_message())
-            if contract_issues:
-                recovery_parts.append(_contract_retry_message(contract_issues))
-            if missing:
-                recovery_parts.append(_claimed_files_retry_message(missing))
-            if failed_mutations:
-                recovery_parts.append(_failed_mutation_retry_message(failed_mutations))
-            retry_messages.extend([
-                {"role": "assistant", "content": response},
-                {"role": "user", "content": "\n\n".join(recovery_parts)},
-            ])
-            current_request = replace(request, messages=retry_messages)
-
-    processor._execute_tool_loop = MethodType(guarded_tool_loop, processor)
-    processor._completion_guard_installed = True
-
+    _install(processor, registry, max_retries=max_retries)
 
 __all__ = [
     "CompletionContract",
