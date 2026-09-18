@@ -93,15 +93,42 @@ class CompletionGuardTests(unittest.TestCase):
             self.assertEqual(processor.calls, 2)
             self.assertFalse(any(isinstance(item[0], TurnFailed) for item in items))
 
-    def test_guard_accepts_and_forwards_agent_route(self):
+    def test_guard_keeps_route_in_request_without_forwarding_route_kwarg(self):
         with tempfile.TemporaryDirectory() as temp:
-            processor = _Processor(temp, recover=True)
+            class LegacyProcessor(_Processor):
+                def _execute_tool_loop(
+                    self, cmd, request, exe_profile, exe_client, workspace_id,
+                    security_context
+                ):
+                    self.calls += 1
+                    self.agent_routes.append(request.agent_route)
+                    if self.calls == 1:
+                        yield (
+                            None,
+                            "Diretório scriptContext/ criado e script "
+                            "scriptContext/generate_context.py implementado.",
+                            list(request.messages),
+                        )
+                        return
+
+                    self.assert_retry_contract(request)
+                    target = self.root / "scriptContext" / "generate_context.py"
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text("print('context')\n", encoding="utf-8")
+                    yield (
+                        None,
+                        "scriptContext/generate_context.py implementado com sucesso.",
+                        list(request.messages),
+                    )
+
+            processor = LegacyProcessor(temp, recover=True)
             registry = _Registry(temp)
             install_completion_guard(processor, registry)
             request = ExecutionRequest(
                 system_prompt="test",
                 messages=[{"role": "user", "content": "crie o script"}],
                 enabled_tools=["kitt_runtime"],
+                agent_route="code-generation",
             )
 
             list(
@@ -112,7 +139,6 @@ class CompletionGuardTests(unittest.TestCase):
                     object(),
                     "workspace",
                     object(),
-                    agent_route="code-generation",
                 )
             )
 
