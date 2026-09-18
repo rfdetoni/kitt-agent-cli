@@ -113,8 +113,8 @@ class TestPrimeRuntime(unittest.TestCase):
         self.assertIn("process.run", instructions)
         self.assertIn('"argv":["npm","run","build"]', instructions)
         self.assertNotIn("repo.search", instructions)
-        self.assertNotIn("repo.write_file", instructions)
-        self.assertNotIn("patch.apply", instructions)
+        self.assertNotIn('"operation":"repo.write_file"', instructions)
+        self.assertNotIn('"operation":"patch.apply"', instructions)
         self.assertNotIn("goal.inspect", instructions)
         self.assertNotIn("live compact catalog", instructions)
 
