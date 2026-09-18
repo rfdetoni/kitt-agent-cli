@@ -2528,7 +2528,7 @@ class KittUIApp:
             ("class:primary", "██║  ██╗    ██║       ██║         ██║   \n"),
             ("class:primary", "╚═╝  ╚═╝    ╚═╝       ╚═╝         ╚═╝   \n"),
             ("class:primary", "K.I.T.T. "),
-            ("class:text.muted", f"— Knowledge & Inference Task Tool • v{__version__}\n"),
+            ("class:text.muted", f"— Knowledge & Inference Task Tool • v{_agent_version()}\n"),
             ("class:accent", f"{self.state.workspace_path}\n"),
             ("class:text.muted", f"Models: {self.state.small_model} (Context) • {self.state.large_model} (Execute)")
         ]
