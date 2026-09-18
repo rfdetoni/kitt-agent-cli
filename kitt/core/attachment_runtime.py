@@ -103,9 +103,7 @@ def install_attachment_runtime(processor: Any) -> None:
         agent_route=None,
         **loop_kwargs,
     ) -> Iterator:
-        legacy_route = agent_route or loop_kwargs.pop("agent_route", None)
-        if legacy_route and not getattr(request, "agent_route", None):
-            request = replace(request, agent_route=legacy_route)
+        loop_kwargs.pop("agent_route", None)
         attachments = tuple(self._attachment_paths_by_turn.get(cmd.turn_id, ()))
         if attachments and not _is_kitt_reverse_proxy(exe_client):
             raise AttachmentError(
