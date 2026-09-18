@@ -73,22 +73,14 @@ class ToolRegistry(_core.ToolRegistry):
                 # that prevents common misrouting (artifact storage vs workspace
                 # writes, or unified diff vs SEARCH/REPLACE patches).
                 tool["description"] = (
-                    "repo.write_file {path,content} with normal language/project indentation; "
-                    "patch.apply never unified diff; process.run is argv-only: "
-                    "{argv:[\"executable\",\"arg\"],cwd?:\"relative/path\",timeout_seconds?:120}; "
-                    "never use process.run or shell redirection to create/edit files; "
-                    "artifacts.store internal only."
+                    "Safe runtime. process.run {argv:[...],cwd?,timeout_seconds?}; "
+                    "argv-only/no shell; file edits use repo.write_file or patch.apply."
                 )
                 tool["args"] = {
-                    "operation": "runtime operation name",
+                    "operation": "runtime operation",
                     "arguments": {
                         "type": "object",
-                        "description": (
-                            "repo.write_file {path,content}; preserve normal indentation/newlines; "
-                            "patch.apply not unified diff; process.run accepts argv, optional cwd "
-                            "and timeout_seconds only for execution semantics (plus output token budget); "
-                            "command/cmd/args shell-style forms are unsupported."
-                        ),
+                        "description": "Operation args; process.run never accepts command/cmd/args.",
                     },
                 }
         return tools
