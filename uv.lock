@@ -42,7 +42,7 @@ wheels = [
 
 [[package]]
 name = "kitt-agent-cli"
-version = "0.41.6"
+version = "0.46.7"
 source = { editable = "." }
 dependencies = [
     { name = "prompt-toolkit" },
