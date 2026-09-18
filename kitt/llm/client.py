@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import logging
 import threading
 import urllib.request
 import uuid
 from typing import Dict, Generator, List, Optional
 
 from kitt.domain.entities import ModelProfile
+from kitt.core.logging import trace_event
 from kitt.llm.agent_contract import (
     AGENT_CONTRACT_HEADER,
     AGENT_CONTRACT_VERSION,
@@ -39,6 +41,9 @@ from kitt.llm.registry import ProviderRegistry
 from kitt.llm.retry import RetryConfig, RetryPolicy
 from kitt.prompts import normalize_execution_system_prompt
 from kitt.router.models import ModelCapabilities
+
+
+logger = logging.getLogger(__name__)
 
 
 LLMError = ProviderError
@@ -345,6 +350,62 @@ class LLMClient:
             timeout_seconds=self.profile.request_timeout_seconds,
             extra_headers=extra_headers,
         )
-        yield from self.retry_policy.execute_with_retry(
-            lambda: adapter.stream(request)
+        trace_event(
+            logger,
+            "llm.request",
+            backend=backend,
+            protocol=self.profile.protocol,
+            model=self.profile.model,
+            base_url=self.profile.base_url,
+            route=extra_headers.get(AGENT_ROUTE_HEADER),
+            session_key=session_key,
+            system_prompt=system_prompt,
+            messages=messages,
+            response_format=response_format,
+            temperature=self.profile.temperature,
+            context_window=self.profile.context_window,
+            max_output_tokens=self.profile.max_output_tokens,
+            timeout_seconds=self.profile.request_timeout_seconds,
+            extra_headers=extra_headers,
+            api_key=api_key,
         )
+
+        chunks = []
+        try:
+            for chunk in self.retry_policy.execute_with_retry(
+                lambda: adapter.stream(request)
+            ):
+                chunks.append(chunk)
+                trace_event(
+                    logger,
+                    "llm.response.chunk",
+                    backend=backend,
+                    protocol=self.profile.protocol,
+                    model=self.profile.model,
+                    route=extra_headers.get(AGENT_ROUTE_HEADER),
+                    chunk=chunk,
+                )
+                yield chunk
+        except Exception as exc:
+            trace_event(
+                logger,
+                "llm.response.error",
+                backend=backend,
+                protocol=self.profile.protocol,
+                model=self.profile.model,
+                route=extra_headers.get(AGENT_ROUTE_HEADER),
+                error=exc,
+                partial_response="".join(chunks),
+            )
+            raise
+        finally:
+            trace_event(
+                logger,
+                "llm.response.complete",
+                backend=backend,
+                protocol=self.profile.protocol,
+                model=self.profile.model,
+                route=extra_headers.get(AGENT_ROUTE_HEADER),
+                response="".join(chunks),
+                chunk_count=len(chunks),
+            )
