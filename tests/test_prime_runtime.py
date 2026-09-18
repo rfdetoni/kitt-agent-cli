@@ -112,8 +112,12 @@ class TestPrimeRuntime(unittest.TestCase):
         execution=SequenceClient()
         self.runtime.processor.context_client=context; self.runtime.processor.execution_client=execution
         events=list(self.runtime.processor.run_turn(TurnCommand(self.conv["id"],"read note")))
-        self.assertEqual(execution.calls,2)
-        self.assertTrue(any(getattr(e,"response","")=="done" for e in events))
+        event_trace = [
+            (type(event).__name__, getattr(event, "error", None), getattr(event, "reason", None))
+            for event in events
+        ]
+        self.assertEqual(execution.calls, 2, event_trace)
+        self.assertTrue(any(getattr(e,"response","")=="done" for e in events), event_trace)
 
     def test_expired_and_mismatched_approval_fail_closed(self):
         from kitt.core.pending_action import PendingAction
