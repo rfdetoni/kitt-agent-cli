@@ -1,7 +1,7 @@
 import unittest
 
 from kitt.core import completion_guard as base_guard
-from kitt.core.progress_guard import _ProgressAwareExecutionLedger
+from kitt.core.completion_guard import _ExecutionProgressLedger
 from kitt.core.turn_events import ToolCompleted, ToolStarted
 
 
@@ -24,7 +24,7 @@ class ProgressGuardRedirectBudgetTests(unittest.TestCase):
         )
 
     def test_redirect_renews_aggregate_exploration_window(self):
-        ledger = _ProgressAwareExecutionLedger()
+        ledger = _ExecutionProgressLedger()
 
         for index in range(base_guard._MAX_EXPLORATIONS_WITHOUT_PROGRESS):
             call_id = f"read-{index}"
@@ -40,7 +40,7 @@ class ProgressGuardRedirectBudgetTests(unittest.TestCase):
         self.assertIsNone(ledger.start(blocked))
 
     def test_redirect_keeps_identical_exploration_history(self):
-        ledger = _ProgressAwareExecutionLedger()
+        ledger = _ExecutionProgressLedger()
         path = "src/same.py"
 
         for index in range(base_guard._MAX_IDENTICAL_EXPLORATIONS_WITHOUT_PROGRESS - 1):
