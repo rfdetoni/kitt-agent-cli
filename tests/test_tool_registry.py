@@ -1,3 +1,4 @@
+import sys
 import unittest
 import tempfile
 from pathlib import Path
@@ -31,7 +32,8 @@ class TestToolRegistry(unittest.TestCase):
         args_description = runtime.get("args", {}).get("arguments", {}).get("description", "")
 
         self.assertIn("never use process.run", description)
-        self.assertIn("never a substitute for workspace file writes", args_description)
+        self.assertIn("process.run is argv-only", description)
+        self.assertIn("command/cmd/args shell-style forms are unsupported", args_description)
 
     def test_execute_tool_disabled_rejection(self):
         res = self.registry.execute_tool("apply_patch", {}, enabled_tools=["read_file"])
@@ -39,9 +41,59 @@ class TestToolRegistry(unittest.TestCase):
         self.assertIn("not enabled", res.error)
 
     def test_execute_tool_policy_denial(self):
-        res = self.registry.execute_tool("run_command", {"command": "rm -rf /"}, enabled_tools=["run_command"])
+        res = self.registry.execute_tool(
+            "run_command",
+            {"argv": ["rm", "-rf", "/"]},
+            enabled_tools=["run_command"],
+        )
         self.assertFalse(res.success)
         self.assertIn("denied by PolicyEngine", res.error)
+
+    def test_run_command_rejects_legacy_command_contract(self):
+        res = self.registry.execute_tool(
+            "run_command",
+            {"command": "pwd"},
+            enabled_tools=["run_command"],
+        )
+        self.assertFalse(res.success)
+        self.assertIn("denied by PolicyEngine", res.error)
+
+    def test_run_command_uses_argv_and_workspace_cwd(self):
+        workdir = self.root_path / "frontend"
+        workdir.mkdir()
+        self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+
+        res = self.registry.execute_tool(
+            "run_command",
+            {
+                "argv": [
+                    sys.executable,
+                    "-c",
+                    "import os; print(os.path.basename(os.getcwd()))",
+                ],
+                "cwd": "frontend",
+                "timeout_seconds": 30,
+            },
+            enabled_tools=["run_command"],
+        )
+
+        self.assertTrue(res.success, res.error)
+        self.assertEqual(res.output.strip(), "frontend")
+
+    def test_run_command_rejects_cwd_escape(self):
+        self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+
+        res = self.registry.execute_tool(
+            "run_command",
+            {
+                "argv": [sys.executable, "-c", "print('never')"],
+                "cwd": "..",
+            },
+            enabled_tools=["run_command"],
+        )
+
+        self.assertFalse(res.success)
+        self.assertIn("inside the workspace", res.error)
 
     def test_read_file_tool(self):
         f = self.root_path / "sample.py"
