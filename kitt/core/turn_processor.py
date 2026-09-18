@@ -1101,6 +1101,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                            exe_client: LLMClient, workspace_id: str,
                            security_context: ExecutionSecurityContext,
                            agent_route: Optional[str] = None) -> Iterator:
+        effective_agent_route = request.agent_route or agent_route
         execution_messages = list(request.messages)
         full_response = ""
         max_python_calls = 2
@@ -1127,7 +1128,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 turn_id=cmd.turn_id,
                 started_at=thinking_started_at,
                 session_key=self._provider_session_key(exe_profile, cmd.conversation_id),
-                route=agent_route,
+                route=effective_agent_route,
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)
@@ -1795,9 +1796,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             full_response = ""
             execution_messages = []
             agent_route = self._agent_route_for_task(task, cmd.mode, cmd.prompt)
+            request = replace(request, agent_route=agent_route)
             for ev, resp, msgs in self._execute_tool_loop(
                 cmd, request, exe_profile, exe_client, workspace_id, security_context,
-                agent_route=agent_route,
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)
