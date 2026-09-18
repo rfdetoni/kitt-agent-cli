@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import time
 from dataclasses import replace
 from types import MethodType
@@ -391,20 +390,6 @@ def install_agent_engineering(processor, registry) -> None:
             data.setdefault("conversation_id", context[1])
         return original_emit(event_name, data)
     processor._emit = MethodType(correlated_emit, processor)
-
-    original_instructions = processor._tool_instructions
-    def instructions(self, enabled_tools):
-        text = original_instructions(enabled_tools)
-        if enabled_tools and "kitt_runtime" in enabled_tools:
-            try:
-                compact = str(registry.get_tool_definitions(["kitt_runtime"])[0]["args"]["operation"])
-                text = re.sub(r"Supported operations:.*?(?=\nRULES:)",
-                              f"Supported operations (live compact catalog): {compact}\n",
-                              text, flags=re.DOTALL)
-            except Exception:
-                pass
-        return text
-    processor._tool_instructions = MethodType(instructions, processor)
 
     original_build = processor._build_context
     def build_context(self, cmd, task, plan, exe_profile, sf_client):
