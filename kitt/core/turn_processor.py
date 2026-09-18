@@ -12,7 +12,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Iterator
-from kitt.domain.entities import EditResult
+from kitt.domain.entities import ContextPlan, EditResult, ModelProfile, SemanticTask
 from kitt.router.router import TaskRouter
 from kitt.router.features import TaskFeatureExtractor
 from kitt.router.models import ModelCapabilities
