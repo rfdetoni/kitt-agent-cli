@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from kitt.artifacts.store import ArtifactStore
 from kitt.children.manager import ChildAgentManager
@@ -41,6 +41,9 @@ from kitt.skills.skill_manager import SkillManager
 from kitt.tools.approval import ApprovalManager
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from kitt.extensions.manager import ExtensionManager
 
 
 @dataclass
