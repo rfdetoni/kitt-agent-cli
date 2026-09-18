@@ -130,7 +130,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                     "turn_test", "conv_test", "ws_test", action_hash, approval_id
                 )
                 approved = reg_sup.execute_tool(
-                    "run_command", {"command": command}, turn_id="turn_test",
+                    "run_command", run_args, turn_id="turn_test",
                     conversation_id="conv_test", workspace_id="ws_test",
                     origin="MODEL", grant=grant, expected_approval_id=approval_id,
                     security_context=sec_ctx,
@@ -162,7 +162,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                     root_dir=tmpdir, autonomy=AutonomyPolicy.preset("read_only")
                 )
                 res_ro = reg_ro.execute_tool(
-                    "run_command", {"command": command}, turn_id="turn_test",
+                    "run_command", run_args, turn_id="turn_test",
                     conversation_id="conv_test", workspace_id="ws_test",
                     origin="MODEL", security_context=sec_ctx,
                 )
@@ -182,7 +182,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                     conversation_id="conv_test", tool_registry=reg_ro,
                 )
                 res_rt_ro = rt_ro.execute(
-                    "process.run", {"command": command}, turn_id="turn_test",
+                    "process.run", run_args, turn_id="turn_test",
                     origin="MODEL", security_context=sec_ctx,
                 )
                 self.assertFalse(res_rt_ro.success)
