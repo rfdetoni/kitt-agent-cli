@@ -165,11 +165,11 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(open_url.call_args.args[0].full_url, "http://localhost:1234/v1/models")
 
     async def test_direct_command_approval_executes_after_allow(self):
-        await self.ui._execute_command("/run echo verified")
+        await self.ui._execute_command("/run python --version")
         self.assertEqual(self.ui.state.active_overlay, "permission")
         self.assertTrue(self.ui.state.pending_approval.get("direct_tool") or self.ui.state.pending_approval.get("approval_id"))
         await self.ui.resolve_approval(True)
-        self.assertIn("verified", self.ui.state.transcript[-1].text)
+        self.assertIn("Python", self.ui.state.transcript[-1].text)
 
     async def test_direct_command_denial_does_not_execute(self):
         await self.ui._execute_command("/run echo must-not-run")

@@ -100,6 +100,35 @@ class TestPrimeRuntime(unittest.TestCase):
         events=asyncio.run(asyncio.wait_for(collect(), timeout=2.0))
         self.assertTrue(events)
 
+    def test_safe_runtime_prompt_scopes_capabilities_and_process_contract(self):
+        from kitt.llm.providers.kitt_reverse_proxy import extract_openai_tools
+
+        planned_tools = ["read_file", "run_command"]
+        instructions = self.runtime.processor._tool_instructions(
+            ["kitt_runtime"],
+            planned_tools=planned_tools,
+        )
+
+        self.assertIn("repo.read", instructions)
+        self.assertIn("process.run", instructions)
+        self.assertIn('"argv":["npm","run","build"]', instructions)
+        self.assertNotIn("repo.search", instructions)
+        self.assertNotIn('"operation":"repo.write_file"', instructions)
+        self.assertNotIn('"operation":"patch.apply"', instructions)
+        self.assertNotIn("goal.inspect", instructions)
+        self.assertNotIn("live compact catalog", instructions)
+
+        native_tools = extract_openai_tools(instructions)
+        self.assertEqual(len(native_tools), 1)
+        operation_enum = native_tools[0]["function"]["parameters"]["properties"]["operation"]["enum"]
+        self.assertEqual(
+            operation_enum,
+            list(self.runtime.processor._runtime_operations_for_tools(planned_tools)),
+        )
+        self.assertNotIn("repo.search", operation_enum)
+        self.assertNotIn("repo.write_file", operation_enum)
+        self.assertNotIn("goal.inspect", operation_enum)
+
     def test_general_tool_protocol_reads_then_continues(self):
         (self.root/"note.txt").write_text("important",encoding="utf-8")
         context=FakeClient('{"intent":"ASK","confidence":1.0}')

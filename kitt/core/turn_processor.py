@@ -480,26 +480,77 @@ class TurnProcessor:
         raw = json.dumps(args, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def _tool_instructions(self, enabled_tools) -> str:
+    @staticmethod
+    def _runtime_operations_for_tools(planned_tools) -> tuple[str, ...]:
+        """Expose only runtime operations authorized by the turn's planned capabilities."""
+        from kitt.runtime.core_runtime import OPERATION_SPECS
+
+        capabilities = capabilities_for_tools(planned_tools or [])
+        preferred_order = (
+            "repo.read", "repo.list", "repo.search", "repo.inspect_symbol",
+            "repo.read_symbol", "repo.references", "repo.edit_symbol",
+            "repo.write_file", "repo.create_directory", "patch.apply",
+            "process.run", "artifacts.store", "artifacts.read",
+            "children.spawn", "children.send", "children.inspect",
+            "goal.inspect", "goal.update", "memory.query", "memory.correct",
+            "memory.concept", "memory.link", "state.get", "state.set",
+            "state.list", "handles.resolve",
+        )
+        allowed = []
+        for name in preferred_order:
+            spec = OPERATION_SPECS.get(name)
+            if spec is None:
+                continue
+            if spec.required_capability is None or spec.required_capability in capabilities:
+                allowed.append(name)
+        return tuple(allowed)
+
+    def _tool_instructions(self, enabled_tools, planned_tools=None) -> str:
         if not enabled_tools:
             return "No host tools are enabled. Answer directly."
 
         if "kitt_runtime" in enabled_tools and len(enabled_tools) == 1:
+            operations = self._runtime_operations_for_tools(planned_tools or enabled_tools)
+            operations_text = ", ".join(operations) or "(none)"
+
+            runtime_definition = dict(
+                self.registry.get_tool_definitions(["kitt_runtime"])[0]
+            )
+            runtime_args = dict(runtime_definition.get("args") or {})
+            runtime_args["operation"] = {
+                "type": "string",
+                "enum": list(operations),
+            }
+            runtime_definition["args"] = runtime_args
+
+            examples = []
+            if "repo.read" in operations:
+                examples.append("""To read a file:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"repo.read","arguments":{"path":"path.ext","start_line":1,"end_line":100}}}
+</kitt-tool>""")
+            if "repo.write_file" in operations:
+                examples.append("""To create or replace a file, use repo.write_file:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"repo.write_file","arguments":{"path":"path/to/file.ext","content":"complete file content"}}}
+</kitt-tool>""")
+            if "patch.apply" in operations:
+                examples.append("""To edit an existing file, patch.apply uses SEARCH/REPLACE blocks:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"patch.apply","arguments":{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original text\\n=======\\nreplacement content\\n>>>>>>> REPLACE"}}}
+</kitt-tool>""")
+            if "process.run" in operations:
+                examples.append("""To run a build/test/validation command, process.run is argv-only and never invokes a shell:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"process.run","arguments":{"argv":["npm","run","build"],"cwd":"frontend","timeout_seconds":120}}}
+</kitt-tool>
+Do not use command, cmd, args, sh -c, bash -c, cmd.exe /c, PowerShell, redirection, pipes, or &&.""")
+            examples_text = "\n".join(examples)
+
             return f"""
-Available host tool: {self.registry.get_tool_definitions(["kitt_runtime"])}
-To call the safe runtime, respond with exactly:
-<kitt-tool>
-{{"name":"kitt_runtime","arguments":{{"operation":"repo.read","arguments":{{"path":"path.ext","start_line":1,"end_line":100}}}}}}
-</kitt-tool>
-To create a file, use repo.write_file (it creates parent directories):
-<kitt-tool>
-{{"name":"kitt_runtime","arguments":{{"operation":"repo.write_file","arguments":{{"path":"path/to/file.ext","content":"complete file content"}}}}}}
-</kitt-tool>
-To edit an existing file, patch.apply requires one or more complete SEARCH/REPLACE blocks inside arguments.patch:
-<kitt-tool>
-{{"name":"kitt_runtime","arguments":{{"operation":"patch.apply","arguments":{{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original text, or empty for a new file\\n=======\\nreplacement content\\n>>>>>>> REPLACE"}}}}}}
-</kitt-tool>
-Supported operations: repo.read, repo.list, repo.search, repo.inspect_symbol, repo.read_symbol, repo.references, repo.edit_symbol, repo.write_file, repo.create_directory, patch.apply, process.run, artifacts.store, artifacts.read, children.spawn, children.send, children.inspect, goal.inspect, goal.update, memory.query, memory.correct, memory.concept, memory.link, state.get, state.set, state.list, handles.resolve.
+Available host tool: {[runtime_definition]}
+{examples_text}
+Supported operations for this turn: {operations_text}.
 RULES:
 - Never use process.run, shell redirection, printf, cat, echo, heredocs, or mkdir to create/edit workspace files. Use repo.write_file, repo.create_directory, or patch.apply instead.
 1. Focus strictly on user request.
@@ -1006,7 +1057,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         use_agent_prompt = bool(plan.enabled_tools) or agent_addressed
         tools_for_contract = exposed_tools if exposed_tools is not None else plan.enabled_tools
         if plan.enabled_tools:
-            tool_contract = self._tool_instructions(tools_for_contract)
+            tool_contract = self._tool_instructions(
+                tools_for_contract,
+                planned_tools=plan.enabled_tools,
+            )
             base_sys = (
                 f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
                 f"Tool Contract:\n{tool_contract}\n\n"

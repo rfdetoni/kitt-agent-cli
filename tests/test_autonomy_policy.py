@@ -1,3 +1,4 @@
+import sys
 import unittest
 from kitt.core.autonomy_policy import AutonomyPolicy
 from kitt.tools.policy_engine import PolicyEngine
@@ -26,7 +27,7 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertEqual(AutonomyPolicy.preset("deny").level, "read_only")
 
     def test_run_command_menu_modes(self):
-        command = {"command": "git status"}
+        command = {"argv": ["git", "status"]}
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("allow_all")).evaluate_tool("run_command", command), "ALLOW")
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("ask")).evaluate_tool("run_command", command), "ASK")
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("deny")).evaluate_tool("run_command", command), "DENY")
@@ -36,7 +37,7 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertEqual(engine.evaluate_tool("read_file", {"path": "src/app.py"}), "ALLOW")
         self.assertEqual(engine.evaluate_tool("write_file", {"path": "src/app.py"}), "DENY")
         self.assertEqual(engine.evaluate_tool("apply_patch", {"patch": "diff"}), "DENY")
-        self.assertEqual(engine.evaluate_tool("run_command", {"command": "pytest"}), "DENY")
+        self.assertEqual(engine.evaluate_tool("run_command", {"argv": ["pytest"]}), "DENY")
 
     def test_from_dict_preserves_flag_overrides(self):
         policy = AutonomyPolicy.from_dict({"level": "read_only", "allow_run_command_auto": True})
@@ -52,7 +53,7 @@ class TestAutonomyPolicy(unittest.TestCase):
             for tool_name, args in [
                 ("apply_patch", {"patch": "diff"}),
                 ("write_file", {"path": "test.txt", "content": "x"}),
-                ("run_command", {"command": "pytest"}),
+                ("run_command", {"argv": ["pytest"]}),
                 ("child_spawn", {"task": "sub"}),
                 ("read_file", {"path": "test.txt"}),
             ]:
@@ -60,12 +61,17 @@ class TestAutonomyPolicy(unittest.TestCase):
                 res_ui = engine.evaluate_tool(tool_name, args, origin="UI")
                 self.assertEqual(res_model, res_ui, f"Mismatch for {tool_name} at {level}: MODEL={res_model}, UI={res_ui}")
 
-    def test_suspicious_commands_follow_repository_autonomy(self):
+    def test_dangerous_process_argv_is_always_denied(self):
+        commands = (
+            ["cat", "/etc/passwd"],
+            ["rm", "-rf", "/"],
+            ["git", "push"],
+            ["sh", "-c", "git status; rm -rf ."],
+        )
         for level in ("read_only", "supervised", "balanced", "autonomous"):
             engine = PolicyEngine(autonomy=AutonomyPolicy.preset(level))
-            expected = "DENY" if level == "read_only" else "ALLOW" if level == "autonomous" else "ASK"
-            for command in ("cat /etc/passwd", "rm -rf /", "git push", "git status; rm -rf ."):
-                self.assertEqual(engine.evaluate_tool("run_command", {"command": command}), expected)
+            for argv in commands:
+                self.assertEqual(engine.evaluate_tool("run_command", {"argv": argv}), "DENY")
 
     def test_rtk_proxy_evaluation(self):
         engine = PolicyEngine()
@@ -93,7 +99,9 @@ class TestAutonomyPolicy(unittest.TestCase):
                 # Use a command with identical semantics on GitHub-hosted Linux,
                 # macOS and Windows runners. `find` is a different executable on
                 # Windows and made the approval test platform-dependent.
-                command = 'python -c "print(\'ok\')"'
+                run_args = {
+                    "argv": [sys.executable, "-c", "print('ok')"],
+                }
                 sec_ctx = ExecutionSecurityContext.from_dict({
                     "workspace_id": "ws_test",
                     "conversation_id": "conv_test",
@@ -106,7 +114,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                 })
 
                 res_sup = reg_sup.execute_tool(
-                    "run_command", {"command": command}, turn_id="turn_test",
+                    "run_command", run_args, turn_id="turn_test",
                     conversation_id="conv_test", workspace_id="ws_test",
                     origin="MODEL", security_context=sec_ctx,
                 )
@@ -114,7 +122,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                 self.assertTrue(res_sup.requires_approval)
 
                 approval_id = "req_command"
-                action_hash = reg_sup.policy.generate_action_hash("run_command", {"command": command})
+                action_hash = reg_sup.policy.generate_action_hash("run_command", run_args)
                 reg_sup.approval_manager.register_request(
                     "turn_test", "conv_test", "ws_test", action_hash, approval_id, "run_command"
                 )
@@ -122,7 +130,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                     "turn_test", "conv_test", "ws_test", action_hash, approval_id
                 )
                 approved = reg_sup.execute_tool(
-                    "run_command", {"command": command}, turn_id="turn_test",
+                    "run_command", run_args, turn_id="turn_test",
                     conversation_id="conv_test", workspace_id="ws_test",
                     origin="MODEL", grant=grant, expected_approval_id=approval_id,
                     security_context=sec_ctx,
@@ -142,7 +150,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                     conversation_id="conv_test", tool_registry=reg_sup,
                 )
                 approved_runtime = rt_sup.execute(
-                    "process.run", {"command": command}, turn_id="runtime_turn",
+                    "process.run", run_args, turn_id="runtime_turn",
                     origin="MODEL", security_context=sec_ctx,
                     approval_grant=runtime_grant,
                     expected_approval_id=runtime_approval_id,
@@ -154,7 +162,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                     root_dir=tmpdir, autonomy=AutonomyPolicy.preset("read_only")
                 )
                 res_ro = reg_ro.execute_tool(
-                    "run_command", {"command": command}, turn_id="turn_test",
+                    "run_command", run_args, turn_id="turn_test",
                     conversation_id="conv_test", workspace_id="ws_test",
                     origin="MODEL", security_context=sec_ctx,
                 )
@@ -162,7 +170,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                 self.assertFalse(res_ro.requires_approval)
 
                 res_rt_sup = rt_sup.execute(
-                    "process.run", {"command": command}, turn_id="turn_test",
+                    "process.run", run_args, turn_id="turn_test",
                     origin="MODEL", security_context=sec_ctx,
                 )
                 self.assertFalse(res_rt_sup.success)
@@ -174,7 +182,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                     conversation_id="conv_test", tool_registry=reg_ro,
                 )
                 res_rt_ro = rt_ro.execute(
-                    "process.run", {"command": command}, turn_id="turn_test",
+                    "process.run", run_args, turn_id="turn_test",
                     origin="MODEL", security_context=sec_ctx,
                 )
                 self.assertFalse(res_rt_ro.success)

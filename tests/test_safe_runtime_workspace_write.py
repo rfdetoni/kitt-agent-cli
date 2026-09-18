@@ -236,17 +236,19 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
             try:
                 definition = registry.get_tool_definitions(["kitt_runtime"])[0]
                 description = definition["description"]
-                self.assertIn("repo.write_file {path,content}", description)
-                self.assertIn("never unified diff", description)
-                self.assertIn("artifacts.store", description)
+                self.assertIn("process.run {argv:[...],cwd?,timeout_seconds?}", description)
+                self.assertIn("argv-only/no shell", description)
+                self.assertIn("repo.write_file or patch.apply", description)
                 self.assertEqual(
                     definition["args"]["operation"],
-                    "runtime operation name",
+                    "runtime operation",
                 )
                 argument_schema = definition["args"]["arguments"]
                 self.assertEqual(argument_schema["type"], "object")
-                self.assertIn("repo.write_file {path,content}", argument_schema["description"])
-                self.assertIn("not unified diff", argument_schema["description"])
+                self.assertIn(
+                    "process.run never accepts command/cmd/args",
+                    argument_schema["description"],
+                )
 
                 tools = extract_openai_tools(f"Available host tools: {[definition]}")
                 native = tools[0]["function"]["parameters"]
@@ -254,9 +256,13 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                     "repo.write_file",
                     native["properties"]["operation"]["enum"],
                 )
+                self.assertIn(
+                    "process.run",
+                    native["properties"]["operation"]["enum"],
+                )
                 self.assertEqual(native["properties"]["arguments"]["type"], "object")
                 self.assertIn(
-                    "repo.write_file {path,content}",
+                    "process.run never accepts command/cmd/args",
                     native["properties"]["arguments"]["description"],
                 )
             finally:

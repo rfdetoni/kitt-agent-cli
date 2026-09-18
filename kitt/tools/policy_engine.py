@@ -25,6 +25,10 @@ class PolicyEngine:
         "cat", "find", "sudo", "chmod", "chown", "dd", "mkfs",
         "curl", "wget", "nc", "netcat", "rm",
     }
+    DISALLOWED_PROCESS_EXECUTABLES = frozenset({
+        "sh", "bash", "zsh", "fish", "dash", "cmd", "cmd.exe",
+        "powershell", "powershell.exe", "pwsh", "pwsh.exe",
+    })
     DENIED_GIT_FLAGS = {
         "--no-index", "-C", "--git-dir", "--work-tree", "--exec-path",
         "--config-env",
@@ -81,7 +85,7 @@ class PolicyEngine:
             if tool_name == "kitt_runtime" or tool_name in read_tools:
                 return "ALLOW"
             if tool_name == "run_command":
-                decision = self.evaluate_command(str(args.get("command", "")).strip())
+                decision = self.evaluate_argv(args.get("argv"))
                 if decision == "DENY":
                     return "DENY"
                 return (
@@ -122,8 +126,8 @@ class PolicyEngine:
                 return "DENY"
 
         if tool_name == "run_command":
-            command = str(args.get("command", "")).strip()
-            if not command or "\x00" in command or len(command) > 65536:
+            command_decision = self.evaluate_argv(args.get("argv"))
+            if command_decision == "DENY":
                 return "DENY"
             # Repository autonomy is user-owned; model commands cannot change it.
             return "ALLOW" if getattr(self.autonomy, "allow_run_command_auto", False) else "ASK"
@@ -150,8 +154,7 @@ class PolicyEngine:
         ):
             return "ALLOW"
         if tool_name == "run_command":
-            command = str(args.get("command", "")).strip()
-            command_decision = self.evaluate_command(command)
+            command_decision = self.evaluate_argv(args.get("argv"))
             if command_decision == "DENY":
                 return "DENY"
             if getattr(self.autonomy, "allow_run_command_auto", False):
@@ -164,9 +167,7 @@ class PolicyEngine:
         return base
 
     def evaluate_command_request(self, req: CommandRequest) -> Permission:
-        if not req.argv:
-            return "DENY"
-        return self.evaluate_command(" ".join(shlex.quote(arg) for arg in req.argv))
+        return self.evaluate_argv(req.argv)
 
     def _path_arg_safe(self, arg: str) -> bool:
         if arg.startswith(("/", "..", "~")):
@@ -242,8 +243,6 @@ class PolicyEngine:
         subcmd = argv[1].lower()
         args = argv[2:]
 
-        # Options with values are deliberately narrow. Unknown forms are ASK,
-        # never ALLOW.
         if subcmd == "status":
             for arg in args:
                 if arg == "--":
@@ -289,16 +288,17 @@ class PolicyEngine:
             return "DENY"
         return "ASK"
 
-    def evaluate_command(self, command: str) -> Permission:
-        if not command or self._has_unquoted_shell_operator(command):
+    def evaluate_argv(self, argv: Any) -> Permission:
+        if (
+            not isinstance(argv, (list, tuple))
+            or not argv
+            or not all(isinstance(arg, str) and arg and "\x00" not in arg for arg in argv)
+        ):
             return "DENY"
-        try:
-            argv = shlex.split(command)
-        except Exception:
-            return "DENY"
-        if not argv:
+        if sum(len(arg) for arg in argv) > 65536:
             return "DENY"
 
+        argv = list(argv)
         executable = Path(argv[0]).name.lower()
         if executable == "rtk":
             if len(argv) > 1 and argv[1] == "proxy":
@@ -309,6 +309,8 @@ class PolicyEngine:
                 return "DENY"
             executable = Path(argv[0]).name.lower()
 
+        if executable in self.DISALLOWED_PROCESS_EXECUTABLES:
+            return "DENY"
         if any(not self._path_arg_safe(arg) for arg in argv[1:] if not arg.startswith("-")):
             return "DENY"
 
@@ -321,16 +323,28 @@ class PolicyEngine:
             return self._git_readonly(argv)
         if executable in {"pwd"} and len(argv) == 1:
             return "ALLOW"
-        # rg/grep may traverse symlink/path targets and accept execution-like
-        # options. Dedicated repository search is the auto-allowed surface.
         if executable in {"rg", "grep", "ls"}:
             return "ASK"
         if executable in {
-            "python", "python3", "pytest", "npm", "bun", "mvn",
-            "gradle", "cargo", "go",
+            "python", "python3", "pytest", "npm", "bun", "node", "mvn",
+            "gradle", "cargo", "go", "java",
         }:
             return "ASK"
         return "ASK"
+
+    def evaluate_command(self, command: str) -> Permission:
+        """Evaluate a textual command for non-runtime callers.
+
+        Model-facing process.run is argv-only; this helper remains for internal
+        callers that already possess a trusted command string.
+        """
+        if not command or self._has_unquoted_shell_operator(command):
+            return "DENY"
+        try:
+            argv = shlex.split(command)
+        except Exception:
+            return "DENY"
+        return self.evaluate_argv(argv)
 
     @staticmethod
     def generate_action_hash(tool_name: str, args: Dict[str, Any]) -> str:

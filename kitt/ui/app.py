@@ -637,7 +637,15 @@ class KittUIApp:
             self.toggle_mouse_support()
         elif found.id == "run":
             if arg:
-                await self._execute_direct_tool("run_command", {"command": arg})
+                try:
+                    argv = shlex.split(arg, posix=os.name != "nt")
+                except ValueError as exc:
+                    self._show_result(f"Invalid command syntax: {exc}")
+                else:
+                    if argv:
+                        await self._execute_direct_tool("run_command", {"argv": argv})
+                    else:
+                        self._show_result("Usage: /run <command>")
             else:
                 self._show_result("Usage: /run <command>")
         elif found.id in {"remote", "web"}:
@@ -645,7 +653,10 @@ class KittUIApp:
             await handle_remote_command(self, arg)
         elif found.id == "commit":
             message = arg or "Auto-commit by K.I.T.T."
-            await self._execute_direct_tool("run_command", {"command": f"git commit -am {shlex.quote(message)}"})
+            await self._execute_direct_tool(
+                "run_command",
+                {"argv": ["git", "commit", "-am", message]},
+            )
         else:
             from kitt.ui.prime_commands import handle_prime_command
             handled = await handle_prime_command(self, found.id, arg)

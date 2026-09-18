@@ -133,9 +133,9 @@ class TestSafeRuntimeSecurity(unittest.TestCase):
             trace_id="tr1",
         )
 
-        res = self.runtime.execute("process.run", {"command": "echo test"}, security_context=ctx, origin="MODEL")
+        res = self.runtime.execute("process.run", {"argv": ["python", "--version"]}, security_context=ctx, origin="MODEL")
         self.assertFalse(res.success)
         self.assertTrue(res.requires_approval)
         self.assertEqual(res.approval_action, "run_command")
-        self.assertEqual(res.approval_payload, {"command": "echo test"})
+        self.assertEqual(res.approval_payload, {"argv": ["python", "--version"]})
         self.assertEqual(res.required_capability, CAP_PROCESS_RUN)

@@ -362,7 +362,9 @@ class ToolRegistry:
             },
             "apply_patch": {"patch": "SEARCH/REPLACE blocks"},
             "run_command": {
-                "command": "executable and arguments allowed by policy (no shell)",
+                "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "cwd": "optional workspace-relative directory",
+                "timeout_seconds": "optional int, default 120",
                 "max_tokens": "output token budget, default 1200",
             },
             "git_status": {"max_tokens": "output token budget, default 600"},

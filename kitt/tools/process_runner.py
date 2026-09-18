@@ -181,6 +181,23 @@ class ProcessRunner:
         self.root = Path(root_dir).resolve()
         self.max_output_bytes = max(4096, int(max_output_bytes))
 
+    def _resolve_cwd(self, cwd: str | Path | None) -> Path:
+        if cwd is None or not str(cwd).strip() or str(cwd).strip() == ".":
+            return self.root
+
+        requested = Path(str(cwd).strip())
+        candidate = requested if requested.is_absolute() else self.root / requested
+        candidate = candidate.resolve()
+        try:
+            candidate.relative_to(self.root)
+        except ValueError as exc:
+            raise PermissionError("Process cwd must stay inside the workspace") from exc
+        if not candidate.exists():
+            raise FileNotFoundError(f"Process cwd does not exist: {cwd}")
+        if not candidate.is_dir():
+            raise NotADirectoryError(f"Process cwd is not a directory: {cwd}")
+        return candidate
+
     @staticmethod
     def _terminate_tree(proc: subprocess.Popen) -> None:
         if proc.poll() is not None:
@@ -223,6 +240,7 @@ class ProcessRunner:
         timeout_seconds: int = 120,
         cancellation: Optional[CancellationToken] = None,
         env: Optional[dict[str, str]] = None,
+        cwd: str | Path | None = None,
     ) -> ProcessResult:
         if not argv or not all(isinstance(x, str) and x for x in argv):
             raise ValueError("argv must be a non-empty string list")
@@ -234,7 +252,7 @@ class ProcessRunner:
         out_cap = _HeadTailCapture(self.max_output_bytes)
         err_cap = _HeadTailCapture(self.max_output_bytes)
         kwargs = dict(
-            cwd=self.root,
+            cwd=self._resolve_cwd(cwd),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
