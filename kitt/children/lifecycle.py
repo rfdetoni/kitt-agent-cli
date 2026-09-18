@@ -288,9 +288,9 @@ class ChildAgentManager:
                 stdout, stderr = process.communicate(
                     json.dumps(payload), timeout=timeout_seconds
                 )
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as exc:
                 self._kill_tree(process)
-                raise TimeoutError("child timed out")
+                raise TimeoutError("child timed out") from exc
             if process.returncode != 0:
                 raise RuntimeError(
                     f"child worker exited {process.returncode}: {stderr[-2000:]}"
