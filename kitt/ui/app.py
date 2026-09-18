@@ -13,6 +13,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+from kitt import __version__
 from kitt.core.turn_events import ApprovalRequired
 from kitt.ui.commands import CommandRegistry
 from kitt.ui.event_bridge import TurnEventBridge
@@ -2519,7 +2520,7 @@ class KittUIApp:
             ("class:primary", "██║  ██╗    ██║       ██║         ██║   \n"),
             ("class:primary", "╚═╝  ╚═╝    ╚═╝       ╚═╝         ╚═╝   \n"),
             ("class:primary", "K.I.T.T. "),
-            ("class:text.muted", "— Knowledge & Inference Task Tool • v1.0.0\n"),
+            ("class:text.muted", f"— Knowledge & Inference Task Tool • v{__version__}\n"),
             ("class:accent", f"{self.state.workspace_path}\n"),
             ("class:text.muted", f"Models: {self.state.small_model} (Context) • {self.state.large_model} (Execute)")
         ]
