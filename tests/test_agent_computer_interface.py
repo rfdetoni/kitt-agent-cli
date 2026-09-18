@@ -40,13 +40,11 @@ def test_runtime_operation_catalog_is_generated_from_live_contract():
     assert len(definitions) == 1
     runtime_tool = definitions[0]
     assert runtime_tool["name"] == "kitt_runtime"
-    # The model-facing safe-runtime descriptor stays intentionally compact.
-    # Native adapters derive the exact operation enum directly from OPERATION_SPECS,
-    # while compact_runtime_operation_catalog() remains the authoritative textual
-    # catalog for diagnostics/tests that explicitly need every live operation.
-    assert runtime_tool["args"]["operation"] == "runtime operation name"
-    assert "repo.write_file {path,content}" in runtime_tool["description"]
-    assert "patch.apply never unified diff" in runtime_tool["description"]
+    # The generic descriptor stays compact. TurnProcessor specializes its operation
+    # enum per turn capabilities before native reverse-proxy extraction.
+    assert runtime_tool["args"]["operation"] == "runtime operation"
+    assert "process.run {argv:[...],cwd?,timeout_seconds?}" in runtime_tool["description"]
+    assert "argv-only/no shell" in runtime_tool["description"]
 
 
 def test_runtime_catalog_exposes_semantic_and_compressed_execution_operations():
