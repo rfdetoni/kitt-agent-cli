@@ -29,6 +29,52 @@ class TestDiffApplierOverwrite(unittest.TestCase):
             self.assertEqual(target_file.read_text(encoding="utf-8"), "<h1>New Overwritten Content</h1>")
             self.assertIn("page.html", result.applied_files)
 
+    def test_new_json_file_is_pretty_printed_before_changeset_commit(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            applier = DiffApplier()
+            blocks = [
+                EditBlock(
+                    file_path="frontend/angular.json",
+                    search_content="",
+                    replace_content='{"version":1,"projects":{"app":{"projectType":"application"}}}',
+                    is_new_file=True,
+                )
+            ]
+
+            result = applier.apply(blocks, root_dir=tmp_dir)
+
+            self.assertTrue(result.success, result.errors)
+            self.assertEqual(
+                (Path(tmp_dir) / "frontend" / "angular.json").read_text(encoding="utf-8"),
+                '{\n  "version": 1,\n  "projects": {\n    "app": {\n      "projectType": "application"\n    }\n  }\n}\n',
+            )
+
+    def test_new_flattened_java_file_is_rejected_before_creation(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            applier = DiffApplier()
+            blocks = [
+                EditBlock(
+                    file_path="src/App.java",
+                    search_content="",
+                    replace_content=(
+                        "package demo;\n"
+                        "public class App {\n"
+                        "private int value;\n"
+                        "public void run() {\n"
+                        "System.out.println(value);\n"
+                        "}\n"
+                        "}\n"
+                    ),
+                    is_new_file=True,
+                )
+            ]
+
+            result = applier.apply(blocks, root_dir=tmp_dir)
+
+            self.assertFalse(result.success)
+            self.assertIn("fully left-aligned", result.errors[0])
+            self.assertFalse((Path(tmp_dir) / "src" / "App.java").exists())
+
     def test_search_replace_parser_overwrite_flow(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             target_file = Path(tmp_dir) / "app.py"
