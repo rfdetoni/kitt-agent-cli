@@ -189,6 +189,21 @@ class TurnProcessor:
             return f"{self._proxy_session_key}:conversation:{conversation_id}"
         return conversation_id
 
+    @staticmethod
+    def _agent_route_for_task(task, mode: str = "") -> str:
+        """Pin the reverse-proxy contract route to the semantic task for the whole tool loop."""
+        if mode == "plan":
+            return "context-gather"
+        raw_intent = getattr(task, "intent", "")
+        intent = str(getattr(raw_intent, "value", raw_intent) or "").upper()
+        if intent == "IMPLEMENT":
+            return "code-generation"
+        if intent in {"DEBUG", "REFACTOR"}:
+            return "code-edit"
+        if intent == "TEST":
+            return "validate-diff"
+        return "chat"
+
     @property
     def workspace_id(self) -> str:
         if self._workspace_id:
@@ -621,6 +636,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         turn_id: str = "",
         started_at: float = 0.0,
         session_key: str = "",
+        route: Optional[str] = None,
     ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
@@ -629,6 +645,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 "system_prompt": sys_prompt,
                 "session_key": session_key or None,
                 "reasoning_effort": getattr(self, "reasoning_effort", 50),
+                "route": route,
             }
             try:
                 sig = inspect.signature(client.chat_stream)
@@ -1054,7 +1071,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
     def _execute_tool_loop(self, cmd: TurnCommand, request: ExecutionRequest, exe_profile: ModelProfile,
                            exe_client: LLMClient, workspace_id: str,
-                           security_context: ExecutionSecurityContext) -> Iterator:
+                           security_context: ExecutionSecurityContext,
+                           agent_route: Optional[str] = None) -> Iterator:
         execution_messages = list(request.messages)
         full_response = ""
         max_python_calls = 2
@@ -1080,6 +1098,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 turn_id=cmd.turn_id,
                 started_at=thinking_started_at,
                 session_key=self._provider_session_key(exe_profile, cmd.conversation_id),
+                route=agent_route,
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)
@@ -1722,8 +1741,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
             full_response = ""
             execution_messages = []
+            agent_route = self._agent_route_for_task(task, cmd.mode)
             for ev, resp, msgs in self._execute_tool_loop(
-                cmd, request, exe_profile, exe_client, workspace_id, security_context
+                cmd, request, exe_profile, exe_client, workspace_id, security_context,
+                agent_route=agent_route,
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)

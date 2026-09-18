@@ -15,7 +15,54 @@ class _CapturingClient:
         raise AssertionError("reverse-proxy semantic planning must stay off browser sessions")
 
 
+class _CapturingStreamClient:
+    def __init__(self):
+        self.profile = SimpleNamespace(model="chatgpt-web")
+        self.routes = []
+
+    def chat_stream(
+        self,
+        messages,
+        system_prompt=None,
+        response_format=None,
+        session_key=None,
+        reasoning_effort=None,
+        route=None,
+    ):
+        self.routes.append(route)
+        yield '{"action":"final_response","tool":null,"tool_input":null,"content":"ok","reasoning_summary":""}'
+
+
 class TestReverseProxyPhaseSession(unittest.TestCase):
+    def test_execution_route_is_pinned_from_semantic_task_and_forwarded(self):
+        processor = TurnProcessor.__new__(TurnProcessor)
+        processor.reasoning_effort = 50
+        processor._record_latency = lambda *args, **kwargs: None
+
+        self.assertEqual(
+            processor._agent_route_for_task(SimpleNamespace(intent="IMPLEMENT")),
+            "code-generation",
+        )
+        self.assertEqual(
+            processor._agent_route_for_task(SimpleNamespace(intent="DEBUG")),
+            "code-edit",
+        )
+        self.assertEqual(
+            processor._agent_route_for_task(SimpleNamespace(intent="TEST")),
+            "validate-diff",
+        )
+
+        client = _CapturingStreamClient()
+        list(
+            processor._stream_execution_response(
+                client,
+                [{"role": "user", "content": "implement the project"}],
+                "system",
+                route="code-generation",
+            )
+        )
+        self.assertEqual(client.routes, ["code-generation"])
+
     def test_reverse_proxy_session_is_scoped_by_logical_conversation(self):
         processor = TurnProcessor.__new__(TurnProcessor)
         processor._proxy_session_key = "agent-window:test"
