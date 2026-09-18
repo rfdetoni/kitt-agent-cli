@@ -10,6 +10,14 @@ class ProgressGuardRedirectBudgetTests(unittest.TestCase):
     def _exploration(call_id: str, path: str) -> ToolStarted:
         return ToolStarted(
             tool_name="kitt_runtime",
+            args={"operation": "repo.list", "arguments": {"path": path}},
+            call_id=call_id,
+        )
+
+    @staticmethod
+    def _focused_read(call_id: str, path: str) -> ToolStarted:
+        return ToolStarted(
+            tool_name="kitt_runtime",
             args={"operation": "repo.read", "arguments": {"path": path}},
             call_id=call_id,
         )
@@ -19,7 +27,7 @@ class ProgressGuardRedirectBudgetTests(unittest.TestCase):
         return ToolCompleted(
             tool_name="kitt_runtime",
             success=True,
-            output=f"read:{path}",
+            output=f"result:{path}",
             call_id=call_id,
         )
 
@@ -38,6 +46,22 @@ class ProgressGuardRedirectBudgetTests(unittest.TestCase):
         ledger.renew_exploration_budget()
 
         self.assertIsNone(ledger.start(blocked))
+
+    def test_focused_read_is_allowed_after_broad_exploration_budget_and_resets_it(self):
+        ledger = _ProgressAwareExecutionLedger()
+
+        for index in range(base_guard._MAX_EXPLORATIONS_WITHOUT_PROGRESS):
+            call_id = f"list-{index}"
+            path = f"src/level_{index}"
+            self.assertIsNone(ledger.start(self._exploration(call_id, path)))
+            ledger.complete(self._complete(call_id, path))
+
+        read = self._focused_read("read-pom", "backend/pom.xml")
+        self.assertIsNone(ledger.start(read))
+        ledger.complete(self._complete("read-pom", "backend/pom.xml"))
+
+        self.assertEqual(ledger.explorations_since_progress, 0)
+        self.assertIsNone(ledger.start(self._exploration("list-next", "frontend")))
 
     def test_redirect_keeps_identical_exploration_history(self):
         ledger = _ProgressAwareExecutionLedger()
