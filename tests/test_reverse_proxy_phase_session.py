@@ -51,6 +51,27 @@ class TestReverseProxyPhaseSession(unittest.TestCase):
             processor._agent_route_for_task(SimpleNamespace(intent="TEST")),
             "validate-diff",
         )
+        self.assertEqual(
+            processor._agent_route_for_task(
+                SimpleNamespace(intent="TEST"),
+                prompt="crie um projeto com backend e frontend",
+            ),
+            "code-generation",
+        )
+        self.assertEqual(
+            processor._agent_route_for_task(
+                SimpleNamespace(intent="TEST"),
+                prompt="corrija o backend do projeto e rode os testes",
+            ),
+            "code-edit",
+        )
+        self.assertEqual(
+            processor._agent_route_for_task(
+                SimpleNamespace(intent="TEST"),
+                prompt="rode os testes e valide o diff",
+            ),
+            "validate-diff",
+        )
 
         client = _CapturingStreamClient()
         list(

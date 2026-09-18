@@ -91,6 +91,7 @@ class ToolRegistry(_core.ToolRegistry):
                 # writes, or unified diff vs SEARCH/REPLACE patches).
                 tool["description"] = (
                     "repo.write_file {path,content}; patch.apply never unified diff; "
+                    "never use process.run or shell redirection to create/edit files; "
                     "artifacts.store internal only."
                 )
                 tool["args"] = {
@@ -98,7 +99,8 @@ class ToolRegistry(_core.ToolRegistry):
                     "arguments": {
                         "type": "object",
                         "description": (
-                            "repo.write_file {path,content}; patch.apply not unified diff."
+                            "repo.write_file {path,content}; patch.apply not unified diff; "
+                            "process.run is never a substitute for workspace file writes."
                         ),
                     },
                 }

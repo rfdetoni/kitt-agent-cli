@@ -24,6 +24,15 @@ class TestToolRegistry(unittest.TestCase):
         self.assertNotIn("apply_patch", names)
         self.assertIn("path", defs[names.index("read_file")]["args"])
 
+    def test_runtime_definition_forbids_shell_file_mutation(self):
+        defs = self.registry.get_tool_definitions(enabled_tools=["kitt_runtime"])
+        runtime = next(item for item in defs if item["name"] == "kitt_runtime")
+        description = runtime.get("description", "")
+        args_description = runtime.get("args", {}).get("arguments", {}).get("description", "")
+
+        self.assertIn("never use process.run", description)
+        self.assertIn("never a substitute for workspace file writes", args_description)
+
     def test_execute_tool_disabled_rejection(self):
         res = self.registry.execute_tool("apply_patch", {}, enabled_tools=["read_file"])
         self.assertFalse(res.success)

@@ -190,10 +190,36 @@ class TurnProcessor:
         return conversation_id
 
     @staticmethod
-    def _agent_route_for_task(task, mode: str = "") -> str:
-        """Pin the reverse-proxy contract route to the semantic task for the whole tool loop."""
+    def _agent_route_for_task(task, mode: str = "", prompt: str = "") -> str:
+        """Pin the proxy route, with explicit user mutation intent as the highest signal."""
         if mode == "plan":
             return "context-gather"
+
+        text = (prompt or "").casefold()
+        workspace_targets = (
+            "projeto", "project", "site", "app", "aplicação", "aplicacao",
+            "backend", "frontend", "front end", "repositório", "repositorio",
+            "repository", "repo", "arquivo", "file", "pasta", "folder",
+            "diretório", "diretorio", "directory", "código", "codigo", "code",
+        )
+        edit_terms = (
+            "corrija", "corrigir", "conserte", "consertar", "repare", "reparar",
+            "refatore", "refatorar", "atualize", "atualizar", "modifique",
+            "modificar", "altere", "alterar", "edite", "editar", "remova",
+            "remover", "fix", "repair", "refactor", "update", "modify",
+            "change", "edit", "remove", "delete",
+        )
+        create_terms = (
+            "crie", "criar", "cria", "implemente", "implementar", "gere",
+            "gerar", "construa", "monte", "create", "build", "implement",
+            "generate", "scaffold", "write", "mkdir",
+        )
+        if any(target in text for target in workspace_targets):
+            if any(term in text for term in edit_terms):
+                return "code-edit"
+            if any(term in text for term in create_terms):
+                return "code-generation"
+
         raw_intent = getattr(task, "intent", "")
         intent = str(getattr(raw_intent, "value", raw_intent) or "").upper()
         if intent == "IMPLEMENT":
@@ -473,6 +499,7 @@ To edit an existing file, patch.apply requires one or more complete SEARCH/REPLA
 </kitt-tool>
 Supported operations: repo.read, repo.list, repo.search, repo.inspect_symbol, repo.read_symbol, repo.references, repo.edit_symbol, repo.write_file, repo.create_directory, patch.apply, process.run, artifacts.store, artifacts.read, children.spawn, children.send, children.inspect, goal.inspect, goal.update, memory.query, memory.correct, memory.concept, memory.link, state.get, state.set, state.list, handles.resolve.
 RULES:
+- Never use process.run, shell redirection, printf, cat, echo, heredocs, or mkdir to create/edit workspace files. Use repo.write_file, repo.create_directory, or patch.apply instead.
 1. Focus strictly on user request.
 2. Do not expose chain-of-thought. Emit the tool call directly when action is needed.
 3. Once fulfilled, STOP calling tools and answer directly.
@@ -1079,6 +1106,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         python_calls = 0
         tool_calls = 0
         malformed_calls = 0
+        policy_denials = 0
 
         thinking_started_at = time.time()
         thinking_completed = False
@@ -1345,8 +1373,32 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 ), None, None
                 return
             if not tool_result.success and tool_result.error and "Execution denied by PolicyEngine" in tool_result.error:
-                yield TurnBlocked(reason=tool_result.error), None, None
-                return
+                policy_denials += 1
+                if policy_denials > 2:
+                    yield TurnBlocked(reason=tool_result.error), None, None
+                    return
+                operation = (
+                    str(tool_args.get("operation") or "")
+                    if tool_name == "kitt_runtime" and isinstance(tool_args, dict)
+                    else tool_name
+                )
+                execution_messages.extend([
+                    {"role": "assistant", "content": full_response},
+                    {
+                        "role": "user",
+                        "content": (
+                            "[KITT POLICY DENIAL]\n"
+                            f"The host policy denied {operation or tool_name}: {tool_result.error}\n"
+                            "Do not retry the same denied command. Never use process.run, shell "
+                            "redirection, printf, cat, echo, heredocs, or mkdir as a substitute for "
+                            "workspace file mutation. For files/directories use kitt_runtime with "
+                            "repo.write_file, repo.create_directory, or patch.apply when the route "
+                            "allows mutation. If this is validation-only, choose a non-mutating "
+                            "validation command or answer from the available evidence."
+                        ),
+                    },
+                ])
+                continue
             touched_paths = self._paths_from_tool(tool_name, tool_args, tool_result)
             if touched_paths:
                 if not self.turn_guard.begin(cmd.turn_id):
@@ -1741,7 +1793,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
             full_response = ""
             execution_messages = []
-            agent_route = self._agent_route_for_task(task, cmd.mode)
+            agent_route = self._agent_route_for_task(task, cmd.mode, cmd.prompt)
             for ev, resp, msgs in self._execute_tool_loop(
                 cmd, request, exe_profile, exe_client, workspace_id, security_context,
                 agent_route=agent_route,
