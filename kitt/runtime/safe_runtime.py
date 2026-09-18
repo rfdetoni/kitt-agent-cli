@@ -158,7 +158,14 @@ class SafeRuntime(_core.SafeRuntime):
     def _op_repo_list(self, args: dict[str, Any], security_context):
         rel = str(args.get("path") or ".")
         limit = max(1, min(int(args.get("limit", 100) or 100), 500))
-        depth = max(1, min(int(args.get("depth", 1) or 1), 32))
+        recursive = bool(args.get("recursive", False))
+        raw_depth = args.get("depth", args.get("max_depth"))
+        if raw_depth is None:
+            depth = 32 if recursive else 1
+        else:
+            depth = max(1, min(int(raw_depth or 1), 32))
+            if args.get("recursive") is False:
+                depth = 1
         fs = WorkspaceFileSystem(self.root)
         relative = fs.relative(rel)
         if security_context is not None:
@@ -209,6 +216,7 @@ class SafeRuntime(_core.SafeRuntime):
                 "truncated": truncated,
                 "path": relative,
                 "depth": depth,
+                "recursive": depth > 1,
             },
             metadata={"method": "workspace_fs", "output_family": "listing"},
         )
