@@ -14,7 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
-from kitt import __version__
+from importlib.metadata import PackageNotFoundError, version as package_version
 from kitt.core.turn_events import ApprovalRequired
 from kitt.ui.commands import CommandRegistry
 from kitt.ui.event_bridge import TurnEventBridge
@@ -39,6 +39,13 @@ from kitt.ui.skill_commands import (
 )
 from kitt.ui.dream_commands import handle_dream_command, handle_memory_extended_command
 from kitt.ui.overlay_manager import OverlayManager
+
+
+def _agent_version() -> str:
+    try:
+        return package_version("kitt-agent-cli")
+    except PackageNotFoundError:
+        return "dev"
 
 
 class KittUIApp:
