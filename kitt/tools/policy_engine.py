@@ -175,6 +175,24 @@ class PolicyEngine:
             return bool(safe)
         return True
 
+    @staticmethod
+    def _has_unquoted_shell_operator(command: str) -> bool:
+        quote = ""
+        escaped = False
+        for char in command:
+            if escaped:
+                escaped = False
+            elif char == "\\" and quote != "'":
+                escaped = True
+            elif quote:
+                if char == quote:
+                    quote = ""
+            elif char in {"'", '"'}:
+                quote = char
+            elif char in ";&|\`$\n":
+                return True
+        return False
+
     def _find_readonly(self, argv: list[str]) -> Permission:
         roots: list[str] = []
         saw_predicate = False
