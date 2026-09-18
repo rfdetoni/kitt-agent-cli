@@ -49,6 +49,7 @@ from kitt.core.turn_events import (
 )
 from kitt.core.pending_action import PendingAction
 from kitt.core.runtime_config import RuntimeConfig
+from kitt.core.logging import trace_event
 from kitt.core.turn_execution_guard import TurnExecutionGuard
 from kitt.security.context import ExecutionSecurityContext
 from kitt.security.capabilities import (
@@ -1103,6 +1104,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                            agent_route: Optional[str] = None) -> Iterator:
         effective_agent_route = request.agent_route or agent_route
         execution_messages = list(request.messages)
+        trace_event(
+            logger,
+            "tool_loop.start",
+            turn_id=cmd.turn_id,
+            conversation_id=cmd.conversation_id,
+            mode=cmd.mode,
+            prompt=cmd.prompt,
+            route=effective_agent_route,
+            workspace_id=workspace_id,
+            enabled_tools=request.enabled_tools,
+            system_prompt=request.system_prompt,
+            messages=execution_messages,
+        )
         full_response = ""
         max_python_calls = 2
         python_calls = 0
@@ -1138,6 +1152,15 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     if isinstance(event, ThinkingCompleted):
                         thinking_completed = True
                     yield event, None, None
+
+            trace_event(
+                logger,
+                "tool_loop.model_response",
+                turn_id=cmd.turn_id,
+                route=effective_agent_route,
+                response=full_response,
+                execution_messages=execution_messages,
+            )
 
             if not thinking_completed:
                 thinking_completed = True
@@ -1240,6 +1263,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 tool_args.get("operation", "-") if isinstance(tool_args, dict) else "-",
                 sorted(operation_args) if isinstance(operation_args, dict) else [],
             )
+            trace_event(
+                logger,
+                "tool_loop.tool_call",
+                turn_id=cmd.turn_id,
+                call=tool_calls,
+                tool=tool_name,
+                args=tool_args,
+                operation_args=operation_args,
+                route=effective_agent_route,
+            )
             is_patch_call = tool_name == "apply_patch" or (
                 tool_name == "kitt_runtime" and tool_args.get("operation") == "patch.apply"
             )
@@ -1295,6 +1328,18 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 tool_result.success,
                 tool_result.requires_approval,
                 tool_result.error,
+            )
+            trace_event(
+                logger,
+                "tool_loop.tool_result",
+                turn_id=cmd.turn_id,
+                call=tool_calls,
+                tool=tool_name,
+                success=tool_result.success,
+                requires_approval=tool_result.requires_approval,
+                output=tool_result.output,
+                error=tool_result.error,
+                metadata=tool_result.metadata,
             )
             if tool_result.requires_approval:
                 # Pending-action registration is state mutation. Order it
@@ -1471,7 +1516,27 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             )
 
             execution_messages.append({"role": "user", "content": tool_prefix + output_str + tool_suffix})
+            trace_event(
+                logger,
+                "tool_loop.context_after_tool",
+                turn_id=cmd.turn_id,
+                call=tool_calls,
+                tool=tool_name,
+                output_for_model=output_str,
+                execution_messages=execution_messages,
+            )
 
+        trace_event(
+            logger,
+            "tool_loop.complete",
+            turn_id=cmd.turn_id,
+            route=effective_agent_route,
+            tool_calls=tool_calls,
+            malformed_calls=malformed_calls,
+            policy_denials=policy_denials,
+            final_response=full_response,
+            execution_messages=execution_messages,
+        )
         yield None, full_response, execution_messages
 
     def _finalize_turn(self, cmd: TurnCommand, full_response: str, execution_messages: list,
