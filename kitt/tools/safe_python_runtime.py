@@ -352,7 +352,7 @@ class SafePythonInterpreter:
         if isinstance(node, ast.Set):
             return set(self._bounded_collection([self._eval(item) for item in node.elts]))
         if isinstance(node, ast.Dict):
-            result = {self._eval(key): self._eval(value) for key, value in zip(node.keys, node.values)}
+            result = {self._eval(key): self._eval(value) for key, value in zip(node.keys, node.values, strict=True)}
             self._ensure_collection_limit(result)
             return result
         if isinstance(node, ast.BinOp):
@@ -382,7 +382,7 @@ class SafePythonInterpreter:
             return current
         if isinstance(node, ast.Compare):
             left = self._eval(node.left)
-            for operator_node, comparator in zip(node.ops, node.comparators):
+            for operator_node, comparator in zip(node.ops, node.comparators, strict=True):
                 operator = self._COMPARE_OPERATORS.get(type(operator_node))
                 if operator is None:
                     raise SafePythonValidationError(f"Comparison {type(operator_node).__name__} is not allowed.")
@@ -480,7 +480,7 @@ class SafePythonInterpreter:
             values = list(value)
             if len(values) != len(target.elts):
                 raise SafePythonValidationError("Unpack target and value lengths differ.")
-            for item_target, item_value in zip(target.elts, values):
+            for item_target, item_value in zip(target.elts, values, strict=True):
                 self._assign(item_target, item_value)
             return
         if isinstance(target, ast.Subscript):
