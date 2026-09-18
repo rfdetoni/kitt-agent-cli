@@ -1,7 +1,6 @@
 """System, execution, patch, and git tool handlers."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -177,6 +176,8 @@ class ApplyPatchHandler:
 
 
 class RunCommandHandler:
+    _ALLOWED_ARGS = frozenset({"argv", "cwd", "timeout_seconds", "max_tokens", "token_budget"})
+
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult
 
@@ -187,17 +188,47 @@ class RunCommandHandler:
                 "run_command is denied for path-scoped principals because subprocess filesystem access cannot be safely confined.",
             )
 
-        command = str(args.get("command", "")).strip()
-        if not command:
-            return ToolResult(False, "", "Empty command.")
-        # The registry authorizes the complete command before reaching this handler.
-        argv = ["cmd.exe", "/d", "/s", "/c", command] if os.name == "nt" else ["/bin/sh", "-c", command]
+        unsupported = sorted(set(args) - self._ALLOWED_ARGS)
+        if unsupported:
+            return ToolResult(
+                False,
+                "",
+                "process.run accepts only argv, cwd, timeout_seconds, max_tokens, and token_budget; "
+                f"unsupported argument(s): {', '.join(unsupported)}",
+            )
+
+        raw_argv = args.get("argv")
+        if (
+            not isinstance(raw_argv, list)
+            or not raw_argv
+            or not all(isinstance(item, str) and item and "\x00" not in item for item in raw_argv)
+        ):
+            return ToolResult(
+                False,
+                "",
+                "process.run requires argv as a non-empty array of non-empty strings.",
+            )
+        argv = list(raw_argv)
+
+        cwd = args.get("cwd")
+        if cwd is not None and not isinstance(cwd, str):
+            return ToolResult(False, "", "process.run cwd must be a workspace-relative string.")
 
         try:
-            result = ctx.registry.process_runner.run(argv, timeout_seconds=30)
-        except FileNotFoundError as exc:
-            return ToolResult(False, "", f"Executable not found: {exc}")
-        except OSError as exc:
+            timeout_seconds = int(args.get("timeout_seconds", 120) or 120)
+        except (TypeError, ValueError):
+            return ToolResult(False, "", "process.run timeout_seconds must be an integer.")
+        timeout_seconds = max(1, min(timeout_seconds, 3600))
+
+        try:
+            result = ctx.registry.process_runner.run(
+                argv,
+                timeout_seconds=timeout_seconds,
+                cwd=cwd,
+            )
+        except FileNotFoundError:
+            return ToolResult(False, "", f"Executable or cwd not found for process.run: {argv[0]}")
+        except (NotADirectoryError, PermissionError, OSError, ValueError) as exc:
             return ToolResult(False, "", f"Command execution failed: {exc}")
         output, metadata, compacted = _optimized_process_output(
             ctx, argv, result, _token_budget(args, 1200)
