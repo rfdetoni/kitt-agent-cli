@@ -512,30 +512,44 @@ class TurnProcessor:
         if "kitt_runtime" in enabled_tools and len(enabled_tools) == 1:
             operations = self._runtime_operations_for_tools(planned_tools or enabled_tools)
             operations_text = ", ".join(operations) or "(none)"
-            process_example = ""
+
+            runtime_definition = dict(
+                self.registry.get_tool_definitions(["kitt_runtime"])[0]
+            )
+            runtime_args = dict(runtime_definition.get("args") or {})
+            runtime_args["operation"] = {
+                "type": "string",
+                "enum": list(operations),
+            }
+            runtime_definition["args"] = runtime_args
+
+            examples = []
+            if "repo.read" in operations:
+                examples.append("""To read a file:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"repo.read","arguments":{"path":"path.ext","start_line":1,"end_line":100}}}
+</kitt-tool>""")
+            if "repo.write_file" in operations:
+                examples.append("""To create or replace a file, use repo.write_file:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"repo.write_file","arguments":{"path":"path/to/file.ext","content":"complete file content"}}}
+</kitt-tool>""")
+            if "patch.apply" in operations:
+                examples.append("""To edit an existing file, patch.apply uses SEARCH/REPLACE blocks:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"patch.apply","arguments":{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original text\\n=======\\nreplacement content\\n>>>>>>> REPLACE"}}}
+</kitt-tool>""")
             if "process.run" in operations:
-                process_example = """
-To run a build/test/validation command, process.run is argv-only and never invokes a shell:
+                examples.append("""To run a build/test/validation command, process.run is argv-only and never invokes a shell:
 <kitt-tool>
 {"name":"kitt_runtime","arguments":{"operation":"process.run","arguments":{"argv":["npm","run","build"],"cwd":"frontend","timeout_seconds":120}}}
 </kitt-tool>
-Do not use command, cmd, args, sh -c, bash -c, cmd.exe /c, PowerShell, redirection, pipes, or &&.
-"""
+Do not use command, cmd, args, sh -c, bash -c, cmd.exe /c, PowerShell, redirection, pipes, or &&.""")
+            examples_text = "\n".join(examples)
+
             return f"""
-Available host tool: {self.registry.get_tool_definitions(["kitt_runtime"])}
-To call the safe runtime, respond with exactly:
-<kitt-tool>
-{{"name":"kitt_runtime","arguments":{{"operation":"repo.read","arguments":{{"path":"path.ext","start_line":1,"end_line":100}}}}}}
-</kitt-tool>
-To create a file, use repo.write_file (it creates parent directories):
-<kitt-tool>
-{{"name":"kitt_runtime","arguments":{{"operation":"repo.write_file","arguments":{{"path":"path/to/file.ext","content":"complete file content"}}}}}}
-</kitt-tool>
-To edit an existing file, patch.apply requires one or more complete SEARCH/REPLACE blocks inside arguments.patch:
-<kitt-tool>
-{{"name":"kitt_runtime","arguments":{{"operation":"patch.apply","arguments":{{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original text, or empty for a new file\\n=======\\nreplacement content\\n>>>>>>> REPLACE"}}}}}}
-</kitt-tool>
-{process_example}
+Available host tool: {[runtime_definition]}
+{examples_text}
 Supported operations for this turn: {operations_text}.
 RULES:
 - Never use process.run, shell redirection, printf, cat, echo, heredocs, or mkdir to create/edit workspace files. Use repo.write_file, repo.create_directory, or patch.apply instead.
