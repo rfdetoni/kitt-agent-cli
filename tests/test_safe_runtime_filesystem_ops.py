@@ -55,7 +55,7 @@ class TestSafeRuntimeFilesystemOps(unittest.TestCase):
 
             recursive = runtime.execute(
                 "repo.list",
-                {"path": ".", "depth": 4},
+                {"path": ".", "recursive": True, "max_depth": 4},
                 effective_capabilities={CAP_REPO_READ},
             )
             self.assertTrue(recursive.success, recursive.error)
