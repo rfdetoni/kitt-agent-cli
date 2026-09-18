@@ -688,7 +688,7 @@ class RepositoryIndex:
         base_terms = list(terms)
         if len(base_terms) > 1:
             terms.append("_".join(base_terms))
-            terms.extend("_".join(pair) for pair in zip(base_terms, base_terms[1:]))
+            terms.extend("_".join(pair) for pair in zip(base_terms, base_terms[1:], strict=False))
         seen = set()
         terms = [term for term in terms if not (term in seen or seen.add(term))]
         return terms[:8]
