@@ -30,7 +30,7 @@ IGNORED_DIRS = {
 }
 IGNORED_EXTS = {
     ".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe", ".bin", ".zip",
-    ".tar", ".gz", ".png", ".jpg", ".pdf",
+    ".tar", ".gz", ".png", ".jpg", ".pdf", ".log",
 }
 # WorkspaceFileSystem.atomic_write stages payloads as
 # ``.<target>.<16-hex>.tmp`` in the destination directory. They are an
