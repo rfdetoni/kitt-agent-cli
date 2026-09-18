@@ -44,23 +44,6 @@ class ToolRegistry(_core.ToolRegistry):
     def runtime_operation_names() -> tuple[str, ...]:
         return runtime_operation_names()
 
-    @staticmethod
-    def _safe_and_chain(policy, command: str) -> bool:
-        """Allow an ``&&`` chain only when every individual command is non-DENY.
-
-        ``PolicyEngine.evaluate_command`` intentionally rejects shell operators.
-        This facade preserves that fail-closed default while permitting the one
-        short-circuit operator supported by ProcessRunner. Dangerous segments,
-        malformed chains and all other shell operators remain denied.
-        """
-        if "&&" not in command:
-            return False
-        parts = [part.strip() for part in command.split("&&")]
-        return bool(parts) and all(
-            part and policy.evaluate_command(part) != "DENY"
-            for part in parts
-        )
-
     def attach_processor(self, processor):
         result = super().attach_processor(processor)
         from kitt.core.agent_runtime import install_agent_engineering
@@ -91,8 +74,10 @@ class ToolRegistry(_core.ToolRegistry):
                 # writes, or unified diff vs SEARCH/REPLACE patches).
                 tool["description"] = (
                     "repo.write_file {path,content} with normal language/project indentation; "
-                    "patch.apply never unified diff; never use process.run or shell redirection "
-                    "to create/edit files; artifacts.store internal only."
+                    "patch.apply never unified diff; process.run is argv-only: "
+                    "{argv:[\"executable\",\"arg\"],cwd?:\"relative/path\",timeout_seconds?:120}; "
+                    "never use process.run or shell redirection to create/edit files; "
+                    "artifacts.store internal only."
                 )
                 tool["args"] = {
                     "operation": "runtime operation name",
@@ -100,22 +85,19 @@ class ToolRegistry(_core.ToolRegistry):
                         "type": "object",
                         "description": (
                             "repo.write_file {path,content}; preserve normal indentation/newlines; "
-                            "patch.apply not unified diff; process.run is never a substitute "
-                            "for workspace file writes."
+                            "patch.apply not unified diff; process.run accepts argv, optional cwd "
+                            "and timeout_seconds only for execution semantics (plus output token budget); "
+                            "command/cmd/args shell-style forms are unsupported."
                         ),
                     },
                 }
         return tools
 
     def execute_tool(self, tool_name, args=None, *positional, **kwargs):
-        """Enforce command DENY decisions before approval can be requested."""
+        """Enforce process argv DENY decisions before approval can be requested."""
         normalized_args = args or {}
         if tool_name == "run_command":
-            command = str(normalized_args.get("command", "")).strip()
-            if (
-                self.policy.evaluate_command(command) == "DENY"
-                and not self._safe_and_chain(self.policy, command)
-            ):
+            if self.policy.evaluate_argv(normalized_args.get("argv")) == "DENY":
                 return ToolResult(
                     False,
                     "",
