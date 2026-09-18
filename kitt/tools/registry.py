@@ -90,17 +90,18 @@ class ToolRegistry(_core.ToolRegistry):
                 # that prevents common misrouting (artifact storage vs workspace
                 # writes, or unified diff vs SEARCH/REPLACE patches).
                 tool["description"] = (
-                    "repo.write_file {path,content}; patch.apply never unified diff; "
-                    "never use process.run or shell redirection to create/edit files; "
-                    "artifacts.store internal only."
+                    "repo.write_file {path,content} with normal language/project indentation; "
+                    "patch.apply never unified diff; never use process.run or shell redirection "
+                    "to create/edit files; artifacts.store internal only."
                 )
                 tool["args"] = {
                     "operation": "runtime operation name",
                     "arguments": {
                         "type": "object",
                         "description": (
-                            "repo.write_file {path,content}; patch.apply not unified diff; "
-                            "process.run is never a substitute for workspace file writes."
+                            "repo.write_file {path,content}; preserve normal indentation/newlines; "
+                            "patch.apply not unified diff; process.run is never a substitute "
+                            "for workspace file writes."
                         ),
                     },
                 }
