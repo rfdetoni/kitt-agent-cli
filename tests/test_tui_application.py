@@ -122,7 +122,10 @@ class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
 
             # Press Ctrl+C
             pipe.send_bytes(b"\x03")
-            await asyncio.sleep(0.05)
+            for _ in range(50):
+                if not ui.state.is_thinking:
+                    break
+                await asyncio.sleep(0)
 
             self.assertFalse(ui.state.is_thinking)
             self.assertFalse(ui.bridge.is_active)
