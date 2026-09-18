@@ -21,7 +21,7 @@ class CompletionProgressStallTests(unittest.TestCase):
                     last_task=SimpleNamespace(intent="IMPLEMENT", actions=["analyze", "edit"])
                 )
 
-            def _execute_tool_loop(self, cmd, request, *args):
+            def _execute_tool_loop(self, cmd, request, *args, **kwargs):
                 for index in range(3):
                     call_id = f"list-{index}"
                     tool_args = {"operation": "repo.list", "arguments": {"path": "."}}
