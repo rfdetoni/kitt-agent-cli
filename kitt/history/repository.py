@@ -3,8 +3,11 @@ import uuid
 import time
 import hashlib
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from kitt.history.database import HistoryDatabase
+
+if TYPE_CHECKING:
+    from kitt.core.pending_action import PendingAction
 
 def json_dumps(obj) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
