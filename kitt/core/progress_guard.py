@@ -300,18 +300,24 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                     stream.close()
 
             if restart_for_stall is not None:
-                # A redirect is a bounded recovery attempt, so it must grant a real
-                # exploration window. Preserve identical-call history to keep the
-                # guard fail-closed against repeating the exact same exploration.
+                # Restart from the latest host-confirmed execution history, not the
+                # original request. Rewinding a named reverse-proxy session would
+                # make the browser transport correctly reject the request as a
+                # conversation_state_conflict.
                 ledger.renew_exploration_budget()
-                retry_messages = list(current_request.messages)
+                snapshots = getattr(self, "_execution_message_snapshots", {})
+                snapshot = snapshots.get(getattr(cmd, "turn_id", ""))
+                retry_messages = list(snapshot or current_request.messages)
                 retry_messages.append(
                     {
                         "role": "user",
                         "content": _forward_progress_retry_message(restart_for_stall),
                     }
                 )
-                current_request = replace(request, messages=retry_messages)
+                current_request = replace(
+                    current_request,
+                    messages=retry_messages,
+                )
                 continue
 
             if terminal is None:
@@ -405,7 +411,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                     {"role": "user", "content": "\n\n".join(recovery_parts)},
                 ]
             )
-            current_request = replace(request, messages=retry_messages)
+            current_request = replace(current_request, messages=retry_messages)
 
     processor._execute_tool_loop = MethodType(guarded_tool_loop, processor)
     processor._completion_guard_installed = True
