@@ -185,11 +185,11 @@ class _InterprocessLock:
                         self._handle.fileno(), msvcrt.LK_NBLCK, 1
                     )
                     break
-                except OSError:
+                except OSError as exc:
                     if time.monotonic() >= deadline:
                         raise TimeoutError(
                             f"Timed out acquiring lock {self.path}"
-                        )
+                        ) from exc
                     time.sleep(0.05)
         else:
             import fcntl
@@ -201,11 +201,11 @@ class _InterprocessLock:
                         fcntl.LOCK_EX | fcntl.LOCK_NB,
                     )
                     break
-                except BlockingIOError:
+                except BlockingIOError as exc:
                     if time.monotonic() >= deadline:
                         raise TimeoutError(
                             f"Timed out acquiring lock {self.path}"
-                        )
+                        ) from exc
                     time.sleep(0.05)
         return self
 
