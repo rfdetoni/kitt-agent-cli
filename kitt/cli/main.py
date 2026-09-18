@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.util
+from importlib.metadata import PackageNotFoundError, version as package_version
 import logging
 import logging.handlers
 import os
@@ -14,6 +15,13 @@ from kitt.core.runtime_config import RuntimeConfig
 from kitt.update_check import notify_if_update_available
 from kitt.ui.capabilities import create_backend
 from kitt.ui.fallback import HeadlessUI
+
+
+def _agent_version() -> str:
+    try:
+        return package_version("kitt-agent-cli")
+    except PackageNotFoundError:
+        return "dev"
 
 
 def _module_available(name: str) -> bool:
@@ -89,6 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="K.I.T.T. autonomous coding agent",
     )
     _add_common_options(parser, defaults=True)
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_agent_version()}",
+    )
     parser.add_argument("-p", "--print", dest="prompt", help="Print one response and exit")
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
