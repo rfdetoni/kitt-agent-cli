@@ -1104,6 +1104,11 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                            agent_route: Optional[str] = None) -> Iterator:
         effective_agent_route = request.agent_route or agent_route
         execution_messages = list(request.messages)
+        snapshots = getattr(self, "_execution_message_snapshots", None)
+        if snapshots is None:
+            snapshots = {}
+            self._execution_message_snapshots = snapshots
+        snapshots[cmd.turn_id] = list(execution_messages)
         trace_event(
             logger,
             "tool_loop.start",
@@ -1516,6 +1521,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             )
 
             execution_messages.append({"role": "user", "content": tool_prefix + output_str + tool_suffix})
+            snapshots[cmd.turn_id] = list(execution_messages)
             trace_event(
                 logger,
                 "tool_loop.context_after_tool",
@@ -1526,6 +1532,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 execution_messages=execution_messages,
             )
 
+        snapshots[cmd.turn_id] = list(execution_messages)
         trace_event(
             logger,
             "tool_loop.complete",
