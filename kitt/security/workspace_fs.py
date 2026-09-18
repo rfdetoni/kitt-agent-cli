@@ -600,9 +600,9 @@ class WorkspaceFileSystem:
                     os.O_RDONLY | int(getattr(os, "O_NOFOLLOW", 0)) | int(getattr(os, "O_CLOEXEC", 0)),
                     dir_fd=parent_fd,
                 )
-            except FileNotFoundError:
+            except FileNotFoundError as exc:
                 if expected_exists is True:
-                    raise ValueError("expected file to exist")
+                    raise ValueError("expected file to exist") from exc
                 return False
             try:
                 st = os.fstat(fd)
