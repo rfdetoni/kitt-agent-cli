@@ -19,6 +19,8 @@ from kitt.router.models import ModelCapabilities
 from kitt.router.policy import RoutingPolicy
 from kitt.memory.memory_manager import MemoryManager
 from kitt.skills.skill_manager import SkillManager
+from kitt.skills.discovery import SkillDiscovery
+from kitt.skills.loader import ProgressiveSkillLoader
 from kitt.context_engine.engine import ContextEngine
 from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.context_filter.semantic_filter import SemanticFilter
@@ -143,6 +145,7 @@ class TurnProcessor:
         self.root_path = Path(root_dir).resolve()
         self.config = config or RuntimeConfig()
         self.router = TaskRouter(root_dir=root_dir)
+        self.routing_policy = RoutingPolicy()
         self.memory = memory_service or MemoryManager(
             root_dir=root_dir, persistence_enabled=self.config.persistence_enabled)
         self.skill_manager = skill_manager or SkillManager(
@@ -155,6 +158,9 @@ class TurnProcessor:
             persistence_enabled=self.config.persistence_enabled,
         )
         self.context_resolver = ContextResolver(root_dir=root_dir)
+        self.deterministic_extractor = DeterministicExtractor()
+        self.skill_discovery = SkillDiscovery()
+        self.skill_loader = ProgressiveSkillLoader()
         self.diff_parser = SearchReplaceParser()
         self.build_detector = BuildDetector(root_dir=root_dir)
         self.log_reducer = LogReducer()
@@ -966,7 +972,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     def _resolve_execution_profile(self, cmd: TurnCommand, task: Optional[SemanticTask] = None) -> tuple:
         configured_exe_name, configured_exe = self.router.resolve_profile_for_task("code-generation")
         features = TaskFeatureExtractor.from_task(task, prompt=cmd.prompt, explicit_files=tuple(cmd.explicit_files)) if task else TaskFeatureExtractor.extract(cmd.prompt, explicit_files=tuple(cmd.explicit_files))
-        routing_decision = RoutingPolicy().select_route(
+        routing_decision = self.routing_policy.select_route(
             features,
             self._routing_capabilities(),
             privacy_mode=getattr(self.config, "privacy_mode", "hybrid_redacted"),
@@ -999,7 +1005,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     ) -> tuple:
         needs_project_context = bool(plan.enabled_tools) or (self.enable_context_summary and self._needs_project_context(task, cmd.prompt))
         working_paths = self.working_set.paths(cmd.conversation_id)
-        diagnostics = DeterministicExtractor().extract_diagnostics(cmd.prompt)
+        diagnostics = self.deterministic_extractor.extract_diagnostics(cmd.prompt)
         query_elements = [
             *task.paths,
             *task.symbols,
@@ -1081,16 +1087,17 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         if agents_str and not plan.enabled_tools:
             context_map_str = f"Project Guidelines:\n{agents_str}\n\n{context_map_str}".strip()
 
-        from kitt.skills.discovery import SkillDiscovery
-        from kitt.skills.loader import ProgressiveSkillLoader
         discovery_dirs = []
         if self.config.persistence_enabled:
             discovery_dirs.append(self.root_path / ".kitt" / "skills")
-        skills_found = SkillDiscovery().discover(discovery_dirs)
-        selected_skills = ProgressiveSkillLoader().select(skills_found, cmd.prompt,
-                                                          max_skills=self.config.max_skills_per_prompt)
+        skills_found = self.skill_discovery.discover(discovery_dirs)
+        selected_skills = self.skill_loader.select(
+            skills_found,
+            cmd.prompt,
+            max_skills=self.config.max_skills_per_prompt,
+        )
         skills_str = "\n\n".join(
-            ProgressiveSkillLoader().load(s, max_chars=self.config.max_skill_body_chars)
+            self.skill_loader.load(s, max_chars=self.config.max_skill_body_chars)
             for s in selected_skills
         ) if selected_skills else "No specific skills loaded."
 
