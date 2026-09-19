@@ -85,8 +85,35 @@ jobs:
           init_file = Path("kitt/__init__.py")
           init_text = init_file.read_text()
           init_text, version_count = re.subn(
-              r'(?m)^__version__ = "[0-9]+\.[0-9]+\.[0-9]+"$',
-              f'__version__ = "{version}"',
+              r'(?m)^(\s*__version__ = ")[0-9]+\.[0-9]+\.[0-9]+(")          if version_count != 1:
+              raise SystemExit("could not update runtime fallback version in kitt/__init__.py")
+          init_file.write_text(init_text)
+          PY
+      - name: Create immutable release tag
+        if: steps.version.outputs.release == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            echo "Tag $RELEASE_TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock kitt/__init__.py
+          git commit --allow-empty -m "chore(release): ${RELEASE_TAG}"
+          git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
+          git push origin "refs/tags/$RELEASE_TAG"
+      - name: Dispatch validated release pipeline
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: gh workflow run release.yml --ref "$RELEASE_TAG" -f tag="$RELEASE_TAG"
+,
+              lambda match: f'{match.group(1)}{version}{match.group(2)}',
               init_text,
               count=1,
           )
