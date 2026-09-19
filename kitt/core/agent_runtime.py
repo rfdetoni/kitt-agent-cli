@@ -163,23 +163,62 @@ def _record_route(processor, cmd: TurnCommand, profile: str, success: bool, dura
         return
 
 
-def routing_feedback(processor, profile: str) -> dict[str, float | int]:
+def routing_feedback_snapshot(processor) -> dict[str, dict[str, float | int]]:
+    """Load routing quality for all profiles with a single SQLite query."""
     db = _db(processor)
     if db is None:
-        return {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0}
+        return {}
     try:
         with db.get_connection() as conn:
-            row = conn.execute(
-                """SELECT COUNT(*), COALESCE(SUM(CASE WHEN route LIKE '%:success' THEN 1 ELSE 0 END),0),
-                COALESCE(AVG(duration_ms),0) FROM telemetry_events WHERE route LIKE ?""",
-                (f"routing:{profile}:%",),
-            ).fetchone()
-            n = int(row[0]) if row else 0
-            return {"samples": n, "success_rate": float(row[1]) / n if n else 0.5,
-                    "avg_duration_ms": float(row[2]) if row else 0.0}
+            rows = conn.execute(
+                """SELECT route, COUNT(*), COALESCE(AVG(duration_ms), 0)
+                FROM telemetry_events
+                WHERE route LIKE 'routing:%'
+                GROUP BY route"""
+            ).fetchall()
     except Exception:
-        return {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0}
+        return {}
 
+    totals: dict[str, dict[str, float | int]] = {}
+    for route, count, avg_duration in rows:
+        parts = str(route or "").split(":")
+        if len(parts) != 3 or parts[0] != "routing":
+            continue
+        profile, outcome = parts[1], parts[2]
+        if outcome not in {"success", "failure"}:
+            continue
+        bucket = totals.setdefault(
+            profile,
+            {"samples": 0, "successes": 0, "duration_weighted": 0.0},
+        )
+        sample_count = int(count or 0)
+        bucket["samples"] = int(bucket["samples"]) + sample_count
+        if outcome == "success":
+            bucket["successes"] = int(bucket["successes"]) + sample_count
+        bucket["duration_weighted"] = float(bucket["duration_weighted"]) + (
+            float(avg_duration or 0.0) * sample_count
+        )
+
+    result: dict[str, dict[str, float | int]] = {}
+    for profile, bucket in totals.items():
+        samples = int(bucket["samples"])
+        successes = int(bucket["successes"])
+        result[profile] = {
+            "samples": samples,
+            "success_rate": (successes / samples) if samples else 0.5,
+            "avg_duration_ms": (
+                float(bucket["duration_weighted"]) / samples if samples else 0.0
+            ),
+        }
+    return result
+
+
+def routing_feedback(processor, profile: str) -> dict[str, float | int]:
+    """Compatibility accessor backed by the aggregated feedback snapshot."""
+    return routing_feedback_snapshot(processor).get(
+        profile,
+        {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0},
+    )
 
 def _expire_code_memory(processor, paths: list[str]) -> None:
     """Invalidate only unpinned code-derived facts with direct path evidence."""
@@ -393,22 +432,28 @@ def install_agent_engineering(processor, registry) -> None:
 
     original_build = processor._build_context
     def build_context(self, cmd, task, plan, exe_profile, sf_client):
-        original_config = self.config
         adaptive = adaptive_retrieval_ratio(self, task, cmd)
-        try:
-            self.config = replace(original_config, context_retrieval_token_ratio=adaptive)
-            self.session_state.adaptive_retrieval_ratio = adaptive
-            return original_build(cmd, task, plan, exe_profile, sf_client)
-        finally:
-            self.config = original_config
+        self.session_state.adaptive_retrieval_ratio = adaptive
+        return original_build(
+            cmd,
+            task,
+            plan,
+            exe_profile,
+            sf_client,
+            retrieval_ratio=adaptive,
+        )
     processor._build_context = MethodType(build_context, processor)
 
     original_caps = processor._routing_capabilities
     def routing_caps(self):
         caps = original_caps()
+        feedback_snapshot = routing_feedback_snapshot(self)
         adjusted = {}
         for name, cap in caps.items():
-            feedback = routing_feedback(self, name)
+            feedback = feedback_snapshot.get(
+                name,
+                {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0},
+            )
             samples = int(feedback.get("samples", 0))
             if samples < 3:
                 adjusted[name] = cap
