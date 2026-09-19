@@ -143,7 +143,21 @@ jobs:
             gh pr create --base main --head "$branch" --title "chore(version): align main with ${RELEASE_TAG}" --body "Reconciles Agent version metadata with the latest published release ${RELEASE_TAG}." >/dev/null
             pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')"
           fi
-          gh pr merge "$pr" --squash --delete-branch
+          merged=false
+          for attempt in 1 2 3 4 5; do
+            if gh pr merge "$pr" --squash --delete-branch; then
+              merged=true
+              break
+            fi
+            if [[ "$attempt" -lt 5 ]]; then
+              echo "Release PR merge raced with a main update; retrying ($attempt/5)." >&2
+              sleep $((attempt * 2))
+            fi
+          done
+          if [[ "$merged" != "true" ]]; then
+            echo "Could not merge release PR #$pr after retries." >&2
+            exit 1
+          fi
           gh workflow run auto-release.yml --ref main
 
       - name: Stop after release reconciliation
@@ -200,7 +214,21 @@ jobs:
             gh pr create --base main --head "$branch" --title "chore(version): synchronize agent metadata" --body "Keeps pyproject.toml, uv.lock and runtime fallback version identical." >/dev/null
             pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')"
           fi
-          gh pr merge "$pr" --squash --delete-branch
+          merged=false
+          for attempt in 1 2 3 4 5; do
+            if gh pr merge "$pr" --squash --delete-branch; then
+              merged=true
+              break
+            fi
+            if [[ "$attempt" -lt 5 ]]; then
+              echo "Release PR merge raced with a main update; retrying ($attempt/5)." >&2
+              sleep $((attempt * 2))
+            fi
+          done
+          if [[ "$merged" != "true" ]]; then
+            echo "Could not merge release PR #$pr after retries." >&2
+            exit 1
+          fi
           gh workflow run auto-release.yml --ref main
 
       - name: Stop after metadata synchronization
@@ -295,7 +323,21 @@ jobs:
                 gh pr create --base main --head "$branch" --title "chore(release): v${candidate}" --body "Advances past immutable tag $tag, which points to an older ancestor." >/dev/null
                 pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')"
               fi
-              gh pr merge "$pr" --squash --delete-branch
+              merged=false
+          for attempt in 1 2 3 4 5; do
+            if gh pr merge "$pr" --squash --delete-branch; then
+              merged=true
+              break
+            fi
+            if [[ "$attempt" -lt 5 ]]; then
+              echo "Release PR merge raced with a main update; retrying ($attempt/5)." >&2
+              sleep $((attempt * 2))
+            fi
+          done
+          if [[ "$merged" != "true" ]]; then
+            echo "Could not merge release PR #$pr after retries." >&2
+            exit 1
+          fi
               gh workflow run auto-release.yml --ref main
               exit 0
             fi
@@ -387,5 +429,19 @@ jobs:
             gh pr create --base main --head "$branch" --title "chore(release): ${RELEASE_TAG}" --body "Commits exact Agent version metadata for ${RELEASE_TAG} before publication." >/dev/null
             pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')"
           fi
-          gh pr merge "$pr" --squash --delete-branch
+          merged=false
+          for attempt in 1 2 3 4 5; do
+            if gh pr merge "$pr" --squash --delete-branch; then
+              merged=true
+              break
+            fi
+            if [[ "$attempt" -lt 5 ]]; then
+              echo "Release PR merge raced with a main update; retrying ($attempt/5)." >&2
+              sleep $((attempt * 2))
+            fi
+          done
+          if [[ "$merged" != "true" ]]; then
+            echo "Could not merge release PR #$pr after retries." >&2
+            exit 1
+          fi
           gh workflow run auto-release.yml --ref main
