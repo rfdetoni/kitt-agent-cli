@@ -157,10 +157,16 @@ class _HeadTailCapture:
                         offset = take
 
                     if offset < len(chunk) and self.tail_limit > 0:
-                        self.tail.extend(chunk[offset:])
-                        overflow = len(self.tail) - self.tail_limit
-                        if overflow > 0:
-                            del self.tail[:overflow]
+                        remaining = chunk[offset:]
+                        if len(remaining) >= self.tail_limit:
+                            # Fast path for verbose commands: never grow the tail
+                            # buffer far beyond its retention window just to trim it.
+                            self.tail[:] = remaining[-self.tail_limit:]
+                        else:
+                            self.tail.extend(remaining)
+                            overflow = len(self.tail) - self.tail_limit
+                            if overflow > 0:
+                                del self.tail[:overflow]
 
                     if self.total_bytes > self.limit:
                         self.truncated = True
