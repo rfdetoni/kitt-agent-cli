@@ -276,9 +276,6 @@ class KittRuntime:
         registry.path_policy = path_policy
         registry.attach_processor(processor)
 
-        from kitt.core.completion_guard import install_completion_guard
-        install_completion_guard(processor, registry)
-
         def is_idle() -> bool:
             active_conversation = history.get_active_read_only()
             conversation_id = active_conversation["id"] if active_conversation else ""
