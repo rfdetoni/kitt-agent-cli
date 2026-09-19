@@ -12,7 +12,7 @@ license = {text = "MIT"}
 dependencies = [
     "prompt-toolkit>=3.0.52,<4",
     "defusedxml>=0.7.1,<1",
-    "kitt-protocol @ git+https://github.com/rfdetoni/kitt-protocol.git@97e1cad8dfc6d3a74fe2332530dc01a25e476516#subdirectory=sdk/python",
+    "kitt-protocol @ git+https://github.com/rfdetoni/kitt-protocol.git@c4ae476521e812ec1497a442cce6b276a26d9f80#subdirectory=sdk/python",
 ]
 
 [project.optional-dependencies]
