@@ -16,14 +16,15 @@ class AutonomyPolicy:
     allow_child_spawn_auto: bool = True
     max_auto_actions_per_turn: int = 20
     max_auto_risk_per_turn: int = 12
+    auto_review_enabled: bool = False
 
     @classmethod
     def preset(cls, level: AutonomyLevel | str) -> "AutonomyPolicy":
         presets = {
-            "read_only": cls("read_only", False, False, False, 0, 0),
-            "supervised": cls("supervised", False, False, True, 20, 12),
-            "balanced": cls("balanced", True, False, True, 20, 24),
-            "autonomous": cls("autonomous", True, True, True, 40, 80),
+            "read_only": cls("read_only", False, False, False, 0, 0, False),
+            "supervised": cls("supervised", False, False, True, 20, 12, False),
+            "balanced": cls("balanced", True, False, True, 20, 24, True),
+            "autonomous": cls("autonomous", True, True, True, 40, 80, True),
         }
         alias_map = {
             "files_free": "balanced",
@@ -80,4 +81,7 @@ class AutonomyPolicy:
             ),
             max_auto_actions_per_turn=max_actions,
             max_auto_risk_per_turn=max_risk,
+            auto_review_enabled=boolean(
+                "auto_review_enabled", base.auto_review_enabled
+            ),
         )

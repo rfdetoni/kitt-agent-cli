@@ -834,6 +834,41 @@ class ToolRegistry:
                     ),
                 }
 
+        auto_review = None
+        if (
+            permission == "ASK"
+            and grant is None
+            and control_plane_gate is None
+            and network_gate is None
+        ):
+            review_profile = (
+                "workspace-write+network"
+                if network_requested
+                else "workspace-write"
+            )
+            sandbox_strong = bool(
+                tool_name == "run_command"
+                and self.process_runner.sandbox.is_strong_available(review_profile)
+            )
+            auto_review = self.policy.review_ask_action(
+                tool_name,
+                args,
+                permission=permission,
+                origin=origin,
+                sandbox_strong=sandbox_strong,
+                network_requested=network_requested,
+                control_plane_elevation=bool(control_plane_gate),
+            )
+            if auto_review.decision == "DENY":
+                return ToolResult(
+                    False,
+                    "",
+                    f"Execution denied by pre-execution review for tool '{tool_name}'.",
+                    metadata={"auto_review": auto_review.to_dict()},
+                )
+            if auto_review.allowed:
+                permission = "ALLOW"
+
         sandbox_gate = None
         if (
             tool_name == "run_command"
@@ -905,6 +940,8 @@ class ToolRegistry:
                     approval_metadata["network"] = network_gate
                 if control_plane_gate is not None:
                     approval_metadata["control_plane"] = control_plane_gate
+                if auto_review is not None:
+                    approval_metadata["auto_review"] = auto_review.to_dict()
                 return ToolResult(
                     False,
                     "",
@@ -954,6 +991,11 @@ class ToolRegistry:
         started_perf = time.perf_counter()
         try:
             result = handler.execute(handler_args, context)
+            if auto_review is not None:
+                result.metadata = {
+                    **dict(result.metadata or {}),
+                    "auto_review": auto_review.to_dict(),
+                }
             if budget_reservation is not None and budget_reservation.reserved:
                 result.metadata = {
                     **dict(result.metadata or {}),

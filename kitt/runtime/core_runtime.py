@@ -386,6 +386,7 @@ class SafeRuntime:
         )
         automatic_budget_reservation = None
         automatic_budget_reserved = False
+        auto_review = None
         policy = (
             getattr(self.registry, "policy", None)
             if self.registry is not None
@@ -497,6 +498,46 @@ class SafeRuntime:
                             ),
                         ),
                     )
+                if permission == "ASK" and approval_grant is None:
+                    review_profile = (
+                        "workspace-write+network"
+                        if bool(args.get("network", False))
+                        else "workspace-write"
+                    )
+                    sandbox = getattr(
+                        getattr(self.registry, "process_runner", None),
+                        "sandbox",
+                        None,
+                    )
+                    sandbox_strong = bool(
+                        spec.policy_tool_action == "run_command"
+                        and sandbox is not None
+                        and sandbox.is_strong_available(review_profile)
+                    )
+                    auto_review = policy.review_ask_action(
+                        spec.policy_tool_action,
+                        args,
+                        permission=permission,
+                        origin=origin,
+                        sandbox_strong=sandbox_strong,
+                        network_requested=bool(args.get("network", False)),
+                        control_plane_elevation=control_plane_elevation,
+                    )
+                    if auto_review.decision == "DENY":
+                        return self._result(
+                            start,
+                            SafeRuntimeResult(
+                                False,
+                                op,
+                                error=(
+                                    f"Operation '{op}' was denied by pre-execution review."
+                                ),
+                                metadata={"auto_review": auto_review.to_dict()},
+                            ),
+                        )
+                    if auto_review.allowed:
+                        permission = "ALLOW"
+
                 if permission == "ASK":
                     if approval_grant is None:
                         return self._result(
@@ -510,6 +551,11 @@ class SafeRuntime:
                                 approval_payload=dict(args),
                                 required_capability=spec.required_capability,
                                 resume_tool_name=spec.resume_tool_name,
+                                metadata=(
+                                    {"auto_review": auto_review.to_dict()}
+                                    if auto_review is not None
+                                    else {}
+                                ),
                             ),
                         )
                     if spec.resume_tool_name:
@@ -571,7 +617,12 @@ class SafeRuntime:
                         required_capability=spec.required_capability,
                         resume_tool_name=spec.resume_tool_name,
                         metadata={
-                            "risk_budget": automatic_budget_reservation.to_dict()
+                            "risk_budget": automatic_budget_reservation.to_dict(),
+                            **(
+                                {"auto_review": auto_review.to_dict()}
+                                if auto_review is not None
+                                else {}
+                            ),
                         },
                     ),
                 )
@@ -595,6 +646,11 @@ class SafeRuntime:
                 result = self.retrieval_guard.observe(op, args, result)
             elif result.success and op in {"repo.edit_symbol", "repo.create_directory", "patch.apply"}:
                 self.retrieval_guard.invalidate()
+            if auto_review is not None:
+                result.metadata = {
+                    **dict(result.metadata or {}),
+                    "auto_review": auto_review.to_dict(),
+                }
             if automatic_budget_reservation is not None and automatic_budget_reservation.reserved:
                 result.metadata = {
                     **dict(result.metadata or {}),

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from kitt.domain.entities import Permission
+from kitt.security.action_review import ActionReviewBroker, ActionReviewResult
 from kitt.security.risk_budget import (
     RiskBudgetLedger,
     RiskBudgetReservation,
@@ -66,6 +67,7 @@ class PolicyEngine:
         self.approval_manager = approval_manager
         self._allowed_custom_tools: Set[str] = set()
         self.risk_budget = RiskBudgetLedger()
+        self.action_reviewer = ActionReviewBroker()
 
     def reserve_automatic_action(
         self,
@@ -119,6 +121,45 @@ class PolicyEngine:
             risk_cost=cost,
             max_actions=max_actions,
             max_risk=max_risk,
+        )
+
+    def review_ask_action(
+        self,
+        tool_name: str,
+        args: dict | None,
+        *,
+        permission: str,
+        origin: str,
+        sandbox_strong: bool = False,
+        network_requested: bool = False,
+        control_plane_elevation: bool = False,
+    ) -> ActionReviewResult:
+        from kitt.core.autonomy_policy import AutonomyPolicy
+
+        level = str(getattr(self.autonomy, "level", "supervised") or "supervised")
+        try:
+            defaults = AutonomyPolicy.preset(level)
+        except ValueError:
+            defaults = AutonomyPolicy.preset("supervised")
+        enabled = bool(
+            getattr(
+                self.autonomy,
+                "auto_review_enabled",
+                defaults.auto_review_enabled,
+            )
+        )
+        command_classification = ""
+        if tool_name == "run_command":
+            command_classification = self.evaluate_argv((args or {}).get("argv"))
+        return self.action_reviewer.review(
+            tool_name=tool_name,
+            permission=permission,
+            origin=origin,
+            auto_review_enabled=enabled,
+            command_classification=command_classification,
+            sandbox_strong=sandbox_strong,
+            network_requested=network_requested,
+            control_plane_elevation=control_plane_elevation,
         )
 
     def allow_custom_tool(self, tool_name: str) -> None:

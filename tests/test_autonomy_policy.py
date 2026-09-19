@@ -17,10 +17,14 @@ class TestAutonomyPolicy(unittest.TestCase):
         bal = AutonomyPolicy.preset("balanced")
         self.assertTrue(bal.allow_file_write_auto)
         self.assertFalse(bal.allow_run_command_auto)
+        self.assertTrue(bal.auto_review_enabled)
 
         aut = AutonomyPolicy.preset("autonomous")
         self.assertTrue(aut.allow_file_write_auto)
         self.assertTrue(aut.allow_run_command_auto)
+        self.assertTrue(aut.auto_review_enabled)
+        self.assertFalse(ro.auto_review_enabled)
+        self.assertFalse(sup.auto_review_enabled)
 
         self.assertEqual(AutonomyPolicy.preset("allow_all").level, "autonomous")
         self.assertEqual(AutonomyPolicy.preset("ask").level, "supervised")

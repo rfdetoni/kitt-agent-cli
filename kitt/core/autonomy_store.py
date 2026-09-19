@@ -21,6 +21,7 @@ class AutonomyStore:
         "allow_child_spawn_auto",
         "max_auto_actions_per_turn",
         "max_auto_risk_per_turn",
+        "auto_review_enabled",
     })
 
     def __init__(self, root_dir: str, persistence_enabled: bool = True):
