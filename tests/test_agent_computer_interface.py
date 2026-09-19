@@ -43,7 +43,10 @@ def test_runtime_operation_catalog_is_generated_from_live_contract():
     # The generic descriptor stays compact. TurnProcessor specializes its operation
     # enum per turn capabilities before native reverse-proxy extraction.
     assert runtime_tool["args"]["operation"] == "runtime operation"
-    assert "process.run {argv:[...],cwd?,timeout_seconds?}" in runtime_tool["description"]
+    assert (
+        "process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}"
+        in runtime_tool["description"]
+    )
     assert "argv-only/no shell" in runtime_tool["description"]
 
 
