@@ -92,21 +92,23 @@ def test_bubblewrap_plan_uses_namespaces_and_masks_control_plane_secrets():
                     for index in range(len(plan.argv) - width + 1)
                 )
 
+            canonical_root = sandbox.root
+            canonical_home = sandbox.home
             assert has_sequence(
                 "--ro-bind",
-                str(root_path / ".git"),
-                str(root_path / ".git"),
+                str(canonical_root / ".git"),
+                str(canonical_root / ".git"),
             )
             assert has_sequence(
                 "--ro-bind",
-                str(root_path / ".kitt"),
-                str(root_path / ".kitt"),
+                str(canonical_root / ".kitt"),
+                str(canonical_root / ".kitt"),
             )
-            assert has_sequence("--tmpfs", str(home_path / ".ssh"))
+            assert has_sequence("--tmpfs", str(canonical_home / ".ssh"))
             assert has_sequence(
                 "--ro-bind",
                 "/dev/null",
-                str(home_path / ".git-credentials"),
+                str(canonical_home / ".git-credentials"),
             )
         finally:
             sandbox.cleanup(plan)
