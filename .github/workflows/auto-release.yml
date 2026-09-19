@@ -253,94 +253,11 @@ jobs:
           head="$(git rev-parse HEAD)"
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
             tagged="$(git rev-list -n1 "$tag")"
-            if [[ "$tagged" != "$head" ]]; then
-              if ! git merge-base --is-ancestor "$tagged" "$head"; then
-                echo "Tag $tag exists at unrelated commit $tagged; refusing ambiguous release." >&2
-                exit 1
-              fi
-
-              candidate="$(python - "$CURRENT_VERSION" <<'PY'
-          import sys
-          major, minor, patch = map(int, sys.argv[1].split("."))
-          print(f"{major}.{minor}.{patch + 1}")
-          PY
-              )"
-              while git rev-parse -q --verify "refs/tags/v${candidate}" >/dev/null; do
-                candidate="$(python - "$candidate" <<'PY'
-          import sys
-          major, minor, patch = map(int, sys.argv[1].split("."))
-          print(f"{major}.{minor}.{patch + 1}")
-          PY
-                )"
-              done
-              python - "$candidate" <<'PY'
-          import re, sys
-          from pathlib import Path
-          version = sys.argv[1]
-
-          pyproject = Path("pyproject.toml")
-          text, count = re.subn(
-              r'(?m)^version = "[0-9]+\.[0-9]+\.[0-9]+"$',
-              f'version = "{version}"',
-              pyproject.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update pyproject.toml")
-          pyproject.write_text(text)
-
-          lock = Path("uv.lock")
-          text, count = re.subn(
-              r'(\[\[package\]\]\nname = "kitt-agent-cli"\nversion = ")[0-9]+\.[0-9]+\.[0-9]+(")',
-              rf'\g<1>{version}\2',
-              lock.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update uv.lock")
-          lock.write_text(text)
-
-          init_file = Path("kitt/__init__.py")
-          text, count = re.subn(
-              r'(?m)^(\s*__version__ = ")[0-9]+\.[0-9]+\.[0-9]+(")$',
-              rf'\g<1>{version}\2',
-              init_file.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update runtime fallback version")
-          init_file.write_text(text)
-          PY
-              branch="automation/recover-v${candidate}"
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git checkout -B "$branch"
-              git add pyproject.toml uv.lock kitt/__init__.py
-              git commit -m "chore(release): v${candidate}"
-              git push --force origin "HEAD:refs/heads/$branch"
-              pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
-              if [[ -z "$pr" ]]; then
-                gh pr create --base main --head "$branch" --title "chore(release): v${candidate}" --body "Advances past immutable tag $tag, which points to an older ancestor." >/dev/null
-                pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')"
-              fi
-              merged=false
-          for attempt in 1 2 3 4 5; do
-            if gh pr merge "$pr" --squash --delete-branch; then
-              merged=true
-              break
+            if [[ "$tagged" != "$head" ]] && ! git merge-base --is-ancestor "$tagged" "$head"; then
+              echo "Tag $tag exists at unrelated commit $tagged; refusing ambiguous release." >&2
+              exit 1
             fi
-            if [[ "$attempt" -lt 5 ]]; then
-              echo "Release PR merge raced with a main update; retrying ($attempt/5)." >&2
-              sleep $((attempt * 2))
-            fi
-          done
-          if [[ "$merged" != "true" ]]; then
-            echo "Could not merge release PR #$pr after retries." >&2
-            exit 1
-          fi
-              gh workflow run auto-release.yml --ref main
-              exit 0
-            fi
+            echo "Tag $tag already exists on commit $tagged; reusing immutable tag."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
