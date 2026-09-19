@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from kitt.core import completion_guard as base_guard
 from kitt.core.execution_request import ExecutionRequest
-from kitt.core.progress_guard import (
+from kitt.core.completion_guard import (
     _ProgressAwareExecutionLedger,
     install_completion_guard,
 )
