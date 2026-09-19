@@ -134,27 +134,48 @@ class HistoryRepository:
         new_conv_id = new_conv["id"]
 
         msgs = self.get_messages_for_conversation(conv_id)
-        # Clone the materialized messages once, preserving order and turn ids.
-        with self.db.get_connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            ordinal = 0
-            for msg in msgs:
-                ordinal += 1
-                new_turn_id = f"fork_{new_conv_id[:8]}_{ordinal}"
-                new_msg_id = uuid.uuid4().hex
-                now = time.time()
-                conn.execute(
+        # Prepare rows outside the write transaction, reuse persisted hashes,
+        # then batch both inserts. This keeps the WAL lock short even for long
+        # conversations and avoids one UPDATE per cloned message.
+        turn_rows = []
+        message_rows = []
+        last_created_at = new_conv["updated_at"]
+        for ordinal, msg in enumerate(msgs, start=1):
+            new_turn_id = f"fork_{new_conv_id[:8]}_{ordinal}"
+            created_at = time.time()
+            last_created_at = created_at
+            content_hash = msg.get("content_hash") or hashlib.sha256(
+                msg["content"].encode("utf-8")
+            ).hexdigest()
+            turn_rows.append((new_turn_id, new_conv_id, ordinal, created_at))
+            message_rows.append((
+                uuid.uuid4().hex,
+                new_conv_id,
+                new_turn_id,
+                msg["role"],
+                msg["content"],
+                created_at,
+                msg.get("token_count", 0),
+                content_hash,
+            ))
+
+        if turn_rows:
+            with self.db.get_connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.executemany(
                     "INSERT INTO turns (id, conversation_id, ordinal, started_at) VALUES (?, ?, ?, ?);",
-                    (new_turn_id, new_conv_id, ordinal, now)
+                    turn_rows,
+                )
+                conn.executemany(
+                    """INSERT INTO messages
+                    (id, conversation_id, turn_id, role, content, created_at, token_count, content_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
+                    message_rows,
                 )
                 conn.execute(
-                    """INSERT INTO messages (id, conversation_id, turn_id, role, content, created_at, token_count, content_hash)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
-                    (new_msg_id, new_conv_id, new_turn_id, msg["role"], msg["content"],
-                     now, msg.get("token_count", 0), hashlib.sha256(msg["content"].encode("utf-8")).hexdigest())
+                    "UPDATE conversations SET updated_at = ? WHERE id = ?;",
+                    (last_created_at, new_conv_id),
                 )
-                conn.execute(
-                    "UPDATE conversations SET updated_at = ? WHERE id = ?;", (now, new_conv_id))
         return new_conv
 
     def list_conversations(self, workspace_id: str, limit: int = 20, offset: int = 0, search: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -315,11 +336,11 @@ class HistoryRepository:
                           COALESCE(SUM(tokens_saved), 0) as saved,
                           COALESCE(SUM(duration_ms), 0.0) as duration
                    FROM telemetry_events
-                   WHERE route NOT LIKE 'tool_gain:%'"""
-        args = []
+                   WHERE NOT (route >= ? AND route < ?)"""
+        args = ["tool_gain:", "tool_gain;"]
         if conv_id:
             query += " AND conversation_id = ?"
-            args = [conv_id]
+            args.append(conv_id)
 
         with self.db.get_connection() as conn:
             cur = conn.cursor()
@@ -330,8 +351,10 @@ class HistoryRepository:
             return dict(row)
 
     def _gain_where(self, conv_id: Optional[str]) -> tuple[str, list[Any]]:
-        where = "route LIKE 'tool_gain:%'"
-        args: list[Any] = []
+        # Prefix range is equivalent to LIKE 'tool_gain:%' for the generated
+        # route format, while remaining directly indexable by SQLite.
+        where = "route >= ? AND route < ?"
+        args: list[Any] = ["tool_gain:", "tool_gain;"]
         if conv_id:
             where += " AND conversation_id = ?"
             args.append(conv_id)
