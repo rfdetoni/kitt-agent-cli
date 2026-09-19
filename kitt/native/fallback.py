@@ -283,6 +283,76 @@ def replace_symbol(root: Path, symbol_id: str, replacement: str, expected_hash: 
     }
 
 
+def replace_block(
+    root: Path,
+    path: str,
+    search: str,
+    replacement: str,
+    expected_file_hash: str | None = None,
+    validate_syntax: bool = True,
+) -> dict[str, Any]:
+    if not search:
+        raise ValueError("search block must not be empty")
+
+    target = (root / path).resolve()
+    try:
+        relative = target.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise PermissionError("path escapes repository root") from exc
+    if target.is_symlink() or not target.is_file():
+        raise PermissionError("block replacement requires a regular workspace file")
+
+    raw = target.read_bytes()
+    old_file_hash = _sha(raw)
+    if expected_file_hash is not None and expected_file_hash != old_file_hash:
+        raise RuntimeError("optimistic edit conflict: file hash changed")
+
+    text = raw.decode("utf-8", "strict")
+    matches = text.count(search)
+    if matches == 0:
+        raise ValueError("search block was not found")
+    if matches > 1:
+        raise ValueError(
+            f"search block is ambiguous: matched {matches} locations; provide more context"
+        )
+    if search == replacement:
+        return {
+            "path": relative,
+            "old_file_hash": old_file_hash,
+            "new_file_hash": old_file_hash,
+            "replacements": 0,
+            "changed": False,
+        }
+
+    updated_text = text.replace(search, replacement, 1)
+    updated = updated_text.encode("utf-8")
+    if validate_syntax and target.suffix.lower() == ".py":
+        ast.parse(updated_text)
+
+    original_mode = stat.S_IMODE(target.stat().st_mode)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as tmp:
+            tmp.write(updated)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            tmp_path = Path(tmp.name)
+        os.chmod(tmp_path, original_mode)
+        os.replace(tmp_path, target)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    return {
+        "path": relative,
+        "old_file_hash": old_file_hash,
+        "new_file_hash": _sha(updated),
+        "replacements": 1,
+        "changed": True,
+    }
+
+
 def dependency_edges(root: Path, max_symbols: int = 10000) -> dict[str, list[str]]:
     all_symbols = find_symbols(root, "", max_symbols)
     by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
