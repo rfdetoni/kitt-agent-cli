@@ -184,6 +184,9 @@ class TurnProcessor:
         self.enable_context_summary = enable_context_summary
         self._context_summary_cache: Dict[str, str] = {}
         self._cache_lock = threading.Lock()
+        self._agent_trace_context: Optional[tuple[str, str]] = None
+        self._adaptive_retrieval_ratio_fn: Optional[Callable[[Any, Any, TurnCommand], float]] = None
+        self._routing_feedback_snapshot_fn: Optional[Callable[[Any], Dict[str, Dict[str, Any]]]] = None
 
     def _provider_session_key(self, profile, conversation_id: str) -> str:
         if _reverse_proxy_identity(profile):
@@ -274,8 +277,15 @@ class TurnProcessor:
 
     def _emit(self, event_name: str, payload: Dict[str, Any]):
         callback = getattr(self, "event_callback", None)
-        if callback and not getattr(self, "_closed", False):
-            callback(event_name, payload)
+        if not callback or getattr(self, "_closed", False):
+            return
+        data = payload
+        context = self._agent_trace_context
+        if context and isinstance(payload, dict):
+            data = dict(payload)
+            data.setdefault("turn_id", context[0])
+            data.setdefault("conversation_id", context[1])
+        callback(event_name, data)
 
     def _record_latency(
         self,
@@ -392,6 +402,29 @@ class TurnProcessor:
                 languages=(),
                 is_local=is_local,
                 privacy_class="local" if is_local else "cloud",
+            )
+
+        feedback_fn = self._routing_feedback_snapshot_fn
+        if feedback_fn is None:
+            return caps
+        try:
+            snapshot = feedback_fn(self)
+        except Exception:
+            return caps
+        for name, cap in tuple(caps.items()):
+            feedback = snapshot.get(name) or {}
+            samples = int(feedback.get("samples", 0))
+            if samples < 3:
+                continue
+            rate = max(0.0, min(float(feedback.get("success_rate", 0.5)), 1.0))
+            weight = min(0.40, samples / 50.0)
+            def blend(old: float) -> float:
+                return max(0.05, min(1.0, float(old) * (1.0 - weight) + rate * weight))
+            caps[name] = replace(
+                cap,
+                tool_call_reliability=blend(cap.tool_call_reliability),
+                code_edit_score=blend(cap.code_edit_score),
+                reasoning_score=blend(cap.reasoning_score),
             )
         return caps
 
@@ -963,8 +996,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         plan: ContextPlan,
         exe_profile: ModelProfile,
         sf_client: LLMClient,
-        *,
-        retrieval_ratio: Optional[float] = None,
     ) -> tuple:
         needs_project_context = bool(plan.enabled_tools) or (self.enable_context_summary and self._needs_project_context(task, cmd.prompt))
         working_paths = self.working_set.paths(cmd.conversation_id)
@@ -981,8 +1012,14 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             query_elements.append(cmd.prompt)
         query_elements.extend(working_paths)
         context_query = " ".join(dict.fromkeys(query_elements)) if query_elements else cmd.prompt
-        if retrieval_ratio is None:
-            retrieval_ratio = getattr(self.config, "context_retrieval_token_ratio", 0.25)
+        retrieval_ratio = getattr(self.config, "context_retrieval_token_ratio", 0.25)
+        adaptive_fn = self._adaptive_retrieval_ratio_fn
+        if adaptive_fn is not None:
+            try:
+                retrieval_ratio = adaptive_fn(self, task, cmd)
+                self.session_state.adaptive_retrieval_ratio = retrieval_ratio
+            except Exception:
+                pass
         retrieval_ratio = max(0.05, min(float(retrieval_ratio), 0.75))
         max_retrieval_cap = getattr(self.config, "max_context_retrieval_tokens", 8192)
         retrieval_budget = min(
