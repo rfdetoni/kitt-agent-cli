@@ -10,10 +10,8 @@ from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt.security.workspace_mutations import delete_path, list_entries, move_path
 
 RuntimeOperationSpec = _core.RuntimeOperationSpec
-SafeRuntimeResult = _core.SafeRuntimeResult
-OPERATION_SPECS = _core.OPERATION_SPECS
-
-OPERATION_SPECS.update({
+RuntimeOperationRegistry = _core.RuntimeOperationRegistry
+SafeRuntimeResult = _core.SEXTENDED_OPERATION_SPECS = {
     "repo.definition": RuntimeOperationSpec("repo.definition", CAP_REPO_READ, "read_file"),
     "repo.hover": RuntimeOperationSpec("repo.hover", CAP_REPO_READ, "read_file"),
     "repo.references_semantic": RuntimeOperationSpec("repo.references_semantic", CAP_REPO_SEARCH, "search"),
@@ -39,11 +37,17 @@ OPERATION_SPECS.update({
         "repo.delete", CAP_REPO_WRITE, "write_file", sensitive=True
     ),
     "security.scan": RuntimeOperationSpec("security.scan", CAP_REPO_SEARCH, "search"),
+}
+
+OPERATION_REGISTRY = _core.OPERATION_REGISTRY.extend(EXTENDED_OPERATION_SPECS)
+OPERATION_SPECS = OPERATION_REGISTRYRCH, "search"),
 })
 
 
 class SafeRuntime(_core.SafeRuntime):
     """SafeRuntime facade adding optional semantic/security and filesystem adapters."""
+
+    operation_registry = OPERATION_REGISTRY
 
     @property
     def semantic(self) -> SemanticCodeIntelligence:

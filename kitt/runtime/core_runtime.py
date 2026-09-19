@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from kitt.context_engine.context_map import ContextMapBuilder
 from kitt.runtime.handles import ContextHandleResolver
+from kitt.runtime.operation_registry import RuntimeOperationRegistry
 from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
 from kitt.runtime.progressive import apply_progressive_search_view
 from kitt.runtime.retrieval_guard import RetrievalGuard
@@ -78,7 +79,7 @@ class RuntimeOperationSpec:
     resume_tool_name: Optional[str] = None
 
 
-OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
+OPERATION_REGISTRY = RuntimeOperationRegistry({
     "repo.read": RuntimeOperationSpec("repo.read", CAP_REPO_READ, "read_file"),
     "repo.search": RuntimeOperationSpec("repo.search", CAP_REPO_SEARCH, "search"),
     "repo.inspect_symbol": RuntimeOperationSpec(
@@ -160,7 +161,8 @@ OPERATION_SPECS: Dict[str, RuntimeOperationSpec] = {
     "handles.resolve": RuntimeOperationSpec(
         "handles.resolve", None, sensitive=False
     ),
-}
+})
+OPERATION_SPECS = OPERATION_REGISTRY
 
 
 @dataclass
@@ -182,6 +184,8 @@ class SafeRuntimeResult:
 
 class SafeRuntime:
     """Compact policy-governed runtime that preserves the principal context."""
+
+    operation_registry = OPERATION_REGISTRY
 
     def __init__(
         self,
@@ -241,7 +245,7 @@ class SafeRuntime:
         start = time.perf_counter()
         args = arguments or {}
         op = operation.strip() if operation else ""
-        spec = OPERATION_SPECS.get(op)
+        spec = self.operation_registry.get(op)
         if spec is None:
             return self._result(
                 start,
