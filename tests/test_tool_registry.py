@@ -163,6 +163,69 @@ class TestToolRegistry(unittest.TestCase):
         self.assertFalse(res.success)
         self.assertIn("network must be a boolean", res.error)
 
+    def test_control_plane_write_requires_exact_single_use_approval(self):
+        control_dir = self.root_path / ".kitt" / "security"
+        control_dir.mkdir(parents=True)
+        self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+        args = {
+            "path": ".kitt/security/policy.txt",
+            "content": "policy=true\n",
+        }
+        turn_id = "turn-control"
+        conversation_id = "conv-control"
+        workspace_id = "ws-control"
+
+        pending = self.registry.execute_tool(
+            "write_file",
+            args,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+            workspace_id=workspace_id,
+            enabled_tools=["write_file"],
+        )
+        self.assertFalse(pending.success)
+        self.assertTrue(pending.requires_approval)
+        self.assertEqual(
+            pending.metadata["control_plane"]["required_capability"],
+            "control_plane.write",
+        )
+        self.assertFalse((control_dir / "policy.txt").exists())
+
+        action_hash = self.registry.policy.generate_action_hash("write_file", args)
+        approval_id = "approval-control"
+        self.registry.approval_manager.register_request(
+            turn_id,
+            conversation_id,
+            workspace_id,
+            action_hash,
+            approval_id,
+            tool_name="write_file",
+        )
+        grant = self.registry.approval_manager.issue_grant(
+            turn_id,
+            conversation_id,
+            workspace_id,
+            action_hash,
+            approval_id=approval_id,
+        )
+        self.assertIsNotNone(grant)
+
+        approved = self.registry.execute_tool(
+            "write_file",
+            args,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+            workspace_id=workspace_id,
+            enabled_tools=["write_file"],
+            grant=grant,
+            expected_approval_id=approval_id,
+        )
+        self.assertTrue(approved.success, approved.error)
+        self.assertEqual(
+            (control_dir / "policy.txt").read_text(encoding="utf-8"),
+            "policy=true\n",
+        )
+
     def test_run_command_rejects_cwd_escape(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
 

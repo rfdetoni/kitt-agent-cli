@@ -4,7 +4,11 @@ import unittest
 from pathlib import Path
 
 from kitt.runtime.safe_runtime import OPERATION_SPECS, SafeRuntime
-from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_WRITE
+from kitt.security.capabilities import (
+    CAP_CONTROL_PLANE_WRITE,
+    CAP_REPO_READ,
+    CAP_REPO_WRITE,
+)
 
 
 class TestSafeRuntimeFilesystemOps(unittest.TestCase):
@@ -145,6 +149,39 @@ class TestSafeRuntimeFilesystemOps(unittest.TestCase):
                 self.assertFalse(delete_root.success)
             finally:
                 outside.unlink(missing_ok=True)
+
+    def test_control_plane_delete_requires_dedicated_capability(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            control = root / ".kitt"
+            control.mkdir()
+            target = control / "security.json"
+            target.write_text("{}", encoding="utf-8")
+            runtime = self._runtime(tmp)
+
+            blocked = runtime.execute(
+                "repo.delete",
+                {"path": ".kitt/security.json"},
+                effective_capabilities={CAP_REPO_WRITE},
+            )
+            self.assertFalse(blocked.success)
+            self.assertTrue(blocked.requires_approval)
+            self.assertEqual(
+                blocked.required_capability,
+                CAP_CONTROL_PLANE_WRITE,
+            )
+            self.assertTrue(target.exists())
+
+            allowed = runtime.execute(
+                "repo.delete",
+                {"path": ".kitt/security.json"},
+                effective_capabilities={
+                    CAP_REPO_WRITE,
+                    CAP_CONTROL_PLANE_WRITE,
+                },
+            )
+            self.assertTrue(allowed.success, allowed.error)
+            self.assertFalse(target.exists())
 
     def test_runtime_specs_mark_mutations_sensitive(self):
         self.assertEqual(OPERATION_SPECS["repo.list"].required_capability, CAP_REPO_READ)

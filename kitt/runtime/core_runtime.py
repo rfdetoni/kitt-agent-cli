@@ -12,12 +12,14 @@ from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
 from kitt.runtime.progressive import apply_progressive_search_view
 from kitt.runtime.retrieval_guard import RetrievalGuard
 from kitt.runtime.state import RuntimeStateStore
+from kitt.security.control_plane import control_plane_paths
 from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
     CAP_CHILD_INSPECT,
     CAP_CHILD_MESSAGE,
     CAP_CHILD_SPAWN,
+    CAP_CONTROL_PLANE_WRITE,
     CAP_GOAL_MANAGE,
     CAP_MCP_CALL,
     CAP_MEMORY_READ,
@@ -276,6 +278,33 @@ class SafeRuntime:
             self.index, self.goals, self.registry
         )
 
+    def _requested_control_plane_paths(
+        self,
+        operation: str,
+        args: Dict[str, Any],
+    ) -> tuple[str, ...]:
+        candidates: list[object] = []
+        if operation in {"repo.write_file", "repo.create_directory", "repo.delete"}:
+            candidates.append(args.get("path") or args.get("file"))
+        elif operation in {"repo.move", "repo.rename"}:
+            candidates.extend(
+                [
+                    args.get("source") or args.get("path"),
+                    args.get("destination") or args.get("target"),
+                ]
+            )
+        elif operation == "repo.edit_symbol":
+            candidates.append(args.get("path"))
+        elif operation == "patch.apply" and self.registry is not None:
+            parser = getattr(self.registry, "parser", None)
+            if parser is not None:
+                try:
+                    blocks = parser.parse(str(args.get("patch", "") or ""))
+                except Exception:
+                    blocks = []
+                candidates.extend(block.file_path for block in blocks)
+        return control_plane_paths(candidates)
+
     def execute(
         self,
         operation: str,
@@ -345,6 +374,11 @@ class SafeRuntime:
 
         delegated_grant = None
         delegated_approval_id = None
+        requested_control_paths = self._requested_control_plane_paths(op, args)
+        control_plane_elevation = bool(
+            requested_control_paths
+            and CAP_CONTROL_PLANE_WRITE not in capabilities
+        )
         network_elevation = bool(
             op == "process.run"
             and args.get("network", False) is True
@@ -357,6 +391,31 @@ class SafeRuntime:
             if self.registry is not None
             else None
         )
+        if control_plane_elevation and approval_grant is None:
+            return self._result(
+                start,
+                SafeRuntimeResult(
+                    False,
+                    op,
+                    error=(
+                        f"Operation '{op}' targets KITT control-plane path(s) and "
+                        "requires explicit user approval or control_plane.write."
+                    ),
+                    requires_approval=True,
+                    approval_action=spec.policy_tool_action or op,
+                    approval_payload=dict(args),
+                    required_capability=CAP_CONTROL_PLANE_WRITE,
+                    resume_tool_name=spec.resume_tool_name,
+                    metadata={
+                        "control_plane": {
+                            "paths": list(requested_control_paths),
+                            "required_capability": CAP_CONTROL_PLANE_WRITE,
+                            "reason": "single-use control-plane elevation required",
+                        }
+                    },
+                ),
+            )
+
         if network_elevation and approval_grant is None:
             return self._result(
                 start,
@@ -385,6 +444,26 @@ class SafeRuntime:
         if network_elevation and approval_grant is not None:
             delegated_grant = approval_grant
             delegated_approval_id = expected_approval_id
+        if (
+            control_plane_elevation
+            and approval_grant is not None
+            and spec.resume_tool_name
+        ):
+            delegated_grant = approval_grant
+            delegated_approval_id = expected_approval_id
+        if control_plane_elevation and approval_grant is not None and policy is None:
+            return self._result(
+                start,
+                SafeRuntimeResult(
+                    False,
+                    op,
+                    error=(
+                        "Control-plane approval cannot be validated without "
+                        "an attached policy/approval broker."
+                    ),
+                    required_capability=CAP_CONTROL_PLANE_WRITE,
+                ),
+            )
 
         if policy is not None:
             if (
@@ -404,6 +483,8 @@ class SafeRuntime:
                 permission = policy.evaluate_tool(
                     spec.policy_tool_action, args, origin=origin
                 )
+                if control_plane_elevation and permission != "DENY":
+                    permission = "ASK"
                 if permission == "DENY":
                     return self._result(
                         start,

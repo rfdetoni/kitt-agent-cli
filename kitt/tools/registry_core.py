@@ -743,6 +743,23 @@ class ToolRegistry:
                 f"Tool '{tool_name}' is not enabled in ContextPlan.",
             )
 
+        control_paths: tuple[str, ...] = ()
+        if tool_name in {"write_file", "create_directory"}:
+            from kitt.security.control_plane import control_plane_paths
+
+            target = args.get("path") or args.get("file")
+            control_paths = control_plane_paths([target])
+        elif tool_name == "apply_patch":
+            from kitt.security.control_plane import control_plane_paths
+
+            try:
+                blocks = self.parser.parse(str(args.get("patch", "") or ""))
+            except Exception:
+                blocks = []
+            control_paths = control_plane_paths(
+                block.file_path for block in blocks
+            )
+
         network_requested = False
         if tool_name == "run_command":
             try:
@@ -778,6 +795,25 @@ class ToolRegistry:
                 "",
                 f"Execution denied by PolicyEngine for tool '{tool_name}'.",
             )
+
+        control_plane_gate = None
+        if control_paths:
+            from kitt.security.capabilities import CAP_CONTROL_PLANE_WRITE
+
+            has_control_plane_capability = bool(
+                security_context is not None
+                and security_context.has_capability(CAP_CONTROL_PLANE_WRITE)
+            )
+            if not has_control_plane_capability and permission != "DENY":
+                permission = "ASK"
+                control_plane_gate = {
+                    "paths": list(control_paths),
+                    "required_capability": CAP_CONTROL_PLANE_WRITE,
+                    "reason": (
+                        "KITT control-plane mutation requires dedicated authority "
+                        "or exact single-use approval"
+                    ),
+                }
 
         network_gate = None
         if tool_name == "run_command" and network_requested:
@@ -867,6 +903,8 @@ class ToolRegistry:
                     approval_metadata["sandbox"] = sandbox_gate
                 if network_gate is not None:
                     approval_metadata["network"] = network_gate
+                if control_plane_gate is not None:
+                    approval_metadata["control_plane"] = control_plane_gate
                 return ToolResult(
                     False,
                     "",

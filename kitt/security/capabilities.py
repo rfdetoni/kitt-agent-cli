@@ -5,6 +5,7 @@ from typing import FrozenSet, Iterable, Set
 CAP_REPO_READ = "repo.read"
 CAP_REPO_SEARCH = "repo.search"
 CAP_REPO_WRITE = "repo.write"
+CAP_CONTROL_PLANE_WRITE = "control_plane.write"
 CAP_PROCESS_RUN = "process.run"
 CAP_ARTIFACT_READ = "artifact.read"
 CAP_ARTIFACT_WRITE = "artifact.write"
@@ -21,6 +22,7 @@ ALL_CAPABILITIES: FrozenSet[str] = frozenset({
     CAP_REPO_READ,
     CAP_REPO_SEARCH,
     CAP_REPO_WRITE,
+    CAP_CONTROL_PLANE_WRITE,
     CAP_PROCESS_RUN,
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
