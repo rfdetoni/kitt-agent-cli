@@ -249,7 +249,18 @@ class SafeRuntime(_core.SafeRuntime):
         self.retrieval_guard.invalidate()
         return SafeRuntimeResult(True, "repo.delete", data=data, metadata={"changed_paths": changed})
 
-    def _dispatch(self, op, args, turn_id, origin, security_context, capabilities, grant, expected_approval_id):
+    def _dispatch(
+        self,
+        op,
+        args,
+        turn_id,
+        origin,
+        security_context,
+        capabilities,
+        grant,
+        expected_approval_id,
+        automatic_budget_reserved: bool = False,
+    ):
         if op == "repo.list":
             return self._op_repo_list(args, security_context)
         if op == "repo.write_file":
@@ -262,6 +273,7 @@ class SafeRuntime(_core.SafeRuntime):
                 security_context,
                 grant,
                 expected_approval_id,
+                automatic_budget_reserved,
             )
             if result.success:
                 self.retrieval_guard.invalidate()
@@ -272,7 +284,17 @@ class SafeRuntime(_core.SafeRuntime):
             return self._op_repo_delete(args, turn_id, security_context)
         if op in {"repo.definition", "repo.hover", "repo.references_semantic", "repo.diagnostics", "repo.call_hierarchy", "repo.outline", "repo.ast_search", "security.scan"}:
             return self._semantic_dispatch(op, args, security_context)
-        return super()._dispatch(op, args, turn_id, origin, security_context, capabilities, grant, expected_approval_id)
+        return super()._dispatch(
+            op,
+            args,
+            turn_id,
+            origin,
+            security_context,
+            capabilities,
+            grant,
+            expected_approval_id,
+            automatic_budget_reserved,
+        )
 
 
 def __getattr__(name: str):

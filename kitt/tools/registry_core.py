@@ -702,6 +702,7 @@ class ToolRegistry:
         expected_approval_id: Optional[str] = None,
         origin: str = "MODEL",
         security_context=None,
+        automatic_budget_reserved: bool = False,
     ) -> ToolResult:
         args = args or {}
 
@@ -763,6 +764,32 @@ class ToolRegistry:
                 f"Execution denied by PolicyEngine for tool '{tool_name}'.",
             )
 
+        budget_reservation = None
+        if (
+            permission == "ALLOW"
+            and grant is None
+            and not automatic_budget_reserved
+        ):
+            budget_reservation = self.policy.reserve_automatic_action(
+                tool_name,
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+                origin=origin,
+            )
+            if not budget_reservation.allowed:
+                permission = "ASK"
+                logger.info(
+                    "automatic risk budget exhausted tool=%s turn=%s reason=%s "
+                    "risk=%s/%s actions=%s/%s",
+                    tool_name,
+                    turn_id,
+                    budget_reservation.reason,
+                    budget_reservation.risk_used,
+                    budget_reservation.max_risk,
+                    budget_reservation.actions_used,
+                    budget_reservation.max_actions,
+                )
+
         if permission == "ASK":
             expected_hash = self.policy.generate_action_hash(tool_name, args)
             valid = self.approval_manager.validate_and_consume(
@@ -779,6 +806,11 @@ class ToolRegistry:
                     "",
                     f"Tool '{tool_name}' requires explicit user confirmation (ASK policy).",
                     requires_approval=True,
+                    metadata=(
+                        {"risk_budget": budget_reservation.to_dict()}
+                        if budget_reservation is not None
+                        else {}
+                    ),
                 )
             approval_validated = True
 
@@ -822,6 +854,11 @@ class ToolRegistry:
         started_perf = time.perf_counter()
         try:
             result = handler.execute(handler_args, context)
+            if budget_reservation is not None and budget_reservation.reserved:
+                result.metadata = {
+                    **dict(result.metadata or {}),
+                    "risk_budget": budget_reservation.to_dict(),
+                }
             result = self._apply_post_edit_gate(
                 tool_name,
                 result,

@@ -15,14 +15,15 @@ class AutonomyPolicy:
     allow_run_command_auto: bool = False
     allow_child_spawn_auto: bool = True
     max_auto_actions_per_turn: int = 20
+    max_auto_risk_per_turn: int = 12
 
     @classmethod
     def preset(cls, level: AutonomyLevel | str) -> "AutonomyPolicy":
         presets = {
-            "read_only": cls("read_only", False, False, False, 0),
-            "supervised": cls("supervised", False, False, True, 20),
-            "balanced": cls("balanced", True, False, True, 20),
-            "autonomous": cls("autonomous", True, True, True, 40),
+            "read_only": cls("read_only", False, False, False, 0, 0),
+            "supervised": cls("supervised", False, False, True, 20, 12),
+            "balanced": cls("balanced", True, False, True, 20, 24),
+            "autonomous": cls("autonomous", True, True, True, 40, 80),
         }
         alias_map = {
             "files_free": "balanced",
@@ -60,6 +61,11 @@ class AutonomyPolicy:
         )
         if not 0 <= max_actions <= 1000:
             raise ValueError("max_auto_actions_per_turn must be between 0 and 1000")
+        max_risk = int(
+            data.get("max_auto_risk_per_turn", base.max_auto_risk_per_turn)
+        )
+        if not 0 <= max_risk <= 10000:
+            raise ValueError("max_auto_risk_per_turn must be between 0 and 10000")
 
         return cls(
             level=base.level,
@@ -73,4 +79,5 @@ class AutonomyPolicy:
                 "allow_child_spawn_auto", base.allow_child_spawn_auto
             ),
             max_auto_actions_per_turn=max_actions,
+            max_auto_risk_per_turn=max_risk,
         )

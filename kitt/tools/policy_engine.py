@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from kitt.domain.entities import Permission
+from kitt.security.risk_budget import (
+    RiskBudgetLedger,
+    RiskBudgetReservation,
+    is_automatic_origin,
+    tool_risk_cost,
+)
 from kitt.tools.path_policy import WorkspacePathPolicy
 
 
@@ -59,6 +65,40 @@ class PolicyEngine:
         self.autonomy = autonomy or AutonomyPolicy.preset("supervised")
         self.approval_manager = approval_manager
         self._allowed_custom_tools: Set[str] = set()
+        self.risk_budget = RiskBudgetLedger()
+
+    def reserve_automatic_action(
+        self,
+        tool_name: str,
+        *,
+        turn_id: str,
+        conversation_id: str,
+        origin: str = "MODEL",
+        risk_cost: int | None = None,
+    ) -> RiskBudgetReservation:
+        cost = tool_risk_cost(tool_name) if risk_cost is None else max(0, int(risk_cost))
+        max_actions = int(getattr(self.autonomy, "max_auto_actions_per_turn", 0) or 0)
+        max_risk = int(getattr(self.autonomy, "max_auto_risk_per_turn", 0) or 0)
+        if cost == 0 or not is_automatic_origin(origin):
+            return RiskBudgetReservation(
+                True,
+                False,
+                str(turn_id or "default_turn"),
+                str(conversation_id or "default_conv"),
+                cost,
+                0,
+                0,
+                max_actions,
+                max_risk,
+                "explicit-or-zero-risk",
+            )
+        return self.risk_budget.reserve(
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+            risk_cost=cost,
+            max_actions=max_actions,
+            max_risk=max_risk,
+        )
 
     def allow_custom_tool(self, tool_name: str) -> None:
         self._allowed_custom_tools.add(tool_name)

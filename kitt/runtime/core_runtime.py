@@ -77,6 +77,7 @@ class RuntimeOperationSpec:
     policy_tool_action: Optional[str] = None
     sensitive: bool = False
     resume_tool_name: Optional[str] = None
+    risk_cost: int = 0
 
 
 OPERATION_REGISTRY = RuntimeOperationRegistry({
@@ -91,13 +92,16 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "repo.context_map", CAP_REPO_SEARCH, "search"
     ),
     "flow.execute": RuntimeOperationSpec("flow.execute", None, sensitive=False),
-    "repo.edit_symbol": RuntimeOperationSpec("repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True),
+    "repo.edit_symbol": RuntimeOperationSpec(
+        "repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=1
+    ),
     "artifacts.store": RuntimeOperationSpec(
         "artifacts.store",
         CAP_ARTIFACT_WRITE,
         "artifact_store",
         sensitive=True,
         resume_tool_name="artifact_store",
+        risk_cost=1,
     ),
     "artifacts.read": RuntimeOperationSpec(
         "artifacts.read", CAP_ARTIFACT_READ, "artifact_read"
@@ -108,6 +112,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "create_directory",
         sensitive=True,
         resume_tool_name="create_directory",
+        risk_cost=1,
     ),
     "patch.apply": RuntimeOperationSpec(
         "patch.apply",
@@ -115,6 +120,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "apply_patch",
         sensitive=True,
         resume_tool_name="apply_patch",
+        risk_cost=1,
     ),
     "process.run": RuntimeOperationSpec(
         "process.run",
@@ -122,6 +128,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "run_command",
         sensitive=True,
         resume_tool_name="run_command",
+        risk_cost=3,
     ),
     "children.spawn": RuntimeOperationSpec(
         "children.spawn",
@@ -129,6 +136,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "child_spawn",
         sensitive=True,
         resume_tool_name="child_spawn",
+        risk_cost=2,
     ),
     "children.send": RuntimeOperationSpec(
         "children.send", CAP_CHILD_MESSAGE, sensitive=False
@@ -183,15 +191,16 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "write_file",
         sensitive=True,
         resume_tool_name="write_file",
+        risk_cost=1,
     ),
     "repo.move": RuntimeOperationSpec(
-        "repo.move", CAP_REPO_WRITE, "write_file", sensitive=True
+        "repo.move", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=1
     ),
     "repo.rename": RuntimeOperationSpec(
-        "repo.rename", CAP_REPO_WRITE, "write_file", sensitive=True
+        "repo.rename", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=1
     ),
     "repo.delete": RuntimeOperationSpec(
-        "repo.delete", CAP_REPO_WRITE, "write_file", sensitive=True
+        "repo.delete", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=4
     ),
     "security.scan": RuntimeOperationSpec("security.scan", CAP_REPO_SEARCH, "search"),
 })
@@ -333,11 +342,17 @@ class SafeRuntime:
 
         delegated_grant = None
         delegated_approval_id = None
-        if self.registry and getattr(self.registry, "policy", None):
-            policy = self.registry.policy
+        automatic_budget_reservation = None
+        automatic_budget_reserved = False
+        policy = (
+            getattr(self.registry, "policy", None)
+            if self.registry is not None
+            else None
+        )
+        if policy is not None:
             if (
                 getattr(getattr(policy, "autonomy", None), "level", None) == "read_only"
-                and spec.sensitive
+                and (spec.sensitive or spec.risk_cost > 0)
             ):
                 return self._result(
                     start,
@@ -410,6 +425,40 @@ class SafeRuntime:
                                 ),
                             )
 
+        if (
+            policy is not None
+            and approval_grant is None
+            and spec.risk_cost > 0
+        ):
+            automatic_budget_reservation = policy.reserve_automatic_action(
+                spec.policy_tool_action or op,
+                turn_id=turn_id,
+                conversation_id=self.conversation_id,
+                origin=origin,
+                risk_cost=spec.risk_cost,
+            )
+            if not automatic_budget_reservation.allowed:
+                return self._result(
+                    start,
+                    SafeRuntimeResult(
+                        False,
+                        op,
+                        error=(
+                            f"Operation '{op}' exceeded the automatic risk budget "
+                            "and requires explicit user approval."
+                        ),
+                        requires_approval=True,
+                        approval_action=spec.policy_tool_action or op,
+                        approval_payload=dict(args),
+                        required_capability=spec.required_capability,
+                        resume_tool_name=spec.resume_tool_name,
+                        metadata={
+                            "risk_budget": automatic_budget_reservation.to_dict()
+                        },
+                    ),
+                )
+            automatic_budget_reserved = automatic_budget_reservation.reserved
+
         try:
             result = self._dispatch(
                 op,
@@ -420,6 +469,7 @@ class SafeRuntime:
                 capabilities,
                 delegated_grant,
                 delegated_approval_id,
+                automatic_budget_reserved,
             )
             if op == "repo.search":
                 result = apply_progressive_search_view(result, args)
@@ -427,6 +477,11 @@ class SafeRuntime:
                 result = self.retrieval_guard.observe(op, args, result)
             elif result.success and op in {"repo.edit_symbol", "repo.create_directory", "patch.apply"}:
                 self.retrieval_guard.invalidate()
+            if automatic_budget_reservation is not None and automatic_budget_reservation.reserved:
+                result.metadata = {
+                    **dict(result.metadata or {}),
+                    "risk_budget": automatic_budget_reservation.to_dict(),
+                }
         except Exception as exc:
             result = SafeRuntimeResult(
                 False, op, error=f"Runtime error in {op}: {exc}"
@@ -448,6 +503,7 @@ class SafeRuntime:
         capabilities: set[str],
         grant,
         expected_approval_id,
+        automatic_budget_reserved: bool = False,
     ) -> SafeRuntimeResult:
         handlers = {
             "repo.read": lambda: self._op_repo_read(args, turn_id, origin, security_context),
@@ -462,12 +518,12 @@ class SafeRuntime:
                 args, turn_id, origin, capabilities, security_context
             ),
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
-            "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id),
-            "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context),
-            "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id),
-            "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id),
-            "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id),
-            "children.spawn": lambda: self._op_registry_tool("children.spawn", "child_spawn", args, turn_id, origin, security_context, grant, expected_approval_id),
+            "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
+            "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context, automatic_budget_reserved=automatic_budget_reserved),
+            "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
+            "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
+            "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
+            "children.spawn": lambda: self._op_registry_tool("children.spawn", "child_spawn", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "children.send": lambda: self._op_children_send(args),
             "children.inspect": lambda: self._op_children_inspect(args),
             "goal.inspect": lambda: self._op_goal_inspect(args),
@@ -478,7 +534,9 @@ class SafeRuntime:
             "memory.concept": lambda: self._op_memory_concept(args),
             "memory.link": lambda: self._op_memory_link(args),
             "skill.call": lambda: self._op_skill_call(args, security_context),
-            "mcp.call": lambda: self._op_mcp_call(args, turn_id, security_context),
+            "mcp.call": lambda: self._op_mcp_call(
+                args, turn_id, security_context, automatic_budget_reserved
+            ),
             "state.get": lambda: self._op_state_get(args),
             "state.set": lambda: self._op_state_set(args),
             "state.list": lambda: self._op_state_list(),
@@ -496,6 +554,7 @@ class SafeRuntime:
         security_context,
         grant=None,
         expected_approval_id=None,
+        automatic_budget_reserved: bool = False,
     ) -> SafeRuntimeResult:
         if not self.registry:
             return SafeRuntimeResult(False, operation, error="No tool registry attached")
@@ -509,6 +568,7 @@ class SafeRuntime:
             grant=grant,
             expected_approval_id=expected_approval_id,
             security_context=security_context,
+            automatic_budget_reserved=automatic_budget_reserved,
         )
         metadata = dict(getattr(tool_result, "metadata", {}) or {})
         handles: list[str] = []
@@ -1179,7 +1239,9 @@ class SafeRuntime:
             error=getattr(result, "error", None),
         )
 
-    def _op_mcp_call(self, args, turn_id, security_context):
+    def _op_mcp_call(
+        self, args, turn_id, security_context, automatic_budget_reserved: bool = False
+    ):
         tool_name = str(args.get("tool_name", ""))
         if not tool_name:
             return SafeRuntimeResult(False, "mcp.call", error="MCP tool_name required")
@@ -1193,6 +1255,7 @@ class SafeRuntime:
             workspace_id=self.workspace_id,
             origin="SAFE_RUNTIME_BROKER",
             security_context=security_context,
+            automatic_budget_reserved=automatic_budget_reserved,
         )
         return SafeRuntimeResult(
             result.success,
