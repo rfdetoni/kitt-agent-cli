@@ -163,22 +163,54 @@ def _record_route(processor, cmd: TurnCommand, profile: str, success: bool, dura
         return
 
 
-def routing_feedback(processor, profile: str) -> dict[str, float | int]:
+def routing_feedback_snapshot(processor) -> dict[str, dict[str, float | int]]:
+    """Load routing quality for all profiles with a single SQLite query."""
     db = _db(processor)
     if db is None:
-        return {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0}
+        return {}
     try:
         with db.get_connection() as conn:
-            row = conn.execute(
-                """SELECT COUNT(*), COALESCE(SUM(CASE WHEN route LIKE '%:success' THEN 1 ELSE 0 END),0),
-                COALESCE(AVG(duration_ms),0) FROM telemetry_events WHERE route LIKE ?""",
-                (f"routing:{profile}:%",),
-            ).fetchone()
-            n = int(row[0]) if row else 0
-            return {"samples": n, "success_rate": float(row[1]) / n if n else 0.5,
-                    "avg_duration_ms": float(row[2]) if row else 0.0}
+            rows = conn.execute(
+                """SELECT route, COUNT(*), COALESCE(AVG(duration_ms), 0)
+                FROM telemetry_events
+                WHERE route LIKE 'routing:%'
+                GROUP BY route"""
+            ).fetchall()
     except Exception:
-        return {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0}
+        return {}
+
+    totals: dict[str, dict[str, float | int]] = {}
+    for route, count, avg_duration in rows:
+        parts = str(route or "").split(":")
+        if len(parts) != 3 or parts[0] != "routing":
+            continue
+        profile, outcome = parts[1], parts[2]
+        if outcome not in {"success", "failure"}:
+            continue
+        bucket = totals.setdefault(
+            profile,
+            {"samples": 0, "successes": 0, "duration_weighted": 0.0},
+        )
+        sample_count = int(count or 0)
+        bucket["samples"] = int(bucket["samples"]) + sample_count
+        if outcome == "success":
+            bucket["successes"] = int(bucket["successes"]) + sample_count
+        bucket["duration_weighted"] = float(bucket["duration_weighted"]) + (
+            float(avg_duration or 0.0) * sample_count
+        )
+
+    result: dict[str, dict[str, float | int]] = {}
+    for profile, bucket in totals.items():
+        samples = int(bucket["samples"])
+        successes = int(bucket["successes"])
+        result[profile] = {
+            "samples": samples,
+            "success_rate": (successes / samples) if samples else 0.5,
+            "avg_duration_ms": (
+                float(bucket["duration_weighted"]) / samples if samples else 0.0
+            ),
+        }
+    return result
 
 
 def _expire_code_memory(processor, paths: list[str]) -> None:
@@ -376,53 +408,11 @@ def install_agent_engineering(processor, registry) -> None:
     processor.turn_journal = journal
     _install_tool_execution(processor, registry)
 
-    # Correlate mapping payloads without changing TurnProcessor's event API or
-    # retyping typed payloads such as TurnMetrics.
-    original_emit = processor._emit
+    # Register native turn hooks instead of stacking MethodType wrappers for
+    # event correlation, adaptive retrieval and learned routing.
     processor._agent_trace_context = None
-    def correlated_emit(self, event_name, payload):
-        if not isinstance(payload, dict):
-            return original_emit(event_name, payload)
-        data = dict(payload)
-        context = getattr(self, "_agent_trace_context", None)
-        if context:
-            data.setdefault("turn_id", context[0])
-            data.setdefault("conversation_id", context[1])
-        return original_emit(event_name, data)
-    processor._emit = MethodType(correlated_emit, processor)
-
-    original_build = processor._build_context
-    def build_context(self, cmd, task, plan, exe_profile, sf_client):
-        original_config = self.config
-        adaptive = adaptive_retrieval_ratio(self, task, cmd)
-        try:
-            self.config = replace(original_config, context_retrieval_token_ratio=adaptive)
-            self.session_state.adaptive_retrieval_ratio = adaptive
-            return original_build(cmd, task, plan, exe_profile, sf_client)
-        finally:
-            self.config = original_config
-    processor._build_context = MethodType(build_context, processor)
-
-    original_caps = processor._routing_capabilities
-    def routing_caps(self):
-        caps = original_caps()
-        adjusted = {}
-        for name, cap in caps.items():
-            feedback = routing_feedback(self, name)
-            samples = int(feedback.get("samples", 0))
-            if samples < 3:
-                adjusted[name] = cap
-                continue
-            rate = max(0.0, min(float(feedback.get("success_rate", 0.5)), 1.0))
-            weight = min(0.40, samples / 50.0)
-            def blend(old):
-                return max(0.05, min(1.0, float(old) * (1.0 - weight) + rate * weight))
-            adjusted[name] = replace(cap,
-                tool_call_reliability=blend(cap.tool_call_reliability),
-                code_edit_score=blend(cap.code_edit_score),
-                reasoning_score=blend(cap.reasoning_score))
-        return adjusted
-    processor._routing_capabilities = MethodType(routing_caps, processor)
+    processor._adaptive_retrieval_ratio_fn = adaptive_retrieval_ratio
+    processor._routing_feedback_snapshot_fn = routing_feedback_snapshot
 
     original_run = processor.run_turn
     def run_turn(self, cmd: TurnCommand) -> Iterator[Any]:

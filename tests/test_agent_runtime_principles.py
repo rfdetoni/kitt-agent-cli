@@ -5,7 +5,12 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from kitt.core.agent_runtime import DurableTurnJournal, _turn, adaptive_retrieval_ratio
+from kitt.core.agent_runtime import (
+    DurableTurnJournal,
+    _turn,
+    adaptive_retrieval_ratio,
+    routing_feedback_snapshot,
+)
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.session_state import SessionState
 from kitt.core.turn_command import TurnCommand
@@ -24,6 +29,49 @@ class AgentRuntimePrinciplesTests(unittest.TestCase):
         cmd = TurnCommand(conversation_id="c", prompt="x")
         self.assertLess(adaptive_retrieval_ratio(processor, exact, cmd),
                         adaptive_retrieval_ratio(processor, ambiguous, cmd))
+
+    def test_routing_feedback_snapshot_uses_one_query_for_all_profiles(self):
+        class FakeConnection:
+            def __init__(self):
+                self.calls = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, _sql):
+                self.calls += 1
+                return self
+
+            def fetchall(self):
+                return [
+                    ("routing:fast:success", 3, 10.0),
+                    ("routing:fast:failure", 1, 30.0),
+                    ("routing:slow:failure", 2, 50.0),
+                ]
+
+        class FakeDB:
+            def __init__(self):
+                self.connection = FakeConnection()
+
+            def get_connection(self):
+                return self.connection
+
+        db = FakeDB()
+        processor = SimpleNamespace(
+            history_service=SimpleNamespace(repo=SimpleNamespace(db=db))
+        )
+
+        snapshot = routing_feedback_snapshot(processor)
+
+        self.assertEqual(db.connection.calls, 1)
+        self.assertEqual(snapshot["fast"]["samples"], 4)
+        self.assertAlmostEqual(snapshot["fast"]["success_rate"], 0.75)
+        self.assertAlmostEqual(snapshot["fast"]["avg_duration_ms"], 15.0)
+        self.assertEqual(snapshot["slow"]["samples"], 2)
+        self.assertEqual(snapshot["slow"]["success_rate"], 0.0)
 
     def test_flow_transform_projects_filters_and_aggregates_without_code_execution(self):
         data = [{"name": "a", "kind": "x", "noise": 1},

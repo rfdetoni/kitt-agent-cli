@@ -19,6 +19,8 @@ from kitt.router.models import ModelCapabilities
 from kitt.router.policy import RoutingPolicy
 from kitt.memory.memory_manager import MemoryManager
 from kitt.skills.skill_manager import SkillManager
+from kitt.skills.discovery import SkillDiscovery
+from kitt.skills.loader import ProgressiveSkillLoader
 from kitt.context_engine.engine import ContextEngine
 from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.context_filter.semantic_filter import SemanticFilter
@@ -36,6 +38,10 @@ from kitt.tools.safe_python import (
 from kitt.tools.protocol import TOOL_CALL_OPEN, parse_tool_call
 from kitt.tools.surface_selector import ToolSurfaceSelector
 from kitt.llm.client import LLMClient
+from kitt.llm.attachments import (
+    AttachmentError,
+    attach_to_first_user_message,
+)
 from kitt.core.session_state import SessionState
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.turn_command import TurnCommand
@@ -116,6 +122,20 @@ def _same_reverse_proxy_endpoint(left, right) -> bool:
     return left_identity is not None and left_identity == _reverse_proxy_identity(right)
 
 
+def _attachment_path_key(value: str) -> str:
+    return str(value).strip().lstrip("@").replace("\\", "/")
+
+
+def _attachment_retrieval_prompt(prompt: str, attachments: tuple[str, ...]) -> str:
+    sanitized = str(prompt)
+    for path in attachments:
+        normalized = _attachment_path_key(path)
+        if not normalized:
+            continue
+        sanitized = sanitized.replace(f"@{path}", " ")
+        sanitized = sanitized.replace(f"@{normalized}", " ")
+    return " ".join(sanitized.split())
+
 
 class TurnProcessor:
     """Decoupled core turn processing engine for K.I.T.T."""
@@ -143,6 +163,7 @@ class TurnProcessor:
         self.root_path = Path(root_dir).resolve()
         self.config = config or RuntimeConfig()
         self.router = TaskRouter(root_dir=root_dir)
+        self.routing_policy = RoutingPolicy()
         self.memory = memory_service or MemoryManager(
             root_dir=root_dir, persistence_enabled=self.config.persistence_enabled)
         self.skill_manager = skill_manager or SkillManager(
@@ -155,6 +176,9 @@ class TurnProcessor:
             persistence_enabled=self.config.persistence_enabled,
         )
         self.context_resolver = ContextResolver(root_dir=root_dir)
+        self.deterministic_extractor = DeterministicExtractor()
+        self.skill_discovery = SkillDiscovery()
+        self.skill_loader = ProgressiveSkillLoader()
         self.diff_parser = SearchReplaceParser()
         self.build_detector = BuildDetector(root_dir=root_dir)
         self.log_reducer = LogReducer()
@@ -184,6 +208,11 @@ class TurnProcessor:
         self.enable_context_summary = enable_context_summary
         self._context_summary_cache: Dict[str, str] = {}
         self._cache_lock = threading.Lock()
+        self._agent_trace_context: Optional[tuple[str, str]] = None
+        self._adaptive_retrieval_ratio_fn: Optional[Callable[[Any, Any, TurnCommand], float]] = None
+        self._routing_feedback_snapshot_fn: Optional[Callable[[Any], Dict[str, Dict[str, Any]]]] = None
+        self._attachment_paths_by_turn: Dict[str, tuple[str, ...]] = {}
+        self._attachment_wire_sent: set[str] = set()
 
     def _provider_session_key(self, profile, conversation_id: str) -> str:
         if _reverse_proxy_identity(profile):
@@ -274,8 +303,15 @@ class TurnProcessor:
 
     def _emit(self, event_name: str, payload: Dict[str, Any]):
         callback = getattr(self, "event_callback", None)
-        if callback and not getattr(self, "_closed", False):
-            callback(event_name, payload)
+        if not callback or getattr(self, "_closed", False):
+            return
+        data = payload
+        context = self._agent_trace_context
+        if context and isinstance(payload, dict):
+            data = dict(payload)
+            data.setdefault("turn_id", context[0])
+            data.setdefault("conversation_id", context[1])
+        callback(event_name, data)
 
     def _record_latency(
         self,
@@ -392,6 +428,29 @@ class TurnProcessor:
                 languages=(),
                 is_local=is_local,
                 privacy_class="local" if is_local else "cloud",
+            )
+
+        feedback_fn = self._routing_feedback_snapshot_fn
+        if feedback_fn is None:
+            return caps
+        try:
+            snapshot = feedback_fn(self)
+        except Exception:
+            return caps
+        for name, cap in tuple(caps.items()):
+            feedback = snapshot.get(name) or {}
+            samples = int(feedback.get("samples", 0))
+            if samples < 3:
+                continue
+            rate = max(0.0, min(float(feedback.get("success_rate", 0.5)), 1.0))
+            weight = min(0.40, samples / 50.0)
+            def blend(old: float) -> float:
+                return max(0.05, min(1.0, float(old) * (1.0 - weight) + rate * weight))
+            caps[name] = replace(
+                cap,
+                tool_call_reliability=blend(cap.tool_call_reliability),
+                code_edit_score=blend(cap.code_edit_score),
+                reasoning_score=blend(cap.reasoning_score),
             )
         return caps
 
@@ -720,6 +779,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
+        wire_messages = messages
+        attachment_paths = getattr(self, "_attachment_paths_by_turn", {}).get(turn_id)
+        attachment_wire_sent = getattr(self, "_attachment_wire_sent", None)
+        if attachment_wire_sent is None:
+            attachment_wire_sent = set()
+            self._attachment_wire_sent = attachment_wire_sent
+        if attachment_paths and turn_id not in attachment_wire_sent:
+            wire_messages = attach_to_first_user_message(
+                self.root_path,
+                list(messages),
+                attachment_paths,
+            )
+            attachment_wire_sent.add(turn_id)
         def _invoke_chat_stream(msgs, sys_prompt):
             kwargs = {
                 "system_prompt": sys_prompt,
@@ -737,7 +809,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return client.chat_stream(msgs, **kwargs)
 
         if "lfm" in getattr(profile, "model", "").lower():
-            raw_text = "".join(_invoke_chat_stream(messages, system_prompt))
+            raw_text = "".join(_invoke_chat_stream(wire_messages, system_prompt))
             thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
             thought_text = thought_match.group(1).strip() if thought_match else ""
             dur_ms = int((time.time() - (started_at or time.time())) * 1000)
@@ -758,7 +830,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
         model_request_started_at = time.perf_counter()
         first_model_chunk = True
-        for chunk in _invoke_chat_stream(messages, system_prompt):
+        for chunk in _invoke_chat_stream(wire_messages, system_prompt):
             if first_model_chunk:
                 first_model_chunk = False
                 self._record_latency(
@@ -933,7 +1005,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     def _resolve_execution_profile(self, cmd: TurnCommand, task: Optional[SemanticTask] = None) -> tuple:
         configured_exe_name, configured_exe = self.router.resolve_profile_for_task("code-generation")
         features = TaskFeatureExtractor.from_task(task, prompt=cmd.prompt, explicit_files=tuple(cmd.explicit_files)) if task else TaskFeatureExtractor.extract(cmd.prompt, explicit_files=tuple(cmd.explicit_files))
-        routing_decision = RoutingPolicy().select_route(
+        routing_decision = self.routing_policy.select_route(
             features,
             self._routing_capabilities(),
             privacy_mode=getattr(self.config, "privacy_mode", "hybrid_redacted"),
@@ -956,10 +1028,36 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             exe_profile = replace(exe_profile, max_output_tokens=max(64, safe_output))
         return exe_profile_name, exe_profile, routing_decision, None
 
-    def _build_context(self, cmd: TurnCommand, task: SemanticTask, plan: ContextPlan, exe_profile: ModelProfile, sf_client: LLMClient) -> tuple:
+    def _build_context(
+        self,
+        cmd: TurnCommand,
+        task: SemanticTask,
+        plan: ContextPlan,
+        exe_profile: ModelProfile,
+        sf_client: LLMClient,
+    ) -> tuple:
+        attachments = self._attachment_paths_by_turn.get(cmd.turn_id, ())
+        if attachments:
+            attachment_keys = {_attachment_path_key(path) for path in attachments}
+            task = replace(
+                task,
+                paths=[
+                    path for path in task.paths
+                    if _attachment_path_key(path) not in attachment_keys
+                ],
+            )
+            cmd = replace(
+                cmd,
+                prompt=_attachment_retrieval_prompt(cmd.prompt, attachments),
+                explicit_files={
+                    path for path in cmd.explicit_files
+                    if _attachment_path_key(path) not in attachment_keys
+                },
+            )
+
         needs_project_context = bool(plan.enabled_tools) or (self.enable_context_summary and self._needs_project_context(task, cmd.prompt))
         working_paths = self.working_set.paths(cmd.conversation_id)
-        diagnostics = DeterministicExtractor().extract_diagnostics(cmd.prompt)
+        diagnostics = self.deterministic_extractor.extract_diagnostics(cmd.prompt)
         query_elements = [
             *task.paths,
             *task.symbols,
@@ -973,6 +1071,14 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         query_elements.extend(working_paths)
         context_query = " ".join(dict.fromkeys(query_elements)) if query_elements else cmd.prompt
         retrieval_ratio = getattr(self.config, "context_retrieval_token_ratio", 0.25)
+        adaptive_fn = self._adaptive_retrieval_ratio_fn
+        if adaptive_fn is not None:
+            try:
+                retrieval_ratio = adaptive_fn(self, task, cmd)
+                self.session_state.adaptive_retrieval_ratio = retrieval_ratio
+            except Exception:
+                pass
+        retrieval_ratio = max(0.05, min(float(retrieval_ratio), 0.75))
         max_retrieval_cap = getattr(self.config, "max_context_retrieval_tokens", 8192)
         retrieval_budget = min(
             max_retrieval_cap,
@@ -1033,16 +1139,17 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         if agents_str and not plan.enabled_tools:
             context_map_str = f"Project Guidelines:\n{agents_str}\n\n{context_map_str}".strip()
 
-        from kitt.skills.discovery import SkillDiscovery
-        from kitt.skills.loader import ProgressiveSkillLoader
         discovery_dirs = []
         if self.config.persistence_enabled:
             discovery_dirs.append(self.root_path / ".kitt" / "skills")
-        skills_found = SkillDiscovery().discover(discovery_dirs)
-        selected_skills = ProgressiveSkillLoader().select(skills_found, cmd.prompt,
-                                                          max_skills=self.config.max_skills_per_prompt)
+        skills_found = self.skill_discovery.discover(discovery_dirs)
+        selected_skills = self.skill_loader.select(
+            skills_found,
+            cmd.prompt,
+            max_skills=self.config.max_skills_per_prompt,
+        )
         skills_str = "\n\n".join(
-            ProgressiveSkillLoader().load(s, max_chars=self.config.max_skill_body_chars)
+            self.skill_loader.load(s, max_chars=self.config.max_skill_body_chars)
             for s in selected_skills
         ) if selected_skills else "No specific skills loaded."
 
@@ -1157,6 +1264,11 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                            security_context: ExecutionSecurityContext,
                            agent_route: Optional[str] = None) -> Iterator:
         effective_agent_route = request.agent_route or agent_route
+        attachment_paths = getattr(self, "_attachment_paths_by_turn", {}).get(cmd.turn_id, ())
+        if attachment_paths and _reverse_proxy_identity(getattr(exe_client, "profile", None)) is None:
+            raise AttachmentError(
+                "File attachments currently require a kitt-reverse-proxy execution profile"
+            )
         execution_messages = list(request.messages)
         snapshots = getattr(self, "_execution_message_snapshots", None)
         if snapshots is None:
@@ -1785,6 +1897,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         yield TurnCompleted(response=clean_response, edit_result=edit_result)
 
     def run_turn(self, cmd: TurnCommand) -> Iterator[TurnEvent]:
+        if cmd.attachments:
+            self._attachment_paths_by_turn[cmd.turn_id] = tuple(sorted(cmd.attachments))
+
         turn_started_at = time.time()
         start_ev = TurnStarted(turn_id=cmd.turn_id, conversation_id=cmd.conversation_id, prompt=cmd.prompt)
         self._emit("TurnStarted", {"turn_id": cmd.turn_id})
@@ -1959,6 +2074,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
         except Exception as e:
             yield TurnFailed(error=str(e))
+        finally:
+            self._attachment_paths_by_turn.pop(cmd.turn_id, None)
+            self._attachment_wire_sent.discard(cmd.turn_id)
 
     def continue_turn(self, turn_id: str, grant: Any) -> Iterator[TurnEvent]:
         if grant is None:
