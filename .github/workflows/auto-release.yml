@@ -90,14 +90,8 @@ jobs:
               init_text,
               count=1,
           )
-          init_text, kitt_count = re.subn(
-              r'(?m)^KITT_VERSION = "[0-9]+\.[0-9]+\.[0-9]+"$',
-              f'KITT_VERSION = "{version}"',
-              init_text,
-              count=1,
-          )
-          if version_count != 1 or kitt_count != 1:
-              raise SystemExit("could not update runtime version in kitt/__init__.py")
+          if version_count != 1:
+              raise SystemExit("could not update runtime fallback version in kitt/__init__.py")
           init_file.write_text(init_text)
           PY
       - name: Create immutable release tag

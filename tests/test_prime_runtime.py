@@ -216,8 +216,8 @@ class TestPrimeRuntime(unittest.TestCase):
         self.assertEqual(received, [{"msg": "hello"}])
 
 
-class TestCanonicalSchemaV1(unittest.TestCase):
-    def test_new_database_creates_schema_v1(self):
+class TestCanonicalSchema(unittest.TestCase):
+    def test_new_database_creates_current_schema(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             db = HistoryDatabase(root)
             try:
@@ -228,7 +228,7 @@ class TestCanonicalSchemaV1(unittest.TestCase):
                     integrity = conn.execute("PRAGMA integrity_check").fetchall()
             finally:
                 db.close()
-            self.assertEqual(version, 1)
+            self.assertEqual(version, 2)
             self.assertIn("conversations", tables)
             self.assertIn("child_sessions", tables)
             self.assertIn("harness_entries", tables)
