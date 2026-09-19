@@ -14,17 +14,25 @@ from kitt.security.execution_sandbox import (
 from kitt.tools.process_runner import ProcessRunner
 
 
-def test_landlock_plan_is_strong_and_uses_standalone_launcher():
+def test_landlock_plan_is_partial_and_never_satisfies_strong_requirement():
     with tempfile.TemporaryDirectory() as root:
         sandbox = ExecutionSandbox(root, auto_detect=False, landlock_abi=3)
+        with pytest.raises(SandboxUnavailable):
+            sandbox.plan(
+                [sys.executable, "-c", "print('ok')"],
+                root,
+                profile="workspace-write+network",
+                require_strong=True,
+            )
+
         plan = sandbox.plan(
             [sys.executable, "-c", "print('ok')"],
             root,
             profile="workspace-write+network",
-            require_strong=True,
+            require_strong=False,
         )
         try:
-            assert plan.strong
+            assert not plan.strong
             assert plan.backend == "landlock"
             assert plan.argv[1] == "-I"
             assert "landlock_exec.py" in plan.argv[2]
@@ -45,36 +53,63 @@ def test_no_network_profile_fails_closed_without_namespace_backend():
             )
 
 
-def test_bubblewrap_plan_uses_namespaces_and_network_isolation():
-    with tempfile.TemporaryDirectory() as root:
-        fake = Path(root).parent / "kitt-fake-bwrap"
+def test_bubblewrap_plan_uses_namespaces_and_masks_control_plane_secrets():
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
+        root_path = Path(root)
+        home_path = Path(home)
+        (root_path / ".git").mkdir()
+        (root_path / ".kitt").mkdir()
+        (home_path / ".ssh").mkdir()
+        (home_path / ".git-credentials").write_text("secret", encoding="utf-8")
+        fake = home_path / "kitt-fake-bwrap"
         fake.write_text("", encoding="utf-8")
+
+        sandbox = ExecutionSandbox(
+            root,
+            bwrap_path=str(fake),
+            bwrap_version=(0, 12, 0),
+            landlock_abi=0,
+            auto_detect=False,
+            home_dir=home,
+        )
+        plan = sandbox.plan(
+            ["tool", "--version"],
+            root,
+            profile="workspace-write",
+            require_strong=True,
+        )
         try:
-            sandbox = ExecutionSandbox(
-                root,
-                bwrap_path=str(fake),
-                bwrap_version=(0, 12, 0),
-                landlock_abi=0,
-                auto_detect=False,
+            assert plan.backend == "bubblewrap"
+            assert plan.strong
+            assert plan.network_isolated
+            assert "--unshare-net" in plan.argv
+            assert "--new-session" in plan.argv
+
+            def has_sequence(*sequence: str) -> bool:
+                width = len(sequence)
+                return any(
+                    plan.argv[index:index + width] == list(sequence)
+                    for index in range(len(plan.argv) - width + 1)
+                )
+
+            assert has_sequence(
+                "--ro-bind",
+                str(root_path / ".git"),
+                str(root_path / ".git"),
             )
-            plan = sandbox.plan(
-                ["tool", "--version"],
-                root,
-                profile="workspace-write",
-                require_strong=True,
+            assert has_sequence(
+                "--ro-bind",
+                str(root_path / ".kitt"),
+                str(root_path / ".kitt"),
             )
-            try:
-                assert plan.backend == "bubblewrap"
-                assert plan.strong
-                assert plan.network_isolated
-                assert "--unshare-net" in plan.argv
-                assert "--ro-bind" in plan.argv
-                assert "--bind" in plan.argv
-                assert "--new-session" in plan.argv
-            finally:
-                sandbox.cleanup(plan)
+            assert has_sequence("--tmpfs", str(home_path / ".ssh"))
+            assert has_sequence(
+                "--ro-bind",
+                "/dev/null",
+                str(home_path / ".git-credentials"),
+            )
         finally:
-            fake.unlink(missing_ok=True)
+            sandbox.cleanup(plan)
 
 
 @pytest.mark.skipif(query_landlock_abi() <= 0, reason="Landlock unavailable")
@@ -99,10 +134,10 @@ def test_landlock_process_cannot_write_outside_workspace():
         result = runner.run(
             [sys.executable, "-c", script],
             sandbox_profile="workspace-write+network",
-            require_strong_sandbox=True,
+            require_strong_sandbox=False,
         )
         assert result.returncode == 0, result.stderr
         assert result.sandbox_backend == "landlock"
-        assert result.sandbox_strong
+        assert not result.sandbox_strong
         assert (Path(root) / "inside.txt").read_text(encoding="utf-8") == "inside"
         assert not outside_file.exists()

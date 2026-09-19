@@ -90,8 +90,14 @@ class ExecutionSandbox:
         bwrap_version: tuple[int, int, int] | None = None,
         landlock_abi: int | None = None,
         auto_detect: bool = True,
+        home_dir: str | Path | None = None,
     ):
         self.root = Path(root_dir).expanduser().resolve()
+        self.home = (
+            Path(home_dir).expanduser().resolve()
+            if home_dir is not None
+            else Path.home().expanduser().resolve()
+        )
         self._bwrap_path_override = bwrap_path
         self._bwrap_version_override = bwrap_version
         self._landlock_abi_override = landlock_abi
@@ -141,6 +147,45 @@ class ExecutionSandbox:
                 return resolved
         return None
 
+    @staticmethod
+    def _bwrap_runtime_works(candidate: Path) -> bool:
+        true_path = next(
+            (path for path in (Path("/usr/bin/true"), Path("/bin/true")) if path.exists()),
+            None,
+        )
+        if true_path is None:
+            return False
+        try:
+            probe = subprocess.run(
+                [
+                    str(candidate),
+                    "--die-with-parent",
+                    "--new-session",
+                    "--unshare-user",
+                    "--unshare-pid",
+                    "--unshare-ipc",
+                    "--unshare-uts",
+                    "--ro-bind",
+                    "/",
+                    "/",
+                    "--proc",
+                    "/proc",
+                    "--dev",
+                    "/dev",
+                    "--",
+                    str(true_path),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+                env={"PATH": os.environ.get("PATH", "")},
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return probe.returncode == 0
+
     def _probe_bwrap(self) -> tuple[str, tuple[int, int, int]] | None:
         if self._bwrap_cache is not False:
             return self._bwrap_cache
@@ -167,6 +212,12 @@ class ExecutionSandbox:
         if version is None or tuple(version) < _MIN_BWRAP_VERSION:
             self._bwrap_cache = None
             return None
+        # A version string is insufficient: user namespaces may be disabled by
+        # the host/container. Explicit test overrides intentionally skip this
+        # runtime probe to keep unit tests hermetic.
+        if self._bwrap_version_override is None and not self._bwrap_runtime_works(candidate):
+            self._bwrap_cache = None
+            return None
         self._bwrap_cache = (str(candidate), tuple(version))
         return self._bwrap_cache
 
@@ -184,11 +235,83 @@ class ExecutionSandbox:
 
     def is_strong_available(self, profile: SandboxProfile | None = None) -> bool:
         target = profile or self.default_profile
-        return self.backend_for(target) not in {None, "none"}
+        # Landlock confines selected filesystem writes, but it cannot provide
+        # the namespace/socket isolation required for unattended process.exec.
+        return self.backend_for(target) == "bubblewrap"
 
     @staticmethod
     def _scratch() -> Path:
         return Path(tempfile.mkdtemp(prefix="kitt-sandbox-")).resolve()
+
+    @staticmethod
+    def _append_sequence(items: list[str], *values: str) -> None:
+        items.extend(values)
+
+    def _mask_private_path(self, wrapped: list[str], path: Path) -> None:
+        try:
+            if not path.exists():
+                return
+            resolved = path.resolve()
+            if resolved.is_dir():
+                try:
+                    self.root.relative_to(resolved)
+                except ValueError:
+                    pass
+                else:
+                    # Never hide an ancestor that contains the workspace.
+                    return
+                self._append_sequence(wrapped, "--tmpfs", str(resolved))
+            else:
+                self._append_sequence(
+                    wrapped, "--ro-bind", "/dev/null", str(resolved)
+                )
+        except OSError:
+            # Sandbox construction stays conservative without turning transient
+            # stat failures into a reason to drop all isolation.
+            return
+
+    def _sensitive_host_paths(self) -> tuple[Path, ...]:
+        relatives = (
+            ".ssh",
+            ".gnupg",
+            ".aws",
+            ".azure",
+            ".kube",
+            ".docker",
+            ".kitt",
+            ".config/gcloud",
+            ".config/gh",
+            ".config/glab",
+            ".local/share/keyrings",
+            ".password-store",
+            ".mozilla",
+            ".config/google-chrome",
+            ".config/chromium",
+            ".netrc",
+            ".git-credentials",
+            ".npmrc",
+            ".pypirc",
+            ".cargo/credentials",
+            ".cargo/credentials.toml",
+            ".m2/settings.xml",
+            ".gradle/gradle.properties",
+            ".config/pip/pip.conf",
+        )
+        paths = [self.home / relative for relative in relatives]
+        raw_kitt_home = str(os.environ.get("KITT_HOME", "") or "").strip()
+        if raw_kitt_home:
+            paths.append(Path(raw_kitt_home).expanduser())
+        unique: list[Path] = []
+        seen: set[str] = set()
+        for path in paths:
+            try:
+                key = str(path.resolve())
+            except OSError:
+                key = str(path)
+            if key not in seen:
+                seen.add(key)
+                unique.append(path)
+        return tuple(unique)
 
     def _bwrap_plan(
         self,
@@ -213,17 +336,56 @@ class ExecutionSandbox:
             "/proc",
             "--dev",
             "/dev",
-            "--bind",
-            str(scratch),
-            str(scratch),
         ]
+
+        # Hide host runtime sockets and global temporary data. Bubblewrap bind
+        # sources are resolved from /oldroot, so workspace/scratch mounts can be
+        # reintroduced safely after these masks.
+        for hidden_root in (Path("/run"), Path("/tmp"), Path("/var/tmp")):
+            if hidden_root.is_dir():
+                self._append_sequence(wrapped, "--tmpfs", str(hidden_root))
+
+        # /etc/resolv.conf is commonly a symlink into /run. Rebind the host
+        # resolver inputs as read-only after masking /run so network-enabled
+        # profiles keep DNS without exposing runtime sockets.
+        for resolver_path in (
+            Path("/etc/resolv.conf"),
+            Path("/etc/hosts"),
+            Path("/etc/nsswitch.conf"),
+        ):
+            if resolver_path.exists():
+                self._append_sequence(
+                    wrapped,
+                    "--ro-bind-try",
+                    str(resolver_path),
+                    str(resolver_path),
+                )
+
+        self._append_sequence(wrapped, "--bind", str(scratch), str(scratch))
+
         network_isolated = profile == "workspace-write"
         if network_isolated:
             wrapped.append("--unshare-net")
         if profile in {"workspace-write", "workspace-write+network"}:
-            wrapped.extend(["--bind", str(self.root), str(self.root)])
+            self._append_sequence(wrapped, "--bind", str(self.root), str(self.root))
         else:
-            wrapped.extend(["--ro-bind", str(self.root), str(self.root)])
+            self._append_sequence(wrapped, "--ro-bind", str(self.root), str(self.root))
+
+        # Commands may modify source files, but repository control-plane state
+        # stays owned by KITT. This also prevents autonomous git metadata edits.
+        for protected_name in (".git", ".kitt"):
+            protected = self.root / protected_name
+            if protected.exists():
+                self._append_sequence(
+                    wrapped, "--ro-bind", str(protected), str(protected)
+                )
+
+        # Environment scrubbing prevents variable-based credential leakage;
+        # these masks additionally block direct filesystem reads of common host
+        # credentials/browser profiles from arbitrary interpreters.
+        for sensitive in self._sensitive_host_paths():
+            self._mask_private_path(wrapped, sensitive)
+
         wrapped.extend(["--chdir", str(cwd), "--", *argv])
         return SandboxPlan(
             argv=wrapped,
@@ -269,7 +431,7 @@ class ExecutionSandbox:
             argv=wrapped,
             profile=profile,
             backend="landlock",
-            strong=True,
+            strong=False,
             network_isolated=False,
             host_cwd=self.root,
             env_overrides={
@@ -278,7 +440,10 @@ class ExecutionSandbox:
                 "TEMP": str(scratch),
             },
             scratch_dir=scratch,
-            reason=f"landlock-abi-{self._probe_landlock()}+no_new_privs",
+            reason=(
+                f"landlock-abi-{self._probe_landlock()}+no_new_privs"
+                "-filesystem-only"
+            ),
         )
 
     def plan(
@@ -301,16 +466,16 @@ class ExecutionSandbox:
         if bwrap is not None:
             return self._bwrap_plan(bwrap[0], target, argv, cwd_path)
 
+        if require_strong:
+            raise SandboxUnavailable(
+                f"Strong sandbox profile '{target}' requires functional bubblewrap >= 0.12"
+            )
+
         if (
             self._probe_landlock() > 0
             and target in {"read-only", "workspace-write+network"}
         ):
             return self._landlock_plan(target, argv, cwd_path)
-
-        if require_strong:
-            raise SandboxUnavailable(
-                f"Strong sandbox profile '{target}' is unavailable on this host"
-            )
         return SandboxPlan(
             list(argv),
             target,
