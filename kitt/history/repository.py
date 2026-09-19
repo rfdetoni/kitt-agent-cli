@@ -442,7 +442,16 @@ class HistoryRepository:
     def get_messages_for_conversation(self, conv_id: str) -> List[Dict[str, Any]]:
         with self.db.get_connection() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC;", (conv_id,))
+            cur.execute(
+                """SELECT m.*
+                   FROM messages AS m
+                   JOIN turns AS t
+                     ON t.id = m.turn_id
+                    AND t.conversation_id = m.conversation_id
+                   WHERE m.conversation_id = ?
+                   ORDER BY t.ordinal ASC, m.created_at ASC, m.rowid ASC;""",
+                (conv_id,),
+            )
             return [dict(row) for row in cur.fetchall()]
 
     def save_pending_action(self, pa: 'PendingAction'):

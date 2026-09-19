@@ -308,14 +308,24 @@ def replace_block(
         raise RuntimeError("optimistic edit conflict: file hash changed")
 
     text = raw.decode("utf-8", "strict")
-    matches = text.count(search)
+
+    # SEARCH/REPLACE blocks are generated with LF newlines, while Git worktrees
+    # on Windows may materialize files as CRLF. Match semantically equivalent
+    # line endings without normalizing the entire file or changing its EOL style.
+    normalized_search = search.replace("\r\n", "\n").replace("\r", "\n")
+    normalized_replacement = replacement.replace("\r\n", "\n").replace("\r", "\n")
+    newline = "\r\n" if "\r\n" in text else "\n"
+    search_text = normalized_search.replace("\n", newline)
+    replacement_text = normalized_replacement.replace("\n", newline)
+
+    matches = text.count(search_text)
     if matches == 0:
         raise ValueError("search block was not found")
     if matches > 1:
         raise ValueError(
             f"search block is ambiguous: matched {matches} locations; provide more context"
         )
-    if search == replacement:
+    if search_text == replacement_text:
         return {
             "path": relative,
             "old_file_hash": old_file_hash,
@@ -324,7 +334,7 @@ def replace_block(
             "changed": False,
         }
 
-    updated_text = text.replace(search, replacement, 1)
+    updated_text = text.replace(search_text, replacement_text, 1)
     updated = updated_text.encode("utf-8")
     if validate_syntax and target.suffix.lower() == ".py":
         ast.parse(updated_text)

@@ -115,3 +115,39 @@ def test_fork_batches_conversation_update_and_preserves_message_order():
         ]
     finally:
         db.close()
+
+
+def test_message_order_uses_turn_ordinal_when_timestamps_tie():
+    db = HistoryDatabase(":memory:", in_memory=True)
+    repo = HistoryRepository(db)
+    try:
+        workspace = repo.get_or_create_workspace("stable-order-workspace")
+        conversation = repo.create_conversation(workspace["id"], title="Stable")
+        conv_id = conversation["id"]
+
+        with db.get_connection() as conn:
+            conn.execute(
+                "INSERT INTO turns (id, conversation_id, ordinal, started_at) VALUES (?, ?, ?, ?)",
+                ("turn-1", conv_id, 1, 1.0),
+            )
+            conn.execute(
+                "INSERT INTO turns (id, conversation_id, ordinal, started_at) VALUES (?, ?, ?, ?)",
+                ("turn-2", conv_id, 2, 1.0),
+            )
+            conn.execute(
+                """INSERT INTO messages
+                   (id, conversation_id, turn_id, role, content, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                ("z-message", conv_id, "turn-1", "user", "first", 10.0),
+            )
+            conn.execute(
+                """INSERT INTO messages
+                   (id, conversation_id, turn_id, role, content, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                ("a-message", conv_id, "turn-2", "user", "second", 10.0),
+            )
+
+        messages = repo.get_messages_for_conversation(conv_id)
+        assert [message["content"] for message in messages] == ["first", "second"]
+    finally:
+        db.close()
