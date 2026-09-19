@@ -5,12 +5,18 @@ The KITT namespace is intentionally split across independently versioned
 packages (agent-cli, assistant runtime, toolbox/native, evolution/evals).
 """
 
+from importlib.metadata import PackageNotFoundError, version
 from pkgutil import extend_path
 
 __path__ = extend_path(__path__, __name__)
 
-__version__ = "0.41.9"
-KITT_VERSION = "0.41.9"
+try:
+    __version__ = version("kitt-agent-cli")
+except PackageNotFoundError:
+    # Source-tree fallback for direct execution before installation.
+    __version__ = "0.41.10"
+
+KITT_VERSION = __version__
 STATE_SCHEMA_VERSION = 1
 DAEMON_PROTOCOL_VERSION = 1
 NATIVE_PROTOCOL_VERSION = 1
