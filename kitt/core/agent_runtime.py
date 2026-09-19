@@ -213,13 +213,6 @@ def routing_feedback_snapshot(processor) -> dict[str, dict[str, float | int]]:
     return result
 
 
-def routing_feedback(processor, profile: str) -> dict[str, float | int]:
-    """Compatibility accessor backed by the aggregated feedback snapshot."""
-    return routing_feedback_snapshot(processor).get(
-        profile,
-        {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0},
-    )
-
 def _expire_code_memory(processor, paths: list[str]) -> None:
     """Invalidate only unpinned code-derived facts with direct path evidence."""
     db = _db(processor)
@@ -415,59 +408,11 @@ def install_agent_engineering(processor, registry) -> None:
     processor.turn_journal = journal
     _install_tool_execution(processor, registry)
 
-    # Correlate mapping payloads without changing TurnProcessor's event API or
-    # retyping typed payloads such as TurnMetrics.
-    original_emit = processor._emit
+    # Register native turn hooks instead of stacking MethodType wrappers for
+    # event correlation, adaptive retrieval and learned routing.
     processor._agent_trace_context = None
-    def correlated_emit(self, event_name, payload):
-        if not isinstance(payload, dict):
-            return original_emit(event_name, payload)
-        data = dict(payload)
-        context = getattr(self, "_agent_trace_context", None)
-        if context:
-            data.setdefault("turn_id", context[0])
-            data.setdefault("conversation_id", context[1])
-        return original_emit(event_name, data)
-    processor._emit = MethodType(correlated_emit, processor)
-
-    original_build = processor._build_context
-    def build_context(self, cmd, task, plan, exe_profile, sf_client):
-        adaptive = adaptive_retrieval_ratio(self, task, cmd)
-        self.session_state.adaptive_retrieval_ratio = adaptive
-        return original_build(
-            cmd,
-            task,
-            plan,
-            exe_profile,
-            sf_client,
-            retrieval_ratio=adaptive,
-        )
-    processor._build_context = MethodType(build_context, processor)
-
-    original_caps = processor._routing_capabilities
-    def routing_caps(self):
-        caps = original_caps()
-        feedback_snapshot = routing_feedback_snapshot(self)
-        adjusted = {}
-        for name, cap in caps.items():
-            feedback = feedback_snapshot.get(
-                name,
-                {"samples": 0, "success_rate": 0.5, "avg_duration_ms": 0.0},
-            )
-            samples = int(feedback.get("samples", 0))
-            if samples < 3:
-                adjusted[name] = cap
-                continue
-            rate = max(0.0, min(float(feedback.get("success_rate", 0.5)), 1.0))
-            weight = min(0.40, samples / 50.0)
-            def blend(old):
-                return max(0.05, min(1.0, float(old) * (1.0 - weight) + rate * weight))
-            adjusted[name] = replace(cap,
-                tool_call_reliability=blend(cap.tool_call_reliability),
-                code_edit_score=blend(cap.code_edit_score),
-                reasoning_score=blend(cap.reasoning_score))
-        return adjusted
-    processor._routing_capabilities = MethodType(routing_caps, processor)
+    processor._adaptive_retrieval_ratio_fn = adaptive_retrieval_ratio
+    processor._routing_feedback_snapshot_fn = routing_feedback_snapshot
 
     original_run = processor.run_turn
     def run_turn(self, cmd: TurnCommand) -> Iterator[Any]:
