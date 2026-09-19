@@ -742,6 +742,12 @@ class ToolRegistry:
                 f"Tool '{tool_name}' is not enabled in ContextPlan.",
             )
 
+        if tool_name == "run_command":
+            try:
+                self.process_runner.validate_cwd(args.get("cwd"))
+            except (FileNotFoundError, NotADirectoryError, PermissionError, OSError, ValueError) as exc:
+                return ToolResult(False, "", f"Command preflight failed: {exc}")
+
         permission = self.policy.evaluate_tool(
             tool_name, args, origin=origin, conversation_id=conversation_id
         )

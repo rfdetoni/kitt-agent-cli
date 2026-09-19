@@ -220,6 +220,10 @@ class ProcessRunner:
             raise NotADirectoryError(f"Process cwd is not a directory: {cwd}")
         return candidate
 
+    def validate_cwd(self, cwd: str | Path | None) -> Path:
+        """Validate process cwd before policy/approval so invalid requests never need consent."""
+        return self._resolve_cwd(cwd)
+
     @staticmethod
     def _terminate_tree(proc: subprocess.Popen) -> None:
         if proc.poll() is not None:

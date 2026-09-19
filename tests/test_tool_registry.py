@@ -77,8 +77,13 @@ class TestToolRegistry(unittest.TestCase):
             enabled_tools=["run_command"],
         )
 
-        self.assertTrue(res.success, res.error)
-        self.assertEqual(res.output.strip(), "frontend")
+        if self.registry.process_runner.sandbox.is_strong_available():
+            self.assertTrue(res.success, res.error)
+            self.assertEqual(res.output.strip(), "frontend")
+            self.assertTrue(res.metadata["sandbox"]["strong"])
+        else:
+            self.assertFalse(res.success)
+            self.assertTrue(res.requires_approval)
 
     def test_run_command_rejects_cwd_escape(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
