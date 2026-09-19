@@ -1,2 +1,0 @@
-prompt-toolkit>=3.0.52,<4
-kitt-protocol @ git+https://github.com/rfdetoni/kitt-protocol.git@main#subdirectory=sdk/python

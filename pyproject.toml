@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kitt-agent-cli"
-version = "0.41.9"
+version = "0.41.10"
 description = "K.I.T.T. autonomous AI coding agent CLI"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,7 +12,7 @@ license = {text = "MIT"}
 dependencies = [
     "prompt-toolkit>=3.0.52,<4",
     "defusedxml>=0.7.1,<1",
-    "kitt-protocol @ git+https://github.com/rfdetoni/kitt-protocol.git@c2dbf4764a38a6036e66f9c97a3264bf4730cd3d#subdirectory=sdk/python",
+    "kitt-protocol @ git+https://github.com/rfdetoni/kitt-protocol.git@cdcffb1539e484c82bc1368b77315214712df88b#subdirectory=sdk/python",
 ]
 
 [project.optional-dependencies]
