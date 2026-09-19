@@ -1,6 +1,6 @@
 import unittest
 
-from kitt.core.progress_guard import _ProgressAwareExecutionLedger
+from kitt.core.completion_guard import _ProgressAwareExecutionLedger
 from kitt.core.turn_events import ToolCompleted, ToolStarted
 
 
