@@ -42,6 +42,10 @@ _DANGEROUS_ENV_NAMES = {
     "NODE_OPTIONS", "PYTHONPATH",
 }
 
+_CAPTURE_HEAD_BYTES = 1024
+_CAPTURE_TAIL_BYTES = 8 * 1024
+_CAPTURE_WINDOW_BYTES = _CAPTURE_HEAD_BYTES + _CAPTURE_TAIL_BYTES
+
 
 def sanitized_subprocess_env(extra: Optional[dict[str, str]] = None) -> dict[str, str]:
     result: dict[str, str] = {}
@@ -127,9 +131,10 @@ class _HeadTailCapture:
     """Bounded stream capture retaining both the beginning and the latest bytes."""
 
     def __init__(self, limit: int):
-        self.limit = max(1024, int(limit))
-        self.head_limit = max(256, self.limit // 4)
-        self.tail_limit = max(0, self.limit - self.head_limit)
+        requested = max(1024, int(limit))
+        self.limit = min(requested, _CAPTURE_WINDOW_BYTES)
+        self.head_limit = min(_CAPTURE_HEAD_BYTES, self.limit)
+        self.tail_limit = min(_CAPTURE_TAIL_BYTES, max(0, self.limit - self.head_limit))
         self.head = bytearray()
         self.tail = bytearray()
         self.truncated = False
@@ -247,8 +252,9 @@ class ProcessRunner:
         timeout_seconds = max(1, min(int(timeout_seconds), 3600))
         started = time.monotonic()
 
-        # Each stream gets a full bounded head/tail capture so a noisy stdout
-        # cannot erase a short stderr before the final fair combined budget.
+        # Drain both pipes continuously, but retain only a 1 KiB diagnostic
+        # prefix plus the latest 8 KiB per stream. This prevents pipe deadlocks
+        # without letting verbose builds/tests inflate resident memory or LLM context.
         out_cap = _HeadTailCapture(self.max_output_bytes)
         err_cap = _HeadTailCapture(self.max_output_bytes)
         kwargs = dict(
