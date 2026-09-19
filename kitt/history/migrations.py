@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -672,6 +672,12 @@ SCHEMA_V1_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_coordination_leases_expiry ON coordination_leases(workspace_id, expires_at);",
 ]
 
+SCHEMA_V2_STATEMENTS = [
+    "CREATE INDEX IF NOT EXISTS idx_conversations_workspace_updated ON conversations(workspace_id, updated_at DESC, id DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_telemetry_conversation_start ON telemetry_events(conversation_id, start_time DESC, id DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_telemetry_route_start ON telemetry_events(route, start_time DESC, id DESC);",
+]
+
 
 class IncompatibleSchemaError(RuntimeError):
     """Raised when an incompatible database schema is detected."""
@@ -706,18 +712,31 @@ class MigrationRunner:
                 "Run: kitt doctor --reset-state"
             )
 
-        if current_version != 0:
-            # Legacy pre-1.0 database detected; do not silently migrate
+        if current_version not in (0, 1):
             raise IncompatibleSchemaError(
                 f"State schema version {current_version} is incompatible with this development build. "
                 "Run: kitt doctor --reset-state"
             )
 
-        # Fresh database: initialize schema v1 in a single transaction
-        with conn:
-            for statement in SCHEMA_V1_STATEMENTS:
-                conn.execute(statement)
-            conn.execute(
-                "INSERT INTO schema_info (version) VALUES (?);", (CURRENT_SCHEMA_VERSION,)
+        if current_version == 0:
+            # Fresh database: initialize v1 first so the incremental path is
+            # identical to upgrades from an existing installation.
+            with conn:
+                for statement in SCHEMA_V1_STATEMENTS:
+                    conn.execute(statement)
+                conn.execute("INSERT INTO schema_info (version) VALUES (1);")
+            current_version = 1
+            logger.info("Initialized KITT SQLite schema version 1")
+
+        if current_version == 1:
+            with conn:
+                for statement in SCHEMA_V2_STATEMENTS:
+                    conn.execute(statement)
+                conn.execute("UPDATE schema_info SET version = 2;")
+            current_version = 2
+            logger.info("Migrated KITT SQLite schema to version 2")
+
+        if current_version != self.target_version:
+            raise IncompatibleSchemaError(
+                f"State schema version {current_version} did not reach target {self.target_version}."
             )
-            logger.info("Initialized KITT SQLite schema version %d", CURRENT_SCHEMA_VERSION)
