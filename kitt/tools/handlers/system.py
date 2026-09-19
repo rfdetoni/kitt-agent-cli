@@ -197,7 +197,7 @@ class RunCommandHandler:
             return ToolResult(
                 False,
                 "",
-                "process.run accepts only argv, cwd, timeout_seconds, max_tokens, and token_budget; "
+                "process.run accepts only argv, cwd, timeout_seconds, network, max_tokens, and token_budget; "
                 f"unsupported argument(s): {', '.join(unsupported)}",
             )
 

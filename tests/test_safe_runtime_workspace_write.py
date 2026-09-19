@@ -236,7 +236,10 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
             try:
                 definition = registry.get_tool_definitions(["kitt_runtime"])[0]
                 description = definition["description"]
-                self.assertIn("process.run {argv:[...],cwd?,timeout_seconds?}", description)
+                self.assertIn(
+                    "process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}",
+                    description,
+                )
                 self.assertIn("argv-only/no shell", description)
                 self.assertIn("repo.write_file or patch.apply", description)
                 self.assertEqual(
