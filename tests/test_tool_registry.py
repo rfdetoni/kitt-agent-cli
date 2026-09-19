@@ -32,7 +32,10 @@ class TestToolRegistry(unittest.TestCase):
         args_description = runtime.get("args", {}).get("arguments", {}).get("description", "")
 
         self.assertIn("file edits use repo.write_file or patch.apply", description)
-        self.assertIn("process.run {argv:[...],cwd?,timeout_seconds?}", description)
+        self.assertIn(
+            "process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}",
+            description,
+        )
         self.assertIn("process.run never accepts command/cmd/args", args_description)
 
     def test_execute_tool_disabled_rejection(self):
@@ -81,9 +84,84 @@ class TestToolRegistry(unittest.TestCase):
             self.assertTrue(res.success, res.error)
             self.assertEqual(res.output.strip(), "frontend")
             self.assertTrue(res.metadata["sandbox"]["strong"])
+            self.assertTrue(res.metadata["sandbox"]["network_isolated"])
         else:
             self.assertFalse(res.success)
             self.assertTrue(res.requires_approval)
+
+    def test_run_command_network_requires_explicit_elevation(self):
+        self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+        args = {
+            "argv": [sys.executable, "-c", "print('network-approved')"],
+            "network": True,
+        }
+        turn_id = "turn-network"
+        conversation_id = "conv-network"
+        workspace_id = "ws-network"
+
+        pending = self.registry.execute_tool(
+            "run_command",
+            args,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+            workspace_id=workspace_id,
+            enabled_tools=["run_command"],
+        )
+        self.assertFalse(pending.success)
+        self.assertTrue(pending.requires_approval)
+        self.assertEqual(
+            pending.metadata["network"]["required_capability"],
+            "network.access",
+        )
+
+        action_hash = self.registry.policy.generate_action_hash("run_command", args)
+        approval_id = "approval-network"
+        self.registry.approval_manager.register_request(
+            turn_id,
+            conversation_id,
+            workspace_id,
+            action_hash,
+            approval_id,
+            tool_name="run_command",
+        )
+        grant = self.registry.approval_manager.issue_grant(
+            turn_id,
+            conversation_id,
+            workspace_id,
+            action_hash,
+            approval_id=approval_id,
+        )
+        self.assertIsNotNone(grant)
+
+        approved = self.registry.execute_tool(
+            "run_command",
+            args,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+            workspace_id=workspace_id,
+            enabled_tools=["run_command"],
+            grant=grant,
+            expected_approval_id=approval_id,
+        )
+        self.assertTrue(approved.success, approved.error)
+        self.assertEqual(approved.output.strip(), "network-approved")
+        self.assertEqual(
+            approved.metadata["sandbox"]["profile"],
+            "workspace-write+network",
+        )
+
+    def test_run_command_rejects_non_boolean_network(self):
+        self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+        res = self.registry.execute_tool(
+            "run_command",
+            {
+                "argv": [sys.executable, "-c", "print('never')"],
+                "network": "true",
+            },
+            enabled_tools=["run_command"],
+        )
+        self.assertFalse(res.success)
+        self.assertIn("network must be a boolean", res.error)
 
     def test_run_command_rejects_cwd_escape(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")

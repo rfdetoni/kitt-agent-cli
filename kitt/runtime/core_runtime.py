@@ -22,6 +22,7 @@ from kitt.security.capabilities import (
     CAP_MCP_CALL,
     CAP_MEMORY_READ,
     CAP_MEMORY_WRITE,
+    CAP_NETWORK_ACCESS,
     CAP_PROCESS_RUN,
     CAP_REPO_READ,
     CAP_REPO_SEARCH,
@@ -130,7 +131,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         sensitive=True,
         resume_tool_name="run_command",
         risk_cost=3,
-        sandbox_profile="workspace-write+network",
+        sandbox_profile="workspace-write",
     ),
     "children.spawn": RuntimeOperationSpec(
         "children.spawn",
@@ -344,6 +345,11 @@ class SafeRuntime:
 
         delegated_grant = None
         delegated_approval_id = None
+        network_elevation = bool(
+            op == "process.run"
+            and args.get("network", False) is True
+            and CAP_NETWORK_ACCESS not in capabilities
+        )
         automatic_budget_reservation = None
         automatic_budget_reserved = False
         policy = (
@@ -351,6 +357,35 @@ class SafeRuntime:
             if self.registry is not None
             else None
         )
+        if network_elevation and approval_grant is None:
+            return self._result(
+                start,
+                SafeRuntimeResult(
+                    False,
+                    op,
+                    error=(
+                        "Operation 'process.run' requests network access and requires "
+                        "explicit user approval or CAP_NETWORK_ACCESS."
+                    ),
+                    requires_approval=True,
+                    approval_action=spec.policy_tool_action or op,
+                    approval_payload=dict(args),
+                    required_capability=CAP_NETWORK_ACCESS,
+                    resume_tool_name=spec.resume_tool_name,
+                    metadata={
+                        "network": {
+                            "requested": True,
+                            "required_capability": CAP_NETWORK_ACCESS,
+                            "reason": "single-use network elevation required",
+                        }
+                    },
+                ),
+            )
+
+        if network_elevation and approval_grant is not None:
+            delegated_grant = approval_grant
+            delegated_approval_id = expected_approval_id
+
         if policy is not None:
             if (
                 getattr(getattr(policy, "autonomy", None), "level", None) == "read_only"

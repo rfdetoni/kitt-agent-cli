@@ -70,7 +70,7 @@ class ToolRegistry(_core.ToolRegistry):
                 # that prevents common misrouting (artifact storage vs workspace
                 # writes, or unified diff vs SEARCH/REPLACE patches).
                 tool["description"] = (
-                    "Safe runtime. process.run {argv:[...],cwd?,timeout_seconds?}; "
+                    "Safe runtime. process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}; "
                     "argv-only/no shell; file edits use repo.write_file or patch.apply."
                 )
                 tool["args"] = {

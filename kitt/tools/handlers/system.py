@@ -178,7 +178,9 @@ class ApplyPatchHandler:
 
 
 class RunCommandHandler:
-    _ALLOWED_ARGS = frozenset({"argv", "cwd", "timeout_seconds", "max_tokens", "token_budget"})
+    _ALLOWED_ARGS = frozenset(
+        {"argv", "cwd", "timeout_seconds", "max_tokens", "token_budget", "network"}
+    )
 
     def execute(self, args: Dict[str, Any], ctx: ToolContext):
         from kitt.tools.registry import ToolResult
@@ -216,6 +218,10 @@ class RunCommandHandler:
         if cwd is not None and not isinstance(cwd, str):
             return ToolResult(False, "", "process.run cwd must be a workspace-relative string.")
 
+        network_requested = args.get("network", False)
+        if not isinstance(network_requested, bool):
+            return ToolResult(False, "", "process.run network must be a boolean when provided.")
+
         try:
             timeout_seconds = int(args.get("timeout_seconds", 120) or 120)
         except (TypeError, ValueError):
@@ -226,11 +232,16 @@ class RunCommandHandler:
             automatic = (
                 ctx.approval_grant is None and is_automatic_origin(ctx.origin)
             )
+            sandbox_profile = (
+                "workspace-write+network"
+                if network_requested
+                else "workspace-write"
+            )
             result = ctx.registry.process_runner.run(
                 argv,
                 timeout_seconds=timeout_seconds,
                 cwd=cwd,
-                sandbox_profile=ctx.registry.process_runner.sandbox.default_profile,
+                sandbox_profile=sandbox_profile,
                 require_strong_sandbox=automatic,
             )
         except FileNotFoundError:

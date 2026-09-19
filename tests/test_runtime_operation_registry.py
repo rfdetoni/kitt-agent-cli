@@ -23,7 +23,7 @@ class RuntimeOperationRegistryTests(unittest.TestCase):
         self.assertIn("security.scan", OPERATION_SPECS)
         self.assertEqual(
             OPERATION_SPECS["process.run"].sandbox_profile,
-            "workspace-write+network",
+            "workspace-write",
         )
         self.assertFalse(hasattr(OPERATION_SPECS, "update"))
 

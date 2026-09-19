@@ -21,7 +21,7 @@ SandboxProfile = Literal[
     "full-access",
 ]
 
-DEFAULT_PROCESS_SANDBOX_PROFILE: SandboxProfile = "workspace-write+network"
+DEFAULT_PROCESS_SANDBOX_PROFILE: SandboxProfile = "workspace-write"
 _MIN_BWRAP_VERSION = (0, 12, 0)
 _LANDLOCK_CREATE_RULESET_VERSION = 1
 _SUPPORTED_LANDLOCK_MACHINES = frozenset(

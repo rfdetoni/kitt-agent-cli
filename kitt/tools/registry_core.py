@@ -365,6 +365,7 @@ class ToolRegistry:
                 "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
                 "cwd": "optional workspace-relative directory",
                 "timeout_seconds": "optional int, default 120",
+                "network": "optional bool, default false; true requires network authority",
                 "max_tokens": "output token budget, default 1200",
             },
             "git_status": {"max_tokens": "output token budget, default 600"},
@@ -742,11 +743,19 @@ class ToolRegistry:
                 f"Tool '{tool_name}' is not enabled in ContextPlan.",
             )
 
+        network_requested = False
         if tool_name == "run_command":
             try:
                 self.process_runner.validate_cwd(args.get("cwd"))
             except (FileNotFoundError, NotADirectoryError, PermissionError, OSError, ValueError) as exc:
                 return ToolResult(False, "", f"Command preflight failed: {exc}")
+            network_requested = args.get("network", False)
+            if not isinstance(network_requested, bool):
+                return ToolResult(
+                    False,
+                    "",
+                    "process.run network must be a boolean when provided.",
+                )
 
         permission = self.policy.evaluate_tool(
             tool_name, args, origin=origin, conversation_id=conversation_id
@@ -770,6 +779,25 @@ class ToolRegistry:
                 f"Execution denied by PolicyEngine for tool '{tool_name}'.",
             )
 
+        network_gate = None
+        if tool_name == "run_command" and network_requested:
+            from kitt.security.capabilities import CAP_NETWORK_ACCESS
+
+            has_network_capability = bool(
+                security_context is not None
+                and security_context.has_capability(CAP_NETWORK_ACCESS)
+            )
+            if not has_network_capability and permission != "DENY":
+                permission = "ASK"
+                network_gate = {
+                    "requested": True,
+                    "required_capability": CAP_NETWORK_ACCESS,
+                    "reason": (
+                        "process network access requires CAP_NETWORK_ACCESS "
+                        "or exact single-use approval"
+                    ),
+                }
+
         sandbox_gate = None
         if (
             tool_name == "run_command"
@@ -778,7 +806,11 @@ class ToolRegistry:
         ):
             from kitt.security.risk_budget import is_automatic_origin
 
-            profile = self.process_runner.sandbox.default_profile
+            profile = (
+                "workspace-write+network"
+                if network_requested
+                else "workspace-write"
+            )
             if (
                 is_automatic_origin(origin)
                 and not self.process_runner.sandbox.is_strong_available(profile)
@@ -833,6 +865,8 @@ class ToolRegistry:
                     approval_metadata["risk_budget"] = budget_reservation.to_dict()
                 if sandbox_gate is not None:
                     approval_metadata["sandbox"] = sandbox_gate
+                if network_gate is not None:
+                    approval_metadata["network"] = network_gate
                 return ToolResult(
                     False,
                     "",
