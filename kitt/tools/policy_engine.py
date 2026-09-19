@@ -77,8 +77,29 @@ class PolicyEngine:
         risk_cost: int | None = None,
     ) -> RiskBudgetReservation:
         cost = tool_risk_cost(tool_name) if risk_cost is None else max(0, int(risk_cost))
-        max_actions = int(getattr(self.autonomy, "max_auto_actions_per_turn", 0) or 0)
-        max_risk = int(getattr(self.autonomy, "max_auto_risk_per_turn", 0) or 0)
+        from kitt.core.autonomy_policy import AutonomyPolicy
+
+        level = str(getattr(self.autonomy, "level", "supervised") or "supervised")
+        try:
+            defaults = AutonomyPolicy.preset(level)
+        except ValueError:
+            defaults = AutonomyPolicy.preset("supervised")
+        max_actions = int(
+            getattr(
+                self.autonomy,
+                "max_auto_actions_per_turn",
+                defaults.max_auto_actions_per_turn,
+            )
+            or 0
+        )
+        max_risk = int(
+            getattr(
+                self.autonomy,
+                "max_auto_risk_per_turn",
+                defaults.max_auto_risk_per_turn,
+            )
+            or 0
+        )
         if cost == 0 or not is_automatic_origin(origin):
             return RiskBudgetReservation(
                 True,

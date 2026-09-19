@@ -39,6 +39,27 @@ class RiskBudgetTests(unittest.TestCase):
         )
         self.assertTrue(other.allowed)
 
+    def test_legacy_autonomy_object_inherits_preset_budget_defaults(self):
+        engine = PolicyEngine()
+        engine.autonomy = type(
+            "LegacyAutonomy",
+            (),
+            {"level": "autonomous", "allow_file_write_auto": True},
+        )()
+        reservation = engine.reserve_automatic_action(
+            "write_file", turn_id="turn", conversation_id="conv", origin="MODEL"
+        )
+        self.assertTrue(reservation.allowed)
+        self.assertTrue(reservation.reserved)
+        self.assertEqual(
+            reservation.max_actions,
+            AutonomyPolicy.preset("autonomous").max_auto_actions_per_turn,
+        )
+        self.assertEqual(
+            reservation.max_risk,
+            AutonomyPolicy.preset("autonomous").max_auto_risk_per_turn,
+        )
+
     def test_explicit_origin_does_not_consume_automatic_budget(self):
         engine = PolicyEngine(
             autonomy=AutonomyPolicy.from_dict({
