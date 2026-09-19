@@ -2,6 +2,7 @@ import json
 import unittest
 
 from kitt.llm.agent_contract import (
+    TURN_CONTEXT_END_MARKER,
     TURN_CONTEXT_MARKER,
     UNTRUSTED_WORKSPACE_LABEL,
     infer_agent_route,
