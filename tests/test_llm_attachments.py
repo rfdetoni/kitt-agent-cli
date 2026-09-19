@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_processor import _attachment_retrieval_prompt
 from kitt.llm.attachments import (
     AttachmentError,
@@ -57,6 +58,14 @@ class TestLlmAttachments(unittest.TestCase):
         self.assertTrue(is_binary_attachment_path("docs/report.pdf"))
         self.assertTrue(is_binary_attachment_path("diagram.PNG"))
         self.assertFalse(is_binary_attachment_path("src/Main.java"))
+
+        cmd = TurnCommand(
+            conversation_id="c",
+            prompt="compare",
+            explicit_files={"docs/report.pdf", "src/Main.java"},
+        )
+        self.assertEqual(cmd.attachments, {"docs/report.pdf"})
+        self.assertEqual(cmd.explicit_files, {"src/Main.java"})
 
     def test_retrieval_prompt_removes_only_attachment_references(self):
         prompt = "@docs/report.pdf compare com @src/Main.java e explique"
