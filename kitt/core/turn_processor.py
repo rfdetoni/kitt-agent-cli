@@ -41,7 +41,6 @@ from kitt.llm.client import LLMClient
 from kitt.llm.attachments import (
     AttachmentError,
     attach_to_first_user_message,
-    is_binary_attachment_path,
 )
 from kitt.core.session_state import SessionState
 from kitt.core.execution_request import ExecutionRequest
@@ -1894,19 +1893,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         yield TurnCompleted(response=clean_response, edit_result=edit_result)
 
     def run_turn(self, cmd: TurnCommand) -> Iterator[TurnEvent]:
-        explicit_files = set(cmd.explicit_files or ())
-        implicit_attachments = {
-            path for path in explicit_files if is_binary_attachment_path(path)
-        }
-        attachments = set(cmd.attachments or ()) | implicit_attachments
-        if attachments != set(cmd.attachments or ()) or implicit_attachments:
-            cmd = replace(
-                cmd,
-                explicit_files=explicit_files - implicit_attachments,
-                attachments=attachments,
-            )
-        if attachments:
-            self._attachment_paths_by_turn[cmd.turn_id] = tuple(sorted(attachments))
+        if cmd.attachments:
+            self._attachment_paths_by_turn[cmd.turn_id] = tuple(sorted(cmd.attachments))
 
         turn_started_at = time.time()
         start_ev = TurnStarted(turn_id=cmd.turn_id, conversation_id=cmd.conversation_id, prompt=cmd.prompt)
