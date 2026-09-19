@@ -300,14 +300,33 @@ def inject_agent_turn_context(
     workspace_context: Any,
     route: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Add a fresh, structured turn envelope without mutating caller-owned messages."""
+    """Prefix volatile turn data to the last user message without mutating inputs.
+
+    Keeping this data out of system/developer messages preserves the stable prompt
+    prefix used by provider prompt caches. The explicit end marker lets the reverse
+    proxy consume the envelope while forwarding the original user task unchanged.
+    """
     payload: Dict[str, Any] = {
         "workspace_context": workspace_context,
     }
     if route is not None:
         payload["route"] = normalize_agent_route(route)
-    context_message = {
-        "role": "developer",
-        "content": f"{TURN_CONTEXT_MARKER}\n{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}",
-    }
-    return [context_message, *[dict(message) for message in messages]]
+
+    envelope = (
+        f"{TURN_CONTEXT_MARKER}\n"
+        f"{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n"
+        f"{TURN_CONTEXT_END_MARKER}"
+    )
+    cloned = [dict(message) for message in messages]
+    for index in range(len(cloned) - 1, -1, -1):
+        message = cloned[index]
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        message["content"] = f"{envelope}\n\n{content}" if content else envelope
+        return cloned
+
+    cloned.append({"role": "user", "content": envelope})
+    return cloned
