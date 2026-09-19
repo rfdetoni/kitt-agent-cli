@@ -89,6 +89,33 @@ class NativeCodeEngine:
             self.root, symbol_id, replacement, expected_hash, validate_syntax
         )
 
+    def replace_block(
+        self,
+        path: str,
+        search: str,
+        replacement: str,
+        expected_file_hash: str | None = None,
+        validate_syntax: bool = True,
+    ) -> dict[str, Any]:
+        if self._native is not None and hasattr(self._native, "replace_block"):
+            return self._loads(
+                self._native.replace_block(
+                    path,
+                    search,
+                    replacement,
+                    expected_file_hash,
+                    validate_syntax,
+                )
+            )
+        return fallback.replace_block(
+            self.root,
+            path,
+            search,
+            replacement,
+            expected_file_hash,
+            validate_syntax,
+        )
+
     def read_file(
         self,
         path: str,
