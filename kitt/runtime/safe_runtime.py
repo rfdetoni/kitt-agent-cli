@@ -11,7 +11,9 @@ from kitt.security.workspace_mutations import delete_path, list_entries, move_pa
 
 RuntimeOperationSpec = _core.RuntimeOperationSpec
 RuntimeOperationRegistry = _core.RuntimeOperationRegistry
-SafeRuntimeResult = _core.SEXTENDED_OPERATION_SPECS = {
+SafeRuntimeResult = _core.SafeRuntimeResult
+
+EXTENDED_OPERATION_SPECS = {
     "repo.definition": RuntimeOperationSpec("repo.definition", CAP_REPO_READ, "read_file"),
     "repo.hover": RuntimeOperationSpec("repo.hover", CAP_REPO_READ, "read_file"),
     "repo.references_semantic": RuntimeOperationSpec("repo.references_semantic", CAP_REPO_SEARCH, "search"),
@@ -40,8 +42,7 @@ SafeRuntimeResult = _core.SEXTENDED_OPERATION_SPECS = {
 }
 
 OPERATION_REGISTRY = _core.OPERATION_REGISTRY.extend(EXTENDED_OPERATION_SPECS)
-OPERATION_SPECS = OPERATION_REGISTRYRCH, "search"),
-})
+OPERATION_SPECS = OPERATION_REGISTRY
 
 
 class SafeRuntime(_core.SafeRuntime):
