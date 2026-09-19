@@ -38,6 +38,11 @@ from kitt.tools.safe_python import (
 from kitt.tools.protocol import TOOL_CALL_OPEN, parse_tool_call
 from kitt.tools.surface_selector import ToolSurfaceSelector
 from kitt.llm.client import LLMClient
+from kitt.llm.attachments import (
+    AttachmentError,
+    attach_to_first_user_message,
+    is_binary_attachment_path,
+)
 from kitt.core.session_state import SessionState
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.turn_command import TurnCommand
@@ -118,6 +123,20 @@ def _same_reverse_proxy_endpoint(left, right) -> bool:
     return left_identity is not None and left_identity == _reverse_proxy_identity(right)
 
 
+def _attachment_path_key(value: str) -> str:
+    return str(value).strip().lstrip("@").replace("\\", "/")
+
+
+def _attachment_retrieval_prompt(prompt: str, attachments: tuple[str, ...]) -> str:
+    sanitized = str(prompt)
+    for path in attachments:
+        normalized = _attachment_path_key(path)
+        if not normalized:
+            continue
+        sanitized = sanitized.replace(f"@{path}", " ")
+        sanitized = sanitized.replace(f"@{normalized}", " ")
+    return " ".join(sanitized.split())
+
 
 class TurnProcessor:
     """Decoupled core turn processing engine for K.I.T.T."""
@@ -193,6 +212,8 @@ class TurnProcessor:
         self._agent_trace_context: Optional[tuple[str, str]] = None
         self._adaptive_retrieval_ratio_fn: Optional[Callable[[Any, Any, TurnCommand], float]] = None
         self._routing_feedback_snapshot_fn: Optional[Callable[[Any], Dict[str, Dict[str, Any]]]] = None
+        self._attachment_paths_by_turn: Dict[str, tuple[str, ...]] = {}
+        self._attachment_wire_sent: set[str] = set()
 
     def _provider_session_key(self, profile, conversation_id: str) -> str:
         if _reverse_proxy_identity(profile):
@@ -759,6 +780,15 @@ Use read_file/search/repository_map for project data and pass only selected JSON
     ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
+        wire_messages = messages
+        attachment_paths = self._attachment_paths_by_turn.get(turn_id)
+        if attachment_paths and turn_id not in self._attachment_wire_sent:
+            wire_messages = attach_to_first_user_message(
+                self.root_path,
+                list(messages),
+                attachment_paths,
+            )
+            self._attachment_wire_sent.add(turn_id)
         def _invoke_chat_stream(msgs, sys_prompt):
             kwargs = {
                 "system_prompt": sys_prompt,
@@ -776,7 +806,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return client.chat_stream(msgs, **kwargs)
 
         if "lfm" in getattr(profile, "model", "").lower():
-            raw_text = "".join(_invoke_chat_stream(messages, system_prompt))
+            raw_text = "".join(_invoke_chat_stream(wire_messages, system_prompt))
             thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
             thought_text = thought_match.group(1).strip() if thought_match else ""
             dur_ms = int((time.time() - (started_at or time.time())) * 1000)
@@ -797,7 +827,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
         model_request_started_at = time.perf_counter()
         first_model_chunk = True
-        for chunk in _invoke_chat_stream(messages, system_prompt):
+        for chunk in _invoke_chat_stream(wire_messages, system_prompt):
             if first_model_chunk:
                 first_model_chunk = False
                 self._record_latency(
@@ -1003,6 +1033,25 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         exe_profile: ModelProfile,
         sf_client: LLMClient,
     ) -> tuple:
+        attachments = self._attachment_paths_by_turn.get(cmd.turn_id, ())
+        if attachments:
+            attachment_keys = {_attachment_path_key(path) for path in attachments}
+            task = replace(
+                task,
+                paths=[
+                    path for path in task.paths
+                    if _attachment_path_key(path) not in attachment_keys
+                ],
+            )
+            cmd = replace(
+                cmd,
+                prompt=_attachment_retrieval_prompt(cmd.prompt, attachments),
+                explicit_files={
+                    path for path in cmd.explicit_files
+                    if _attachment_path_key(path) not in attachment_keys
+                },
+            )
+
         needs_project_context = bool(plan.enabled_tools) or (self.enable_context_summary and self._needs_project_context(task, cmd.prompt))
         working_paths = self.working_set.paths(cmd.conversation_id)
         diagnostics = self.deterministic_extractor.extract_diagnostics(cmd.prompt)
@@ -1212,6 +1261,11 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                            security_context: ExecutionSecurityContext,
                            agent_route: Optional[str] = None) -> Iterator:
         effective_agent_route = request.agent_route or agent_route
+        attachment_paths = self._attachment_paths_by_turn.get(cmd.turn_id, ())
+        if attachment_paths and _reverse_proxy_identity(getattr(exe_client, "profile", None)) is None:
+            raise AttachmentError(
+                "File attachments currently require a kitt-reverse-proxy execution profile"
+            )
         execution_messages = list(request.messages)
         snapshots = getattr(self, "_execution_message_snapshots", None)
         if snapshots is None:
@@ -1840,6 +1894,20 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         yield TurnCompleted(response=clean_response, edit_result=edit_result)
 
     def run_turn(self, cmd: TurnCommand) -> Iterator[TurnEvent]:
+        explicit_files = set(cmd.explicit_files or ())
+        implicit_attachments = {
+            path for path in explicit_files if is_binary_attachment_path(path)
+        }
+        attachments = set(cmd.attachments or ()) | implicit_attachments
+        if attachments != set(cmd.attachments or ()) or implicit_attachments:
+            cmd = replace(
+                cmd,
+                explicit_files=explicit_files - implicit_attachments,
+                attachments=attachments,
+            )
+        if attachments:
+            self._attachment_paths_by_turn[cmd.turn_id] = tuple(sorted(attachments))
+
         turn_started_at = time.time()
         start_ev = TurnStarted(turn_id=cmd.turn_id, conversation_id=cmd.conversation_id, prompt=cmd.prompt)
         self._emit("TurnStarted", {"turn_id": cmd.turn_id})
@@ -2014,6 +2082,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
         except Exception as e:
             yield TurnFailed(error=str(e))
+        finally:
+            self._attachment_paths_by_turn.pop(cmd.turn_id, None)
+            self._attachment_wire_sent.discard(cmd.turn_id)
 
     def continue_turn(self, turn_id: str, grant: Any) -> Iterator[TurnEvent]:
         if grant is None:
