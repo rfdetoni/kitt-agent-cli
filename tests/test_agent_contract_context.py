@@ -73,12 +73,29 @@ class TestAgentContractContext(unittest.TestCase):
         )
 
         self.assertEqual(len(original), 1)
-        self.assertEqual(result[0]["role"], "developer")
+        self.assertEqual(result[0]["role"], "user")
         self.assertTrue(result[0]["content"].startswith(TURN_CONTEXT_MARKER))
-        payload = json.loads(result[0]["content"].split("\n", 1)[1])
+        envelope, original_content = result[0]["content"].split(
+            f"\n{TURN_CONTEXT_END_MARKER}\n\n", 1
+        )
+        payload = json.loads(envelope.split("\n", 1)[1])
         self.assertEqual(payload["route"], "context-gather")
         self.assertEqual(payload["workspace_context"], {"data": "repo evidence"})
-        self.assertEqual(result[1], original[0])
+        self.assertEqual(original_content, original[0]["content"])
+        self.assertEqual(original, [{"role": "user", "content": "Inspect the repository"}])
+
+    def test_turn_context_is_appended_as_user_turn_when_no_text_user_exists(self):
+        original = [{"role": "assistant", "content": "previous answer"}]
+        result = inject_agent_turn_context(
+            original,
+            workspace_context="not_provided",
+            route="chat",
+        )
+
+        self.assertEqual(result[0], original[0])
+        self.assertEqual(result[-1]["role"], "user")
+        self.assertTrue(result[-1]["content"].startswith(TURN_CONTEXT_MARKER))
+        self.assertTrue(result[-1]["content"].endswith(TURN_CONTEXT_END_MARKER))
 
     def test_route_contract_is_closed_to_known_router_routes(self):
         self.assertEqual(normalize_agent_route(None), "chat")
