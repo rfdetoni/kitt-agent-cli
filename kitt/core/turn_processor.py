@@ -956,7 +956,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             exe_profile = replace(exe_profile, max_output_tokens=max(64, safe_output))
         return exe_profile_name, exe_profile, routing_decision, None
 
-    def _build_context(self, cmd: TurnCommand, task: SemanticTask, plan: ContextPlan, exe_profile: ModelProfile, sf_client: LLMClient) -> tuple:
+    def _build_context(
+        self,
+        cmd: TurnCommand,
+        task: SemanticTask,
+        plan: ContextPlan,
+        exe_profile: ModelProfile,
+        sf_client: LLMClient,
+        *,
+        retrieval_ratio: Optional[float] = None,
+    ) -> tuple:
         needs_project_context = bool(plan.enabled_tools) or (self.enable_context_summary and self._needs_project_context(task, cmd.prompt))
         working_paths = self.working_set.paths(cmd.conversation_id)
         diagnostics = DeterministicExtractor().extract_diagnostics(cmd.prompt)
@@ -972,7 +981,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             query_elements.append(cmd.prompt)
         query_elements.extend(working_paths)
         context_query = " ".join(dict.fromkeys(query_elements)) if query_elements else cmd.prompt
-        retrieval_ratio = getattr(self.config, "context_retrieval_token_ratio", 0.25)
+        if retrieval_ratio is None:
+            retrieval_ratio = getattr(self.config, "context_retrieval_token_ratio", 0.25)
+        retrieval_ratio = max(0.05, min(float(retrieval_ratio), 0.75))
         max_retrieval_cap = getattr(self.config, "max_context_retrieval_tokens", 8192)
         retrieval_budget = min(
             max_retrieval_cap,
