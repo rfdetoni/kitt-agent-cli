@@ -14,9 +14,9 @@ try:
     __version__ = version("kitt-agent-cli")
 except PackageNotFoundError:
     # Source-tree fallback for direct execution before installation.
-    __version__ = "0.41.10"
+    __version__ = "0.41.15"
 
 KITT_VERSION = __version__
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 DAEMON_PROTOCOL_VERSION = 1
 NATIVE_PROTOCOL_VERSION = 1
