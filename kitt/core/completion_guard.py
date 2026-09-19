@@ -205,8 +205,77 @@ class CompletionContract:
         return issues
 
 
-class _ExecutionProgressLedger:
-    """Track meaningful progress instead of treating every tool call as completion."""
+_MAX_STALL_REDIRECTS = 2
+_FOCUSED_EXPLORATION_OPERATIONS = frozenset({
+    "repo.read",
+    "repo.read_symbol",
+    "repo.inspect_symbol",
+    "repo.definition",
+    "repo.hover",
+    "repo.diagnostics",
+    "repo.outline",
+    "artifacts.read",
+})
+_TERMINAL_EXPLORATION_ERROR_RE = re.compile(
+    r"(?:unknown (?:runtime )?operation|not supported|unsupported|not available|"
+    r"not granted|no such tool|does not allow|não permite|nao permite|"
+    r"capability .+ required|invalid operation for (?:this )?route)",
+    re.IGNORECASE,
+)
+
+
+def _canonical_exploration(tool_name: str, args: Any) -> tuple[str, dict[str, Any]] | None:
+    if not isinstance(args, dict):
+        return None
+
+    if tool_name == "kitt_runtime":
+        operation = str(args.get("operation") or "").strip().lower()
+        if operation not in _RUNTIME_EXPLORATION_OPERATIONS:
+            return None
+        raw_arguments = args.get("arguments", {})
+        arguments = dict(raw_arguments) if isinstance(raw_arguments, dict) else {"value": raw_arguments}
+    else:
+        operation = str(tool_name or "").strip().lower()
+        if not (_is_exploration_call(tool_name, args) or operation in _RUNTIME_EXPLORATION_OPERATIONS):
+            return None
+        arguments = dict(args)
+
+    for key in ("force_refresh", "max_tokens", "token_budget"):
+        arguments.pop(key, None)
+    return operation, arguments
+
+
+def _exploration_signature(tool_name: str, args: Any) -> str | None:
+    canonical = _canonical_exploration(tool_name, args)
+    if canonical is None:
+        return None
+    operation, arguments = canonical
+    payload = json.dumps(
+        [operation, arguments],
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+def _result_fingerprint(event: ToolCompleted) -> str:
+    payload = json.dumps(
+        {
+            "success": bool(event.success),
+            "output": str(event.output or "").strip(),
+            "error": str(event.error or "").strip(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+class _ProgressAwareExecutionLedger:
+    """Track progress only after observing host results."""
 
     def __init__(self) -> None:
         self.successful_mutations: set[str] = set()
@@ -214,7 +283,8 @@ class _ExecutionProgressLedger:
         self.successful_validation_scopes: set[str] = set()
         self.pending_mutations: dict[str, str] = {}
         self.pending_validations: dict[str, tuple[str, str]] = {}
-        self.exploration_counts: dict[str, int] = {}
+        self.pending_explorations: dict[str, tuple[str, str, bool]] = {}
+        self.exploration_results: dict[str, tuple[str, int]] = {}
         self.explorations_since_progress = 0
 
     @property
@@ -234,42 +304,118 @@ class _ExecutionProgressLedger:
         if _is_mutation_call(event.tool_name, event.args):
             self.pending_mutations[event.call_id] = signature
         if _is_validation_call(event.tool_name, event.args):
-            self.pending_validations[event.call_id] = (signature, _validation_scope(event.args))
-        if _is_exploration_call(event.tool_name, event.args):
-            self.explorations_since_progress += 1
-            count = self.exploration_counts.get(signature, 0) + 1
-            self.exploration_counts[signature] = count
-            if count >= _MAX_IDENTICAL_EXPLORATIONS_WITHOUT_PROGRESS:
-                return (
-                    "identical exploration repeated without progress: "
-                    f"{event.tool_name} ({count} times)"
-                )
-            if self.explorations_since_progress > _MAX_EXPLORATIONS_WITHOUT_PROGRESS:
-                return (
-                    "too many exploration calls without a successful mutation "
-                    f"({_MAX_EXPLORATIONS_WITHOUT_PROGRESS} allowed)"
-                )
+            self.pending_validations[event.call_id] = (
+                signature,
+                _validation_scope(event.args),
+            )
+
+        exploration_signature = _exploration_signature(event.tool_name, event.args)
+        if exploration_signature is None:
+            return None
+
+        canonical = _canonical_exploration(event.tool_name, event.args)
+        operation = canonical[0] if canonical else str(event.tool_name or "").strip().lower()
+        counts_toward_stall = operation not in _FOCUSED_EXPLORATION_OPERATIONS
+
+        if (
+            counts_toward_stall
+            and self.explorations_since_progress >= _MAX_EXPLORATIONS_WITHOUT_PROGRESS
+        ):
+            return (
+                "too many exploration calls without a successful mutation "
+                f"({_MAX_EXPLORATIONS_WITHOUT_PROGRESS} allowed)"
+            )
+
+        previous = self.exploration_results.get(exploration_signature)
+        previous_count = previous[1] if previous else 0
+        if previous_count >= _MAX_IDENTICAL_EXPLORATIONS_WITHOUT_PROGRESS - 1:
+            return (
+                "identical exploration repeated without progress: "
+                f"{operation} ({previous_count + 1} attempted times)"
+            )
+
+        self.pending_explorations[event.call_id] = (
+            exploration_signature,
+            event.tool_name,
+            counts_toward_stall,
+        )
         return None
 
     def complete(self, event: ToolCompleted) -> tuple[bool, bool]:
         mutation = self.pending_mutations.pop(event.call_id, None)
         validation_entry = self.pending_validations.pop(event.call_id, None)
+        exploration_entry = self.pending_explorations.pop(event.call_id, None)
         validation = validation_entry[0] if validation_entry else None
         validation_scope = validation_entry[1] if validation_entry else None
+
         if mutation is None and event.tool_name in _MUTATION_TOOLS:
             mutation = f"completed:{event.tool_name}:{event.call_id or 'legacy'}"
-        new_mutation = bool(event.success and mutation and mutation not in self.successful_mutations)
-        new_validation = bool(event.success and validation and validation not in self.successful_validations)
+
+        new_mutation = bool(
+            event.success and mutation and mutation not in self.successful_mutations
+        )
+        new_validation = bool(
+            event.success and validation and validation not in self.successful_validations
+        )
+
         if new_mutation and mutation:
             self.successful_mutations.add(mutation)
         if new_validation and validation:
             self.successful_validations.add(validation)
             if validation_scope:
                 self.successful_validation_scopes.add(validation_scope)
+
+        if exploration_entry is not None:
+            exploration_signature, _, counts_toward_stall = exploration_entry
+            fingerprint = _result_fingerprint(event)
+            previous = self.exploration_results.get(exploration_signature)
+            count = previous[1] + 1 if previous and previous[0] == fingerprint else 1
+
+            if not event.success and _TERMINAL_EXPLORATION_ERROR_RE.search(
+                str(event.error or event.output or "")
+            ):
+                count = max(
+                    count,
+                    _MAX_IDENTICAL_EXPLORATIONS_WITHOUT_PROGRESS - 1,
+                )
+
+            self.exploration_results[exploration_signature] = (fingerprint, count)
+            if counts_toward_stall:
+                self.explorations_since_progress += 1
+            elif event.success:
+                # Reading a concrete file/symbol is meaningful narrowing progress,
+                # even before the first mutation. Grant a fresh broad-discovery window.
+                self.explorations_since_progress = 0
+
         if new_mutation:
-            self.exploration_counts.clear()
+            self.exploration_results.clear()
+            self.pending_explorations.clear()
             self.explorations_since_progress = 0
+
         return new_mutation, new_validation
+
+    def renew_exploration_budget(self) -> None:
+        """Grant a fresh aggregate exploration window after a guard redirect.
+
+        Preserve result/signature history so an identical read/search loop remains
+        blocked. Only the aggregate budget is renewed; otherwise the very first
+        legitimate exploration after a redirect would immediately stall again.
+        """
+        self.pending_explorations.clear()
+        self.explorations_since_progress = 0
+
+
+def _forward_progress_retry_message(stall: str) -> str:
+    return (
+        "[KITT FORWARD PROGRESS REQUIRED]\n"
+        f"The previous exploration is now blocked because it made no new progress: {stall}.\n"
+        "Do not repeat the same read/list/search/inspect call with equivalent arguments. "
+        "Reuse the result already obtained. If a tool reported an unsupported operation, "
+        "route mismatch, missing capability, or unavailable feature, do not retry it unchanged. "
+        "Choose a genuinely new action: read a concrete file/symbol discovered earlier, change "
+        "the query/range, perform the required workspace mutation, run an appropriate validation, "
+        "or finish if the user's request is already satisfied."
+    )
 
 
 def _contains_source_file(root: Path, suffixes: tuple[str, ...]) -> bool:
@@ -567,16 +713,210 @@ def _failed_mutation_retry_message(failed_mutations: dict[str, str]) -> str:
 
 
 def install_completion_guard(processor: Any, registry: Any, *, max_retries: int = 1) -> None:
-    """Install the canonical result-aware completion guard.
+    """Install a bounded completion guard with result-aware stall recovery."""
+    if getattr(processor, "_completion_guard_installed", False):
+        return
 
-    Verification helpers and contracts live in this module. Runtime loop wrapping
-    has a single implementation in :mod:`kitt.core.progress_guard`, imported
-    lazily here to avoid an import cycle while preserving one stable internal
-    entry point for runtime composition and tests.
-    """
-    from kitt.core.progress_guard import install_completion_guard as _install
+    original_loop = processor._execute_tool_loop
+    retries_allowed = max(0, int(max_retries))
 
-    _install(processor, registry, max_retries=max_retries)
+    def guarded_tool_loop(
+        self,
+        cmd,
+        request,
+        exe_profile,
+        exe_client,
+        workspace_id,
+        security_context,
+        agent_route=None,
+        **loop_kwargs,
+    ) -> Iterator:
+        current_request = request
+        legacy_route = agent_route or loop_kwargs.pop("agent_route", None)
+        if legacy_route and not getattr(current_request, "agent_route", None):
+            current_request = replace(current_request, agent_route=legacy_route)
+        recoveries = 0
+        stall_redirects = 0
+        last_recovery_revision = 0
+        ledger = _ProgressAwareExecutionLedger()
+        failed_mutations: dict[str, str] = {}
+        mutation_required = requires_workspace_mutation(self, cmd)
+        task = getattr(getattr(self, "session_state", None), "last_task", None)
+        contract = build_completion_contract(
+            str(getattr(cmd, "prompt", "") or ""),
+            task,
+        )
+
+        while True:
+            terminal: tuple[str, list] | None = None
+            restart_for_stall: str | None = None
+            stream = original_loop(
+                cmd,
+                current_request,
+                exe_profile,
+                exe_client,
+                workspace_id,
+                security_context,
+                **loop_kwargs,
+            )
+            try:
+                for event, response, messages in stream:
+                    if event is None and response is not None and messages is not None:
+                        terminal = (response, messages)
+                        continue
+
+                    if isinstance(event, ToolStarted):
+                        stall = ledger.start(event)
+                        if stall and mutation_required:
+                            if stall_redirects < _MAX_STALL_REDIRECTS:
+                                stall_redirects += 1
+                                restart_for_stall = stall
+                                break
+                            yield TurnFailed(
+                                error=(
+                                    "Execution stalled: "
+                                    + stall
+                                    + ". The implementation requires forward progress; "
+                                    "repeated read/list/search calls cannot complete it."
+                                )
+                            ), None, None
+                            return
+                    elif isinstance(event, ToolCompleted):
+                        was_mutation = (
+                            event.call_id in ledger.pending_mutations
+                            or event.tool_name in _MUTATION_TOOLS
+                        )
+                        new_mutation, _ = ledger.complete(event)
+                        if new_mutation:
+                            stall_redirects = 0
+                        if was_mutation:
+                            if event.success:
+                                failed_mutations.pop(event.tool_name, None)
+                            else:
+                                failed_mutations[event.tool_name] = (
+                                    event.error or "resultado sem detalhes"
+                                )
+                    yield event, response, messages
+            finally:
+                if restart_for_stall is not None and hasattr(stream, "close"):
+                    stream.close()
+
+            if restart_for_stall is not None:
+                # Restart from the latest host-confirmed execution history, not the
+                # original request. Rewinding a named reverse-proxy session would
+                # make the browser transport correctly reject the request as a
+                # conversation_state_conflict.
+                ledger.renew_exploration_budget()
+                snapshots = getattr(self, "_execution_message_snapshots", {})
+                snapshot = snapshots.get(getattr(cmd, "turn_id", ""))
+                retry_messages = list(snapshot or current_request.messages)
+                retry_messages.append(
+                    {
+                        "role": "user",
+                        "content": _forward_progress_retry_message(restart_for_stall),
+                    }
+                )
+                current_request = replace(
+                    current_request,
+                    messages=retry_messages,
+                )
+                continue
+
+            if terminal is None:
+                return
+
+            response, messages = terminal
+            missing = missing_claimed_workspace_files(
+                registry.root_path,
+                response,
+            )
+            mutation_missing = mutation_required and not ledger.successful_mutations
+            deferred_implementation = (
+                mutation_required
+                and is_deferred_implementation_response(response)
+            )
+            contract_issues = (
+                contract.evaluate(
+                    registry.root_path,
+                    validation_succeeded=ledger.validation_succeeded,
+                    validated_scopes=ledger.validated_scopes,
+                )
+                if mutation_required and contract.enabled
+                else []
+            )
+
+            if (
+                not missing
+                and not failed_mutations
+                and not mutation_missing
+                and not deferred_implementation
+                and not contract_issues
+            ):
+                yield None, response, messages
+                return
+
+            progress_since_recovery = ledger.revision > last_recovery_revision
+            normal_budget_exhausted = recoveries >= retries_allowed
+            progress_budget_exhausted = recoveries >= _MAX_PROGRESS_RECOVERIES
+            if progress_budget_exhausted or (
+                normal_budget_exhausted and not progress_since_recovery
+            ):
+                reasons: list[str] = []
+                if mutation_missing:
+                    reasons.append(
+                        "the task required a workspace mutation but no mutation tool succeeded"
+                    )
+                if deferred_implementation:
+                    reasons.append(
+                        "the response deferred required implementation work back to the user"
+                    )
+                if contract_issues:
+                    reasons.append(
+                        "completion contract remains unsatisfied: "
+                        + "; ".join(contract_issues)
+                    )
+                if missing:
+                    reasons.append(
+                        "claimed files are still missing after recovery: "
+                        + ", ".join(missing)
+                    )
+                if failed_mutations:
+                    reasons.append(
+                        "mutation tool failures remain: "
+                        + "; ".join(
+                            f"{name}: {error}"
+                            for name, error in failed_mutations.items()
+                        )
+                    )
+                yield TurnFailed(
+                    error="Completion verification failed: " + "; ".join(reasons)
+                ), None, None
+                return
+
+            recoveries += 1
+            last_recovery_revision = ledger.revision
+            retry_messages = list(messages)
+            recovery_parts: list[str] = []
+            if mutation_missing or deferred_implementation:
+                recovery_parts.append(_required_mutation_retry_message())
+            if contract_issues:
+                recovery_parts.append(_contract_retry_message(contract_issues))
+            if missing:
+                recovery_parts.append(_claimed_files_retry_message(missing))
+            if failed_mutations:
+                recovery_parts.append(
+                    _failed_mutation_retry_message(failed_mutations)
+                )
+            retry_messages.extend(
+                [
+                    {"role": "assistant", "content": response},
+                    {"role": "user", "content": "\n\n".join(recovery_parts)},
+                ]
+            )
+            current_request = replace(current_request, messages=retry_messages)
+
+    processor._execute_tool_loop = MethodType(guarded_tool_loop, processor)
+    processor._completion_guard_installed = True
 
 __all__ = [
     "CompletionContract",
