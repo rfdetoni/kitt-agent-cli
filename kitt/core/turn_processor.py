@@ -780,14 +780,18 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
         wire_messages = messages
-        attachment_paths = self._attachment_paths_by_turn.get(turn_id)
-        if attachment_paths and turn_id not in self._attachment_wire_sent:
+        attachment_paths = getattr(self, "_attachment_paths_by_turn", {}).get(turn_id)
+        attachment_wire_sent = getattr(self, "_attachment_wire_sent", None)
+        if attachment_wire_sent is None:
+            attachment_wire_sent = set()
+            self._attachment_wire_sent = attachment_wire_sent
+        if attachment_paths and turn_id not in attachment_wire_sent:
             wire_messages = attach_to_first_user_message(
                 self.root_path,
                 list(messages),
                 attachment_paths,
             )
-            self._attachment_wire_sent.add(turn_id)
+            attachment_wire_sent.add(turn_id)
         def _invoke_chat_stream(msgs, sys_prompt):
             kwargs = {
                 "system_prompt": sys_prompt,
@@ -1260,7 +1264,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                            security_context: ExecutionSecurityContext,
                            agent_route: Optional[str] = None) -> Iterator:
         effective_agent_route = request.agent_route or agent_route
-        attachment_paths = self._attachment_paths_by_turn.get(cmd.turn_id, ())
+        attachment_paths = getattr(self, "_attachment_paths_by_turn", {}).get(cmd.turn_id, ())
         if attachment_paths and _reverse_proxy_identity(getattr(exe_client, "profile", None)) is None:
             raise AttachmentError(
                 "File attachments currently require a kitt-reverse-proxy execution profile"
