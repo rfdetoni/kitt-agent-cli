@@ -764,6 +764,27 @@ class ToolRegistry:
                 f"Execution denied by PolicyEngine for tool '{tool_name}'.",
             )
 
+        sandbox_gate = None
+        if (
+            tool_name == "run_command"
+            and permission == "ALLOW"
+            and grant is None
+        ):
+            from kitt.security.risk_budget import is_automatic_origin
+
+            profile = self.process_runner.sandbox.default_profile
+            if (
+                is_automatic_origin(origin)
+                and not self.process_runner.sandbox.is_strong_available(profile)
+            ):
+                permission = "ASK"
+                sandbox_gate = {
+                    "profile": profile,
+                    "backend": "unavailable",
+                    "strong": False,
+                    "reason": "automatic process execution requires a strong OS sandbox",
+                }
+
         budget_reservation = None
         if (
             permission == "ALLOW"
@@ -801,16 +822,17 @@ class ToolRegistry:
                 expected_approval_id=expected_approval_id,
             )
             if not valid:
+                approval_metadata = {}
+                if budget_reservation is not None:
+                    approval_metadata["risk_budget"] = budget_reservation.to_dict()
+                if sandbox_gate is not None:
+                    approval_metadata["sandbox"] = sandbox_gate
                 return ToolResult(
                     False,
                     "",
                     f"Tool '{tool_name}' requires explicit user confirmation (ASK policy).",
                     requires_approval=True,
-                    metadata=(
-                        {"risk_budget": budget_reservation.to_dict()}
-                        if budget_reservation is not None
-                        else {}
-                    ),
+                    metadata=approval_metadata,
                 )
             approval_validated = True
 

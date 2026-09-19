@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from kitt.core.cancellation import CancellationToken
+from kitt.security.execution_sandbox import ExecutionSandbox, SandboxProfile
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,10 @@ class ProcessResult:
     truncated: bool = False
     stdout_total_bytes: int = 0
     stderr_total_bytes: int = 0
+    sandbox_profile: str = "full-access"
+    sandbox_backend: str = "none"
+    sandbox_strong: bool = False
+    sandbox_network_isolated: bool = False
 
 
 _SECRET_ENV_RE = re.compile(
@@ -188,9 +193,15 @@ class _HeadTailCapture:
 
 
 class ProcessRunner:
-    def __init__(self, root_dir: str, max_output_bytes: int = 262144):
+    def __init__(
+        self,
+        root_dir: str,
+        max_output_bytes: int = 262144,
+        sandbox: ExecutionSandbox | None = None,
+    ):
         self.root = Path(root_dir).resolve()
         self.max_output_bytes = max(4096, int(max_output_bytes))
+        self.sandbox = sandbox or ExecutionSandbox(self.root)
 
     def _resolve_cwd(self, cwd: str | Path | None) -> Path:
         if cwd is None or not str(cwd).strip() or str(cwd).strip() == ".":
@@ -252,19 +263,27 @@ class ProcessRunner:
         cancellation: Optional[CancellationToken] = None,
         env: Optional[dict[str, str]] = None,
         cwd: str | Path | None = None,
+        sandbox_profile: SandboxProfile | None = None,
+        require_strong_sandbox: bool = False,
     ) -> ProcessResult:
         if not argv or not all(isinstance(x, str) and x for x in argv):
             raise ValueError("argv must be a non-empty string list")
         timeout_seconds = max(1, min(int(timeout_seconds), 3600))
         started = time.monotonic()
+        resolved_cwd = self._resolve_cwd(cwd)
+        plan = self.sandbox.plan(
+            argv,
+            resolved_cwd,
+            profile=sandbox_profile or "full-access",
+            require_strong=require_strong_sandbox,
+        )
 
-        # Drain both pipes continuously, but retain only a 1 KiB diagnostic
-        # prefix plus the latest 8 KiB per stream. This prevents pipe deadlocks
-        # without letting verbose builds/tests inflate resident memory or LLM context.
         out_cap = _HeadTailCapture(self.max_output_bytes)
         err_cap = _HeadTailCapture(self.max_output_bytes)
+        process_env = sanitized_subprocess_env(env)
+        process_env.update(plan.env_overrides)
         kwargs = dict(
-            cwd=self._resolve_cwd(cwd),
+            cwd=plan.host_cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -272,22 +291,29 @@ class ProcessRunner:
             shell=False,
             close_fds=True,
             restore_signals=True,
-            env=sanitized_subprocess_env(env),
+            env=process_env,
         )
         if os.name != "nt":
             kwargs["start_new_session"] = True
         else:
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
-        proc = subprocess.Popen(argv, **kwargs)
-        out_thread = threading.Thread(target=out_cap.consume, args=(proc.stdout,), daemon=True)
-        err_thread = threading.Thread(target=err_cap.consume, args=(proc.stderr,), daemon=True)
-        out_thread.start()
-        err_thread.start()
-
+        proc = None
+        out_thread = None
+        err_thread = None
         timed_out = False
         cancelled = False
         try:
+            proc = subprocess.Popen(plan.argv, **kwargs)
+            out_thread = threading.Thread(
+                target=out_cap.consume, args=(proc.stdout,), daemon=True
+            )
+            err_thread = threading.Thread(
+                target=err_cap.consume, args=(proc.stderr,), daemon=True
+            )
+            out_thread.start()
+            err_thread.start()
+
             while proc.poll() is None:
                 if cancellation and cancellation.cancelled:
                     cancelled = True
@@ -303,10 +329,19 @@ class ProcessRunner:
             else:
                 proc.wait()
         finally:
-            out_thread.join(timeout=2.0)
-            err_thread.join(timeout=2.0)
-            if out_thread.is_alive() or err_thread.is_alive():
+            if out_thread is not None:
+                out_thread.join(timeout=2.0)
+            if err_thread is not None:
+                err_thread.join(timeout=2.0)
+            if (
+                proc is not None
+                and (
+                    (out_thread is not None and out_thread.is_alive())
+                    or (err_thread is not None and err_thread.is_alive())
+                )
+            ):
                 self._terminate_tree(proc)
+            self.sandbox.cleanup(plan)
 
         raw_out = out_cap.render()
         raw_err = err_cap.render()
@@ -317,7 +352,7 @@ class ProcessRunner:
 
         return ProcessResult(
             list(argv),
-            proc.returncode if proc.returncode is not None else -1,
+            proc.returncode if proc is not None and proc.returncode is not None else -1,
             out.decode("utf-8", "replace"),
             err.decode("utf-8", "replace"),
             (time.monotonic() - started) * 1000,
@@ -326,4 +361,8 @@ class ProcessRunner:
             combined_truncated,
             out_cap.total_bytes,
             err_cap.total_bytes,
+            sandbox_profile=plan.profile,
+            sandbox_backend=plan.backend,
+            sandbox_strong=plan.strong,
+            sandbox_network_isolated=plan.network_isolated,
         )

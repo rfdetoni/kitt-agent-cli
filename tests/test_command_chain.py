@@ -48,8 +48,13 @@ def test_runtime_executes_direct_argv_and_rejects_shell_escape():
                 ]
             },
         )
-        assert result.success, result.error
-        assert (Path(root) / "created").is_dir()
+        if registry.process_runner.sandbox.is_strong_available():
+            assert result.success, result.error
+            assert (Path(root) / "created").is_dir()
+            assert result.metadata["sandbox"]["strong"]
+        else:
+            assert result.requires_approval
+            assert not (Path(root) / "created").exists()
 
         result = registry.execute_tool(
             "run_command",

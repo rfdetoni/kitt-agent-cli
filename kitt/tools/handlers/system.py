@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
+from kitt.security.execution_sandbox import SandboxUnavailable
+from kitt.security.risk_budget import is_automatic_origin
 from kitt.tools.handlers import ToolContext
 
 
@@ -221,18 +223,34 @@ class RunCommandHandler:
         timeout_seconds = max(1, min(timeout_seconds, 3600))
 
         try:
+            automatic = (
+                ctx.approval_grant is None and is_automatic_origin(ctx.origin)
+            )
             result = ctx.registry.process_runner.run(
                 argv,
                 timeout_seconds=timeout_seconds,
                 cwd=cwd,
+                sandbox_profile=ctx.registry.process_runner.sandbox.default_profile,
+                require_strong_sandbox=automatic,
             )
         except FileNotFoundError:
             return ToolResult(False, "", f"Executable or cwd not found for process.run: {argv[0]}")
+        except SandboxUnavailable as exc:
+            return ToolResult(False, "", f"Command sandbox unavailable: {exc}")
         except (NotADirectoryError, PermissionError, OSError, ValueError) as exc:
             return ToolResult(False, "", f"Command execution failed: {exc}")
         output, metadata, compacted = _optimized_process_output(
             ctx, argv, result, _token_budget(args, 1200)
         )
+        metadata = {
+            **metadata,
+            "sandbox": {
+                "profile": result.sandbox_profile,
+                "backend": result.sandbox_backend,
+                "strong": result.sandbox_strong,
+                "network_isolated": result.sandbox_network_isolated,
+            },
+        }
         if result.timed_out:
             command_error = "Command timed out"
         elif result.cancelled:

@@ -21,6 +21,10 @@ class RuntimeOperationRegistryTests(unittest.TestCase):
         self.assertIn("repo.write_file", OPERATION_SPECS)
         self.assertIn("repo.definition", OPERATION_SPECS)
         self.assertIn("security.scan", OPERATION_SPECS)
+        self.assertEqual(
+            OPERATION_SPECS["process.run"].sandbox_profile,
+            "workspace-write+network",
+        )
         self.assertFalse(hasattr(OPERATION_SPECS, "update"))
 
         with self.assertRaises(TypeError):

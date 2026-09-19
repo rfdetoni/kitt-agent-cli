@@ -78,6 +78,7 @@ class RuntimeOperationSpec:
     sensitive: bool = False
     resume_tool_name: Optional[str] = None
     risk_cost: int = 0
+    sandbox_profile: Optional[str] = None
 
 
 OPERATION_REGISTRY = RuntimeOperationRegistry({
@@ -129,6 +130,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         sensitive=True,
         resume_tool_name="run_command",
         risk_cost=3,
+        sandbox_profile="workspace-write+network",
     ),
     "children.spawn": RuntimeOperationSpec(
         "children.spawn",
