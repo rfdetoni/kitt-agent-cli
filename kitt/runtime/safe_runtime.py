@@ -12,37 +12,8 @@ from kitt.security.workspace_mutations import delete_path, list_entries, move_pa
 RuntimeOperationSpec = _core.RuntimeOperationSpec
 RuntimeOperationRegistry = _core.RuntimeOperationRegistry
 SafeRuntimeResult = _core.SafeRuntimeResult
-
-EXTENDED_OPERATION_SPECS = {
-    "repo.definition": RuntimeOperationSpec("repo.definition", CAP_REPO_READ, "read_file"),
-    "repo.hover": RuntimeOperationSpec("repo.hover", CAP_REPO_READ, "read_file"),
-    "repo.references_semantic": RuntimeOperationSpec("repo.references_semantic", CAP_REPO_SEARCH, "search"),
-    "repo.diagnostics": RuntimeOperationSpec("repo.diagnostics", CAP_REPO_READ, "read_file"),
-    "repo.call_hierarchy": RuntimeOperationSpec("repo.call_hierarchy", CAP_REPO_SEARCH, "search"),
-    "repo.outline": RuntimeOperationSpec("repo.outline", CAP_REPO_READ, "read_file"),
-    "repo.ast_search": RuntimeOperationSpec("repo.ast_search", CAP_REPO_SEARCH, "search"),
-    "repo.list": RuntimeOperationSpec("repo.list", CAP_REPO_READ, "list_files"),
-    "repo.write_file": RuntimeOperationSpec(
-        "repo.write_file",
-        CAP_REPO_WRITE,
-        "write_file",
-        sensitive=True,
-        resume_tool_name="write_file",
-    ),
-    "repo.move": RuntimeOperationSpec(
-        "repo.move", CAP_REPO_WRITE, "write_file", sensitive=True
-    ),
-    "repo.rename": RuntimeOperationSpec(
-        "repo.rename", CAP_REPO_WRITE, "write_file", sensitive=True
-    ),
-    "repo.delete": RuntimeOperationSpec(
-        "repo.delete", CAP_REPO_WRITE, "write_file", sensitive=True
-    ),
-    "security.scan": RuntimeOperationSpec("security.scan", CAP_REPO_SEARCH, "search"),
-}
-
-OPERATION_REGISTRY = _core.OPERATION_REGISTRY.extend(EXTENDED_OPERATION_SPECS)
-OPERATION_SPECS = OPERATION_REGISTRY
+OPERATION_REGISTRY = _core.OPERATION_REGISTRY
+OPERATION_SPECS = _core.OPERATION_SPECS
 
 
 class SafeRuntime(_core.SafeRuntime):

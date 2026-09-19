@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from kitt.tools import registry_core as _core
 
-# ``registry_core`` imports SafeRuntimeHandler, which loads the semantic runtime.
-# Import the composed immutable catalog explicitly; the core catalog is no longer
-# mutated as an import side effect.
-from kitt.runtime.safe_runtime import OPERATION_SPECS
+# The operation catalog is immutable and authoritative in core_runtime.
+# SafeRuntime implements specialized handlers without mutating or extending it.
+from kitt.runtime.core_runtime import OPERATION_SPECS
 
 
 ToolResult = _core.ToolResult
