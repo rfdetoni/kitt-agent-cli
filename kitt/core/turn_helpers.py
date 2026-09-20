@@ -50,3 +50,18 @@ def _reverse_proxy_identity(profile) -> Optional[tuple[str, str]]:
 def _same_reverse_proxy_endpoint(left, right) -> bool:
     left_identity = _reverse_proxy_identity(left)
     return left_identity is not None and left_identity == _reverse_proxy_identity(right)
+
+
+def _attachment_path_key(value: str) -> str:
+    return str(value).strip().lstrip("@").replace("\\", "/")
+
+
+def _attachment_retrieval_prompt(prompt: str, attachments: tuple[str, ...]) -> str:
+    sanitized = str(prompt)
+    for path in attachments:
+        normalized = _attachment_path_key(path)
+        if not normalized:
+            continue
+        sanitized = sanitized.replace(f"@{path}", " ")
+        sanitized = sanitized.replace(f"@{normalized}", " ")
+    return " ".join(sanitized.split())
