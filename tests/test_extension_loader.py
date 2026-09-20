@@ -1,6 +1,7 @@
 """Tests for plugin loader discovery, loading, lifecycle, and rollback on failure."""
 import asyncio
 import os
+import sys
 import tempfile
 import textwrap
 import unittest
