@@ -21,6 +21,7 @@ from kitt.llm.agent_contract import (
     split_workspace_context,
 )
 from kitt.llm.auth import ProviderAuthService
+from kitt.llm.browser_gateway import KittProxyBrowserGateway
 from kitt.llm.endpoint_security import (
     ProviderEndpointTrustStore,
     resolve_endpoint_credential,
@@ -153,6 +154,61 @@ class LLMClient:
         """Most recently discovered reverse-proxy contract, if this client used one."""
         return self._last_kitt_proxy_capabilities
 
+    def _is_kitt_proxy(self) -> bool:
+        backend = (self.profile.backend or "").strip().lower()
+        protocol = (self.profile.protocol or "").strip().lower()
+        return protocol == "kitt-reverse-proxy" or backend in {"kitt-reverse-proxy", "kitt-proxy"}
+
+    def _kitt_proxy_session_id(self, session_key: Optional[str]) -> str:
+        if session_key:
+            return uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"kitt-reverse-proxy:{session_key}",
+            ).hex[:32]
+        return self._kitt_session_id
+
+    def create_kitt_proxy_browser_gateway(
+        self, session_key: Optional[str] = None
+    ) -> Optional[KittProxyBrowserGateway]:
+        if not self._is_kitt_proxy():
+            return None
+        backend = (self.profile.backend or "").strip().lower() or "kitt-reverse-proxy"
+        base_url = (self.profile.base_url or "http://127.0.0.1:3000").strip()
+        api_key = resolve_endpoint_credential(
+            self.auth_service,
+            backend,
+            base_url,
+            credential_ref=self.profile.credential_ref,
+            raw_secret=self.profile.api_key,
+            policy=self.endpoint_policy,
+        )
+        discovered = discover_kitt_proxy_capabilities(
+            base_url,
+            api_key=api_key,
+            timeout=min(1.0, max(0.2, float(self.profile.request_timeout_seconds))),
+        )
+        self._last_kitt_proxy_capabilities = discovered
+        if not discovered.discovered or not discovered.browser_supported:
+            return None
+        if not discovered.browser_actions:
+            return None
+        return KittProxyBrowserGateway(
+            base_url=base_url,
+            api_key=api_key,
+            session_header=(
+                discovered.session_header
+                if discovered.accepts_named_sessions is not False
+                else None
+            ),
+            session_id=self._kitt_proxy_session_id(session_key),
+            request_id_header=discovered.request_id_header,
+            allowed_actions=discovered.browser_actions,
+            timeout_seconds=min(
+                60.0,
+                max(1.0, float(self.profile.request_timeout_seconds)),
+            ),
+        )
+
     def close(self):
         """Shut down the owned thread pool executor."""
         if self._executor and not self._external_executor:
@@ -281,10 +337,7 @@ class LLMClient:
                 "openai-chat-completions"
             )
 
-        is_kitt_proxy = (
-            (self.profile.protocol or "").strip().lower() == "kitt-reverse-proxy"
-            or backend in {"kitt-reverse-proxy", "kitt-proxy"}
-        )
+        is_kitt_proxy = self._is_kitt_proxy()
         extra_headers: Dict[str, str] = {}
         if is_kitt_proxy:
             contract_route = (
@@ -308,13 +361,7 @@ class LLMClient:
             )
             self._last_kitt_proxy_capabilities = discovered
 
-            if session_key:
-                session_id = uuid.uuid5(
-                    uuid.NAMESPACE_URL,
-                    f"kitt-reverse-proxy:{session_key}",
-                ).hex[:32]
-            else:
-                session_id = self._kitt_session_id
+            session_id = self._kitt_proxy_session_id(session_key)
 
             if discovered.discovered:
                 session_header = (

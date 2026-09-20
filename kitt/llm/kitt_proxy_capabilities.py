@@ -21,6 +21,7 @@ class KittProxyCapabilities:
     reasoning_supported: Optional[bool] = False
     reasoning_range: Tuple[int, int] = (0, 100)
     session_management: Dict[str, Any] = field(default_factory=dict)
+    browser_automation: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -42,6 +43,24 @@ class KittProxyCapabilities:
     def idle_timeout_ms(self) -> Optional[int]:
         value = self.session_management.get("idle_timeout_ms")
         return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+
+    @property
+    def browser_supported(self) -> bool:
+        return self.browser_automation.get("supported") is True
+
+    @property
+    def browser_actions(self) -> Tuple[str, ...]:
+        raw = self.browser_automation.get("actions")
+        if not isinstance(raw, list):
+            return ()
+        actions = []
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            value = item.strip().lower()
+            if value and value.replace("_", "").replace("-", "").isalnum():
+                actions.append(value)
+        return tuple(dict.fromkeys(actions))
 
 
 _CACHE_TTL_SECONDS = 30.0
@@ -96,6 +115,8 @@ def _parse(payload: Any) -> KittProxyCapabilities:
 
     session = contract.get("session_management")
     session_management = dict(session) if isinstance(session, dict) else {}
+    browser = contract.get("browser_automation")
+    browser_automation = dict(browser) if isinstance(browser, dict) else {}
 
     # Reverse-proxy reasoning is owned by the authenticated WebChat session.
     # Ignore legacy capability/header declarations so the CLI never attempts to
@@ -115,6 +136,7 @@ def _parse(payload: Any) -> KittProxyCapabilities:
         reasoning_supported=reasoning_supported,
         reasoning_range=(0, 100),
         session_management=session_management,
+        browser_automation=browser_automation,
         raw=dict(payload),
     )
 

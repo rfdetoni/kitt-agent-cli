@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -90,6 +91,8 @@ class ToolRegistry:
         self.event_bus = None
         self.metrics_collector = None
         self._processor = None
+        self._browser_gateway_lock = threading.RLock()
+        self._browser_gateways: Dict[str, Any] = {}
 
         self._custom_tools: Dict[str, Dict[str, Any]] = {}
         self._safe_runtime_instance = None
@@ -118,11 +121,34 @@ class ToolRegistry:
         }
 
     def close(self) -> None:
+        with self._browser_gateway_lock:
+            self._browser_gateways.clear()
         if self.context_engine is not None:
             try:
                 self.context_engine.close()
             except Exception:
                 pass
+
+    def bind_browser_gateway(self, conversation_id: str, gateway: Any) -> None:
+        key = str(conversation_id or "").strip()
+        if not key:
+            raise ValueError("conversation_id is required for browser gateway binding")
+        with self._browser_gateway_lock:
+            self._browser_gateways[key] = gateway
+
+    def get_browser_gateway(self, conversation_id: str):
+        with self._browser_gateway_lock:
+            return self._browser_gateways.get(str(conversation_id or "").strip())
+
+    def clear_browser_gateway(self, conversation_id: str) -> None:
+        with self._browser_gateway_lock:
+            self._browser_gateways.pop(str(conversation_id or "").strip(), None)
+
+    def drain_browser_images(self, conversation_id: str) -> list[Any]:
+        gateway = self.get_browser_gateway(conversation_id)
+        if gateway is None or not hasattr(gateway, "drain_images"):
+            return []
+        return list(gateway.drain_images())
 
     def register(
         self,

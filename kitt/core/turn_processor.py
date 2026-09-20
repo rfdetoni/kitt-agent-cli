@@ -73,6 +73,8 @@ from kitt.security.capabilities import (
     capabilities_for_tools,
     READ_ONLY_CAPABILITIES,
     CAP_REPO_WRITE,
+    CAP_BROWSER_READ,
+    CAP_BROWSER_WRITE,
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
 )
@@ -505,8 +507,10 @@ class TurnProcessor(
             "process.run", "artifacts.store", "artifacts.read",
             "children.spawn", "children.send", "children.inspect",
             "goal.inspect", "goal.update", "memory.query", "memory.correct",
-            "memory.concept", "memory.link", "state.get", "state.set",
-            "state.list", "handles.resolve",
+            "memory.concept", "memory.link",
+            "browser.open", "browser.inspect", "browser.screenshot",
+            "browser.click", "browser.type", "browser.close",
+            "state.get", "state.set", "state.list", "handles.resolve",
         )
         allowed = []
         for name in preferred_order:
@@ -557,6 +561,17 @@ class TurnProcessor(
 {"name":"kitt_runtime","arguments":{"operation":"process.run","arguments":{"argv":["npm","run","build"],"cwd":"frontend","timeout_seconds":120}}}
 </kitt-tool>
 Do not use command, cmd, args, sh -c, bash -c, cmd.exe /c, PowerShell, redirection, pipes, or &&.""")
+            if "browser.open" in operations:
+                examples.append("""Browser automation uses a separate reverse-proxy tab.
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"browser.open","arguments":{"url":"http://localhost:4200"}}}
+</kitt-tool>
+Use browser.inspect for bounded DOM/text and browser.screenshot for visual validation. Screenshots are attached only to the next model request; never request or reproduce base64.""")
+            if "browser.click" in operations:
+                examples.append("""Interactive browser actions require browser.write and may require approval:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"browser.click","arguments":{"selector":"#submit"}}}
+</kitt-tool>""")
             examples_text = "\n".join(examples)
 
             return f"""
@@ -619,6 +634,54 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 """
         return instructions.strip()
 
+
+    @staticmethod
+    def _browser_intent(prompt: str) -> tuple[bool, bool]:
+        text = str(prompt or "").casefold()
+        read_terms = (
+            "browser", "navegador", "website", "web site", "site", "webpage",
+            "web page", "página web", "pagina web", "frontend", "front-end",
+            "preview", "screenshot", "captura de tela", "localhost", "renderize",
+            "renderizar", "visual da página", "visual da pagina",
+        )
+        write_terms = (
+            "click", "clique", "clicar", "preencha", "preencher", "fill",
+            "digite", "digitar", "type", "submit", "envie o formulário",
+            "envie o formulario", "interaja", "interagir", "login", "log in",
+            "autentique", "autenticar",
+        )
+        has_url = bool(
+            re.search(
+                r"https?://|\blocalhost(?::\d+)?\b|\b127\.0\.0\.1(?::\d+)?\b",
+                text,
+            )
+        )
+        read_requested = has_url or any(term in text for term in read_terms)
+        write_requested = read_requested and any(term in text for term in write_terms)
+        return read_requested, write_requested
+
+    def _browser_authorities_for_turn(
+        self,
+        cmd: TurnCommand,
+        exe_client: LLMClient,
+        exe_profile: ModelProfile,
+    ) -> tuple[str, ...]:
+        read_requested, write_requested = self._browser_intent(cmd.prompt)
+        if not read_requested or _reverse_proxy_identity(exe_profile) is None:
+            return ()
+        session_key = self._provider_session_key(exe_profile, cmd.conversation_id)
+        try:
+            gateway = exe_client.create_kitt_proxy_browser_gateway(session_key)
+        except Exception as exc:
+            logger.debug("browser gateway discovery failed: %s", exc)
+            return ()
+        if gateway is None:
+            return ()
+        self.registry.bind_browser_gateway(cmd.conversation_id, gateway)
+        authorities = [CAP_BROWSER_READ]
+        if write_requested and cmd.mode not in {"plan", "ask"}:
+            authorities.append(CAP_BROWSER_WRITE)
+        return tuple(authorities)
 
     def _security_context_for_turn(self, cmd: TurnCommand, planned_tools) -> ExecutionSecurityContext:
         if cmd.security_context is not None:
@@ -752,14 +815,24 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
 
             exe_client = self.execution_client or LLMClient(exe_profile)
+            browser_authorities = self._browser_authorities_for_turn(
+                cmd, exe_client, exe_profile
+            )
+            planned_authorities = list(plan.enabled_tools)
+            for authority in browser_authorities:
+                if authority not in planned_authorities:
+                    planned_authorities.append(authority)
             exposed_tools = self.surface_selector.select_tools(
                 plan,
                 model_capabilities=getattr(exe_client, "capabilities", None),
             )
-            security_context = self._security_context_for_turn(cmd, plan.enabled_tools)
+            if browser_authorities:
+                exposed_tools = ["kitt_runtime"]
+            security_context = self._security_context_for_turn(cmd, planned_authorities)
+            prompt_plan = replace(plan, enabled_tools=planned_authorities)
 
             sys_prompt, base_sys, allocated, request = self._build_system_prompt(
-                cmd, task, plan, exe_profile, context_map_str, explicit_str, agents_str,
+                cmd, task, prompt_plan, exe_profile, context_map_str, explicit_str, agents_str,
                 skills_str, agent_addressed, workspace_id, budget, exposed_tools=exposed_tools
             )
             self._emit("BudgetApplied", {"allocated": allocated})

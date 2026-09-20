@@ -16,6 +16,8 @@ CAP_GOAL_MANAGE = "goal.manage"
 CAP_MEMORY_READ = "memory.read"
 CAP_MEMORY_WRITE = "memory.write"
 CAP_NETWORK_ACCESS = "network.access"
+CAP_BROWSER_READ = "browser.read"
+CAP_BROWSER_WRITE = "browser.write"
 CAP_MCP_CALL = "mcp.call"
 
 ALL_CAPABILITIES: FrozenSet[str] = frozenset({
@@ -33,6 +35,8 @@ ALL_CAPABILITIES: FrozenSet[str] = frozenset({
     CAP_MEMORY_READ,
     CAP_MEMORY_WRITE,
     CAP_NETWORK_ACCESS,
+    CAP_BROWSER_READ,
+    CAP_BROWSER_WRITE,
     CAP_MCP_CALL,
 })
 
@@ -48,6 +52,7 @@ READ_ONLY_CAPABILITIES: FrozenSet[str] = frozenset({
     CAP_ARTIFACT_READ,
     CAP_CHILD_INSPECT,
     CAP_MEMORY_READ,
+    CAP_BROWSER_READ,
 })
 
 TOOL_TO_CAPABILITY = {

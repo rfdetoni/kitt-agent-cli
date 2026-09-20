@@ -94,6 +94,7 @@ class TurnToolLoopMixin:
                 started_at=thinking_started_at,
                 session_key=self._provider_session_key(exe_profile, cmd.conversation_id),
                 route=effective_agent_route,
+                conversation_id=cmd.conversation_id,
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)

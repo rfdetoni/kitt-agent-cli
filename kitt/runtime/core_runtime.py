@@ -16,6 +16,8 @@ from kitt.security.control_plane import control_plane_paths
 from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
+    CAP_BROWSER_READ,
+    CAP_BROWSER_WRITE,
     CAP_CHILD_INSPECT,
     CAP_CHILD_MESSAGE,
     CAP_CHILD_SPAWN,
@@ -167,6 +169,18 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "skill.call": RuntimeOperationSpec("skill.call", CAP_REPO_READ, sensitive=False),
     "mcp.call": RuntimeOperationSpec(
         "mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True
+    ),
+    "browser.open": RuntimeOperationSpec("browser.open", CAP_BROWSER_READ),
+    "browser.inspect": RuntimeOperationSpec("browser.inspect", CAP_BROWSER_READ),
+    "browser.screenshot": RuntimeOperationSpec("browser.screenshot", CAP_BROWSER_READ),
+    "browser.click": RuntimeOperationSpec(
+        "browser.click", CAP_BROWSER_WRITE, "browser.click", sensitive=True, risk_cost=1
+    ),
+    "browser.type": RuntimeOperationSpec(
+        "browser.type", CAP_BROWSER_WRITE, "browser.type", sensitive=True, risk_cost=1
+    ),
+    "browser.close": RuntimeOperationSpec(
+        "browser.close", CAP_BROWSER_WRITE, "browser.close", sensitive=True, risk_cost=1
     ),
     "state.get": RuntimeOperationSpec("state.get", CAP_REPO_READ, sensitive=False),
     "state.set": RuntimeOperationSpec("state.set", CAP_REPO_WRITE, sensitive=False),
@@ -711,12 +725,45 @@ class SafeRuntime:
             "mcp.call": lambda: self._op_mcp_call(
                 args, turn_id, security_context, automatic_budget_reserved
             ),
+            "browser.open": lambda: self._op_browser_action("browser.open", args),
+            "browser.inspect": lambda: self._op_browser_action("browser.inspect", args),
+            "browser.screenshot": lambda: self._op_browser_action("browser.screenshot", args),
+            "browser.click": lambda: self._op_browser_action("browser.click", args),
+            "browser.type": lambda: self._op_browser_action("browser.type", args),
+            "browser.close": lambda: self._op_browser_action("browser.close", args),
             "state.get": lambda: self._op_state_get(args),
             "state.set": lambda: self._op_state_set(args),
             "state.list": lambda: self._op_state_list(),
             "handles.resolve": lambda: self._op_handles_resolve(args, security_context),
         }
         return handlers[op]()
+
+    def _op_browser_action(self, operation: str, args: dict) -> SafeRuntimeResult:
+        if not self.registry or not hasattr(self.registry, "get_browser_gateway"):
+            return SafeRuntimeResult(False, operation, error="Browser gateway is unavailable")
+        gateway = self.registry.get_browser_gateway(self.conversation_id)
+        if gateway is None:
+            return SafeRuntimeResult(
+                False,
+                operation,
+                error="Browser gateway is not bound to this conversation",
+            )
+        action = operation.split(".", 1)[1]
+        try:
+            data = gateway.execute(action, dict(args))
+        except Exception as exc:
+            return SafeRuntimeResult(False, operation, error=f"Browser action failed: {exc}")
+        return SafeRuntimeResult(
+            True,
+            operation,
+            data=data,
+            metadata={
+                "browser_action": action,
+                "visual_input_pending": bool(
+                    isinstance(data, dict) and data.get("image_attached") is True
+                ),
+            },
+        )
 
     def _op_registry_tool(
         self,
