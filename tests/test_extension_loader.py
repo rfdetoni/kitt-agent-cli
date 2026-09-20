@@ -146,6 +146,7 @@ class TestExtensionLoader(unittest.TestCase):
             tool_registry.close()
 
 
+    @unittest.skipUnless(sys.platform == "linux", "bubblewrap backend is Linux-only")
     def test_worker_bubblewrap_plan_scopes_workspace_and_network(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base = Path(tmp)
