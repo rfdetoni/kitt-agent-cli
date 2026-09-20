@@ -9,6 +9,7 @@ from kitt.extensions.errors import (
 from kitt.extensions.manifest import parse_manifest_data
 from kitt.extensions.models import PluginManifest
 from kitt.extensions.plugins.registry import PluginRegistry
+from kitt.extensions.plugins.security import PluginTrustStore
 
 
 class _StateStore:
@@ -136,6 +137,43 @@ class TestPluginManifestBooleanSchema(unittest.TestCase):
         manifest = parse_manifest_data(data)
         self.assertFalse(manifest.enabled_by_default)
         self.assertFalse(manifest.is_critical)
+
+    def test_content_trust_does_not_require_in_process_opt_in(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            plugin_dir = root / ".kitt" / "plugins" / "demo"
+            plugin_dir.mkdir(parents=True)
+            manifest_path = plugin_dir / "plugin.toml"
+            manifest_path.write_text(
+                "\n".join([
+                    'name = "demo"',
+                    'version = "1.0.0"',
+                    'api_version = "1"',
+                    'entrypoint = "plugin:setup"',
+                    'permissions = []',
+                    'trusted_in_process = false',
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            (plugin_dir / "plugin.py").write_text(
+                "def setup(ctx):\n    return None\n",
+                encoding="utf-8",
+            )
+            manifest = parse_manifest_data(
+                self._base(),
+                manifest_path=manifest_path,
+                source="workspace",
+            )
+            store = PluginTrustStore(
+                root,
+                path=root / "plugin-trust.json",
+            )
+            digest = store.grant(manifest)
+            self.assertTrue(digest)
+            self.assertTrue(store.is_trusted(manifest))
 
 
 if __name__ == "__main__":

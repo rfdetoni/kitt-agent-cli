@@ -757,11 +757,9 @@ class PluginTrustStore:
         return digest
 
     def grant(self, manifest: PluginManifest) -> str:
-        if not manifest.trusted_in_process:
-            raise PluginLoadError(
-                f"Plugin '{manifest.name}' does not opt in to in-process "
-                "execution."
-            )
+        # Content trust and execution mode are separate authorities. A plugin
+        # may be approved for the isolated worker without ever being eligible
+        # for in-process execution.
         digest = plugin_content_digest(
             manifest,
             self.workspace_root,
@@ -795,8 +793,6 @@ class PluginTrustStore:
         return removed
 
     def is_trusted(self, manifest: PluginManifest) -> bool:
-        if not manifest.trusted_in_process:
-            return False
         expected = self.approved_digest(manifest)
         if not expected:
             return False
