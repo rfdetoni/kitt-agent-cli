@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import logging
 import re
 import time
@@ -86,15 +87,34 @@ class TurnToolLoopMixin:
 
             self._rebudget_execution_messages(execution_messages, request.system_prompt, exe_profile)
             model_round_started_at = time.perf_counter()
+            stream_kwargs = {
+                "turn_id": cmd.turn_id,
+                "started_at": thinking_started_at,
+                "session_key": self._provider_session_key(
+                    exe_profile, cmd.conversation_id
+                ),
+                "route": effective_agent_route,
+                "conversation_id": cmd.conversation_id,
+            }
+            try:
+                signature = inspect.signature(self._stream_execution_response)
+                supports_kwargs = any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in signature.parameters.values()
+                )
+                if not supports_kwargs:
+                    stream_kwargs = {
+                        key: value
+                        for key, value in stream_kwargs.items()
+                        if key in signature.parameters
+                    }
+            except (TypeError, ValueError):
+                pass
             for streamed_response, event in self._stream_execution_response(
                 exe_client,
                 execution_messages,
                 request.system_prompt,
-                turn_id=cmd.turn_id,
-                started_at=thinking_started_at,
-                session_key=self._provider_session_key(exe_profile, cmd.conversation_id),
-                route=effective_agent_route,
-                conversation_id=cmd.conversation_id,
+                **stream_kwargs,
             ):
                 if cmd.turn_id in self.cancelled_turns:
                     self.cancelled_turns.discard(cmd.turn_id)
