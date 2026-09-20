@@ -56,6 +56,8 @@ def _normalize_origin_scope(values: Iterable[str]) -> tuple[str, ...]:
         parsed = urlsplit(raw)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise BrowserGatewayError(f"Invalid browser origin scope: {raw!r}")
+        if parsed.username or parsed.password:
+            raise BrowserGatewayError("Browser origin scope must not contain URL credentials")
         host = parsed.hostname
         if ":" not in host:
             try:
@@ -86,7 +88,7 @@ def _is_loopback_host(hostname: str) -> bool:
     return (
         host == "localhost"
         or host.endswith(".localhost")
-        or host in {"127.0.0.1", "::1", "0.0.0.0"}
+        or host in {"127.0.0.1", "::1"}
     )
 
 
@@ -136,6 +138,8 @@ class KittProxyBrowserGateway:
         except ValueError:
             return False
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return False
+        if parsed.username or parsed.password:
             return False
         if _LOOPBACK_SCOPE in self.origin_scope and _is_loopback_host(parsed.hostname):
             return True

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kitt.cli.main import build_parser
-from kitt.core.logging import configure_logging, trace_event
+from kitt.core.logging import configure_logging, sanitize_message, trace_event
 
 
 class LoggingLevelTests(unittest.TestCase):
@@ -51,6 +51,18 @@ class LoggingLevelTests(unittest.TestCase):
             self.assertNotIn("super-secret", rendered)
             self.assertNotIn('"hidden"', rendered)
             self.assertIn("[REDACTED]", rendered)
+
+
+    def test_trace_sanitizer_redacts_inline_binary_data_and_url_credentials(self):
+        rendered = sanitize_message(
+            "visual=data:image/png;base64,QUJDREVGRw== "
+            "target=https://user:pw@example.com/private?q=value"
+        )
+        self.assertIn("data:image/png;base64,[REDACTED]", rendered)
+        self.assertNotIn("QUJDREVGRw==", rendered)
+        self.assertNotIn("user:pw@", rendered)
+        self.assertNotIn("q=value", rendered)
+        self.assertIn("https://example.com/private?[redacted]", rendered)
 
 
 if __name__ == "__main__":

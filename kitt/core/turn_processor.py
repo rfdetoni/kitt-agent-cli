@@ -712,7 +712,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         text = str(prompt or "")
         folded = text.casefold()
         scope: list[str] = []
-        explicit_local_terms = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
         generic_local_terms = (
             "frontend", "front-end", "preview", "captura de tela",
             "screenshot", "renderize", "renderizar",
@@ -722,38 +721,50 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             text,
             flags=re.IGNORECASE,
         )
-        if any(term in folded for term in explicit_local_terms):
-            scope.append("loopback")
 
-        for match in explicit_url_matches:
-            candidate = match.rstrip(".,;:!?}")
+        def add_origin(candidate: str) -> None:
             try:
-                parsed = urlsplit(candidate)
+                parsed = urlsplit(candidate.rstrip(".,;:!?"))
                 host = parsed.hostname
-                if not host or parsed.username or parsed.password:
-                    continue
-                scheme = parsed.scheme.lower()
-                if scheme not in {"http", "https"}:
-                    continue
+                if (
+                    not host
+                    or parsed.username
+                    or parsed.password
+                    or parsed.scheme.lower() not in {"http", "https"}
+                ):
+                    return
                 host_ascii = host.encode("idna").decode("ascii").lower()
-                if host_ascii in {"localhost", "127.0.0.1", "::1"}:
-                    scope.append("loopback")
-                    continue
                 display_host = (
-                    f"[{host_ascii}]" if ":" in host_ascii and not host_ascii.startswith("[")
+                    f"[{host_ascii}]"
+                    if ":" in host_ascii and not host_ascii.startswith("[")
                     else host_ascii
                 )
                 port = parsed.port
+                scheme = parsed.scheme.lower()
                 default_port = 80 if scheme == "http" else 443
                 origin = f"{scheme}://{display_host}"
                 if port is not None and port != default_port:
                     origin += f":{port}"
                 scope.append(origin)
             except (UnicodeError, ValueError):
-                continue
-        if not explicit_url_matches and any(
-            term in folded for term in generic_local_terms
-        ):
+                return
+
+        residual = text
+        for match in explicit_url_matches:
+            add_origin(match)
+            residual = residual.replace(match, " ")
+
+        bare_local = re.compile(
+            r"(?<![\w.])(?:localhost|127\.0\.0\.1)(?::\d{1,5})?"
+            r"|\[::1\](?::\d{1,5})?",
+            flags=re.IGNORECASE,
+        )
+        for match in bare_local.finditer(residual):
+            add_origin(f"http://{match.group(0)}")
+
+        # Broad loopback authority is only a fallback for local-preview intent
+        # where the user did not name an endpoint.
+        if not scope and any(term in folded for term in generic_local_terms):
             scope.append("loopback")
         return tuple(dict.fromkeys(scope))
 

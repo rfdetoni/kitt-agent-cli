@@ -18,6 +18,10 @@ _SENSITIVE_KEY = re.compile(
     re.IGNORECASE,
 )
 _URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_DATA_BASE64_URI = re.compile(
+    r"data:([a-z0-9.+-]+/[a-z0-9.+-]+);base64,[a-z0-9+/=_-]+",
+    re.IGNORECASE,
+)
 
 
 def _sanitize_url(raw: str) -> str:
@@ -27,14 +31,27 @@ def _sanitize_url(raw: str) -> str:
         parsed = urlsplit(raw)
         if not parsed.scheme or not parsed.netloc:
             return raw
+        host = parsed.hostname
+        if not host:
+            return f"{parsed.scheme}://[redacted]"
+        display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        netloc = f"{display_host}:{port}" if port is not None else display_host
         suffix = "?[redacted]" if parsed.query or parsed.fragment else ""
-        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", "")) + suffix
+        return urlunsplit((parsed.scheme, netloc, parsed.path, "", "")) + suffix
     except Exception:
         return raw
 
 
 def sanitize_message(value: str) -> str:
-    return _URL.sub(lambda match: _sanitize_url(match.group(0)), str(value))
+    text = _DATA_BASE64_URI.sub(
+        lambda match: f"data:{match.group(1)};base64,[REDACTED]",
+        str(value),
+    )
+    return _URL.sub(lambda match: _sanitize_url(match.group(0)), text)
 
 
 def sanitize_value(value: Any, key: str = "") -> Any:

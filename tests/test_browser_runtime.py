@@ -112,7 +112,7 @@ def test_turn_browser_scope_is_explicit_and_bounded_to_user_origins():
     scope = TurnProcessor._browser_origin_scope(
         "Abra https://Example.com:443/path e valide o frontend em localhost:4200"
     )
-    assert scope == ("loopback", "https://example.com")
+    assert scope == ("https://example.com", "http://localhost:4200")
 
     assert TurnProcessor._browser_origin_scope(
         "use o navegador para explorar algum site"
@@ -123,6 +123,72 @@ def test_turn_browser_scope_is_explicit_and_bounded_to_user_origins():
     assert TurnProcessor._browser_origin_scope(
         "valide o frontend local"
     ) == ("loopback",)
+
+
+def test_turn_browser_scope_never_broadens_explicit_loopback_or_credentials():
+    from kitt.core.turn_processor import TurnProcessor
+
+    assert TurnProcessor._browser_origin_scope(
+        "abra http://localhost:4200/app"
+    ) == ("http://localhost:4200",)
+    assert TurnProcessor._browser_origin_scope(
+        "abra http://127.0.0.1:5173 e http://127.0.0.1:8080"
+    ) == ("http://127.0.0.1:5173", "http://127.0.0.1:8080")
+    assert TurnProcessor._browser_origin_scope(
+        "abra https://user:pw@example.com/private"
+    ) == ()
+    assert TurnProcessor._browser_origin_scope(
+        "valide o frontend local"
+    ) == ("loopback",)
+
+
+def test_gateway_rejects_credentials_and_unspecified_host_from_loopback_scope(monkeypatch):
+    called = False
+
+    def fake_open(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return _Response({})
+
+    monkeypatch.setattr("kitt.llm.browser_gateway.secure_urlopen", fake_open)
+
+    try:
+        KittProxyBrowserGateway(
+            base_url="http://127.0.0.1:3000/v1",
+            api_key=None,
+            session_header="X-Kitt-Session-Id",
+            session_id="abc123",
+            request_id_header="X-Kitt-Request-Id",
+            allowed_actions=("open",),
+            origin_scope_header="X-Kitt-Browser-Origin-Scope",
+            origin_scope=("https://user:pw@example.com",),
+        )
+    except Exception as exc:
+        assert "credentials" in str(exc)
+    else:
+        raise AssertionError("credential-bearing origin scope must fail closed")
+
+    gateway = KittProxyBrowserGateway(
+        base_url="http://127.0.0.1:3000/v1",
+        api_key=None,
+        session_header="X-Kitt-Session-Id",
+        session_id="abc123",
+        request_id_header="X-Kitt-Request-Id",
+        allowed_actions=("open",),
+        origin_scope_header="X-Kitt-Browser-Origin-Scope",
+        origin_scope=("loopback",),
+    )
+    for target in (
+        "http://0.0.0.0:4200/",
+        "http://user:pw@127.0.0.1:4200/",
+    ):
+        try:
+            gateway.execute("open", {"url": target})
+        except Exception:
+            pass
+        else:
+            raise AssertionError(f"unsafe browser target unexpectedly allowed: {target}")
+    assert called is False
 
 
 def test_gateway_rejects_out_of_scope_open_before_network(monkeypatch):
