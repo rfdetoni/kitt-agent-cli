@@ -12,6 +12,7 @@ from kitt.extensions.models import PluginState
 from kitt.extensions.plugins.loader import PluginLoader
 from kitt.extensions.plugins.registry import PluginRegistry
 from kitt.extensions.plugins.security import PluginTrustStore
+from kitt.extensions.plugins.worker import PluginWorkerSandbox
 from kitt.tools.registry import ToolRegistry
 
 
@@ -120,6 +121,9 @@ class TestExtensionLoader(unittest.TestCase):
             self.assertEqual(instance.execution_mode, "worker")
             self.assertIsNotNone(instance.worker_client)
             self.assertIsNone(instance.worker_client._process.poll())
+            if os.name != "nt":
+                self.assertEqual(instance.worker_client.ipc_transport, "unix")
+            self.assertIsInstance(instance.worker_sandbox, dict)
 
             result = tool_registry.execute_tool(
                 "worker_pid",
@@ -140,6 +144,102 @@ class TestExtensionLoader(unittest.TestCase):
             if worker_registry.get("worker-plugin") is not None:
                 asyncio.run(worker_registry.unload("worker-plugin"))
             tool_registry.close()
+
+
+    def test_worker_bubblewrap_plan_scopes_workspace_and_network(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base = Path(tmp)
+            workspace = base / "workspace"
+            snapshot = base / "snapshot"
+            ipc_dir = base / "ipc"
+            worker_home = base / "home"
+            home = base / "user-home"
+            for path in (workspace, snapshot, ipc_dir, worker_home, home):
+                path.mkdir(parents=True, exist_ok=True)
+            (workspace / ".git").mkdir()
+            (workspace / ".kitt").mkdir()
+            fake_bwrap = base / "bwrap"
+            fake_bwrap.write_text("", encoding="utf-8")
+
+            sandbox = PluginWorkerSandbox(
+                workspace,
+                {"tools.register"},
+                bwrap_path=str(fake_bwrap),
+                bwrap_version=(0, 12, 0),
+                auto_detect=False,
+                home_dir=home,
+            )
+            plan = sandbox.plan(
+                ["python", "worker.py"],
+                snapshot_root=snapshot,
+                ipc_dir=ipc_dir,
+                worker_home=worker_home,
+                env={"PATH": os.environ.get("PATH", "")},
+            )
+
+            self.assertEqual(plan.backend, "bubblewrap")
+            self.assertTrue(plan.strong)
+            self.assertTrue(plan.network_isolated)
+            self.assertEqual(plan.workspace_access, "none")
+            self.assertIn("--unshare-net", plan.argv)
+
+            def has_sequence(*items):
+                width = len(items)
+                return any(
+                    plan.argv[index:index + width] == list(items)
+                    for index in range(len(plan.argv) - width + 1)
+                )
+
+            self.assertTrue(
+                has_sequence("--tmpfs", str(workspace.resolve()))
+            )
+            self.assertTrue(
+                has_sequence(
+                    "--ro-bind",
+                    str(snapshot.resolve()),
+                    str(snapshot.resolve()),
+                )
+            )
+            self.assertTrue(
+                has_sequence(
+                    "--ro-bind",
+                    str(ipc_dir.resolve()),
+                    str(ipc_dir.resolve()),
+                )
+            )
+
+            write_network = PluginWorkerSandbox(
+                workspace,
+                {"filesystem.write", "network"},
+                bwrap_path=str(fake_bwrap),
+                bwrap_version=(0, 12, 0),
+                auto_detect=False,
+                home_dir=home,
+            ).plan(
+                ["python", "worker.py"],
+                snapshot_root=snapshot,
+                ipc_dir=ipc_dir,
+                worker_home=worker_home,
+                env={},
+            )
+            self.assertEqual(write_network.workspace_access, "write")
+            self.assertFalse(write_network.network_isolated)
+            self.assertNotIn("--unshare-net", write_network.argv)
+            self.assertTrue(
+                has_sequence(
+                    "--bind",
+                    str(workspace.resolve()),
+                    str(workspace.resolve()),
+                )
+                or [
+                    "--bind",
+                    str(workspace.resolve()),
+                    str(workspace.resolve()),
+                ] in [
+                    write_network.argv[i:i + 3]
+                    for i in range(max(0, len(write_network.argv) - 2))
+                ]
+            )
 
     def test_transactional_rollback_on_setup_failure(self):
         p_dir = self.ws_plugins_dir / "faulty-plugin"

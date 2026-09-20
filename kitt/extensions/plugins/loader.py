@@ -87,6 +87,7 @@ class PluginInstance:
     snapshot_root: Optional[Path] = None
     execution_mode: str = "in_process"
     worker_client: Optional[PluginWorkerClient] = None
+    worker_sandbox: Optional[dict] = None
     event_unsubscribers: List[Callable[[], Any]] = None
 
     def __post_init__(self) -> None:
@@ -498,6 +499,8 @@ class PluginLoader:
             plugin_name=manifest.name,
             event_bus=self.event_bus,
             config_api=instance.context.config,
+            workspace_root=self.workspace_root,
+            permissions=manifest.permissions,
         )
         manifest_payload = {
             "name": manifest.name,
@@ -518,6 +521,7 @@ class PluginLoader:
                 config=config_payload,
             )
             instance.worker_client = client
+            instance.worker_sandbox = dict(client.sandbox_metadata)
             instance.execution_mode = "worker"
             self._register_worker_callbacks(
                 instance,

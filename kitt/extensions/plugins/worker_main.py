@@ -435,12 +435,22 @@ def _send(stream, payload: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--host", required=True)
-    parser.add_argument("--port", required=True, type=int)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--socket")
     parser.add_argument("--token", required=True)
     args = parser.parse_args()
 
-    sock = socket.create_connection((args.host, args.port), timeout=10.0)
+    if args.socket:
+        if not hasattr(socket, "AF_UNIX"):
+            raise RuntimeError("Unix socket IPC is unavailable on this host")
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(10.0)
+        sock.connect(args.socket)
+    else:
+        if not args.host or not args.port:
+            raise RuntimeError("TCP plugin IPC requires --host and --port")
+        sock = socket.create_connection((args.host, args.port), timeout=10.0)
     # Connection timeout applies only to the broker handshake. A long-lived
     # plugin must not die merely because no callback arrived for a while.
     sock.settimeout(None)

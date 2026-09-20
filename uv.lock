@@ -57,7 +57,7 @@ source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk
 
 [[package]]
 name = "kitt-agent-cli"
-version = "0.59.2"
+version = "0.60.0"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },

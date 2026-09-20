@@ -233,6 +233,11 @@ class ExecutionSandbox:
             return "landlock"
         return None
 
+    def bubblewrap_executable(self) -> str | None:
+        """Return a functional bubblewrap executable path, when available."""
+        probe = self._probe_bwrap()
+        return probe[0] if probe is not None else None
+
     def is_strong_available(self, profile: SandboxProfile | None = None) -> bool:
         target = profile or self.default_profile
         # Landlock confines selected filesystem writes, but it cannot provide
