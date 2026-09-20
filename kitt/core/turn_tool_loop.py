@@ -27,6 +27,10 @@ from kitt.core.turn_helpers import (
     detect_chat_limit_message,
 )
 from kitt.domain.entities import ModelProfile
+from kitt.edit_format.strategy import (
+    edit_result_was_executed,
+    strategy_for_tool_call,
+)
 from kitt.llm.attachments import AttachmentError
 from kitt.llm.client import LLMClient
 from kitt.security.context import ExecutionSecurityContext
@@ -313,6 +317,23 @@ class TurnToolLoopMixin:
                 error=tool_result.error,
                 metadata=tool_result.metadata,
             )
+            observed_strategy = strategy_for_tool_call(tool_name, tool_args)
+            if (
+                observed_strategy is not None
+                and edit_result_was_executed(tool_result)
+                and hasattr(self, "edit_strategy_tracker")
+            ):
+                self.edit_strategy_tracker.record(
+                    observed_strategy,
+                    bool(tool_result.success),
+                )
+                trace_event(
+                    logger,
+                    "edit_strategy.observed",
+                    turn_id=cmd.turn_id,
+                    strategy=observed_strategy,
+                    success=bool(tool_result.success),
+                )
             if tool_result.requires_approval:
                 # Pending-action registration is state mutation. Order it
                 # against cancellation instead of checking a racy boolean.

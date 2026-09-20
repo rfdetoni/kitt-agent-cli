@@ -28,6 +28,7 @@ from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.edit_format.parser import SearchReplaceParser
+from kitt.edit_format.strategy import EditStrategySelector, EditStrategyTracker
 from kitt.tools.build_detector import BuildDetector
 from kitt.tools.log_reducer import LogReducer
 from kitt.tools.registry import ToolRegistry
@@ -136,6 +137,8 @@ class TurnProcessor(
         self.skill_discovery = SkillDiscovery()
         self.skill_loader = ProgressiveSkillLoader()
         self.diff_parser = SearchReplaceParser()
+        self.edit_strategy_selector = EditStrategySelector()
+        self.edit_strategy_tracker = EditStrategyTracker()
         self.build_detector = BuildDetector(root_dir=root_dir)
         self.log_reducer = LogReducer()
         self.registry = registry or ToolRegistry(root_dir=root_dir)
@@ -496,15 +499,33 @@ class TurnProcessor(
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _runtime_operations_for_tools(planned_tools) -> tuple[str, ...]:
-        """Expose only runtime operations authorized by the turn's planned capabilities."""
+    def _runtime_operations_for_tools(
+        planned_tools,
+        edit_strategy: str = "",
+    ) -> tuple[str, ...]:
+        """Expose authorized operations, optionally prioritizing an edit strategy."""
         from kitt.runtime.core_runtime import OPERATION_SPECS
 
         capabilities = capabilities_for_tools(planned_tools or [])
+        default_edits = (
+            "repo.edit_symbol", "repo.write_file", "repo.create_directory", "patch.apply",
+        )
+        edit_orders = {
+            "structured_symbol": (
+                "repo.edit_symbol", "patch.apply", "repo.write_file", "repo.create_directory",
+            ),
+            "search_replace": (
+                "patch.apply", "repo.edit_symbol", "repo.write_file", "repo.create_directory",
+            ),
+            "whole_file": (
+                "repo.create_directory", "repo.write_file", "patch.apply", "repo.edit_symbol",
+            ),
+        }
+        edits = edit_orders.get(str(edit_strategy or ""), default_edits)
         preferred_order = (
             "repo.read", "repo.list", "repo.search", "repo.inspect_symbol",
-            "repo.read_symbol", "repo.references", "repo.edit_symbol",
-            "repo.write_file", "repo.create_directory", "patch.apply",
+            "repo.read_symbol", "repo.references",
+            *edits,
             "process.run", "artifacts.store", "artifacts.read",
             "children.spawn", "children.send", "children.inspect",
             "goal.inspect", "goal.update", "memory.query", "memory.correct",
@@ -527,7 +548,14 @@ class TurnProcessor(
             return "No host tools are enabled. Answer directly."
 
         if "kitt_runtime" in enabled_tools and len(enabled_tools) == 1:
-            operations = self._runtime_operations_for_tools(planned_tools or enabled_tools)
+            edit_strategy = str(
+                getattr(self.session_state, "edit_strategy", "search_replace")
+                or "search_replace"
+            )
+            operations = self._runtime_operations_for_tools(
+                planned_tools or enabled_tools,
+                edit_strategy=edit_strategy,
+            )
             operations_text = ", ".join(operations) or "(none)"
 
             runtime_definition = dict(
@@ -541,13 +569,29 @@ class TurnProcessor(
             runtime_definition["args"] = runtime_args
 
             examples = []
+            if (
+                edit_strategy == "structured_symbol"
+                and "repo.edit_symbol" in operations
+            ):
+                examples.append("""Selected edit strategy: structured_symbol.
+For an existing named symbol, inspect it first and then replace only that symbol:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"repo.inspect_symbol","arguments":{"symbol":"ClassOrFunctionName"}}}
+</kitt-tool>
+After inspection, prefer repo.edit_symbol with the resolved symbol/name and complete replacement body. If structural lookup is unavailable, fall back to patch.apply.""")
+            elif edit_strategy == "whole_file" and "repo.write_file" in operations:
+                examples.append("""Selected edit strategy: whole_file.
+Prefer repo.write_file for a new file or an intentionally complete small-file replacement. Never overwrite a partially inspected existing file; use patch.apply instead when only part of an existing file should change.""")
+            elif "patch.apply" in operations:
+                examples.append("""Selected edit strategy: search_replace.
+Prefer patch.apply for existing-file changes because it minimizes output and preserves untouched content.""")
             if "repo.read" in operations:
                 examples.append("""To read a file:
 <kitt-tool>
 {"name":"kitt_runtime","arguments":{"operation":"repo.read","arguments":{"path":"path.ext","start_line":1,"end_line":100}}}
 </kitt-tool>""")
             if "repo.write_file" in operations:
-                examples.append("""To create or replace a file, use repo.write_file:
+                examples.append("""To create or deliberately replace a complete file, use repo.write_file:
 <kitt-tool>
 {"name":"kitt_runtime","arguments":{"operation":"repo.write_file","arguments":{"path":"path/to/file.ext","content":"complete file content"}}}
 </kitt-tool>""")
@@ -874,6 +918,24 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
 
             exe_client = self.execution_client or LLMClient(exe_profile)
+            edit_decision = self.edit_strategy_selector.select(
+                model_capabilities=getattr(exe_client, "capabilities", None),
+                task=task,
+                prompt=cmd.prompt,
+                explicit_files=cmd.explicit_files,
+                root_path=self.root_path,
+                history=self.edit_strategy_tracker.snapshot(),
+            )
+            self.session_state.edit_strategy = edit_decision.strategy
+            self.session_state.edit_strategy_reason = "; ".join(edit_decision.reasons)
+            trace_event(
+                logger,
+                "edit_strategy.selected",
+                turn_id=cmd.turn_id,
+                strategy=edit_decision.strategy,
+                scores=dict(edit_decision.scores),
+                reasons=list(edit_decision.reasons),
+            )
             browser_authorities = self._browser_authorities_for_turn(
                 cmd, exe_client, exe_profile
             )

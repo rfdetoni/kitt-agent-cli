@@ -14,3 +14,5 @@ class SessionState:
     last_changeset: Optional[ChangeSet] = None
     last_validation_error: Optional[str] = None
     compact_history_summary: str = ""
+    edit_strategy: str = "search_replace"
+    edit_strategy_reason: str = ""
