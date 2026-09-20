@@ -10,7 +10,7 @@ import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from kitt.extensions.errors import PluginLoadError
 from kitt.extensions.manifest import parse_manifest_file
@@ -32,6 +32,7 @@ from kitt.extensions.plugins.security import (
     PluginTrustStore,
     prepare_trusted_plugin_snapshot,
 )
+from kitt.extensions.plugins.worker import PluginWorkerClient
 
 logger = logging.getLogger("kitt.extensions.plugins.loader")
 
@@ -39,6 +40,17 @@ logger = logging.getLogger("kitt.extensions.plugins.loader")
 class PluginHandle(Protocol):
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
+
+
+class WorkerPluginHandle:
+    def __init__(self, client: PluginWorkerClient):
+        self.client = client
+
+    async def start(self) -> None:
+        await asyncio.to_thread(self.client.lifecycle, "start")
+
+    async def stop(self) -> None:
+        await asyncio.to_thread(self.client.lifecycle, "stop")
 
 
 class DefaultPluginHandle:
@@ -73,6 +85,13 @@ class PluginInstance:
     last_error: Optional[str] = None
     module_prefix: Optional[str] = None
     snapshot_root: Optional[Path] = None
+    execution_mode: str = "in_process"
+    worker_client: Optional[PluginWorkerClient] = None
+    event_unsubscribers: List[Callable[[], Any]] = None
+
+    def __post_init__(self) -> None:
+        if self.event_unsubscribers is None:
+            self.event_unsubscribers = []
 
 
 class PluginLoader:
@@ -173,11 +192,6 @@ class PluginLoader:
         return manifests
 
     def _approved_digest(self, manifest: PluginManifest) -> str:
-        if not manifest.trusted_in_process:
-            raise PluginLoadError(
-                f"Plugin '{manifest.name}' does not opt in to "
-                "in-process execution."
-            )
         approved = self.trust_store.approved_digest(manifest)
         if approved:
             return approved
@@ -344,12 +358,185 @@ class PluginLoader:
         sys.modules[module_name] = module
 
     def unload_instance(self, instance: PluginInstance) -> None:
+        for unsubscribe in list(instance.event_unsubscribers or []):
+            try:
+                unsubscribe()
+            except Exception:
+                logger.debug("Plugin event unsubscribe failed", exc_info=True)
+        instance.event_unsubscribers.clear()
+
+        if (
+            self.command_registry
+            and hasattr(self.command_registry, "unregister_by_owner")
+        ):
+            try:
+                self.command_registry.unregister_by_owner(
+                    instance.manifest.name
+                )
+            except Exception:
+                logger.debug("Plugin command cleanup failed", exc_info=True)
+
+        if instance.worker_client is not None:
+            instance.worker_client.close()
+            instance.worker_client = None
+
         prefix = instance.module_prefix
         if not prefix:
             return
         for name in list(sys.modules):
             if name == prefix or name.startswith(prefix + "."):
                 sys.modules.pop(name, None)
+
+    @staticmethod
+    def _decode_worker_hook_result(value: Any) -> Any:
+        if isinstance(value, dict) and value.get("__kitt_type__") == "HookResult":
+            from kitt.extensions.hooks.models import HookResult
+
+            return HookResult(
+                value=value.get("value"),
+                stop=bool(value.get("stop", False)),
+            )
+        return value
+
+    def _register_worker_callbacks(
+        self,
+        instance: PluginInstance,
+        client: PluginWorkerClient,
+        registrations: list[dict],
+    ) -> None:
+        for registration in registrations:
+            kind = str(registration.get("kind") or "")
+            name = str(registration.get("name") or "")
+            handler_id = str(registration.get("handler_id") or "")
+            if not kind or not name or not handler_id:
+                raise PluginLoadError(
+                    f"Plugin '{instance.manifest.name}' returned invalid worker registration."
+                )
+
+            if kind == "tool":
+                if self.tool_registry is None:
+                    continue
+
+                def tool_proxy(args, _handler_id=handler_id):
+                    return client.invoke(_handler_id, [args])
+
+                self.tool_registry.register(
+                    name,
+                    tool_proxy,
+                    description=str(registration.get("description") or ""),
+                    schema=(
+                        registration.get("schema")
+                        if isinstance(registration.get("schema"), dict)
+                        else {}
+                    ),
+                    owner_plugin_id=instance.manifest.name,
+                )
+                continue
+
+            if kind == "hook":
+                if self.hook_registry is None:
+                    continue
+
+                def hook_proxy(value, context=None, _handler_id=handler_id):
+                    result = client.invoke(
+                        _handler_id,
+                        [value, context],
+                    )
+                    return self._decode_worker_hook_result(result)
+
+                self.hook_registry.register(
+                    name,
+                    hook_proxy,
+                    priority=int(registration.get("priority") or 0),
+                    plugin_id=instance.manifest.name,
+                    fail_closed=bool(registration.get("fail_closed", False)),
+                    timeout_seconds=registration.get("timeout_seconds"),
+                )
+                continue
+
+            if kind == "event":
+                if self.event_bus is None or not hasattr(self.event_bus, "subscribe"):
+                    continue
+
+                def event_proxy(_event, payload, _handler_id=handler_id):
+                    return client.invoke(_handler_id, [payload])
+
+                unsubscribe = self.event_bus.subscribe(name, event_proxy)
+                if callable(unsubscribe):
+                    instance.event_unsubscribers.append(unsubscribe)
+                continue
+
+            if kind == "command":
+                if self.command_registry is None or not hasattr(
+                    self.command_registry, "register"
+                ):
+                    continue
+
+                def command_proxy(*args, _handler_id=handler_id, **kwargs):
+                    return client.invoke(_handler_id, list(args), kwargs)
+
+                self.command_registry.register(
+                    name,
+                    command_proxy,
+                    help_text=str(registration.get("help_text") or ""),
+                    owner_plugin_id=instance.manifest.name,
+                )
+                continue
+
+            raise PluginLoadError(
+                f"Plugin '{instance.manifest.name}' returned unsupported "
+                f"worker registration kind '{kind}'."
+            )
+
+    async def _load_worker_async(
+        self,
+        instance: PluginInstance,
+        snapshot_root: Path,
+    ) -> PluginInstance:
+        manifest = instance.manifest
+        client = PluginWorkerClient(
+            plugin_name=manifest.name,
+            event_bus=self.event_bus,
+            config_api=instance.context.config,
+        )
+        manifest_payload = {
+            "name": manifest.name,
+            "version": manifest.version,
+            "api_version": manifest.api_version,
+            "entrypoint": manifest.entrypoint,
+            "permissions": sorted(manifest.permissions),
+            "source": manifest.source,
+        }
+        config_payload = dict(
+            getattr(instance.context.config, "_data", {}) or {}
+        )
+        try:
+            registrations = await asyncio.to_thread(
+                client.start,
+                snapshot_root=snapshot_root,
+                manifest=manifest_payload,
+                config=config_payload,
+            )
+            instance.worker_client = client
+            instance.execution_mode = "worker"
+            self._register_worker_callbacks(
+                instance,
+                client,
+                registrations,
+            )
+            instance.handle = WorkerPluginHandle(client)
+            instance.state = PluginState.LOADED
+            return instance
+        except Exception as exc:
+            client.close()
+            instance.state = PluginState.FAILED
+            instance.last_error = str(exc)
+            self._rollback(instance)
+            if isinstance(exc, PluginLoadError):
+                raise
+            raise PluginLoadError(
+                f"Failed to load plugin '{manifest.name}' in worker: {exc}"
+            ) from exc
 
     def _rollback(self, instance: PluginInstance) -> None:
         if self.hook_registry:
@@ -380,10 +567,18 @@ class PluginLoader:
         instance = self._build_instance(
             manifest, snapshot_root
         )
+
+        if not manifest.trusted_in_process:
+            return await self._load_worker_async(
+                instance,
+                snapshot_root,
+            )
+
         package_key = self._package_key(
             manifest, approved_digest
         )
         instance.module_prefix = package_key
+        instance.execution_mode = "in_process"
 
         try:
             module_name, separator, function_name = (

@@ -1,4 +1,6 @@
 """Tests for plugin loader discovery, loading, lifecycle, and rollback on failure."""
+import asyncio
+import os
 import tempfile
 import textwrap
 import unittest
@@ -10,6 +12,7 @@ from kitt.extensions.models import PluginState
 from kitt.extensions.plugins.loader import PluginLoader
 from kitt.extensions.plugins.registry import PluginRegistry
 from kitt.extensions.plugins.security import PluginTrustStore
+from kitt.tools.registry import ToolRegistry
 
 
 class TestExtensionLoader(unittest.TestCase):
@@ -65,6 +68,77 @@ class TestExtensionLoader(unittest.TestCase):
         instance = self.registry.load("test-plugin")
         self.assertEqual(instance.state, PluginState.LOADED)
         self.assertEqual(len(self.hooks.get_chain("app.started")), 1)
+
+    def test_default_plugin_runs_in_worker_and_proxies_registered_tool(self):
+        p_dir = self.ws_plugins_dir / "worker-plugin"
+        p_dir.mkdir(parents=True, exist_ok=True)
+
+        (p_dir / "plugin.toml").write_text(
+            textwrap.dedent("""
+            name = "worker-plugin"
+            version = "1.0.0"
+            api_version = "1"
+            entrypoint = "plugin:setup"
+            permissions = ["tools.register"]
+            """),
+            encoding="utf-8",
+        )
+        (p_dir / "plugin.py").write_text(
+            textwrap.dedent("""
+            import os
+
+            def setup(ctx):
+                ctx.tools.register(
+                    "worker_pid",
+                    lambda args: str(os.getpid()),
+                    description="Return isolated worker PID",
+                    schema={},
+                )
+            """),
+            encoding="utf-8",
+        )
+
+        tool_registry = ToolRegistry(root_dir=str(self.root))
+        worker_loader = PluginLoader(
+            workspace_root=str(self.root),
+            hook_registry=self.hooks,
+            tool_registry=tool_registry,
+            trust_store=PluginTrustStore(
+                self.root,
+                path=self.root / "worker-trust.json",
+            ),
+        )
+        worker_registry = PluginRegistry(loader=worker_loader)
+        try:
+            manifests = worker_registry.discover()
+            manifest = manifests["worker-plugin"]
+            self.assertFalse(manifest.trusted_in_process)
+            worker_loader.trust_store.grant(manifest)
+
+            instance = worker_registry.load("worker-plugin")
+            self.assertEqual(instance.state, PluginState.LOADED)
+            self.assertEqual(instance.execution_mode, "worker")
+            self.assertIsNotNone(instance.worker_client)
+
+            result = tool_registry.execute_tool(
+                "worker_pid",
+                {},
+                origin="SAFE_RUNTIME_BROKER",
+            )
+            self.assertTrue(result.success, result.error)
+            self.assertNotEqual(int(result.output), os.getpid())
+
+            asyncio.run(worker_registry.unload("worker-plugin"))
+            missing = tool_registry.execute_tool(
+                "worker_pid",
+                {},
+                origin="SAFE_RUNTIME_BROKER",
+            )
+            self.assertFalse(missing.success)
+        finally:
+            if worker_registry.get("worker-plugin") is not None:
+                asyncio.run(worker_registry.unload("worker-plugin"))
+            tool_registry.close()
 
     def test_transactional_rollback_on_setup_failure(self):
         p_dir = self.ws_plugins_dir / "faulty-plugin"
