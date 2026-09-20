@@ -16,3 +16,5 @@ class SessionState:
     compact_history_summary: str = ""
     edit_strategy: str = "search_replace"
     edit_strategy_reason: str = ""
+    architect_used: bool = False
+    architect_profile: str = ""

@@ -69,6 +69,7 @@ from kitt.core.turn_helpers import (
 from kitt.core.turn_tool_loop import TurnToolLoopMixin
 from kitt.core.turn_finalization import TurnFinalizationMixin
 from kitt.core.turn_context import TurnContextMixin
+from kitt.core.turn_architect import TurnArchitectMixin
 from kitt.core.turn_model import TurnModelMixin
 from kitt.security.context import ExecutionSecurityContext
 from kitt.security.capabilities import (
@@ -93,6 +94,7 @@ class TurnProcessor(
     TurnToolLoopMixin,
     TurnFinalizationMixin,
     TurnContextMixin,
+    TurnArchitectMixin,
     TurnModelMixin,
 ):
     """Decoupled core turn coordinator for K.I.T.T."""
@@ -910,6 +912,17 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     schema_version=str(build_stats.get("schema_version", "")),
                 )
             yield ContextResolved(resolved_count=len(context_blocks) + len(explicit_items))
+
+            architect_handoff = self._maybe_architect_handoff(
+                cmd,
+                task,
+                context_map_str,
+                explicit_str,
+            )
+            if architect_handoff is not None:
+                context_map_str = (
+                    f"{architect_handoff.render()}\n\n{context_map_str}"
+                ).strip()
 
             # 4. System Prompt and Budgeting
             if cmd.turn_id in self.cancelled_turns:

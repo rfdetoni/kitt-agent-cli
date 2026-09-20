@@ -108,6 +108,7 @@ class SettingsDescriptorProvider:
             {"key": "max_tool_calls_per_turn", "label": "Tool calls / turn", "type": "integer", "default": default_config.max_tool_calls_per_turn, "minimum": 1, "maximum": 64, "apply_mode": "component_restart"},
             {"key": "process_timeout_seconds", "label": "Process timeout (s)", "type": "integer", "default": default_config.process_timeout_seconds, "minimum": 1, "maximum": 3600, "apply_mode": "component_restart"},
             {"key": "safe_runtime_enabled", "label": "Safe runtime", "type": "boolean", "default": default_config.safe_runtime_enabled, "apply_mode": "component_restart"},
+            {"key": "architect_enabled", "label": "Architect phase", "type": "boolean", "default": default_config.architect_enabled, "apply_mode": "component_restart"},
             {"key": "daemon_enabled", "label": "Agent daemon", "type": "boolean", "default": default_config.daemon_enabled, "apply_mode": "component_restart"},
             {"key": "daemon_auto_start", "label": "Daemon auto-start", "type": "boolean", "default": default_config.daemon_auto_start, "apply_mode": "component_restart"},
             {"key": "scheduler_enabled", "label": "Scheduler", "type": "boolean", "default": default_config.scheduler_enabled, "apply_mode": "component_restart"},

@@ -72,6 +72,7 @@ class RuntimeConfig:
 
     tool_runtime_mode: str = "auto"
     safe_runtime_enabled: bool = True
+    architect_enabled: bool = True
     daemon_enabled: bool = True
     daemon_auto_start: bool = True
     daemon_local_fallback: bool = False
@@ -88,6 +89,7 @@ class RuntimeConfig:
         values = runtime_overrides(allowed)
         values.update(
             safe_runtime_enabled=_env_bool("KITT_SAFE_RUNTIME", values.get("safe_runtime_enabled", True)),
+            architect_enabled=_env_bool("KITT_ARCHITECT", values.get("architect_enabled", True)),
             daemon_enabled=_env_bool("KITT_DAEMON", values.get("daemon_enabled", True)),
             daemon_auto_start=_env_bool("KITT_DAEMON_AUTO_START", values.get("daemon_auto_start", True)),
             daemon_local_fallback=_env_bool("KITT_DAEMON_LOCAL_FALLBACK", values.get("daemon_local_fallback", False)),
