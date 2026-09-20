@@ -34,6 +34,8 @@ def test_proxy_capabilities_parse_browser_contract():
             "session_management": {"accepts_named_sessions": True},
             "browser_automation": {
                 "supported": True,
+                "origin_scope_enforced": True,
+                "origin_scope_header": "X-Kitt-Browser-Origin-Scope",
                 "actions": ["open", "inspect", "screenshot", "click", "type", "close"],
             },
         }
@@ -42,6 +44,8 @@ def test_proxy_capabilities_parse_browser_contract():
     assert parsed.browser_actions == (
         "open", "inspect", "screenshot", "click", "type", "close"
     )
+    assert parsed.browser_origin_scope_enforced is True
+    assert parsed.browser_origin_scope_header == "X-Kitt-Browser-Origin-Scope"
 
 
 def test_browser_runtime_capabilities_are_separate():
@@ -62,6 +66,7 @@ def test_gateway_strips_screenshot_base64_and_queues_image(monkeypatch):
     def fake_open(request, **_kwargs):
         captured["url"] = request.full_url
         captured["session"] = request.get_header("X-kitt-session-id")
+        captured["origin_scope"] = request.get_header("X-kitt-browser-origin-scope")
         return _Response({
             "action": "screenshot",
             "format": "jpeg",
@@ -78,6 +83,8 @@ def test_gateway_strips_screenshot_base64_and_queues_image(monkeypatch):
         session_id="abc123",
         request_id_header="X-Kitt-Request-Id",
         allowed_actions=("screenshot",),
+        origin_scope_header="X-Kitt-Browser-Origin-Scope",
+        origin_scope=("loopback",),
     )
 
     result = gateway.execute("screenshot", {"format": "jpeg"})
@@ -85,7 +92,26 @@ def test_gateway_strips_screenshot_base64_and_queues_image(monkeypatch):
     assert result["image_attached"] is True
     assert captured["url"].endswith("/v1/kitt/browser/screenshot")
     assert captured["session"] == "abc123"
+    scope_header = captured.get("origin_scope")
+    assert scope_header is not None
+    decoded_scope = json.loads(
+        base64.urlsafe_b64decode(scope_header + "=" * (-len(scope_header) % 4))
+    )
+    assert decoded_scope == ["loopback"]
     images = gateway.drain_images()
     assert len(images) == 1
     assert images[0].data == raw
     assert gateway.drain_images() == ()
+
+
+def test_turn_browser_scope_is_explicit_and_bounded_to_user_origins():
+    from kitt.core.turn_processor import TurnProcessor
+
+    scope = TurnProcessor._browser_origin_scope(
+        "Abra https://Example.com:443/path e valide o frontend em localhost:4200"
+    )
+    assert scope == ("loopback", "https://example.com")
+
+    assert TurnProcessor._browser_origin_scope(
+        "use o navegador para explorar algum site"
+    ) == ()

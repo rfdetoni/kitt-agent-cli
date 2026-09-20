@@ -168,7 +168,10 @@ class LLMClient:
         return self._kitt_session_id
 
     def create_kitt_proxy_browser_gateway(
-        self, session_key: Optional[str] = None
+        self,
+        session_key: Optional[str] = None,
+        *,
+        origin_scope: tuple[str, ...] = (),
     ) -> Optional[KittProxyBrowserGateway]:
         if not self._is_kitt_proxy():
             return None
@@ -190,7 +193,12 @@ class LLMClient:
         self._last_kitt_proxy_capabilities = discovered
         if not discovered.discovered or not discovered.browser_supported:
             return None
-        if not discovered.browser_actions:
+        if (
+            not discovered.browser_actions
+            or not discovered.browser_origin_scope_enforced
+            or not discovered.browser_origin_scope_header
+            or not origin_scope
+        ):
             return None
         return KittProxyBrowserGateway(
             base_url=base_url,
@@ -203,6 +211,8 @@ class LLMClient:
             session_id=self._kitt_proxy_session_id(session_key),
             request_id_header=discovered.request_id_header,
             allowed_actions=discovered.browser_actions,
+            origin_scope_header=discovered.browser_origin_scope_header,
+            origin_scope=origin_scope,
             timeout_seconds=min(
                 60.0,
                 max(1.0, float(self.profile.request_timeout_seconds)),

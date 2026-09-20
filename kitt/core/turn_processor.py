@@ -46,6 +46,7 @@ from kitt.core.session_state import SessionState
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.turn_command import TurnCommand
 import uuid
+from urllib.parse import urlsplit
 from kitt.core.turn_events import (
     TurnEvent, TurnStarted, FilterCompleted, ContextResolved, BudgetApplied,
     ContextBuildCompleted, ModelSelected, TextDelta, ToolCallProposed, ApprovalRequired, ToolStarted, ToolCompleted,
@@ -660,6 +661,46 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         write_requested = read_requested and any(term in text for term in write_terms)
         return read_requested, write_requested
 
+    @staticmethod
+    def _browser_origin_scope(prompt: str) -> tuple[str, ...]:
+        text = str(prompt or "")
+        folded = text.casefold()
+        scope: list[str] = []
+        local_terms = (
+            "localhost", "127.0.0.1", "frontend", "front-end", "preview",
+            "captura de tela", "screenshot", "renderize", "renderizar",
+        )
+        if any(term in folded for term in local_terms):
+            scope.append("loopback")
+
+        for match in re.findall(r"https?://[^\s<>'\"\]\)]+", text, flags=re.IGNORECASE):
+            candidate = match.rstrip(".,;:!?}")
+            try:
+                parsed = urlsplit(candidate)
+                host = parsed.hostname
+                if not host or parsed.username or parsed.password:
+                    continue
+                scheme = parsed.scheme.lower()
+                if scheme not in {"http", "https"}:
+                    continue
+                host_ascii = host.encode("idna").decode("ascii").lower()
+                if host_ascii in {"localhost", "127.0.0.1", "::1"}:
+                    scope.append("loopback")
+                    continue
+                display_host = (
+                    f"[{host_ascii}]" if ":" in host_ascii and not host_ascii.startswith("[")
+                    else host_ascii
+                )
+                port = parsed.port
+                default_port = 80 if scheme == "http" else 443
+                origin = f"{scheme}://{display_host}"
+                if port is not None and port != default_port:
+                    origin += f":{port}"
+                scope.append(origin)
+            except (UnicodeError, ValueError):
+                continue
+        return tuple(dict.fromkeys(scope))
+
     def _browser_authorities_for_turn(
         self,
         cmd: TurnCommand,
@@ -667,11 +708,19 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         exe_profile: ModelProfile,
     ) -> tuple[str, ...]:
         read_requested, write_requested = self._browser_intent(cmd.prompt)
-        if not read_requested or _reverse_proxy_identity(exe_profile) is None:
+        origin_scope = self._browser_origin_scope(cmd.prompt)
+        if (
+            not read_requested
+            or not origin_scope
+            or _reverse_proxy_identity(exe_profile) is None
+        ):
             return ()
         session_key = self._provider_session_key(exe_profile, cmd.conversation_id)
         try:
-            gateway = exe_client.create_kitt_proxy_browser_gateway(session_key)
+            gateway = exe_client.create_kitt_proxy_browser_gateway(
+                session_key,
+                origin_scope=origin_scope,
+            )
         except Exception as exc:
             logger.debug("browser gateway discovery failed: %s", exc)
             return ()

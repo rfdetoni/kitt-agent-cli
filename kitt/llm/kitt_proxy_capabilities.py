@@ -62,6 +62,18 @@ class KittProxyCapabilities:
                 actions.append(value)
         return tuple(dict.fromkeys(actions))
 
+    @property
+    def browser_origin_scope_enforced(self) -> bool:
+        return self.browser_automation.get("origin_scope_enforced") is True
+
+    @property
+    def browser_origin_scope_header(self) -> Optional[str]:
+        value = self.browser_automation.get("origin_scope_header")
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value if value and len(value) <= 128 else None
+
 
 _CACHE_TTL_SECONDS = 30.0
 _CACHE: Dict[str, tuple[float, KittProxyCapabilities]] = {}

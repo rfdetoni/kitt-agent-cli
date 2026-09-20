@@ -53,6 +53,8 @@ class KittProxyBrowserGateway:
         session_id: str,
         request_id_header: Optional[str],
         allowed_actions: Iterable[str],
+        origin_scope_header: str,
+        origin_scope: Iterable[str],
         timeout_seconds: float = 30.0,
     ):
         self.base_url = _proxy_root(base_url)
@@ -60,6 +62,16 @@ class KittProxyBrowserGateway:
         self.session_header = session_header
         self.session_id = str(session_id or "").strip()
         self.request_id_header = request_id_header
+        self.origin_scope_header = str(origin_scope_header or "").strip()
+        self.origin_scope = tuple(
+            dict.fromkeys(
+                str(item).strip()
+                for item in origin_scope
+                if str(item).strip()
+            )
+        )
+        if not self.origin_scope_header or not self.origin_scope:
+            raise BrowserGatewayError("Browser origin scope is required")
         self.allowed_actions = frozenset(
             str(action).strip().lower()
             for action in allowed_actions
@@ -91,6 +103,14 @@ class KittProxyBrowserGateway:
             headers[self.session_header] = self.session_id
         if self.request_id_header:
             headers[self.request_id_header] = uuid.uuid4().hex
+        scope_json = json.dumps(
+            list(self.origin_scope),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        headers[self.origin_scope_header] = (
+            base64.urlsafe_b64encode(scope_json).rstrip(b"=").decode("ascii")
+        )
 
         request = urllib.request.Request(
             f"{self.base_url}/v1/kitt/browser/{normalized}",
