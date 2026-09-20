@@ -441,6 +441,9 @@ def main() -> int:
     args = parser.parse_args()
 
     sock = socket.create_connection((args.host, args.port), timeout=10.0)
+    # Connection timeout applies only to the broker handshake. A long-lived
+    # plugin must not die merely because no callback arrived for a while.
+    sock.settimeout(None)
     stream = sock.makefile("rwb", buffering=0)
     _send(stream, {"type": "hello", "token": args.token})
 

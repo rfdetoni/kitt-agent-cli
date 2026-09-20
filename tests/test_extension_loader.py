@@ -119,6 +119,7 @@ class TestExtensionLoader(unittest.TestCase):
             self.assertEqual(instance.state, PluginState.LOADED)
             self.assertEqual(instance.execution_mode, "worker")
             self.assertIsNotNone(instance.worker_client)
+            self.assertIsNone(instance.worker_client._process.poll())
 
             result = tool_registry.execute_tool(
                 "worker_pid",
