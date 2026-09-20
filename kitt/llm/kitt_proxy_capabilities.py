@@ -64,15 +64,16 @@ class KittProxyCapabilities:
 
     @property
     def browser_origin_scope_enforced(self) -> bool:
-        return self.browser_automation.get("origin_scope_enforced") is True
+        return (
+            self.browser_automation.get("origin_scope_enforced") is True
+            and self.browser_automation.get("origin_scope_encoding")
+            == "base64url-json-array"
+            and self.browser_automation.get("top_level_navigation_enforced") is True
+        )
 
     @property
     def browser_origin_scope_header(self) -> Optional[str]:
-        value = self.browser_automation.get("origin_scope_header")
-        if not isinstance(value, str):
-            return None
-        value = value.strip()
-        return value if value and len(value) <= 128 else None
+        return _safe_header(self.browser_automation.get("origin_scope_header"))
 
 
 _CACHE_TTL_SECONDS = 30.0

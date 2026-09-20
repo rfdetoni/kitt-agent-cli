@@ -666,14 +666,20 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         text = str(prompt or "")
         folded = text.casefold()
         scope: list[str] = []
-        local_terms = (
-            "localhost", "127.0.0.1", "frontend", "front-end", "preview",
-            "captura de tela", "screenshot", "renderize", "renderizar",
+        explicit_local_terms = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+        generic_local_terms = (
+            "frontend", "front-end", "preview", "captura de tela",
+            "screenshot", "renderize", "renderizar",
         )
-        if any(term in folded for term in local_terms):
+        explicit_url_matches = re.findall(
+            r"https?://[^\s<>'\"\]\)]+",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if any(term in folded for term in explicit_local_terms):
             scope.append("loopback")
 
-        for match in re.findall(r"https?://[^\s<>'\"\]\)]+", text, flags=re.IGNORECASE):
+        for match in explicit_url_matches:
             candidate = match.rstrip(".,;:!?}")
             try:
                 parsed = urlsplit(candidate)
@@ -699,6 +705,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 scope.append(origin)
             except (UnicodeError, ValueError):
                 continue
+        if not explicit_url_matches and any(
+            term in folded for term in generic_local_terms
+        ):
+            scope.append("loopback")
         return tuple(dict.fromkeys(scope))
 
     def _browser_authorities_for_turn(

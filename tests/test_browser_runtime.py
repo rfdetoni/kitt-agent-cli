@@ -36,6 +36,8 @@ def test_proxy_capabilities_parse_browser_contract():
                 "supported": True,
                 "origin_scope_enforced": True,
                 "origin_scope_header": "X-Kitt-Browser-Origin-Scope",
+                "origin_scope_encoding": "base64url-json-array",
+                "top_level_navigation_enforced": True,
                 "actions": ["open", "inspect", "screenshot", "click", "type", "close"],
             },
         }
@@ -115,3 +117,38 @@ def test_turn_browser_scope_is_explicit_and_bounded_to_user_origins():
     assert TurnProcessor._browser_origin_scope(
         "use o navegador para explorar algum site"
     ) == ()
+    assert TurnProcessor._browser_origin_scope(
+        "valide o frontend em https://example.com/app"
+    ) == ("https://example.com",)
+    assert TurnProcessor._browser_origin_scope(
+        "valide o frontend local"
+    ) == ("loopback",)
+
+
+def test_gateway_rejects_out_of_scope_open_before_network(monkeypatch):
+    called = False
+
+    def fake_open(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return _Response({})
+
+    monkeypatch.setattr("kitt.llm.browser_gateway.secure_urlopen", fake_open)
+    gateway = KittProxyBrowserGateway(
+        base_url="http://127.0.0.1:3000/v1",
+        api_key=None,
+        session_header="X-Kitt-Session-Id",
+        session_id="abc123",
+        request_id_header="X-Kitt-Request-Id",
+        allowed_actions=("open",),
+        origin_scope_header="X-Kitt-Browser-Origin-Scope",
+        origin_scope=("https://allowed.example",),
+    )
+
+    try:
+        gateway.execute("open", {"url": "https://evil.example/"})
+    except Exception as exc:
+        assert "origin scope" in str(exc)
+    else:
+        raise AssertionError("out-of-scope browser.open must fail")
+    assert called is False
