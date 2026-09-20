@@ -6,6 +6,7 @@ from kitt.core.turn_processor import TurnProcessor
 from kitt.core.turn_tool_loop import TurnToolLoopMixin
 from kitt.core.turn_finalization import TurnFinalizationMixin
 from kitt.core.turn_context import TurnContextMixin
+from kitt.core.turn_model import TurnModelMixin
 
 
 class TurnProcessorDecompositionTests(unittest.TestCase):
@@ -28,6 +29,19 @@ class TurnProcessorDecompositionTests(unittest.TestCase):
             self.assertIs(
                 getattr(TurnProcessor, method_name),
                 getattr(TurnContextMixin, method_name),
+            )
+
+    def test_model_phase_is_owned_by_dedicated_mixin(self):
+        self.assertTrue(issubclass(TurnProcessor, TurnModelMixin))
+        for method_name in (
+            "_resolve_execution_profile",
+            "_stream_execution_response",
+            "_without_thinking",
+        ):
+            self.assertNotIn(method_name, TurnProcessor.__dict__)
+            self.assertIs(
+                getattr(TurnProcessor, method_name),
+                getattr(TurnModelMixin, method_name),
             )
 
     def test_finalization_is_owned_by_dedicated_phase_mixin(self):
