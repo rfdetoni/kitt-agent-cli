@@ -34,6 +34,7 @@ def test_strong_model_with_named_symbol_prefers_structured_edit(tmp_path: Path):
     target = tmp_path / "service.py"
     target.write_text("def run():\n    return 1\n", encoding="utf-8")
     task = SemanticTask(
+        original_prompt="refactor run",
         intent="REFACTOR",
         symbols=["run"],
         paths=["service.py"],
@@ -52,7 +53,7 @@ def test_strong_model_with_named_symbol_prefers_structured_edit(tmp_path: Path):
 def test_small_local_model_defaults_to_search_replace(tmp_path: Path):
     target = tmp_path / "service.py"
     target.write_text("x = 1\n", encoding="utf-8")
-    task = SemanticTask(intent="DEBUG", paths=["service.py"])
+    task = SemanticTask(original_prompt="corrija o bug", intent="DEBUG", paths=["service.py"])
     decision = EditStrategySelector().select(
         model_capabilities=_caps(
             tier="small",
@@ -71,7 +72,7 @@ def test_small_local_model_defaults_to_search_replace(tmp_path: Path):
 
 
 def test_new_file_creation_prefers_whole_file(tmp_path: Path):
-    task = SemanticTask(intent="IMPLEMENT", paths=["new_module.py"])
+    task = SemanticTask(original_prompt="crie new_module.py", intent="IMPLEMENT", paths=["new_module.py"])
     decision = EditStrategySelector().select(
         model_capabilities=_caps(tier="small", local=True, edit=0.75, reasoning=0.75, context=8192),
         task=task,
@@ -84,7 +85,7 @@ def test_new_file_creation_prefers_whole_file(tmp_path: Path):
 
 
 def test_observed_history_changes_scores_without_single_attempt_flip(tmp_path: Path):
-    task = SemanticTask(intent="DEBUG", paths=["service.py"])
+    task = SemanticTask(original_prompt="fix", intent="DEBUG", paths=["service.py"])
     (tmp_path / "service.py").write_text("x=1\n", encoding="utf-8")
     tracker = EditStrategyTracker()
     tracker.record("search_replace", False)
