@@ -49,7 +49,7 @@ class TestDiffApplierOverwrite(unittest.TestCase):
                 '{\n  "version": 1,\n  "projects": {\n    "app": {\n      "projectType": "application"\n    }\n  }\n}\n',
             )
 
-    def test_new_flattened_java_file_is_rejected_before_creation(self):
+    def test_new_flattened_java_file_is_auto_healed_before_creation(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             applier = DiffApplier()
             blocks = [
@@ -71,9 +71,11 @@ class TestDiffApplierOverwrite(unittest.TestCase):
 
             result = applier.apply(blocks, root_dir=tmp_dir)
 
-            self.assertFalse(result.success)
-            self.assertIn("fully left-aligned", result.errors[0])
-            self.assertFalse((Path(tmp_dir) / "src" / "App.java").exists())
+            self.assertTrue(result.success, result.errors)
+            rendered = (Path(tmp_dir) / "src" / "App.java").read_text(encoding="utf-8")
+            self.assertIn("    private int value;", rendered)
+            self.assertIn("    public void run() {", rendered)
+            self.assertIn("        System.out.println(value);", rendered)
 
     def test_search_replace_parser_overwrite_flow(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:

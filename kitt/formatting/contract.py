@@ -15,8 +15,8 @@ STATE_RELATIVE_PATH = ".kitt/formatting.state.json"
 
 _LANGUAGE_SPECS: dict[str, dict[str, Any]] = {
     "python": {"extensions": [".py", ".pyi"], "formatters": ["ruff", "black"], "indent": 4},
-    "java": {"extensions": [".java"], "formatters": ["google-java-format", "clang-format"], "indent": 4},
-    "kotlin": {"extensions": [".kt", ".kts"], "formatters": ["ktlint", "clang-format"], "indent": 4},
+    "java": {"extensions": [".java"], "formatters": ["google-java-format"], "indent": 4},
+    "kotlin": {"extensions": [".kt", ".kts"], "formatters": ["ktlint"], "indent": 4},
     "javascript": {"extensions": [".js", ".jsx", ".mjs", ".cjs"], "formatters": ["biome", "prettier"], "indent": 2},
     "typescript": {"extensions": [".ts", ".tsx"], "formatters": ["biome", "prettier"], "indent": 2},
     "go": {"extensions": [".go"], "formatters": ["gofmt"], "indent": "tab"},
