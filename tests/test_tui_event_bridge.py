@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -25,6 +26,37 @@ class OfflineDaemonBridge:
 
     async def connect(self):
         return False
+
+    async def close(self):
+        self.closed = True
+
+
+class ConnectedDaemonBridge:
+    def __init__(self):
+        self.attached_session_id = None
+        self.closed = False
+        self.calls = []
+
+    async def connect(self):
+        self.calls.append(("connect",))
+        return True
+
+    async def set_logging(self, level, path):
+        self.calls.append(("set_logging", level, path))
+        return {"status": "ok", "level": level, "path": path}
+
+    async def attach(self, session_id):
+        self.calls.append(("attach", session_id))
+        self.attached_session_id = session_id
+        return True
+
+    async def set_reasoning(self, value):
+        self.calls.append(("set_reasoning", value))
+        return {"status": "ok"}
+
+    async def set_autonomy(self, preset):
+        self.calls.append(("set_autonomy", preset))
+        return {"status": "ok"}
 
     async def close(self):
         self.closed = True
@@ -106,6 +138,35 @@ class TestTurnEventBridge(unittest.IsolatedAsyncioTestCase):
                 await bridge.ensure_daemon("conversation")
 
         self.assertTrue(daemon.closed)
+        await bridge.shutdown()
+
+    async def test_level_2_is_synchronized_to_existing_daemon(self):
+        daemon = ConnectedDaemonBridge()
+        runtime = self._runtime(daemon_enabled=True)
+        runtime.canonical_root = "."
+        bridge = TurnEventBridge(runtime, lambda event: None, lambda: None)
+
+        with (
+            patch("kitt.ui.daemon_bridge.DaemonUIBridge", return_value=daemon),
+            patch.dict(
+                os.environ,
+                {
+                    "KITT_LOG_LEVEL": "2",
+                    "KITT_LOG_FILE": "/tmp/kitt-live-daemon.log",
+                },
+                clear=False,
+            ),
+        ):
+            self.assertTrue(await bridge.ensure_daemon("conversation"))
+
+        self.assertIn(
+            ("set_logging", 2, "/tmp/kitt-live-daemon.log"),
+            daemon.calls,
+        )
+        self.assertLess(
+            daemon.calls.index(("set_logging", 2, "/tmp/kitt-live-daemon.log")),
+            daemon.calls.index(("attach", "conversation")),
+        )
         await bridge.shutdown()
 
     def test_only_explicit_pre_spawn_marker_is_safe_for_implicit_local_fallback(self):
