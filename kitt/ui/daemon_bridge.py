@@ -223,6 +223,15 @@ class DaemonUIBridge:
     async def undo(self) -> dict:
         return await self.request("ui.undo", {"session_id": self.attached_session_id or ""})
 
+    async def set_logging(self, level: int, path: str | None) -> dict:
+        return await self.request(
+            "runtime.set_logging",
+            {
+                "level": int(level),
+                "path": str(path) if path else None,
+            },
+        )
+
     async def set_reasoning(self, value: int) -> dict:
         return await self.request("runtime.set_reasoning", {"value": max(0, min(100, int(value)))})
 
