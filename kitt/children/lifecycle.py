@@ -500,15 +500,27 @@ class ChildAgentManager:
 
     @staticmethod
     def _kill_tree(process) -> None:
+        """Best-effort, idempotent process-tree shutdown.
+
+        A child can exit between poll(), killpg() and wait(). Treat a missing
+        process group as an already-completed cleanup instead of surfacing a
+        teardown failure to the parent turn or test runner.
+        """
         if process.poll() is not None:
             return
         try:
             if sys.platform != "win32":
-                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    return
                 try:
                     process.wait(timeout=1.5)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
             else:
                 subprocess.run(
                     ["taskkill", "/PID", str(process.pid), "/T", "/F"],
@@ -519,6 +531,8 @@ class ChildAgentManager:
         finally:
             try:
                 process.kill()
+            except (ProcessLookupError, OSError):
+                pass
             except Exception:
                 pass
 
