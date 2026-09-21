@@ -129,7 +129,7 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
             finally:
                 registry.close()
 
-    def test_write_file_rejects_fully_flattened_block_source(self):
+    def test_write_file_auto_heals_fully_flattened_block_source(self):
         with tempfile.TemporaryDirectory() as temp:
             registry = self._registry(temp)
             try:
@@ -154,9 +154,15 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                     effective_capabilities={CAP_REPO_WRITE},
                 )
 
-                self.assertFalse(result.success)
-                self.assertIn("fully left-aligned", result.error)
-                self.assertFalse((Path(temp) / "src" / "App.java").exists())
+                self.assertTrue(result.success, result.error)
+                healed = (Path(temp) / "src" / "App.java").read_text(encoding="utf-8")
+                self.assertRegex(healed, r"(?m)^\s+private int value;")
+                self.assertRegex(healed, r"(?m)^\s+public void run\(\)")
+                self.assertRegex(healed, r"(?m)^\s+System\.out\.println")
+                self.assertTrue(result.metadata["formatting"]["healed"])
+                self.assertEqual(result.metadata["post_edit_gate"]["skipped"], 0)
+                self.assertGreaterEqual(result.metadata["post_edit_gate"]["checked"], 1)
+                self.assertTrue((Path(temp) / ".kitt" / "formatting.json").is_file())
             finally:
                 registry.close()
 
@@ -186,11 +192,51 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                 )
 
                 self.assertTrue(result.success, result.error)
-                self.assertEqual(
-                    (Path(temp) / "src" / "App.java").read_text(encoding="utf-8"),
-                    source,
+                rendered = (Path(temp) / "src" / "App.java").read_text(encoding="utf-8")
+                self.assertIn("public class App", rendered)
+                self.assertIn("System.out.println(value);", rendered)
+                self.assertEqual(result.metadata["post_edit_gate"]["skipped"], 0)
+            finally:
+                registry.close()
+
+    def test_apply_patch_auto_heals_existing_java_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            registry = self._registry(temp)
+            try:
+                target = Path(temp) / "App.java"
+                target.write_text(
+                    "public class App {\n"
+                    "    public void run() {\n"
+                    "        System.out.println(1);\n"
+                    "    }\n"
+                    "}\n",
+                    encoding="utf-8",
                 )
-                self.assertFalse(result.metadata["formatting"]["normalized"])
+                result = registry.execute_tool(
+                    "apply_patch",
+                    {
+                        "patch": (
+                            "--- a/App.java\n"
+                            "+++ b/App.java\n"
+                            "@@ -1,5 +1,5 @@\n"
+                            " public class App {\n"
+                            "-    public void run() {\n"
+                            "-        System.out.println(1);\n"
+                            "-    }\n"
+                            "+ public void run() {\n"
+                            "+ System.out.println(2);\n"
+                            "+ }\n"
+                            " }\n"
+                        )
+                    },
+                    conversation_id="conversation",
+                    workspace_id="workspace",
+                )
+                self.assertTrue(result.success, result.error)
+                rendered = target.read_text(encoding="utf-8")
+                self.assertRegex(rendered, r"(?m)^\s+public void run\(\)")
+                self.assertRegex(rendered, r"(?m)^\s+System\.out\.println\(2\)")
+                self.assertEqual(result.metadata["post_edit_gate"]["skipped"], 0)
             finally:
                 registry.close()
 

@@ -15,6 +15,7 @@ from kitt.core.turn_helpers import (
     _same_reverse_proxy_endpoint,
 )
 from kitt.domain.entities import ContextPlan, ModelProfile, SemanticTask
+from kitt.formatting.contract import FormattingContractManager
 from kitt.llm.client import LLMClient
 from kitt.prompts import (
     CONTEXT_SUMMARY_SYSTEM as CONTEXT_SUMMARY_PROMPT,
@@ -285,12 +286,16 @@ class TurnContextMixin:
                 tools_for_contract,
                 planned_tools=plan.enabled_tools,
             )
+            formatting_contract = FormattingContractManager(
+                self.root_path
+            ).prompt_summary()
             base_sys = (
                 f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
                 f"Tool Contract:\n{tool_contract}\n\n"
                 f"Memory:\n{self.memory.get_memory_context(cmd.prompt)}\n\n"
                 f"Active Skills:\n{skills_str}\n\n"
                 f"Project Guidelines:\n{agents_str}\n\n"
+                f"Formatting Contract:\n{formatting_contract}\n\n"
                 f"Learned Harness:\n{self.harness_service.prompt(workspace_id, cmd.conversation_id, max_chars=self.config.max_harness_chars) if self.harness_service and self.history_service else ''}"
             ).strip()
         elif use_agent_prompt:

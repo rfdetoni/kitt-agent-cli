@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from kitt.context_engine.engine import ContextEngine
 from kitt.edit_format.applier import DiffApplier
 from kitt.edit_format.parser import PatchParser
+from kitt.formatting.engine import DynamicFormattingEngine
 from kitt.index.repository import RepositoryIndex
 from kitt.tools.approval import ApprovalGrant, ApprovalManager
 from kitt.tools.artifact_tools import ArtifactTools
@@ -64,12 +65,15 @@ class ToolRegistry:
         self.root_path = Path(root_dir).resolve()
         self.policy = PolicyEngine(root_dir=root_dir)
         self.path_policy = WorkspacePathPolicy(root_dir=root_dir)
-        self.applier = DiffApplier()
-        self.applier.tracker.root_dir = self.root_path
         self.parser = PatchParser()
         self.approval_manager = ApprovalManager()
         self.safe_python = SafePythonExecutor()
         self.process_runner = ProcessRunner(root_dir)
+        self.formatting_engine = DynamicFormattingEngine(
+            self.root_path, self.process_runner
+        )
+        self.applier = DiffApplier(formatting_engine=self.formatting_engine)
+        self.applier.tracker.root_dir = self.root_path
         self.post_edit_validator = PostEditValidator(
             self.root_path, self.process_runner
         )

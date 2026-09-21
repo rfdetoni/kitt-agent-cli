@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from kitt.context_engine.context_map import ContextMapBuilder
+from kitt.domain.entities import FileSnapshot
 from kitt.runtime.handles import ContextHandleResolver
 from kitt.runtime.operation_registry import RuntimeOperationRegistry
 from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
@@ -13,6 +14,7 @@ from kitt.runtime.progressive import apply_progressive_search_view
 from kitt.runtime.retrieval_guard import RetrievalGuard
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.control_plane import control_plane_paths
+from kitt.security.workspace_fs import DEFAULT_MAX_FILE_BYTES, WorkspaceFileSystem
 from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
@@ -1156,27 +1158,100 @@ class SafeRuntime:
         if not found:
             return SafeRuntimeResult(False, "repo.edit_symbol", error=f"symbol no longer exists: {symbol_id}")
         symbol = found["symbol"]
-        if expected_path and str(symbol["path"]) != expected_path:
+        path = str(symbol["path"])
+        if expected_path and path != expected_path:
             return SafeRuntimeResult(False, "repo.edit_symbol", error="structural edit target path changed after approval")
-        self._assert_native_path_allowed(security_context, symbol["path"])
+        self._assert_native_path_allowed(security_context, path)
         coordinator = getattr(self.registry, "coordinator", None) if self.registry else None
         if coordinator is not None and security_context is not None and getattr(security_context, "principal_type", "") == "CHILD":
             coordinator.claim_symbol_for_edit(
                 symbol_id, security_context.principal_id,
                 str(args.get("intent", f"edit {symbol_id}")),
             )
+
+        fs = WorkspaceFileSystem(self.root, max_file_bytes=DEFAULT_MAX_FILE_BYTES)
+        try:
+            before = fs.read(path, max_bytes=DEFAULT_MAX_FILE_BYTES)
+            before_text = before.content.decode("utf-8", errors="strict")
+        except Exception as exc:
+            return SafeRuntimeResult(False, "repo.edit_symbol", error=f"structural edit snapshot failed: {exc}")
+
         result = engine.replace_symbol(
             symbol_id, replacement, expected_hash=expected_hash,
             validate_syntax=bool(args.get("validate_syntax", True)),
         )
-        if self.registry and result.get("changed"):
-            self.registry._refresh_index([result["path"]])
-            recorder = getattr(self.registry, "record_changed_paths", None)
-            if recorder is not None:
-                recorder(
-                    conversation_id=self.conversation_id, turn_id=turn_id,
-                    changed=[result["path"]], kind="native_symbol_edit",
+        if not (self.registry and result.get("changed")):
+            return SafeRuntimeResult(True, "repo.edit_symbol", data=result)
+
+        formatting = self.registry.formatting_engine.format_paths([path]).get(path, {})
+        try:
+            final_data = fs.read(path, max_bytes=DEFAULT_MAX_FILE_BYTES)
+            final_text = final_data.content.decode("utf-8", errors="strict")
+        except Exception as exc:
+            return SafeRuntimeResult(False, "repo.edit_symbol", error=f"formatted structural edit could not be read: {exc}")
+
+        report = self.registry.post_edit_validator.validate_paths([path])
+        if not report.ok:
+            try:
+                fs.atomic_write(
+                    path,
+                    before_text,
+                    expected_exists=True,
+                    expected_sha256=final_data.sha256,
+                    max_bytes=DEFAULT_MAX_FILE_BYTES,
                 )
+                self.registry._refresh_index([path])
+            except Exception as exc:
+                return SafeRuntimeResult(
+                    False,
+                    "repo.edit_symbol",
+                    error=f"Post-edit validation failed and rollback failed: {exc}",
+                )
+            failures = [
+                f"{item.path} [{item.validator}]: {item.message}"
+                for item in report.diagnostics if not item.ok
+            ]
+            return SafeRuntimeResult(
+                False,
+                "repo.edit_symbol",
+                error="Post-edit validation failed; structural edit was reverted. " + " | ".join(failures[:8]),
+                metadata={"post_edit_gate": report.as_dict(), "formatting": formatting},
+            )
+
+        try:
+            changeset = self.registry.applier.tracker.record_changeset(
+                description=f"repo.edit_symbol {path}",
+                snapshots=[FileSnapshot(path, True, before_text)],
+                workspace_id=self.workspace_id,
+                conversation_id=self.conversation_id,
+                turn_id=turn_id,
+                post_hashes={path: final_data.sha256},
+                post_exists={path: True},
+                post_contents={path: final_text},
+            )
+        except Exception as exc:
+            try:
+                fs.atomic_write(
+                    path,
+                    before_text,
+                    expected_exists=True,
+                    expected_sha256=final_data.sha256,
+                    max_bytes=DEFAULT_MAX_FILE_BYTES,
+                )
+            except Exception:
+                pass
+            return SafeRuntimeResult(False, "repo.edit_symbol", error=f"Undo journal persistence failed: {exc}")
+
+        result["formatting"] = formatting
+        result["post_edit_gate"] = report.as_dict()
+        result["changeset_id"] = getattr(changeset, "id", None)
+        self.registry._refresh_index([path])
+        recorder = getattr(self.registry, "record_changed_paths", None)
+        if recorder is not None:
+            recorder(
+                conversation_id=self.conversation_id, turn_id=turn_id,
+                changed=[path], kind="native_symbol_edit",
+            )
         return SafeRuntimeResult(True, "repo.edit_symbol", data=result)
 
     def _op_memory_correct(self, args):

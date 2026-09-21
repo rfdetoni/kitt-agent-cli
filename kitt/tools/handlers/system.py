@@ -266,6 +266,12 @@ class RunCommandHandler:
             command_error = "Command timed out"
         elif result.cancelled:
             command_error = "Command cancelled"
+        elif result.returncode == 126:
+            command_error = (
+                "Command exited with code 126: executable was found but could not be "
+                "invoked. Check execute permissions, script interpreter/shebang, and "
+                "sandbox-visible runtime dependencies."
+            )
         elif result.returncode != 0:
             command_error = f"Command exited with code {result.returncode}"
         else:

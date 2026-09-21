@@ -314,10 +314,19 @@ class WriteFileHandler:
                 return ToolResult(False, "", "expected_content_hash mismatch")
 
             try:
-                prepared = prepare_generated_content(
-                    relative,
-                    content,
-                    existing_content=before_content,
+                formatting_engine = getattr(ctx.registry, "formatting_engine", None)
+                prepared = (
+                    formatting_engine.prepare_content(
+                        relative,
+                        content,
+                        existing_content=before_content,
+                    )
+                    if formatting_engine is not None
+                    else prepare_generated_content(
+                        relative,
+                        content,
+                        existing_content=before_content,
+                    )
                 )
             except GeneratedContentError as exc:
                 return ToolResult(
@@ -346,6 +355,14 @@ class WriteFileHandler:
                     expected_sha256=before_hash if existed else None,
                     max_bytes=DEFAULT_MAX_FILE_BYTES,
                 )
+                formatting_details = {}
+                if formatting_engine is not None:
+                    formatting_details = formatting_engine.format_paths([relative]).get(
+                        relative, {}
+                    )
+                    final_data = fs.read(relative, max_bytes=DEFAULT_MAX_FILE_BYTES)
+                    content = final_data.content.decode("utf-8", errors="strict")
+                    digest = final_data.sha256
                 try:
                     changeset = ctx.registry.applier.tracker.record_changeset(
                         description=f"write_file {relative}",
@@ -375,8 +392,12 @@ class WriteFileHandler:
                 "path": relative,
                 "changeset": changeset,
                 "formatting": {
-                    "normalized": prepared.normalized,
-                    "strategy": prepared.strategy,
+                    "normalized": prepared.normalized or bool(formatting_details.get("healed")),
+                    "strategy": formatting_details.get("strategy") or prepared.strategy,
+                    "language": formatting_details.get("language") or prepared.language,
+                    "formatter": formatting_details.get("formatter"),
+                    "contract": ".kitt/formatting.json",
+                    "healed": bool(formatting_details.get("healed")) or prepared.normalized,
                 },
             },
         )

@@ -122,7 +122,7 @@ class TestContextAndIndex(unittest.TestCase):
             meta = index.metadata()
 
             self.assertEqual(meta["schema_version"], "2")
-            self.assertEqual(meta["parser_registry_version"], "parser-registry-v1")
+            self.assertEqual(meta["parser_registry_version"], "parser-registry-v2")
             self.assertIn("workspace_identity", meta)
             self.assertIn("capabilities", meta)
             self.assertEqual(stats["schema_version"], "2")

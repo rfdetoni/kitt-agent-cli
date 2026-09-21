@@ -81,6 +81,7 @@ _TOP_LEVEL_HEADERS = (
     "Memory:",
     "Active Skills:",
     "Project Guidelines:",
+    "Formatting Contract:",
     "Learned Harness:",
     "Mandatory Constraints:",
     "Files Context:",
@@ -95,6 +96,7 @@ _UNTRUSTED_HEADERS = frozenset(
     {
         "Active Skills:",
         "Project Guidelines:",
+        "Formatting Contract:",
         "Files Context:",
         "Repo Map:",
         "Recent Conversation:",

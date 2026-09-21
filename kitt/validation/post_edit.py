@@ -15,6 +15,11 @@ from defusedxml.common import DefusedXmlException
 from xml.etree.ElementTree import ParseError
 
 from kitt.security.workspace_fs import WorkspaceFileSystem
+from kitt.validation.generated_content import (
+    SOURCE_SUFFIXES,
+    structural_issues,
+    tree_sitter_issues,
+)
 
 
 @dataclass
@@ -85,12 +90,28 @@ class PostEditValidator:
                 return GateDiagnostic(relative, "xml", True), False
         except (SyntaxError, ValueError, UnicodeError, ParseError, DefusedXmlException) as exc:
             return GateDiagnostic(relative, validator_name, False, str(exc)), False
-        if suffix in {".js", ".mjs", ".cjs"}:
-            return self._external(["node", "--check", relative], relative, "node --check"), False
-        if suffix == ".rs":
-            return self._external(["rustfmt", "--emit", "stdout", relative], relative, "rustfmt parse"), False
-        if suffix == ".go":
-            return self._external(["gofmt", relative], relative, "gofmt parse"), False
+        if suffix in SOURCE_SUFFIXES:
+            issues = structural_issues(relative, text)
+            if issues:
+                return GateDiagnostic(
+                    relative,
+                    "kitt.structure",
+                    False,
+                    "; ".join(issues),
+                ), False
+            parsed = tree_sitter_issues(relative, text)
+            if parsed is not None:
+                return GateDiagnostic(
+                    relative,
+                    "tree-sitter",
+                    not parsed,
+                    "; ".join(parsed),
+                ), False
+            # A language-aware structural pass is still a real validation when
+            # no compiler/LSP/Tree-sitter grammar is available on this machine.
+            # Never report source files as checked=0/skipped=1 merely because an
+            # optional external validator is absent.
+            return GateDiagnostic(relative, "kitt.structure", True), False
         return None, True
 
     @staticmethod

@@ -27,8 +27,13 @@ class DiffApplier:
     commit rolls back already-applied paths using post-write hashes.
     """
 
-    def __init__(self, changeset_tracker: ChangeSetTracker = None):
+    def __init__(
+        self,
+        changeset_tracker: ChangeSetTracker = None,
+        formatting_engine=None,
+    ):
         self.tracker = changeset_tracker or ChangeSetTracker()
+        self.formatting_engine = formatting_engine
 
     @staticmethod
     def _normalize_newlines(value: str) -> str:
@@ -200,12 +205,20 @@ class DiffApplier:
                     )
                     working = working.replace(target, replacement, 1)
 
-                if working_exists and any(block.is_new_file for block in path_blocks):
+                if working_exists:
                     try:
-                        generated = prepare_generated_content(
-                            rel,
-                            working,
-                            existing_content=initial_content if initial_exists else None,
+                        generated = (
+                            self.formatting_engine.prepare_content(
+                                rel,
+                                working,
+                                existing_content=initial_content if initial_exists else None,
+                            )
+                            if self.formatting_engine is not None
+                            else prepare_generated_content(
+                                rel,
+                                working,
+                                existing_content=initial_content if initial_exists else None,
+                            )
                         )
                     except GeneratedContentError as exc:
                         raise ValueError(
@@ -350,6 +363,24 @@ class DiffApplier:
                     success=False,
                     errors=[f"Patch application stopped: {exc}{suffix}"],
                 )
+
+            if self.formatting_engine is not None:
+                changed_for_formatting = [
+                    item["rel"] for item in prepared if item["final_exists"]
+                ]
+                self.formatting_engine.format_paths(changed_for_formatting)
+                # External formatters run before the undo journal is finalized.
+                # Refresh the journal's expected post-state so rollback remains
+                # optimistic and race-resistant after healing.
+                for item in prepared:
+                    if not item["final_exists"]:
+                        continue
+                    final_data = fs.read(
+                        item["rel"], max_bytes=DEFAULT_MAX_FILE_BYTES
+                    )
+                    final_content = final_data.content.decode("utf-8", errors="strict")
+                    item["final_content"] = final_content
+                    item["final_hash"] = final_data.sha256
 
             post_hashes = {item["rel"]: item["final_hash"] for item in prepared}
             post_exists = {item["rel"]: item["final_exists"] for item in prepared}
