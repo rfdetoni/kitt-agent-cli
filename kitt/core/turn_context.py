@@ -288,7 +288,9 @@ class TurnContextMixin:
             )
             formatting_contract = FormattingContractManager(
                 self.root_path
-            ).prompt_summary()
+            ).prompt_summary(
+                paths=[*(cmd.explicit_files or ()), *task.paths]
+            )
             base_sys = (
                 f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
                 f"Tool Contract:\n{tool_contract}\n\n"

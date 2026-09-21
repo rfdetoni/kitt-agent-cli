@@ -122,8 +122,25 @@ def tree_sitter_process(path: str, content: str):
         return None
 
 
-def _indent_unit(existing_content: str | None, content: str, suffix: str) -> str:
+def _indent_unit(
+    existing_content: str | None,
+    content: str,
+    suffix: str,
+    style: dict | None = None,
+) -> str:
+    style = style if isinstance(style, dict) else {}
+    preferred_style = str(style.get("indent_style", "")).casefold()
+    preferred_size = style.get("indent_size")
     default = "\t" if suffix == ".go" else "    "
+    if existing_content is None:
+        if preferred_style in {"tab", "tabs"}:
+            default = "\t"
+        elif preferred_style in {"space", "spaces"}:
+            try:
+                width = max(1, min(int(preferred_size), 16))
+            except (TypeError, ValueError):
+                width = 4
+            default = " " * width
     samples: list[str] = []
     for candidate in (existing_content or "", content):
         for line in candidate.splitlines():
@@ -213,9 +230,14 @@ def _scan_line(line: str, state: _LexState) -> tuple[int, int, int, int, int, in
     return bo, bc, po, pc, so, sc, lead_b, lead_p, lead_s
 
 
-def _heal_brace_indentation(path: str, content: str, existing_content: str | None) -> str:
+def _heal_brace_indentation(
+    path: str,
+    content: str,
+    existing_content: str | None,
+    style: dict | None = None,
+) -> str:
     suffix = Path(path).suffix.casefold()
-    unit = _indent_unit(existing_content, content, suffix)
+    unit = _indent_unit(existing_content, content, suffix, style)
     reference = existing_content if existing_content is not None else content
     newline = "\r\n" if "\r\n" in reference else "\r" if "\r" in reference and "\n" not in reference else "\n"
     final_newline = content.endswith(("\n", "\r"))
@@ -309,14 +331,15 @@ def heal_source_content(
     content: str,
     *,
     existing_content: str | None = None,
+    style: dict | None = None,
 ) -> PreparedGeneratedContent:
     suffix = Path(path).suffix.casefold()
     language = detect_source_language(path)
     if suffix == ".json":
-        normalized = _pretty_json(content, existing_content)
+        normalized = _pretty_json(content, existing_content, style)
         return PreparedGeneratedContent(normalized, normalized != content, "json.pretty", language)
     if suffix in BRACE_SOURCE_SUFFIXES:
-        healed = _heal_brace_indentation(path, content, existing_content)
+        healed = _heal_brace_indentation(path, content, existing_content, style)
         return PreparedGeneratedContent(
             healed,
             healed != content,
@@ -327,9 +350,15 @@ def heal_source_content(
 
 
 
-def _json_indent(existing_content: str | None) -> int | str:
+def _json_indent(existing_content: str | None, style: dict | None = None) -> int | str:
     if not existing_content:
-        return 2
+        style = style if isinstance(style, dict) else {}
+        if str(style.get("indent_style", "")).casefold() in {"tab", "tabs"}:
+            return "\t"
+        try:
+            return max(1, min(int(style.get("indent_size", 2)), 16))
+        except (TypeError, ValueError):
+            return 2
     for line in existing_content.splitlines()[1:]:
         if not line.strip():
             continue
@@ -343,7 +372,11 @@ def _json_indent(existing_content: str | None) -> int | str:
     return 2
 
 
-def _pretty_json(content: str, existing_content: str | None) -> str:
+def _pretty_json(
+    content: str,
+    existing_content: str | None,
+    style: dict | None = None,
+) -> str:
     try:
         value = json.loads(content)
     except (json.JSONDecodeError, UnicodeError) as exc:
@@ -351,7 +384,7 @@ def _pretty_json(content: str, existing_content: str | None) -> str:
     rendered = json.dumps(
         value,
         ensure_ascii=False,
-        indent=_json_indent(existing_content),
+        indent=_json_indent(existing_content, style),
         sort_keys=False,
     )
     return rendered + "\n"
@@ -435,10 +468,16 @@ def prepare_generated_content(
     content: str,
     *,
     existing_content: str | None = None,
+    style: dict | None = None,
 ) -> PreparedGeneratedContent:
     """Heal safe formatting defects, then fail closed on malformed source."""
     if "\x00" in content:
         raise GeneratedContentError(f"{path} contains NUL bytes")
-    prepared = heal_source_content(path, content, existing_content=existing_content)
+    prepared = heal_source_content(
+        path,
+        content,
+        existing_content=existing_content,
+        style=style,
+    )
     validate_generated_content(path, prepared.content)
     return prepared

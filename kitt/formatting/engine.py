@@ -49,8 +49,18 @@ class DynamicFormattingEngine:
         *,
         existing_content: str | None = None,
     ):
-        self.contracts.ensure()
-        return prepare_generated_content(path, content, existing_content=existing_content)
+        _language, language_contract = self.contracts.language_contract(path)
+        style = (
+            language_contract.get("style")
+            if isinstance(language_contract.get("style"), dict)
+            else {}
+        )
+        return prepare_generated_content(
+            path,
+            content,
+            existing_content=existing_content,
+            style=style,
+        )
 
     def _local_executable(self, executable: str) -> str | None:
         """Resolve an allowlisted formatter without trusting workspace PATH shims."""
@@ -109,7 +119,17 @@ class DynamicFormattingEngine:
 
             language, language_contract = self.contracts.language_contract(relative)
             try:
-                prepared = prepare_generated_content(relative, before, existing_content=before)
+                style = (
+                    language_contract.get("style")
+                    if isinstance(language_contract.get("style"), dict)
+                    else {}
+                )
+                prepared = prepare_generated_content(
+                    relative,
+                    before,
+                    existing_content=before,
+                    style=style,
+                )
             except GeneratedContentError as exc:
                 result[relative] = {
                     "ok": False, "language": language, "strategy": "validate",
@@ -157,6 +177,9 @@ class DynamicFormattingEngine:
                     )
                     formatter_used = str(formatter_id)
                     if execution.returncode == 0:
+                        self.contracts.remember_formatter_success(
+                            language, formatter_used
+                        )
                         break
                     formatter_error = (
                         execution.stderr or execution.stdout
