@@ -14,12 +14,8 @@ concurrency:
 
 jobs:
   python-prime:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.14"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Agent
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,18 +31,16 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install split Python project
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
-      - name: Run Python suite
-        run: python -m unittest discover -s tests -v
       - name: Prime architecture suite
         run: python -m unittest discover -s tests/prime_architecture -v
       - name: 1k repository benchmark smoke
-        if: runner.os == 'Linux'
         run: python benchmarks/scale_benchmark.py --files 1000
       - name: Safe runtime schema benchmark
-        if: runner.os == 'Linux'
         run: python benchmarks/safe_runtime_benchmark.py

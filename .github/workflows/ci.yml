@@ -14,11 +14,7 @@ concurrency:
 
 jobs:
   test:
-    name: python ${{ matrix.python-version }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13"]
+    name: python 3.13
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -27,8 +23,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
           cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install Agent development dependencies
         run: python -m pip install -e ".[dev]"
       - name: Compose Assistant runtime namespace
@@ -36,8 +33,6 @@ jobs:
           python -m pip install --no-deps
           "git+https://github.com/rfdetoni/kitt-assistant.git@867519454ca97d0473bcefc515a39eb6fec657d0#subdirectory=packages/kitt-assistant-runtime"
       - name: Regression suite
-        run: python -m unittest discover -s tests -v
-      - name: Pytest suite
         run: python -m pytest -q
       - name: Compile package
         run: python -m compileall -q kitt

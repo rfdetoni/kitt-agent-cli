@@ -1,40 +1,49 @@
 name: Automatic Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["PR Checks"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
   actions: write
-  pull-requests: write
 
 concurrency:
   group: automatic-release-main
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  version:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout validated Agent commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Resolve published release baseline
-        id: baseline
+      - name: Validate immutable release candidate
+        id: state
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           git fetch --force --tags origin
+
           current="$(python - <<'PY'
           import tomllib
           with open("pyproject.toml", "rb") as fh:
@@ -59,6 +68,16 @@ jobs:
           print(match.group(1))
           PY
           )"
+
+          if [[ "$current" != "$lock_version" || "$current" != "$runtime_version" ]]; then
+            echo "Version metadata mismatch: pyproject=$current uv.lock=$lock_version runtime=$runtime_version" >&2
+            exit 1
+          fi
+          if [[ ! "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Package version must be strict semantic version: $current" >&2
+            exit 1
+          fi
+
           latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')"
           if [[ ! "$latest_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Latest published release is not strict semver: $latest_tag" >&2
@@ -77,288 +96,43 @@ jobs:
           print("behind" if current < latest else "ahead" if current > latest else "equal")
           PY
           )"
+
           echo "current=$current" >> "$GITHUB_OUTPUT"
-          echo "lock_version=$lock_version" >> "$GITHUB_OUTPUT"
-          echo "runtime_version=$runtime_version" >> "$GITHUB_OUTPUT"
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
-          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
           echo "relation=$relation" >> "$GITHUB_OUTPUT"
 
-      - name: Reconcile main with latest published release
-        if: steps.baseline.outputs.relation == 'behind'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ steps.baseline.outputs.latest }}
-          RELEASE_TAG: ${{ steps.baseline.outputs.latest_tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - "$RELEASE_VERSION" <<'PY'
-          import re, sys
-          from pathlib import Path
-
-          version = sys.argv[1]
-          pyproject = Path("pyproject.toml")
-          text, count = re.subn(
-              r'(?m)^version = "[0-9]+\.[0-9]+\.[0-9]+"$',
-              f'version = "{version}"',
-              pyproject.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update pyproject.toml")
-          pyproject.write_text(text)
-
-          lock = Path("uv.lock")
-          text, count = re.subn(
-              r'(\[\[package\]\]\nname = "kitt-agent-cli"\nversion = ")[0-9]+\.[0-9]+\.[0-9]+(")',
-              rf'\g<1>{version}\2',
-              lock.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update uv.lock")
-          lock.write_text(text)
-
-          init_file = Path("kitt/__init__.py")
-          text, count = re.subn(
-              r'(?m)^(\s*__version__ = ")[0-9]+\.[0-9]+\.[0-9]+(")$',
-              rf'\g<1>{version}\2',
-              init_file.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update runtime fallback version")
-          init_file.write_text(text)
-          PY
-          branch="automation/reconcile-${RELEASE_TAG}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add pyproject.toml uv.lock kitt/__init__.py
-          git commit -m "chore(version): align main with ${RELEASE_TAG}"
-          git push --force origin "HEAD:refs/heads/$branch"
-          pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
-          if [[ -z "$pr" ]]; then
-            gh pr create --base main --head "$branch" --title "chore(version): align main with ${RELEASE_TAG}" --body "Reconciles Agent version metadata with the latest published release ${RELEASE_TAG}." >/dev/null
-            pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')"
-          fi
-          merged=false
-          for attempt in 1 2 3 4 5; do
-            if gh pr merge "$pr" --squash --delete-branch; then
-              merged=true
-              break
-            fi
-            if [[ "$attempt" -lt 5 ]]; then
-              echo "Release PR merge raced with a main update; retrying ($attempt/5)." >&2
-              sleep $((attempt * 2))
-            fi
-          done
-          if [[ "$merged" != "true" ]]; then
-            echo "Could not merge release PR #$pr after retries." >&2
+          if [[ "$relation" == "behind" ]]; then
+            echo "Validated candidate $current is behind latest release $latest; refusing release." >&2
             exit 1
           fi
-          gh workflow run auto-release.yml --ref main
 
-      - name: Stop after release reconciliation
-        if: steps.baseline.outputs.relation == 'behind'
-        run: echo "Version reconciliation merged; a follow-up release workflow was dispatched."
+      - name: No release required
+        if: steps.state.outputs.relation == 'equal'
+        run: echo "Validated main already matches v${{ steps.state.outputs.current }}; no release required."
 
-      - name: Synchronize inconsistent version metadata
-        if: >-
-          steps.baseline.outputs.relation != 'behind' &&
-          (steps.baseline.outputs.current != steps.baseline.outputs.lock_version ||
-           steps.baseline.outputs.current != steps.baseline.outputs.runtime_version)
+      - name: Tag and dispatch validated release
+        if: steps.state.outputs.relation == 'ahead'
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_VERSION: ${{ steps.baseline.outputs.current }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - "$CURRENT_VERSION" <<'PY'
-          import re, sys
-          from pathlib import Path
-          version = sys.argv[1]
-
-          lock = Path("uv.lock")
-          text, count = re.subn(
-              r'(\[\[package\]\]\nname = "kitt-agent-cli"\nversion = ")[0-9]+\.[0-9]+\.[0-9]+(")',
-              rf'\g<1>{version}\2',
-              lock.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not synchronize uv.lock")
-          lock.write_text(text)
-
-          init_file = Path("kitt/__init__.py")
-          text, count = re.subn(
-              r'(?m)^(\s*__version__ = ")[0-9]+\.[0-9]+\.[0-9]+(")$',
-              rf'\g<1>{version}\2',
-              init_file.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not synchronize runtime fallback version")
-          init_file.write_text(text)
-          PY
-          branch="automation/version-metadata-sync"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add uv.lock kitt/__init__.py
-          git commit -m "chore(version): synchronize agent metadata"
-          git push --force origin "HEAD:refs/heads/$branch"
-          pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
-          if [[ -z "$pr" ]]; then
-            gh pr create --base main --head "$branch" --title "chore(version): synchronize agent metadata" --body "Keeps pyproject.toml, uv.lock and runtime fallback version identical." >/dev/null
-            pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')"
-          fi
-          merged=false
-          for attempt in 1 2 3 4 5; do
-            if gh pr merge "$pr" --squash --delete-branch; then
-              merged=true
-              break
-            fi
-            if [[ "$attempt" -lt 5 ]]; then
-              echo "Release PR merge raced with a main update; retrying ($attempt/5)." >&2
-              sleep $((attempt * 2))
-            fi
-          done
-          if [[ "$merged" != "true" ]]; then
-            echo "Could not merge release PR #$pr after retries." >&2
-            exit 1
-          fi
-          gh workflow run auto-release.yml --ref main
-
-      - name: Stop after metadata synchronization
-        if: >-
-          steps.baseline.outputs.relation != 'behind' &&
-          (steps.baseline.outputs.current != steps.baseline.outputs.lock_version ||
-           steps.baseline.outputs.current != steps.baseline.outputs.runtime_version)
-        run: echo "Version metadata synchronized; a follow-up release workflow was dispatched."
-
-      - name: Publish version already committed to main
-        if: >-
-          steps.baseline.outputs.relation == 'ahead' &&
-          steps.baseline.outputs.current == steps.baseline.outputs.lock_version &&
-          steps.baseline.outputs.current == steps.baseline.outputs.runtime_version
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CURRENT_VERSION: ${{ steps.baseline.outputs.current }}
+          CURRENT_VERSION: ${{ steps.state.outputs.current }}
         shell: bash
         run: |
           set -euo pipefail
           tag="v${CURRENT_VERSION}"
           head="$(git rev-parse HEAD)"
+
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
             tagged="$(git rev-list -n1 "$tag")"
-            if [[ "$tagged" != "$head" ]] && ! git merge-base --is-ancestor "$tagged" "$head"; then
-              echo "Tag $tag exists at unrelated commit $tagged; refusing ambiguous release." >&2
+            if [[ "$tagged" != "$head" ]]; then
+              echo "Immutable tag $tag already points to $tagged, expected validated SHA $head." >&2
               exit 1
             fi
-            echo "Tag $tag already exists on commit $tagged; reusing immutable tag."
+            echo "Tag $tag already points to validated SHA $head."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "$tag" -m "Release $tag" "$head"
             git push origin "refs/tags/$tag"
           fi
+
           gh workflow run release.yml --ref "$tag" -f tag="$tag"
-
-      - name: Calculate next semantic version
-        id: version
-        if: >-
-          steps.baseline.outputs.relation == 'equal' &&
-          steps.baseline.outputs.current == steps.baseline.outputs.lock_version &&
-          steps.baseline.outputs.current == steps.baseline.outputs.runtime_version
-        env:
-          CURRENT_VERSION: ${{ steps.baseline.outputs.current }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          next="$(python .github/scripts/next_semver.py "$CURRENT_VERSION")"
-          if [[ -z "$next" ]]; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "No releasable commits since the latest semantic tag."
-            exit 0
-          fi
-          echo "release=true" >> "$GITHUB_OUTPUT"
-          echo "next=$next" >> "$GITHUB_OUTPUT"
-          echo "tag=v$next" >> "$GITHUB_OUTPUT"
-
-      - name: Create and merge release version PR
-        if: steps.version.outputs.release == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NEXT_VERSION: ${{ steps.version.outputs.next }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - "$NEXT_VERSION" <<'PY'
-          import re, sys
-          from pathlib import Path
-          version = sys.argv[1]
-
-          pyproject = Path("pyproject.toml")
-          text, count = re.subn(
-              r'(?m)^version = "[0-9]+\.[0-9]+\.[0-9]+"$',
-              f'version = "{version}"',
-              pyproject.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update pyproject.toml")
-          pyproject.write_text(text)
-
-          lock = Path("uv.lock")
-          text, count = re.subn(
-              r'(\[\[package\]\]\nname = "kitt-agent-cli"\nversion = ")[0-9]+\.[0-9]+\.[0-9]+(")',
-              rf'\g<1>{version}\2',
-              lock.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update uv.lock")
-          lock.write_text(text)
-
-          init_file = Path("kitt/__init__.py")
-          text, count = re.subn(
-              r'(?m)^(\s*__version__ = ")[0-9]+\.[0-9]+\.[0-9]+(")$',
-              rf'\g<1>{version}\2',
-              init_file.read_text(),
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update runtime fallback version")
-          init_file.write_text(text)
-          PY
-          branch="automation/release-${RELEASE_TAG}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add pyproject.toml uv.lock kitt/__init__.py
-          git commit -m "chore(release): ${RELEASE_TAG}"
-          git push --force origin "HEAD:refs/heads/$branch"
-          pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
-          if [[ -z "$pr" ]]; then
-            gh pr create --base main --head "$branch" --title "chore(release): ${RELEASE_TAG}" --body "Commits exact Agent version metadata for ${RELEASE_TAG} before publication." >/dev/null
-            pr="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')"
-          fi
-          merged=false
-          for attempt in 1 2 3 4 5; do
-            if gh pr merge "$pr" --squash --delete-branch; then
-              merged=true
-              break
-            fi
-            if [[ "$attempt" -lt 5 ]]; then
-              echo "Release PR merge raced with a main update; retrying ($attempt/5)." >&2
-              sleep $((attempt * 2))
-            fi
-          done
-          if [[ "$merged" != "true" ]]; then
-            echo "Could not merge release PR #$pr after retries." >&2
-            exit 1
-          fi
-          gh workflow run auto-release.yml --ref main
