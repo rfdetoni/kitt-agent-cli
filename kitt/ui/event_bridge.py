@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import queue
 import threading
 import time
@@ -143,6 +144,22 @@ class TurnEventBridge:
                 if getattr(config, "daemon_local_fallback", False):
                     return False
                 raise RuntimeError("Unable to connect to KITT daemon after successful process start")
+        log_level = int((os.getenv("KITT_LOG_LEVEL", "0") or "0").strip() or "0")
+        log_path = (os.getenv("KITT_LOG_FILE", "") or "").strip()
+        if log_level > 0:
+            if not log_path:
+                log_path = str(
+                    self.runtime.canonical_root / ".kitt" / "logs" / "agent-cli.log"
+                )
+            try:
+                await bridge.set_logging(log_level, log_path)
+            except Exception as exc:
+                await bridge.close()
+                raise RuntimeError(
+                    "Unable to synchronize daemon logging; restart/update the "
+                    "KITT assistant runtime and retry"
+                ) from exc
+
         if not await bridge.attach(conversation_id):
             # Session should already exist because the TUI creates it in the shared DB.
             if getattr(config, "daemon_local_fallback", False):
