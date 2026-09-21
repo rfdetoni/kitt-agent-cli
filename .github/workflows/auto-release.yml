@@ -20,6 +20,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -43,6 +44,16 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --force --tags origin
+          git fetch --no-tags origin main
+
+          head="$(git rev-parse HEAD)"
+          main_head="$(git rev-parse origin/main)"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" && "$head" != "$main_head" ]]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "Validated workflow SHA $head is no longer current main $main_head; skipping release."
+            exit 0
+          fi
+          echo "stale=false" >> "$GITHUB_OUTPUT"
 
           current="$(python - <<'PY'
           import tomllib
@@ -107,11 +118,11 @@ jobs:
           fi
 
       - name: No release required
-        if: steps.state.outputs.relation == 'equal'
+        if: steps.state.outputs.stale != 'true' && steps.state.outputs.relation == 'equal'
         run: echo "Validated main already matches v${{ steps.state.outputs.current }}; no release required."
 
       - name: Tag and dispatch validated release
-        if: steps.state.outputs.relation == 'ahead'
+        if: steps.state.outputs.stale != 'true' && steps.state.outputs.relation == 'ahead'
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_VERSION: ${{ steps.state.outputs.current }}
