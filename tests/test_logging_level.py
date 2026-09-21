@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from kitt.cli.main import build_parser
+from kitt.cli.main import _configure_debug_log, build_parser
 from kitt.core.logging import (
     configure_logging,
     sanitize_message,
@@ -29,6 +29,27 @@ class LoggingLevelTests(unittest.TestCase):
             ])
         self.assertEqual(args.log_level, 2)
         self.assertEqual(args.log_file, "/tmp/kitt-agent-trace.log")
+
+    def test_cli_configuration_writes_bootstrap_event(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            args = type(
+                "Args",
+                (),
+                {"log_level": 2, "log_file": None, "root": str(root)},
+            )()
+            configured = _configure_debug_log(args)
+            expected = root / ".kitt" / "logs" / "agent-cli.log"
+            self.assertEqual(configured, expected.resolve())
+
+            lines = expected.read_text(encoding="utf-8").splitlines()
+            self.assertTrue(lines)
+            payload = json.loads(lines[-1])
+            self.assertEqual(
+                payload.get("extra_data", {}).get("event"),
+                "cli.logging.configured",
+            )
+            self.assertEqual(payload.get("extra_data", {}).get("level"), 2)
 
     def test_level_2_records_full_payload_and_redacts_secrets(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
