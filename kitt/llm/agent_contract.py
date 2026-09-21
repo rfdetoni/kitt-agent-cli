@@ -332,7 +332,5 @@ def inject_agent_turn_context(
         message["content"] = f"{envelope}\n\n{content}" if content else envelope
         return cloned
 
-    # A tool-only continuation has no safe user task to decorate. Keep the tool
-    # result untouched and carry dynamic orchestration context separately.
-    cloned.append({"role": "developer", "content": envelope})
+    cloned.append({"role": "user", "content": envelope})
     return cloned
