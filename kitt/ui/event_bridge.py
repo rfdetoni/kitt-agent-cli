@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import TextDelta, TurnCancelled, TurnCompleted, TurnEvent, TurnFailed
@@ -149,7 +150,7 @@ class TurnEventBridge:
         if log_level > 0:
             if not log_path:
                 log_path = str(
-                    self.runtime.canonical_root / ".kitt" / "logs" / "agent-cli.log"
+                    Path(str(self.runtime.canonical_root)) / ".kitt" / "logs" / "agent-cli.log"
                 )
             try:
                 await bridge.set_logging(log_level, log_path)
