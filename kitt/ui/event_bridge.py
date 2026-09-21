@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import os
 import queue
 import threading
 import time
@@ -160,14 +159,6 @@ class TurnEventBridge:
                 "Unable to synchronize daemon logging; restart/update the "
                 "KITT assistant runtime and retry"
             ) from exc
-
-        level_raw = os.getenv("KITT_LOG_LEVEL", "0").strip() or "0"
-        try:
-            log_level = int(level_raw)
-        except ValueError:
-            log_level = 0
-        log_file = os.getenv("KITT_LOG_FILE", "").strip() or None
-        await bridge.set_logging(log_level, log_file)
 
         if not await bridge.attach(conversation_id):
             # Session should already exist because the TUI creates it in the shared DB.
