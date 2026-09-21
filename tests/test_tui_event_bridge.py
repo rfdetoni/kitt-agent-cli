@@ -34,6 +34,33 @@ class OfflineDaemonBridge:
 class ConnectedDaemonBridge:
     def __init__(self):
         self.attached_session_id = None
+        self.logging_calls = []
+        self.closed = False
+
+    async def connect(self):
+        return True
+
+    async def set_logging(self, level, path):
+        self.logging_calls.append((level, path))
+        return {"status": "ok"}
+
+    async def attach(self, session_id):
+        self.attached_session_id = session_id
+        return True
+
+    async def set_reasoning(self, value):
+        return {"status": "ok"}
+
+    async def set_autonomy(self, preset):
+        return {"status": "ok"}
+
+    async def close(self):
+        self.closed = True
+
+
+class ConnectedDaemonBridge:
+    def __init__(self):
+        self.attached_session_id = None
         self.closed = False
         self.calls = []
 
@@ -115,6 +142,34 @@ class TestTurnEventBridge(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(isinstance(event, TurnCompleted) for event in events))
         self.assertFalse(bridge.daemon_mode)
         self.assertTrue(daemon.closed)
+        await bridge.shutdown()
+
+    async def test_existing_daemon_receives_requested_logging_configuration(self):
+        daemon = ConnectedDaemonBridge()
+        runtime = self._runtime(daemon_enabled=True)
+        runtime.processor.reasoning_effort = 50
+        runtime.autonomy_store = SimpleNamespace(
+            get=lambda: SimpleNamespace(level="supervised")
+        )
+        bridge = TurnEventBridge(runtime, lambda event: None, lambda: None)
+
+        with (
+            patch("kitt.ui.daemon_bridge.DaemonUIBridge", return_value=daemon),
+            patch.dict(
+                "os.environ",
+                {
+                    "KITT_LOG_LEVEL": "2",
+                    "KITT_LOG_FILE": "/tmp/kitt-agent-trace.log",
+                },
+                clear=False,
+            ),
+        ):
+            self.assertTrue(await bridge.ensure_daemon("conversation"))
+
+        self.assertEqual(
+            daemon.logging_calls,
+            [(2, "/tmp/kitt-agent-trace.log")],
+        )
         await bridge.shutdown()
 
     async def test_post_spawn_daemon_failure_stays_fail_closed(self):
