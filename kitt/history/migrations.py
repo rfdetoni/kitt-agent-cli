@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -678,6 +678,36 @@ SCHEMA_V2_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_telemetry_route_start ON telemetry_events(route, start_time DESC, id DESC);",
 ]
 
+SCHEMA_V3_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS edit_strategy_feedback (
+        workspace_id TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        language TEXT NOT NULL DEFAULT '',
+        project_type TEXT NOT NULL DEFAULT '',
+        strategy TEXT NOT NULL,
+        attempts REAL NOT NULL DEFAULT 0,
+        successes REAL NOT NULL DEFAULT 0,
+        parse_failures REAL NOT NULL DEFAULT 0,
+        apply_failures REAL NOT NULL DEFAULT 0,
+        validation_failures REAL NOT NULL DEFAULT 0,
+        repair_required REAL NOT NULL DEFAULT 0,
+        rollbacks REAL NOT NULL DEFAULT 0,
+        files_changed REAL NOT NULL DEFAULT 0,
+        output_tokens REAL NOT NULL DEFAULT 0,
+        latency_ms REAL NOT NULL DEFAULT 0,
+        updated_at REAL NOT NULL,
+        PRIMARY KEY(workspace_id, provider, model, language, project_type, strategy),
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_edit_strategy_feedback_lookup
+    ON edit_strategy_feedback(workspace_id, provider, model, language, project_type);
+    """,
+]
+
 
 class IncompatibleSchemaError(RuntimeError):
     """Raised when an incompatible database schema is detected."""
@@ -712,7 +742,7 @@ class MigrationRunner:
                 "Run: kitt doctor --reset-state"
             )
 
-        if current_version not in (0, 1):
+        if current_version not in (0, 1, 2):
             raise IncompatibleSchemaError(
                 f"State schema version {current_version} is incompatible with this development build. "
                 "Run: kitt doctor --reset-state"
@@ -735,6 +765,14 @@ class MigrationRunner:
                 conn.execute("UPDATE schema_info SET version = 2;")
             current_version = 2
             logger.info("Migrated KITT SQLite schema to version 2")
+
+        if current_version == 2:
+            with conn:
+                for statement in SCHEMA_V3_STATEMENTS:
+                    conn.execute(statement)
+                conn.execute("UPDATE schema_info SET version = 3;")
+            current_version = 3
+            logger.info("Migrated KITT SQLite schema to version 3")
 
         if current_version != self.target_version:
             raise IncompatibleSchemaError(

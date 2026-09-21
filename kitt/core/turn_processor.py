@@ -28,7 +28,11 @@ from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.edit_format.parser import SearchReplaceParser
-from kitt.edit_format.strategy import EditStrategySelector, EditStrategyTracker
+from kitt.edit_format.strategy import (
+    EditStrategySelector,
+    EditStrategyTracker,
+    infer_edit_strategy_context,
+)
 from kitt.tools.build_detector import BuildDetector
 from kitt.tools.log_reducer import LogReducer
 from kitt.tools.registry import ToolRegistry
@@ -162,6 +166,8 @@ class TurnProcessor(
         self.execution_client = execution_client
         self.event_callback = event_callback
         self.history_service = history_service
+        if self.history_service is not None and hasattr(self.history_service, "repo"):
+            self.edit_strategy_tracker.bind_repository(self.history_service.repo)
         self.metrics_collector = metrics_collector
         self.harness_service = harness_service
         self.compaction_service = compaction_service
@@ -942,16 +948,25 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
 
             exe_client = self.execution_client or LLMClient(exe_profile)
+            edit_context = infer_edit_strategy_context(
+                workspace_id=workspace_id,
+                provider=str(getattr(exe_profile, "backend", "") or ""),
+                model=str(getattr(exe_profile, "model", "") or ""),
+                task=task,
+                explicit_files=cmd.explicit_files,
+                root_path=self.root_path,
+            )
             edit_decision = self.edit_strategy_selector.select(
                 model_capabilities=getattr(exe_client, "capabilities", None),
                 task=task,
                 prompt=cmd.prompt,
                 explicit_files=cmd.explicit_files,
                 root_path=self.root_path,
-                history=self.edit_strategy_tracker.snapshot(),
+                history=self.edit_strategy_tracker.snapshot(edit_context),
             )
             self.session_state.edit_strategy = edit_decision.strategy
             self.session_state.edit_strategy_reason = "; ".join(edit_decision.reasons)
+            self.session_state.edit_strategy_context = edit_context
             trace_event(
                 logger,
                 "edit_strategy.selected",
@@ -959,6 +974,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 strategy=edit_decision.strategy,
                 scores=dict(edit_decision.scores),
                 reasons=list(edit_decision.reasons),
+                feedback_context={
+                    "provider": edit_context.provider,
+                    "model": edit_context.model,
+                    "language": edit_context.language,
+                    "project_type": edit_context.project_type,
+                },
             )
             browser_authorities = self._browser_authorities_for_turn(
                 cmd, exe_client, exe_profile

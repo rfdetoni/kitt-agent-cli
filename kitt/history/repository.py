@@ -439,6 +439,180 @@ class HistoryRepository:
             rows = conn.execute(query, (*args, cutoff)).fetchall()
             return [dict(row) for row in rows]
 
+    @staticmethod
+    def _edit_feedback_key(
+        provider: str,
+        model: str,
+        language: str,
+        project_type: str,
+    ) -> tuple[str, str, str, str]:
+        return (
+            str(provider or "").strip().casefold()[:128],
+            str(model or "").strip()[:256],
+            str(language or "").strip().casefold()[:64],
+            str(project_type or "").strip().casefold()[:64],
+        )
+
+    def get_edit_strategy_feedback(
+        self,
+        *,
+        workspace_id: str,
+        provider: str,
+        model: str,
+        language: str,
+        project_type: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        provider, model, language, project_type = self._edit_feedback_key(
+            provider, model, language, project_type
+        )
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                """SELECT strategy, attempts, successes, parse_failures,
+                          apply_failures, validation_failures, repair_required,
+                          rollbacks, files_changed, output_tokens, latency_ms,
+                          updated_at
+                   FROM edit_strategy_feedback
+                   WHERE workspace_id = ? AND provider = ? AND model = ?
+                     AND language = ? AND project_type = ?""",
+                (workspace_id, provider, model, language, project_type),
+            ).fetchall()
+
+        now = time.time()
+        half_life_seconds = 30.0 * 86400.0
+        metric_names = (
+            "attempts",
+            "successes",
+            "parse_failures",
+            "apply_failures",
+            "validation_failures",
+            "repair_required",
+            "rollbacks",
+            "files_changed",
+            "output_tokens",
+            "latency_ms",
+        )
+        result: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            item = dict(row)
+            age = max(0.0, now - float(item.get("updated_at") or now))
+            decay = 2.0 ** (-(age / half_life_seconds))
+            for name in metric_names:
+                item[name] = max(0.0, float(item.get(name, 0.0) or 0.0)) * decay
+            result[str(item["strategy"])] = item
+        return result
+
+    def record_edit_strategy_feedback(
+        self,
+        *,
+        workspace_id: str,
+        provider: str,
+        model: str,
+        language: str,
+        project_type: str,
+        strategy: str,
+        success: bool,
+        failure_kind: str = "",
+        repair_required: bool = False,
+        rollback: bool = False,
+        files_changed: int = 0,
+        output_tokens: int = 0,
+        latency_ms: float = 0.0,
+    ) -> Dict[str, Any]:
+        provider, model, language, project_type = self._edit_feedback_key(
+            provider, model, language, project_type
+        )
+        strategy = str(strategy or "").strip().casefold()[:64]
+        if not strategy:
+            raise ValueError("edit strategy is required")
+        failure_kind = str(failure_kind or "").strip().casefold()
+        now = time.time()
+        half_life_seconds = 30.0 * 86400.0
+        metric_names = (
+            "attempts",
+            "successes",
+            "parse_failures",
+            "apply_failures",
+            "validation_failures",
+            "repair_required",
+            "rollbacks",
+            "files_changed",
+            "output_tokens",
+            "latency_ms",
+        )
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """SELECT attempts, successes, parse_failures, apply_failures,
+                          validation_failures, repair_required, rollbacks,
+                          files_changed, output_tokens, latency_ms, updated_at
+                   FROM edit_strategy_feedback
+                   WHERE workspace_id = ? AND provider = ? AND model = ?
+                     AND language = ? AND project_type = ? AND strategy = ?""",
+                (workspace_id, provider, model, language, project_type, strategy),
+            ).fetchone()
+            current = {name: 0.0 for name in metric_names}
+            if row is not None:
+                age = max(0.0, now - float(row["updated_at"] or now))
+                decay = 2.0 ** (-(age / half_life_seconds))
+                for name in metric_names:
+                    current[name] = max(0.0, float(row[name] or 0.0)) * decay
+
+            current["attempts"] += 1.0
+            current["successes"] += 1.0 if success else 0.0
+            failure_column = {
+                "parse_failure": "parse_failures",
+                "apply_failure": "apply_failures",
+                "validation_failure": "validation_failures",
+            }.get(failure_kind)
+            if failure_column:
+                current[failure_column] += 1.0
+            current["repair_required"] += 1.0 if repair_required else 0.0
+            current["rollbacks"] += 1.0 if rollback else 0.0
+            current["files_changed"] += max(0, int(files_changed or 0))
+            current["output_tokens"] += max(0, int(output_tokens or 0))
+            current["latency_ms"] += max(0.0, float(latency_ms or 0.0))
+
+            conn.execute(
+                """INSERT INTO edit_strategy_feedback
+                   (workspace_id, provider, model, language, project_type, strategy,
+                    attempts, successes, parse_failures, apply_failures,
+                    validation_failures, repair_required, rollbacks, files_changed,
+                    output_tokens, latency_ms, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(workspace_id, provider, model, language, project_type, strategy)
+                   DO UPDATE SET attempts=excluded.attempts,
+                                 successes=excluded.successes,
+                                 parse_failures=excluded.parse_failures,
+                                 apply_failures=excluded.apply_failures,
+                                 validation_failures=excluded.validation_failures,
+                                 repair_required=excluded.repair_required,
+                                 rollbacks=excluded.rollbacks,
+                                 files_changed=excluded.files_changed,
+                                 output_tokens=excluded.output_tokens,
+                                 latency_ms=excluded.latency_ms,
+                                 updated_at=excluded.updated_at""",
+                (
+                    workspace_id,
+                    provider,
+                    model,
+                    language,
+                    project_type,
+                    strategy,
+                    current["attempts"],
+                    current["successes"],
+                    current["parse_failures"],
+                    current["apply_failures"],
+                    current["validation_failures"],
+                    current["repair_required"],
+                    current["rollbacks"],
+                    current["files_changed"],
+                    current["output_tokens"],
+                    current["latency_ms"],
+                    now,
+                ),
+            )
+        return {**current, "strategy": strategy, "updated_at": now}
+
     def get_messages_for_conversation(self, conv_id: str) -> List[Dict[str, Any]]:
         with self.db.get_connection() as conn:
             cur = conn.cursor()

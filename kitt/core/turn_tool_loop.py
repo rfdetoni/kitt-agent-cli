@@ -79,6 +79,7 @@ class TurnToolLoopMixin:
         tool_calls = 0
         malformed_calls = 0
         policy_denials = 0
+        edit_repairs_pending: set[str] = set()
 
         thinking_started_at = time.time()
         thinking_completed = False
@@ -254,6 +255,24 @@ class TurnToolLoopMixin:
             )
             if is_patch_call and not self.diff_parser.parse(str(operation_args.get("patch", ""))):
                 malformed_calls += 1
+                if hasattr(self, "edit_strategy_tracker"):
+                    self.edit_strategy_tracker.record(
+                        "search_replace",
+                        False,
+                        context=getattr(self.session_state, "edit_strategy_context", None),
+                        failure_kind="parse_failure",
+                        output_tokens=TokenCounter.count_tokens(full_response),
+                        latency_ms=(time.perf_counter() - model_round_started_at) * 1000,
+                    )
+                    edit_repairs_pending.add("search_replace")
+                    trace_event(
+                        logger,
+                        "edit_strategy.observed",
+                        turn_id=cmd.turn_id,
+                        strategy="search_replace",
+                        success=False,
+                        failure_kind="parse_failure",
+                    )
                 if malformed_calls > 2:
                     yield TurnFailed(error="Invalid apply_patch request: no valid SEARCH/REPLACE blocks."), None, None
                     return
@@ -323,16 +342,59 @@ class TurnToolLoopMixin:
                 and edit_result_was_executed(tool_result)
                 and hasattr(self, "edit_strategy_tracker")
             ):
+                metadata = dict(tool_result.metadata or {})
+                error_text = str(tool_result.error or "")
+                post_edit_gate = metadata.get("post_edit_gate")
+                validation_failed = (
+                    isinstance(post_edit_gate, dict)
+                    and post_edit_gate.get("ok") is False
+                )
+                failure_kind = ""
+                if not tool_result.success:
+                    failure_kind = (
+                        "validation_failure" if validation_failed else "apply_failure"
+                    )
+                rolled_back = bool(
+                    metadata.get("post_edit_rolled_back")
+                    or metadata.get("post_edit_rollback_failed")
+                    or "rolled back" in error_text.casefold()
+                    or "reverted" in error_text.casefold()
+                )
+                changed_paths = metadata.get("changed_paths")
+                if not isinstance(changed_paths, list):
+                    changed_paths = self._paths_from_tool(
+                        tool_name, tool_args, tool_result
+                    )
+                repair_required = bool(
+                    tool_result.success and observed_strategy in edit_repairs_pending
+                )
                 self.edit_strategy_tracker.record(
                     observed_strategy,
                     bool(tool_result.success),
+                    context=getattr(self.session_state, "edit_strategy_context", None),
+                    failure_kind=failure_kind,
+                    repair_required=repair_required,
+                    rollback=rolled_back,
+                    files_changed=len(changed_paths),
+                    output_tokens=TokenCounter.count_tokens(
+                        str(tool_result.output or tool_result.error or "")
+                    ),
+                    latency_ms=(time.perf_counter() - tool_started_at) * 1000,
                 )
+                if tool_result.success:
+                    edit_repairs_pending.discard(observed_strategy)
+                else:
+                    edit_repairs_pending.add(observed_strategy)
                 trace_event(
                     logger,
                     "edit_strategy.observed",
                     turn_id=cmd.turn_id,
                     strategy=observed_strategy,
                     success=bool(tool_result.success),
+                    failure_kind=failure_kind,
+                    repair_required=repair_required,
+                    rollback=rolled_back,
+                    files_changed=len(changed_paths),
                 )
             if tool_result.requires_approval:
                 # Pending-action registration is state mutation. Order it

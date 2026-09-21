@@ -4,13 +4,16 @@ from pathlib import Path
 
 from kitt.domain.entities import SemanticTask
 from kitt.edit_format.strategy import (
+    EditStrategyContext,
     EditStrategyHistory,
     EditStrategySelector,
     EditStrategyTracker,
+    infer_edit_strategy_context,
     edit_result_was_executed,
     strategy_for_tool_call,
 )
 from kitt.router.models import ModelCapabilities
+from kitt.history.service import HistoryService
 
 
 def _caps(*, tier="large", local=False, edit=0.9, reasoning=0.9, context=32768):
@@ -136,3 +139,104 @@ def test_tool_call_mapping_and_nonexecution_filter():
         error = "Execution denied by PolicyEngine for tool 'write_file'."
 
     assert edit_result_was_executed(PolicyDenied()) is False
+
+
+
+def test_feedback_metrics_are_conservative_and_track_costs():
+    tracker = EditStrategyTracker()
+    context = EditStrategyContext(
+        workspace_id="ws",
+        provider="openai",
+        model="model",
+        language="python",
+        project_type="python",
+    )
+    for _ in range(3):
+        tracker.record(
+            "search_replace",
+            False,
+            context=context,
+            failure_kind="apply_failure",
+            output_tokens=100,
+            latency_ms=20,
+        )
+    below_threshold = tracker.snapshot(context)["search_replace"]
+    assert below_threshold.attempts == 3
+    assert below_threshold.apply_failures == 3
+    assert below_threshold.avg_output_tokens == 100
+    assert below_threshold.avg_latency_ms == 20
+
+    tracker.record(
+        "search_replace",
+        True,
+        context=context,
+        repair_required=True,
+        rollback=True,
+        files_changed=2,
+        output_tokens=200,
+        latency_ms=40,
+    )
+    stats = tracker.snapshot(context)["search_replace"]
+    assert stats.attempts == 4
+    assert stats.successes == 1
+    assert stats.repair_rate == 0.25
+    assert stats.rollback_rate == 0.25
+    assert stats.files_changed == 2
+
+
+def test_feedback_persists_by_workspace_model_language_and_project(tmp_path: Path):
+    service = HistoryService(root_dir=str(tmp_path))
+    try:
+        context = EditStrategyContext(
+            workspace_id=service.workspace_id,
+            provider="openai",
+            model="gpt-test",
+            language="python",
+            project_type="python",
+        )
+        writer = EditStrategyTracker(service.repo)
+        writer.record(
+            "structured_symbol",
+            True,
+            context=context,
+            files_changed=1,
+            output_tokens=80,
+            latency_ms=12,
+        )
+
+        reader = EditStrategyTracker(service.repo)
+        stats = reader.snapshot(context)["structured_symbol"]
+        assert stats.attempts > 0.99
+        assert stats.successes > 0.99
+        assert stats.files_changed > 0.99
+
+        other_model = EditStrategyContext(
+            workspace_id=service.workspace_id,
+            provider="openai",
+            model="different-model",
+            language="python",
+            project_type="python",
+        )
+        assert reader.snapshot(other_model)["structured_symbol"].attempts == 0
+    finally:
+        service.close()
+
+
+def test_context_inference_tracks_project_and_language(tmp_path: Path):
+    (tmp_path / "pom.xml").write_text("<project/>", encoding="utf-8")
+    task = SemanticTask(
+        original_prompt="refactor service",
+        intent="REFACTOR",
+        paths=["src/main/java/App.java"],
+        technologies=["Spring Boot", "Java"],
+    )
+    context = infer_edit_strategy_context(
+        workspace_id="ws",
+        provider="openai",
+        model="gpt-test",
+        task=task,
+        explicit_files=("src/main/java/App.java",),
+        root_path=tmp_path,
+    )
+    assert context.language == "java"
+    assert context.project_type == "java"

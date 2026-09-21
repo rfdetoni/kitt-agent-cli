@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Set, Optional
+from typing import Any, List, Dict, Set, Optional
 from kitt.domain.entities import SemanticTask, ContextPlan, ChangeSet
 
 @dataclass
@@ -16,5 +16,6 @@ class SessionState:
     compact_history_summary: str = ""
     edit_strategy: str = "search_replace"
     edit_strategy_reason: str = ""
+    edit_strategy_context: Any = None
     architect_used: bool = False
     architect_profile: str = ""
