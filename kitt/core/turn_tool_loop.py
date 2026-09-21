@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import logging
 import re
 import time
 import uuid
 from typing import Iterator, Optional
+from urllib.parse import urlsplit
 
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.core.execution_request import ExecutionRequest
-from kitt.core.logging import trace_event
+from kitt.core.logging import summarize_trace_messages, summarize_trace_text, trace_event
 from kitt.core.pending_action import PendingAction
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import (
@@ -41,6 +43,86 @@ from kitt.tools.safe_python import parse_python_compute_call
 logger = logging.getLogger("kitt.core.turn_processor")
 
 
+def _runtime_operation_name(tool_name: str, tool_args: object) -> str:
+    if tool_name == "kitt_runtime" and isinstance(tool_args, dict):
+        return str(tool_args.get("operation") or "")
+    return str(tool_name or "")
+
+
+def _browser_trace_origin(value: object) -> str:
+    try:
+        parsed = urlsplit(str(value or "").strip())
+    except ValueError:
+        return ""
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+    host = parsed.hostname
+    display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if (parsed.scheme == "http" and port == 80) or (
+        parsed.scheme == "https" and port == 443
+    ):
+        port = None
+    return f"{parsed.scheme}://{display_host}" + (f":{port}" if port is not None else "")
+
+
+def _browser_trace_call(tool_name: str, tool_args: object) -> dict | None:
+    operation = _runtime_operation_name(tool_name, tool_args)
+    if not operation.startswith("browser."):
+        return None
+    arguments = {}
+    if isinstance(tool_args, dict):
+        raw_arguments = tool_args.get("arguments", {})
+        if isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+    encoded = json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str).encode(
+        "utf-8", "replace"
+    )
+    return {
+        "operation": operation,
+        "action": operation.split(".", 1)[1],
+        "origin": _browser_trace_origin(arguments.get("url")),
+        "status": "proposed",
+        "duration_ms": 0,
+        "bytes": len(encoded),
+        "blocked_by_origin_policy": False,
+    }
+
+
+def _browser_trace_result(
+    browser_call: dict,
+    *,
+    success: bool,
+    output: object,
+    error: object,
+    duration_ms: float,
+) -> dict:
+    origin = str(browser_call.get("origin") or "")
+    output_text = str(output or "")
+    if not origin and output_text:
+        try:
+            payload = json.loads(output_text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            origin = _browser_trace_origin(payload.get("url"))
+    error_text = str(error or "").casefold()
+    return {
+        "action": str(browser_call.get("action") or ""),
+        "origin": origin,
+        "status": "success" if success else "error",
+        "duration_ms": round(max(0.0, float(duration_ms)), 3),
+        "bytes": len(output_text.encode("utf-8", "replace")),
+        "blocked_by_origin_policy": (
+            "origin" in error_text
+            and any(marker in error_text for marker in ("blocked", "outside", "scope"))
+        ),
+    }
+
+
 class TurnToolLoopMixin:
     """Host-tool execution phase extracted from TurnProcessor."""
 
@@ -66,12 +148,12 @@ class TurnToolLoopMixin:
             turn_id=cmd.turn_id,
             conversation_id=cmd.conversation_id,
             mode=cmd.mode,
-            prompt=cmd.prompt,
+            prompt=summarize_trace_text(cmd.prompt),
             route=effective_agent_route,
             workspace_id=workspace_id,
             enabled_tools=request.enabled_tools,
-            system_prompt=request.system_prompt,
-            messages=execution_messages,
+            system_prompt=summarize_trace_text(request.system_prompt),
+            messages=summarize_trace_messages(execution_messages),
         )
         full_response = ""
         max_python_calls = 2
@@ -135,8 +217,8 @@ class TurnToolLoopMixin:
                 "tool_loop.model_response",
                 turn_id=cmd.turn_id,
                 route=effective_agent_route,
-                response=full_response,
-                execution_messages=execution_messages,
+                response=summarize_trace_text(full_response),
+                execution_messages=summarize_trace_messages(execution_messages),
             )
 
             if not thinking_completed:
@@ -240,14 +322,15 @@ class TurnToolLoopMixin:
                 tool_args.get("operation", "-") if isinstance(tool_args, dict) else "-",
                 sorted(operation_args) if isinstance(operation_args, dict) else [],
             )
+            browser_trace_call = _browser_trace_call(tool_name, tool_args)
             trace_event(
                 logger,
                 "tool_loop.tool_call",
                 turn_id=cmd.turn_id,
                 call=tool_calls,
                 tool=tool_name,
-                args=tool_args,
-                operation_args=operation_args,
+                args=browser_trace_call if browser_trace_call is not None else tool_args,
+                operation_args=None if browser_trace_call is not None else operation_args,
                 route=effective_agent_route,
             )
             is_patch_call = tool_name == "apply_patch" or (
@@ -315,6 +398,7 @@ class TurnToolLoopMixin:
                 (time.perf_counter() - tool_started_at) * 1000,
                 detail={"tool": tool_name, "requires_approval": bool(tool_result.requires_approval)},
             )
+            tool_duration_ms = (time.perf_counter() - tool_started_at) * 1000
             logger.debug(
                 "host result turn=%s call=%s tool=%s success=%s approval=%s error=%r",
                 cmd.turn_id,
@@ -322,7 +406,18 @@ class TurnToolLoopMixin:
                 tool_name,
                 tool_result.success,
                 tool_result.requires_approval,
-                tool_result.error,
+                None if browser_trace_call is not None else tool_result.error,
+            )
+            browser_trace_result = (
+                _browser_trace_result(
+                    browser_trace_call,
+                    success=bool(tool_result.success),
+                    output=tool_result.output,
+                    error=tool_result.error,
+                    duration_ms=tool_duration_ms,
+                )
+                if browser_trace_call is not None
+                else None
             )
             trace_event(
                 logger,
@@ -332,9 +427,9 @@ class TurnToolLoopMixin:
                 tool=tool_name,
                 success=tool_result.success,
                 requires_approval=tool_result.requires_approval,
-                output=tool_result.output,
-                error=tool_result.error,
-                metadata=tool_result.metadata,
+                output=None if browser_trace_result is not None else tool_result.output,
+                error=None if browser_trace_result is not None else tool_result.error,
+                metadata=browser_trace_result if browser_trace_result is not None else tool_result.metadata,
             )
             observed_strategy = strategy_for_tool_call(tool_name, tool_args)
             if (
@@ -578,8 +673,12 @@ class TurnToolLoopMixin:
                 turn_id=cmd.turn_id,
                 call=tool_calls,
                 tool=tool_name,
-                output_for_model=output_str,
-                execution_messages=execution_messages,
+                output_for_model=(
+                    summarize_trace_text(output_str)
+                    if browser_trace_call is not None
+                    else output_str
+                ),
+                execution_messages=summarize_trace_messages(execution_messages),
             )
 
         snapshots[cmd.turn_id] = list(execution_messages)
@@ -591,7 +690,7 @@ class TurnToolLoopMixin:
             tool_calls=tool_calls,
             malformed_calls=malformed_calls,
             policy_denials=policy_denials,
-            final_response=full_response,
-            execution_messages=execution_messages,
+            final_response=summarize_trace_text(full_response),
+            execution_messages=summarize_trace_messages(execution_messages),
         )
         yield None, full_response, execution_messages

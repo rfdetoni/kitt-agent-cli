@@ -7,7 +7,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kitt.cli.main import build_parser
-from kitt.core.logging import configure_logging, sanitize_message, trace_event
+from kitt.core.logging import (
+    configure_logging,
+    sanitize_message,
+    summarize_trace_messages,
+    summarize_trace_text,
+    trace_event,
+)
+from kitt.core.turn_tool_loop import _browser_trace_call, _browser_trace_result
 
 
 class LoggingLevelTests(unittest.TestCase):
@@ -63,6 +70,69 @@ class LoggingLevelTests(unittest.TestCase):
         self.assertNotIn("user:pw@", rendered)
         self.assertNotIn("q=value", rendered)
         self.assertIn("https://example.com/private?[redacted]", rendered)
+
+
+    def test_trace_summaries_do_not_serialize_message_contents(self):
+        secret = "typed-secret-value"
+        text_summary = summarize_trace_text(secret)
+        messages_summary = summarize_trace_messages([
+            {"role": "user", "content": secret},
+            {"role": "tool", "content": "<html>private-dom</html>"},
+        ])
+        rendered = json.dumps(
+            {"text": text_summary, "messages": messages_summary},
+            ensure_ascii=False,
+        )
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn("private-dom", rendered)
+        self.assertEqual(messages_summary[0]["role"], "user")
+        self.assertEqual(messages_summary[1]["role"], "tool")
+        self.assertGreater(messages_summary[0]["content"]["bytes"], 0)
+        self.assertEqual(len(messages_summary[0]["content"]["sha256"]), 16)
+
+    def test_browser_trace_keeps_only_safe_metadata(self):
+        call = _browser_trace_call(
+            "kitt_runtime",
+            {
+                "operation": "browser.type",
+                "arguments": {
+                    "selector": "#password",
+                    "text": "do-not-log-this-secret",
+                    "url": "https://user:pw@example.com/login?q=secret",
+                    "submit": True,
+                },
+            },
+        )
+        self.assertIsNotNone(call)
+        rendered_call = json.dumps(call, ensure_ascii=False)
+        self.assertNotIn("do-not-log-this-secret", rendered_call)
+        self.assertNotIn("#password", rendered_call)
+        self.assertNotIn("user:pw", rendered_call)
+        self.assertNotIn("q=secret", rendered_call)
+        self.assertEqual(call["action"], "type")
+        self.assertEqual(call["origin"], "https://example.com")
+
+        result = _browser_trace_result(
+            call,
+            success=True,
+            output='{"url":"https://example.com/private","dom":"sensitive-dom"}',
+            error="",
+            duration_ms=12.5,
+        )
+        rendered_result = json.dumps(result, ensure_ascii=False)
+        self.assertNotIn("sensitive-dom", rendered_result)
+        self.assertNotIn("/private", rendered_result)
+        self.assertEqual(
+            set(result),
+            {
+                "action",
+                "origin",
+                "status",
+                "duration_ms",
+                "bytes",
+                "blocked_by_origin_policy",
+            },
+        )
 
 
 if __name__ == "__main__":

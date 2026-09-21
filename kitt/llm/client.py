@@ -10,7 +10,7 @@ import uuid
 from typing import Dict, Generator, List, Optional
 
 from kitt.domain.entities import ModelProfile
-from kitt.core.logging import trace_event
+from kitt.core.logging import summarize_trace_messages, summarize_trace_text, trace_event
 from kitt.llm.agent_contract import (
     AGENT_CONTRACT_HEADER,
     AGENT_CONTRACT_VERSION,
@@ -416,8 +416,8 @@ class LLMClient:
             base_url=self.profile.base_url,
             route=extra_headers.get(AGENT_ROUTE_HEADER),
             session_key=session_key,
-            system_prompt=system_prompt,
-            messages=messages,
+            system_prompt=summarize_trace_text(system_prompt),
+            messages=summarize_trace_messages(messages),
             response_format=response_format,
             temperature=self.profile.temperature,
             context_window=self.profile.context_window,
@@ -440,7 +440,7 @@ class LLMClient:
                     protocol=self.profile.protocol,
                     model=self.profile.model,
                     route=extra_headers.get(AGENT_ROUTE_HEADER),
-                    chunk=chunk,
+                    chunk=summarize_trace_text(chunk),
                 )
                 yield chunk
         except Exception as exc:
@@ -452,7 +452,7 @@ class LLMClient:
                 model=self.profile.model,
                 route=extra_headers.get(AGENT_ROUTE_HEADER),
                 error=exc,
-                partial_response="".join(chunks),
+                partial_response=summarize_trace_text("".join(chunks)),
             )
             raise
         finally:
@@ -463,6 +463,6 @@ class LLMClient:
                 protocol=self.profile.protocol,
                 model=self.profile.model,
                 route=extra_headers.get(AGENT_ROUTE_HEADER),
-                response="".join(chunks),
+                response=summarize_trace_text("".join(chunks)),
                 chunk_count=len(chunks),
             )

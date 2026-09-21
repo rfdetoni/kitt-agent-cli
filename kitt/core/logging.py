@@ -1,6 +1,7 @@
 """Structured diagnostic logging for K.I.T.T."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -52,6 +53,37 @@ def sanitize_message(value: str) -> str:
         str(value),
     )
     return _URL.sub(lambda match: _sanitize_url(match.group(0)), text)
+
+
+def summarize_trace_text(value: Any) -> Dict[str, Any]:
+    text = str(value or "")
+    encoded = text.encode("utf-8", "replace")
+    return {
+        "chars": len(text),
+        "bytes": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest()[:16],
+    }
+
+
+def summarize_trace_messages(messages: Any) -> list[Dict[str, Any]]:
+    if not isinstance(messages, (list, tuple)):
+        return [{"role": "", "content": summarize_trace_text(messages)}]
+    summarized: list[Dict[str, Any]] = []
+    for item in messages:
+        if isinstance(item, dict):
+            summarized.append(
+                {
+                    "role": str(item.get("role") or ""),
+                    "name": str(item.get("name") or ""),
+                    "keys": sorted(str(key) for key in item.keys()),
+                    "content": summarize_trace_text(item.get("content", "")),
+                }
+            )
+        else:
+            summarized.append(
+                {"role": "", "content": summarize_trace_text(item)}
+            )
+    return summarized
 
 
 def sanitize_value(value: Any, key: str = "") -> Any:
