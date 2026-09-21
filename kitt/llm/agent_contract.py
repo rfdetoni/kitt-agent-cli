@@ -301,11 +301,12 @@ def inject_agent_turn_context(
     workspace_context: Any,
     route: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Prefix volatile turn data to the last user message without mutating inputs.
+    """Prefix volatile turn data to the last real user task without mutating inputs.
 
-    Keeping this data out of system/developer messages preserves the stable prompt
-    prefix used by provider prompt caches. The explicit end marker lets the reverse
-    proxy consume the envelope while forwarding the original user task unchanged.
+    KITT-generated tool feedback must remain byte-stable so the reverse-proxy adapter
+    can restore assistant.tool_calls -> tool(tool_call_id) before transport. Keeping
+    volatile workspace data on a real user task also gives the proxy a stable logical
+    conversation identity after it strips the turn-context envelope.
     """
     payload: Dict[str, Any] = {
         "workspace_context": workspace_context,
@@ -326,8 +327,12 @@ def inject_agent_turn_context(
         content = message.get("content")
         if not isinstance(content, str):
             continue
+        if _is_internal_tool_feedback(content):
+            continue
         message["content"] = f"{envelope}\n\n{content}" if content else envelope
         return cloned
 
-    cloned.append({"role": "user", "content": envelope})
+    # A tool-only continuation has no safe user task to decorate. Keep the tool
+    # result untouched and carry dynamic orchestration context separately.
+    cloned.append({"role": "developer", "content": envelope})
     return cloned
