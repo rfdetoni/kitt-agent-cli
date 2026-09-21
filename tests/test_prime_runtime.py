@@ -9,6 +9,7 @@ from kitt.core.runtime import KittRuntime
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import ApprovalRequired, TurnFailed
 from kitt.history.database import CREATE_TABLES_SQL, HistoryDatabase
+from kitt.history.migrations import CURRENT_SCHEMA_VERSION
 from kitt.history.session_tree import SessionTreeRepository
 from kitt.skills.discovery import SkillDiscovery
 from kitt.skills.loader import ProgressiveSkillLoader
@@ -228,8 +229,9 @@ class TestCanonicalSchema(unittest.TestCase):
                     integrity = conn.execute("PRAGMA integrity_check").fetchall()
             finally:
                 db.close()
-            self.assertEqual(version, 2)
+            self.assertEqual(version, CURRENT_SCHEMA_VERSION)
             self.assertIn("conversations", tables)
+            self.assertIn("edit_strategy_feedback", tables)
             self.assertIn("child_sessions", tables)
             self.assertIn("harness_entries", tables)
             self.assertEqual(len(fk), 0)
