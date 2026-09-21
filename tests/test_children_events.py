@@ -53,6 +53,7 @@ class TestChildProcessTeardown(unittest.TestCase):
         with (
             patch("kitt.children.lifecycle.sys.platform", "linux"),
             patch("kitt.children.lifecycle.os.killpg", side_effect=killpg, create=True),
+            patch("kitt.children.lifecycle.signal.SIGKILL", 9, create=True),
         ):
             ChildAgentManager._kill_tree(process)
 
