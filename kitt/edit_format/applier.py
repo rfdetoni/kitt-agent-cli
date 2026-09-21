@@ -20,7 +20,7 @@ _MAX_CHANGESET_JOURNAL_BYTES = 32 * 1024 * 1024
 
 
 class DiffApplier:
-    """Atomic-at-workspace-boundary SEARCH/REPLACE applier.
+    """Atomic-at-workspace-boundary edit-block applier.
 
     Every file is prepared first, optimistic preconditions are checked at the
     write boundary, each path is mutated only once, and a failed multi-file
@@ -236,7 +236,7 @@ class DiffApplier:
         fs = WorkspaceFileSystem(root, max_file_bytes=DEFAULT_MAX_FILE_BYTES)
         self.tracker.root_dir = root
         if not blocks:
-            return EditResult(success=False, errors=["No valid SEARCH/REPLACE blocks found."])
+            return EditResult(success=False, errors=["No valid patch edit blocks found."])
 
         mutation_lock = workspace_mutation_lock(root)
         with mutation_lock:

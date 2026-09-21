@@ -7,12 +7,15 @@ from pathlib import Path
 import threading
 from typing import Any, Dict, Iterable, Literal, Mapping
 
+from kitt.edit_format.parser import detect_patch_format
+
 
 logger = logging.getLogger(__name__)
 
-EditStrategy = Literal["structured_symbol", "search_replace", "whole_file"]
+EditStrategy = Literal["structured_symbol", "unified_diff", "search_replace", "whole_file"]
 EDIT_STRATEGIES: tuple[EditStrategy, ...] = (
     "structured_symbol",
+    "unified_diff",
     "search_replace",
     "whole_file",
 )
@@ -248,15 +251,20 @@ class EditStrategyDecision:
 def strategy_for_tool_call(tool_name: str, args: Any) -> EditStrategy | None:
     name = str(tool_name or "")
     operation = ""
+    payload: Any = args
     if name == "kitt_runtime" and isinstance(args, dict):
         operation = str(args.get("operation") or "")
+        nested = args.get("arguments")
+        if isinstance(nested, dict):
+            payload = nested
     elif name:
         operation = name
 
     if operation in {"repo.edit_symbol", "edit_symbol"}:
         return "structured_symbol"
     if operation in {"patch.apply", "apply_patch"}:
-        return "search_replace"
+        patch = str(payload.get("patch", "") or "") if isinstance(payload, dict) else ""
+        return "unified_diff" if detect_patch_format(patch) == "unified_diff" else "search_replace"
     if operation in {"repo.write_file", "write_file"}:
         return "whole_file"
     return None
@@ -400,6 +408,7 @@ class EditStrategySelector:
     ) -> EditStrategyDecision:
         scores: Dict[EditStrategy, float] = {
             "structured_symbol": 0.45,
+            "unified_diff": 0.60,
             "search_replace": 0.70,
             "whole_file": 0.25,
         }
@@ -415,27 +424,38 @@ class EditStrategySelector:
             scores["structured_symbol"] += 0.80 * (edit_score - 0.5)
             scores["structured_symbol"] += 0.40 * (reasoning - 0.5)
             scores["structured_symbol"] += 0.25 * (tool_reliability - 0.5)
+            scores["unified_diff"] += 0.55 * (edit_score - 0.5)
+            scores["unified_diff"] += 0.30 * (reasoning - 0.5)
+            scores["unified_diff"] += 0.20 * (tool_reliability - 0.5)
             if int(getattr(caps, "input_context_limit", 0) or 0) >= 16_384:
                 scores["structured_symbol"] += 0.15
+                scores["unified_diff"] += 0.10
             if str(getattr(caps, "tier", "")).lower() == "small":
                 scores["search_replace"] += 0.25
                 scores["structured_symbol"] -= 0.10
+                scores["unified_diff"] -= 0.15
             if bool(getattr(caps, "is_local", False)):
                 scores["search_replace"] += 0.10
+                scores["unified_diff"] -= 0.05
             if edit_score >= 0.85:
                 reasons.append("high model code-edit score")
 
         symbols = tuple(str(item) for item in getattr(task, "symbols", ()) if str(item))
         if symbols:
             scores["structured_symbol"] += 0.80
+            scores["unified_diff"] -= 0.05
             reasons.append("task names concrete symbols")
 
         raw_intent = getattr(task, "intent", "")
         intent = str(getattr(raw_intent, "value", raw_intent) or "").upper()
         if intent in {"DEBUG", "REFACTOR"}:
-            scores["structured_symbol"] += 0.25
+            if symbols:
+                scores["structured_symbol"] += 0.25
+            else:
+                scores["unified_diff"] += 0.20
         elif intent == "IMPLEMENT":
             scores["search_replace"] += 0.10
+            scores["unified_diff"] += 0.05
 
         task_paths = tuple(str(item) for item in getattr(task, "paths", ()) if str(item))
         existing, missing = self._safe_target_states(
@@ -447,6 +467,10 @@ class EditStrategySelector:
             reasons.append("one or more target files do not exist yet")
         if existing and not symbols:
             scores["search_replace"] += 0.15
+            scores["unified_diff"] += 0.20
+        if existing >= 2 and not symbols:
+            scores["unified_diff"] += 0.25
+            reasons.append("multiple existing targets favor compact unified hunks")
 
         prompt_lower = str(prompt or "").casefold()
         creation_terms = (
@@ -480,6 +504,7 @@ class EditStrategySelector:
                 )
 
         tie_order: tuple[EditStrategy, ...] = (
+            "unified_diff",
             "search_replace",
             "structured_symbol",
             "whole_file",

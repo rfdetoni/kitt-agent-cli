@@ -74,6 +74,26 @@ def test_small_local_model_defaults_to_search_replace(tmp_path: Path):
     assert decision.strategy == "search_replace"
 
 
+def test_strong_model_with_multiple_existing_targets_prefers_unified_diff(tmp_path: Path):
+    for name in ("one.py", "two.py"):
+        (tmp_path / name).write_text("value = 1\n", encoding="utf-8")
+    task = SemanticTask(
+        original_prompt="fix both files",
+        intent="DEBUG",
+        paths=["one.py", "two.py"],
+    )
+    decision = EditStrategySelector().select(
+        model_capabilities=_caps(),
+        task=task,
+        prompt="fix both files",
+        explicit_files=("one.py", "two.py"),
+        root_path=tmp_path,
+        history={},
+    )
+    assert decision.strategy == "unified_diff"
+    assert decision.scores["unified_diff"] > decision.scores["search_replace"]
+
+
 def test_new_file_creation_prefers_whole_file(tmp_path: Path):
     task = SemanticTask(original_prompt="crie new_module.py", intent="IMPLEMENT", paths=["new_module.py"])
     decision = EditStrategySelector().select(
@@ -122,8 +142,23 @@ def test_tool_call_mapping_and_nonexecution_filter():
         "kitt_runtime", {"operation": "repo.edit_symbol"}
     ) == "structured_symbol"
     assert strategy_for_tool_call(
-        "kitt_runtime", {"operation": "patch.apply"}
+        "kitt_runtime",
+        {
+            "operation": "patch.apply",
+            "arguments": {
+                "patch": "service.py\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE"
+            },
+        },
     ) == "search_replace"
+    assert strategy_for_tool_call(
+        "kitt_runtime",
+        {
+            "operation": "patch.apply",
+            "arguments": {
+                "patch": "--- a/service.py\n+++ b/service.py\n@@ -1 +1 @@\n-old\n+new\n"
+            },
+        },
+    ) == "unified_diff"
     assert strategy_for_tool_call("write_file", {}) == "whole_file"
 
     class Result:

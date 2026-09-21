@@ -94,7 +94,7 @@ class ApplyPatchHandler:
         patch_text = args.get("patch", "")
         blocks = ctx.registry.parser.parse(patch_text)
         if not blocks:
-            return ToolResult(False, "", "No valid SEARCH/REPLACE blocks found.")
+            return ToolResult(False, "", "No valid SEARCH/REPLACE or unified-diff blocks found.")
 
         try:
             resolved_paths = {

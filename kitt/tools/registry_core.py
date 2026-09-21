@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from kitt.context_engine.engine import ContextEngine
 from kitt.edit_format.applier import DiffApplier
-from kitt.edit_format.parser import SearchReplaceParser
+from kitt.edit_format.parser import PatchParser
 from kitt.index.repository import RepositoryIndex
 from kitt.tools.approval import ApprovalGrant, ApprovalManager
 from kitt.tools.artifact_tools import ArtifactTools
@@ -66,7 +66,7 @@ class ToolRegistry:
         self.path_policy = WorkspacePathPolicy(root_dir=root_dir)
         self.applier = DiffApplier()
         self.applier.tracker.root_dir = self.root_path
-        self.parser = SearchReplaceParser()
+        self.parser = PatchParser()
         self.approval_manager = ApprovalManager()
         self.safe_python = SafePythonExecutor()
         self.process_runner = ProcessRunner(root_dir)
@@ -328,7 +328,7 @@ class ToolRegistry:
             },
             {"name": "create_directory", "description": "Create a directory inside the workspace without invoking a shell"},
             {"name": "write_file", "description": "Create or overwrite content to a file"},
-            {"name": "apply_patch", "description": "Apply SEARCH/REPLACE diff blocks"},
+            {"name": "apply_patch", "description": "Apply SEARCH/REPLACE blocks or unified diff hunks through the same atomic edit engine"},
             {"name": "run_command", "description": "Run an executable directly without a shell; prefer dedicated filesystem tools for mutations"},
             {"name": "git_status", "description": "Show uncommitted git status"},
             {"name": "git_diff", "description": "Show git diff"},
@@ -386,7 +386,7 @@ class ToolRegistry:
                 "content": "full file text",
                 "expected_content_hash": "optional sha256",
             },
-            "apply_patch": {"patch": "SEARCH/REPLACE blocks"},
+            "apply_patch": {"patch": "SEARCH/REPLACE blocks or standard unified diff"},
             "run_command": {
                 "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
                 "cwd": "optional workspace-relative directory",

@@ -27,7 +27,7 @@ from kitt.context_filter.semantic_filter import SemanticFilter
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
-from kitt.edit_format.parser import SearchReplaceParser
+from kitt.edit_format.parser import PatchParser
 from kitt.edit_format.strategy import (
     EditStrategySelector,
     EditStrategyTracker,
@@ -142,7 +142,7 @@ class TurnProcessor(
         self.deterministic_extractor = DeterministicExtractor()
         self.skill_discovery = SkillDiscovery()
         self.skill_loader = ProgressiveSkillLoader()
-        self.diff_parser = SearchReplaceParser()
+        self.diff_parser = PatchParser()
         self.edit_strategy_selector = EditStrategySelector()
         self.edit_strategy_tracker = EditStrategyTracker()
         self.build_detector = BuildDetector(root_dir=root_dir)
@@ -522,6 +522,9 @@ class TurnProcessor(
             "structured_symbol": (
                 "repo.edit_symbol", "patch.apply", "repo.write_file", "repo.create_directory",
             ),
+            "unified_diff": (
+                "patch.apply", "repo.edit_symbol", "repo.write_file", "repo.create_directory",
+            ),
             "search_replace": (
                 "patch.apply", "repo.edit_symbol", "repo.write_file", "repo.create_directory",
             ),
@@ -590,9 +593,12 @@ After inspection, prefer repo.edit_symbol with the resolved symbol/name and comp
             elif edit_strategy == "whole_file" and "repo.write_file" in operations:
                 examples.append("""Selected edit strategy: whole_file.
 Prefer repo.write_file for a new file or an intentionally complete small-file replacement. Never overwrite a partially inspected existing file; use patch.apply instead when only part of an existing file should change.""")
+            elif edit_strategy == "unified_diff" and "patch.apply" in operations:
+                examples.append("""Selected edit strategy: unified_diff.
+Prefer patch.apply with standard unified diff hunks for existing-file changes. Include ---/+++ file headers and @@ hunks with enough context to anchor every existing-file edit. New files should normally use repo.write_file.""")
             elif "patch.apply" in operations:
                 examples.append("""Selected edit strategy: search_replace.
-Prefer patch.apply for existing-file changes because it minimizes output and preserves untouched content.""")
+Prefer patch.apply with SEARCH/REPLACE blocks for existing-file changes because it minimizes output and preserves untouched content.""")
             if "repo.read" in operations:
                 examples.append("""To read a file:
 <kitt-tool>
@@ -604,7 +610,13 @@ Prefer patch.apply for existing-file changes because it minimizes output and pre
 {"name":"kitt_runtime","arguments":{"operation":"repo.write_file","arguments":{"path":"path/to/file.ext","content":"complete file content"}}}
 </kitt-tool>""")
             if "patch.apply" in operations:
-                examples.append("""To edit an existing file, patch.apply uses SEARCH/REPLACE blocks:
+                if edit_strategy == "unified_diff":
+                    examples.append("""To edit an existing file with unified diff:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"patch.apply","arguments":{"patch":"--- a/path/to/file.ext\\n+++ b/path/to/file.ext\\n@@ -1,2 +1,2 @@\\n context line\\n-old line\\n+new line"}}}
+</kitt-tool>""")
+                else:
+                    examples.append("""To edit an existing file, patch.apply uses SEARCH/REPLACE blocks:
 <kitt-tool>
 {"name":"kitt_runtime","arguments":{"operation":"patch.apply","arguments":{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original text\\n=======\\nreplacement content\\n>>>>>>> REPLACE"}}}
 </kitt-tool>""")
@@ -660,11 +672,16 @@ To create or overwrite a file, use write_file:
 """
         if "apply_patch" in enabled_tools:
             instructions += """
-To edit an existing file, use apply_patch with SEARCH/REPLACE blocks:
+To edit an existing file, apply_patch accepts SEARCH/REPLACE blocks or standard unified diff.
+SEARCH/REPLACE example:
 <kitt-tool>
 {"name":"apply_patch","arguments":{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original lines to find\\n=======\\nreplacement lines\\n>>>>>>> REPLACE"}}
 </kitt-tool>
-Alternatively, you may emit standard SEARCH/REPLACE diff blocks directly:
+Unified diff example:
+<kitt-tool>
+{"name":"apply_patch","arguments":{"patch":"--- a/path/to/file.ext\\n+++ b/path/to/file.ext\\n@@ -1,2 +1,2 @@\\n context line\\n-old line\\n+new line"}}
+</kitt-tool>
+For an existing file, unified-diff insertion hunks must include context/deleted lines so the edit remains content-anchored. You may also emit SEARCH/REPLACE blocks directly:
 path/to/file.ext
 <<<<<<< SEARCH
 exact original lines to find

@@ -336,32 +336,49 @@ class TurnToolLoopMixin:
             is_patch_call = tool_name == "apply_patch" or (
                 tool_name == "kitt_runtime" and tool_args.get("operation") == "patch.apply"
             )
-            if is_patch_call and not self.diff_parser.parse(str(operation_args.get("patch", ""))):
+            patch_text = str(operation_args.get("patch", "")) if is_patch_call else ""
+            if is_patch_call and not self.diff_parser.parse(patch_text):
                 malformed_calls += 1
+                patch_format = self.diff_parser.format(patch_text)
+                failure_strategy = (
+                    patch_format
+                    if patch_format in {"search_replace", "unified_diff"}
+                    else str(getattr(self.session_state, "edit_strategy", "search_replace"))
+                )
+                if failure_strategy not in {"search_replace", "unified_diff"}:
+                    failure_strategy = "search_replace"
                 if hasattr(self, "edit_strategy_tracker"):
                     self.edit_strategy_tracker.record(
-                        "search_replace",
+                        failure_strategy,
                         False,
                         context=getattr(self.session_state, "edit_strategy_context", None),
                         failure_kind="parse_failure",
                         output_tokens=TokenCounter.count_tokens(full_response),
                         latency_ms=(time.perf_counter() - model_round_started_at) * 1000,
                     )
-                    edit_repairs_pending.add("search_replace")
+                    edit_repairs_pending.add(failure_strategy)
                     trace_event(
                         logger,
                         "edit_strategy.observed",
                         turn_id=cmd.turn_id,
-                        strategy="search_replace",
+                        strategy=failure_strategy,
                         success=False,
                         failure_kind="parse_failure",
                     )
                 if malformed_calls > 2:
-                    yield TurnFailed(error="Invalid apply_patch request: no valid SEARCH/REPLACE blocks."), None, None
+                    yield TurnFailed(error="Invalid apply_patch request: no valid SEARCH/REPLACE or unified-diff blocks."), None, None
                     return
+                retry_hint = (
+                    "apply_patch was rejected before approval: arguments.patch must be a valid unified diff "
+                    "with ---/+++ file headers and @@ hunks. Existing-file hunks need at least one context "
+                    "or deleted line so they remain content-anchored; prefer repo.write_file for new files."
+                    if patch_format == "unified_diff"
+                    else "apply_patch was rejected before approval: arguments.patch needs a filename plus "
+                    "<<<<<<< SEARCH, =======, and >>>>>>> REPLACE. For a new file leave SEARCH empty."
+                )
                 execution_messages.extend([
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": "apply_patch was rejected before approval: arguments.patch needs a filename plus <<<<<<< SEARCH, =======, and >>>>>>> REPLACE. For a new file leave SEARCH empty. Retry with one complete envelope."},
+                    {"role": "user", "content": retry_hint + " Retry with one complete envelope."},
                 ])
                 continue
             if tool_name == "python_compute":
