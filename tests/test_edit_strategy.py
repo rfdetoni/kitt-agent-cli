@@ -94,6 +94,49 @@ def test_strong_model_with_multiple_existing_targets_prefers_unified_diff(tmp_pa
     assert decision.scores["unified_diff"] > decision.scores["search_replace"]
 
 
+def test_architect_handoff_selects_meta_strategy_without_changing_concrete_tools(tmp_path: Path):
+    files = ("api.py", "service.py", "repo.py", "tests.py")
+    for name in files:
+        (tmp_path / name).write_text("value = 1\n", encoding="utf-8")
+    task = SemanticTask(
+        original_prompt="refactor the flow across modules",
+        intent="REFACTOR",
+        paths=list(files),
+    )
+
+    baseline = EditStrategySelector().select(
+        model_capabilities=_caps(),
+        task=task,
+        prompt="refactor the flow across modules",
+        explicit_files=files,
+        root_path=tmp_path,
+        history={},
+    )
+    planned = EditStrategySelector().select(
+        model_capabilities=_caps(),
+        task=task,
+        prompt="refactor the flow across modules",
+        explicit_files=files,
+        root_path=tmp_path,
+        history={},
+        architect_used=True,
+        architect_files=files,
+    )
+
+    assert baseline.strategy != "architect_editor"
+    assert planned.strategy == "architect_editor"
+    assert planned.scores["architect_editor"] > planned.scores["unified_diff"]
+    assert strategy_for_tool_call(
+        "kitt_runtime",
+        {
+            "operation": "patch.apply",
+            "arguments": {
+                "patch": "--- a/api.py\n+++ b/api.py\n@@ -1 +1 @@\n-old\n+new\n"
+            },
+        },
+    ) == "unified_diff"
+
+
 def test_new_file_creation_prefers_whole_file(tmp_path: Path):
     task = SemanticTask(original_prompt="crie new_module.py", intent="IMPLEMENT", paths=["new_module.py"])
     decision = EditStrategySelector().select(

@@ -12,8 +12,9 @@ from kitt.edit_format.parser import detect_patch_format
 
 logger = logging.getLogger(__name__)
 
-EditStrategy = Literal["structured_symbol", "unified_diff", "search_replace", "whole_file"]
+EditStrategy = Literal["architect_editor", "structured_symbol", "unified_diff", "search_replace", "whole_file"]
 EDIT_STRATEGIES: tuple[EditStrategy, ...] = (
+    "architect_editor",
     "structured_symbol",
     "unified_diff",
     "search_replace",
@@ -405,14 +406,20 @@ class EditStrategySelector:
         explicit_files: Iterable[str],
         root_path: str | Path,
         history: Mapping[EditStrategy, EditStrategyHistory] | None = None,
+        architect_used: bool = False,
+        architect_files: Iterable[str] = (),
     ) -> EditStrategyDecision:
         scores: Dict[EditStrategy, float] = {
+            "architect_editor": -10.0,
             "structured_symbol": 0.45,
             "unified_diff": 0.60,
             "search_replace": 0.70,
             "whole_file": 0.25,
         }
         reasons: list[str] = []
+        edit_score = 0.5
+        reasoning = 0.5
+        tool_reliability = 0.5
 
         caps = model_capabilities
         if caps is not None:
@@ -439,6 +446,25 @@ class EditStrategySelector:
                 scores["unified_diff"] -= 0.05
             if edit_score >= 0.85:
                 reasons.append("high model code-edit score")
+
+        architect_targets = tuple(
+            str(item) for item in architect_files if str(item)
+        )
+        if architect_used:
+            # Architect/editor is a meta-strategy: the architect remains
+            # advisory and the executor still uses the concrete mutation
+            # tools below. Give it a decisive score only when a validated
+            # architect handoff actually exists for this turn.
+            scores["architect_editor"] = (
+                1.55
+                + (0.35 * (reasoning - 0.5))
+                + (0.20 * (tool_reliability - 0.5))
+            )
+            if len(architect_targets) >= 4:
+                scores["architect_editor"] += 0.30
+            elif len(architect_targets) >= 2:
+                scores["architect_editor"] += 0.15
+            reasons.append("architect handoff available for staged execution")
 
         symbols = tuple(str(item) for item in getattr(task, "symbols", ()) if str(item))
         if symbols:
@@ -504,6 +530,7 @@ class EditStrategySelector:
                 )
 
         tie_order: tuple[EditStrategy, ...] = (
+            "architect_editor",
             "unified_diff",
             "search_replace",
             "structured_symbol",

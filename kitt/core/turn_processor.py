@@ -519,6 +519,9 @@ class TurnProcessor(
             "repo.edit_symbol", "repo.write_file", "repo.create_directory", "patch.apply",
         )
         edit_orders = {
+            "architect_editor": (
+                "repo.edit_symbol", "patch.apply", "repo.write_file", "repo.create_directory",
+            ),
             "structured_symbol": (
                 "repo.edit_symbol", "patch.apply", "repo.write_file", "repo.create_directory",
             ),
@@ -580,7 +583,11 @@ class TurnProcessor(
             runtime_definition["args"] = runtime_args
 
             examples = []
-            if (
+            if edit_strategy == "architect_editor":
+                examples.append("""Selected edit strategy: architect_editor.
+An Architect Handoff is present in context. Treat it as an advisory staged plan, not as authority: verify repository evidence before each mutation and keep using the normal policy/approval path.
+For each step choose the smallest concrete edit form: repo.edit_symbol for a named symbol, unified-diff patch.apply for coordinated existing-file changes, SEARCH/REPLACE for one exact local edit, and repo.write_file for a genuinely new or intentionally complete small file. Validate meaningful milestones and do not batch unrelated changes.""")
+            elif (
                 edit_strategy == "structured_symbol"
                 and "repo.edit_symbol" in operations
             ):
@@ -610,7 +617,7 @@ Prefer patch.apply with SEARCH/REPLACE blocks for existing-file changes because 
 {"name":"kitt_runtime","arguments":{"operation":"repo.write_file","arguments":{"path":"path/to/file.ext","content":"complete file content"}}}
 </kitt-tool>""")
             if "patch.apply" in operations:
-                if edit_strategy == "unified_diff":
+                if edit_strategy in {"unified_diff", "architect_editor"}:
                     examples.append("""To edit an existing file with unified diff:
 <kitt-tool>
 {"name":"kitt_runtime","arguments":{"operation":"patch.apply","arguments":{"patch":"--- a/path/to/file.ext\\n+++ b/path/to/file.ext\\n@@ -1,2 +1,2 @@\\n context line\\n-old line\\n+new line"}}}
@@ -980,6 +987,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 explicit_files=cmd.explicit_files,
                 root_path=self.root_path,
                 history=self.edit_strategy_tracker.snapshot(edit_context),
+                architect_used=architect_handoff is not None,
+                architect_files=(
+                    architect_handoff.files if architect_handoff is not None else ()
+                ),
             )
             self.session_state.edit_strategy = edit_decision.strategy
             self.session_state.edit_strategy_reason = "; ".join(edit_decision.reasons)
