@@ -25,10 +25,11 @@ def test_schema_v1_upgrades_in_place_with_hot_path_indexes():
             "SELECT name FROM sqlite_master WHERE type = 'index' AND name IS NOT NULL"
         )
     }
-    assert version == CURRENT_SCHEMA_VERSION == 2
+    assert version == CURRENT_SCHEMA_VERSION
     assert "idx_conversations_workspace_updated" in indexes
     assert "idx_telemetry_conversation_start" in indexes
     assert "idx_telemetry_route_start" in indexes
+    assert "idx_edit_strategy_feedback_lookup" in indexes
 
 
 def test_tool_gain_prefix_range_keeps_telemetry_semantics():
