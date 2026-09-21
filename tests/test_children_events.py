@@ -34,6 +34,7 @@ class TestChildProcessTeardown(unittest.TestCase):
             patch(
                 "kitt.children.lifecycle.os.killpg",
                 side_effect=ProcessLookupError(3, "No such process"),
+                create=True,
             ),
         ):
             ChildAgentManager._kill_tree(process)
@@ -51,7 +52,7 @@ class TestChildProcessTeardown(unittest.TestCase):
 
         with (
             patch("kitt.children.lifecycle.sys.platform", "linux"),
-            patch("kitt.children.lifecycle.os.killpg", side_effect=killpg),
+            patch("kitt.children.lifecycle.os.killpg", side_effect=killpg, create=True),
         ):
             ChildAgentManager._kill_tree(process)
 
