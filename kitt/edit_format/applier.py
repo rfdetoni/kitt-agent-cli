@@ -30,6 +30,20 @@ class DiffApplier:
     def __init__(self, changeset_tracker: ChangeSetTracker = None):
         self.tracker = changeset_tracker or ChangeSetTracker()
 
+    @staticmethod
+    def _normalize_newlines(value: str) -> str:
+        return value.replace("\r\n", "\n").replace("\r", "\n")
+
+    @staticmethod
+    def _match_target_line_endings(target: str, replacement: str) -> str:
+        """Preserve the target file's local newline convention for an edit."""
+        normalized = DiffApplier._normalize_newlines(replacement)
+        if "\r\n" in target:
+            return normalized.replace("\n", "\r\n")
+        if "\r" in target and "\n" not in target:
+            return normalized.replace("\n", "\r")
+        return normalized
+
     def _find_fuzzy_replacement(
         self,
         current_content: str,
@@ -43,8 +57,19 @@ class DiffApplier:
         if count:
             return True, search_content, count
 
-        lines = current_content.splitlines()
-        search_lines = search_content.splitlines()
+        normalized_search = self._normalize_newlines(search_content)
+
+        # First handle the common cross-platform case exactly: a model emits
+        # LF hunks for a CRLF/CR workspace file. Return the *original* target
+        # bytes-as-text so str.replace can mutate the actual working buffer.
+        for newline in ("\r\n", "\r"):
+            candidate = normalized_search.replace("\n", newline)
+            count = current_content.count(candidate)
+            if count:
+                return True, candidate, count
+
+        lines = current_content.splitlines(keepends=True)
+        search_lines = normalized_search.splitlines()
         n_search = len(search_lines)
         if n_search == 0 or not lines:
             return False, "", 0
@@ -52,13 +77,23 @@ class DiffApplier:
         best_ratio = 0.0
         second_best = 0.0
         best_chunk = ""
+        search_has_final_newline = search_content.endswith(("\n", "\r"))
         for index in range(len(lines) - n_search + 1):
-            chunk = "\n".join(lines[index:index + n_search])
-            ratio = difflib.SequenceMatcher(None, chunk, search_content).ratio()
+            raw_lines = lines[index:index + n_search]
+            comparable = "\n".join(line.rstrip("\r\n") for line in raw_lines)
+            raw_chunk = "".join(raw_lines)
+            if raw_lines and not search_has_final_newline:
+                if raw_chunk.endswith("\r\n"):
+                    raw_chunk = raw_chunk[:-2]
+                elif raw_chunk.endswith(("\n", "\r")):
+                    raw_chunk = raw_chunk[:-1]
+            ratio = difflib.SequenceMatcher(
+                None, comparable, normalized_search
+            ).ratio()
             if ratio > best_ratio:
                 second_best = best_ratio
                 best_ratio = ratio
-                best_chunk = chunk
+                best_chunk = raw_chunk
             elif ratio > second_best:
                 second_best = ratio
         if best_ratio >= 0.8:
@@ -160,7 +195,10 @@ class DiffApplier:
                         raise ValueError(
                             f"Ambiguous SEARCH block in '{rel}': matched {count} occurrences"
                         )
-                    working = working.replace(target, block.replace_content, 1)
+                    replacement = self._match_target_line_endings(
+                        target, block.replace_content
+                    )
+                    working = working.replace(target, replacement, 1)
 
                 if working_exists and any(block.is_new_file for block in path_blocks):
                     try:

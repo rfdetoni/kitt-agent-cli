@@ -82,6 +82,45 @@ def test_unified_diff_uses_existing_atomic_applier_and_undo_boundary(tmp_path: P
     )
 
 
+def test_unified_diff_preserves_crlf_and_undo_bytes(tmp_path: Path):
+    target = tmp_path / "service.py"
+    original = (
+        b"def first():\r\n"
+        b"    return 1\r\n"
+        b"\r\n"
+        b"def second():\r\n"
+        b"    return 3\r\n"
+    )
+    target.write_bytes(original)
+    patch = """--- a/service.py
++++ b/service.py
+@@ -1,2 +1,2 @@
+ def first():
+-    return 1
++    return 2
+@@ -4,2 +4,2 @@
+ def second():
+-    return 3
++    return 4
+"""
+    applier = DiffApplier()
+
+    result = applier.apply(PatchParser().parse(patch), root_dir=str(tmp_path))
+
+    assert result.success is True
+    assert target.read_bytes() == (
+        b"def first():\r\n"
+        b"    return 2\r\n"
+        b"\r\n"
+        b"def second():\r\n"
+        b"    return 4\r\n"
+    )
+
+    reverted = applier.tracker.revert_last_changeset()
+    assert reverted is not None
+    assert target.read_bytes() == original
+
+
 def test_unified_diff_new_file_and_delete_file_are_translated():
     parser = PatchParser()
     create_patch = """diff --git a/new.py b/new.py
