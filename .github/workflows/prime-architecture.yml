@@ -53,7 +53,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rfdetoni/kitt-assistant
-          ref: 75d802bad72dea2ceb92e252c67e932754a449c2
+          ref: 1e69c78e2cebbb4343d3817d56d5041924594e7e
           path: assistant-source
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
