@@ -229,6 +229,12 @@ class DaemonUIBridge:
     async def set_autonomy(self, preset: str) -> dict:
         return await self.request("runtime.set_autonomy", {"preset": str(preset)})
 
+    async def set_logging(self, level: int, path: str) -> dict:
+        return await self.request(
+            "runtime.set_logging",
+            {"level": int(level), "path": str(path)},
+        )
+
     async def reload_router(self) -> dict:
         return await self.request("runtime.reload_router")
 
