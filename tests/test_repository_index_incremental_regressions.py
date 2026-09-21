@@ -52,6 +52,42 @@ def test_noop_reindex_skips_reference_and_fts_maintenance(tmp_path: Path, monkey
         index.close()
 
 
+def test_update_paths_avoids_reading_unchanged_explicit_file(tmp_path: Path, monkeypatch):
+    path = tmp_path / "stable.py"
+    path.write_text("def stable_symbol():\n    return 1\n", encoding="utf-8")
+
+    index = RepositoryIndex(tmp_path, in_memory=True)
+    try:
+        first = index.build_or_update()
+        assert first["generation"] == 1
+
+        original_read = index.workspace_fs.read
+
+        def fail_if_read(*args, **kwargs):
+            raise AssertionError(
+                "unchanged update_paths must use metadata fast-path before file read"
+            )
+
+        monkeypatch.setattr(index.workspace_fs, "read", fail_if_read)
+
+        second = index.update_paths(["stable.py"])
+
+        assert second["updated"] == 0
+        assert second["deleted"] == 0
+        assert second["generation"] == first["generation"]
+
+        monkeypatch.setattr(index.workspace_fs, "read", original_read)
+        path.write_text("def changed_symbol():\n    return 2\n", encoding="utf-8")
+
+        third = index.update_paths(["stable.py"])
+
+        assert third["updated"] == 1
+        assert third["generation"] == first["generation"] + 1
+        assert index.search_symbol("changed_symbol")
+    finally:
+        index.close()
+
+
 def test_complete_scan_still_removes_deleted_files(tmp_path: Path):
     path = tmp_path / "obsolete.py"
     path.write_text("def obsolete():\n    return True\n", encoding="utf-8")

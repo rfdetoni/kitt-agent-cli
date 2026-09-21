@@ -402,9 +402,7 @@ class RepositoryIndex:
                     (rel_path,),
                 ).fetchone()
                 try:
-                    file_data = self.workspace_fs.read(
-                        rel_path, max_bytes=self.max_file_bytes
-                    )
+                    file_stat = self.workspace_fs.stat_regular(rel_path)
                 except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
                     if row:
                         self._delete_file_locked(row["file_id"])
@@ -413,10 +411,22 @@ class RepositoryIndex:
                 adapter_version = self.parser_registry.adapter_for(self.root_path / rel_path).version
                 if (
                     row
-                    and row["mtime_ns"] == file_data.mtime_ns
-                    and row["size_bytes"] == file_data.size
+                    and row["mtime_ns"] == file_stat.mtime_ns
+                    and row["size_bytes"] == file_stat.size
                     and row["parser_version"] == adapter_version
                 ):
+                    # Explicit/working-set paths are checked on most turns.
+                    # Avoid reading and hashing the entire file when secure
+                    # metadata proves the indexed version is still current.
+                    continue
+                try:
+                    file_data = self.workspace_fs.read(
+                        rel_path, max_bytes=self.max_file_bytes
+                    )
+                except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
+                    if row:
+                        self._delete_file_locked(row["file_id"])
+                        deleted += 1
                     continue
                 if (
                     row
