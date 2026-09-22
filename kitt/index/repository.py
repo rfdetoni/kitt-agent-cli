@@ -339,6 +339,10 @@ class RepositoryIndex:
         if thread and thread.is_alive():
             thread.join(timeout=timeout)
 
+    def schedule_background_update(self) -> None:
+        """Schedule a coalesced full reconciliation without blocking a turn."""
+        self._start_background_update()
+
     def _start_background_update(self) -> None:
         with self._lifecycle_lock:
             if self._closed:
