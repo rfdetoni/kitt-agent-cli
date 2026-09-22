@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import logging
 import threading
 import urllib.request
@@ -10,7 +11,7 @@ import uuid
 from typing import Dict, Generator, List, Optional
 
 from kitt.domain.entities import ModelProfile
-from kitt.core.logging import summarize_trace_messages, summarize_trace_text, trace_event
+from kitt.core.logging import TRACE_LEVEL, summarize_trace_messages, summarize_trace_text, trace_event
 from kitt.llm.agent_contract import (
     AGENT_CONTRACT_HEADER,
     AGENT_CONTRACT_VERSION,
@@ -45,6 +46,35 @@ from kitt.router.models import ModelCapabilities
 
 
 logger = logging.getLogger(__name__)
+
+_SHARED_LLM_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="kitt-llm",
+)
+
+
+class _StreamingTraceSummary:
+    __slots__ = ("chars", "bytes", "chunks", "_sha256")
+
+    def __init__(self):
+        self.chars = 0
+        self.bytes = 0
+        self.chunks = 0
+        self._sha256 = hashlib.sha256()
+
+    def update(self, chunk: str) -> None:
+        encoded = chunk.encode("utf-8", "replace")
+        self.chars += len(chunk)
+        self.bytes += len(encoded)
+        self.chunks += 1
+        self._sha256.update(encoded)
+
+    def summary(self) -> Dict[str, object]:
+        return {
+            "chars": self.chars,
+            "bytes": self.bytes,
+            "sha256": self._sha256.hexdigest()[:16],
+        }
 
 
 LLMError = ProviderError
@@ -101,10 +131,7 @@ class LLMClient:
         self._kitt_session_id = uuid.uuid4().hex[:32]
         self._last_kitt_proxy_capabilities: Optional[KittProxyCapabilities] = None
         self._external_executor = executor is not None
-        self._executor = executor or concurrent.futures.ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="llm_client_worker",
-        )
+        self._executor = executor or _SHARED_LLM_EXECUTOR
         if retry_policy is not None:
             self.retry_policy = retry_policy
         else:
@@ -221,9 +248,13 @@ class LLMClient:
 
     def close(self):
         """Shut down the owned thread pool executor."""
-        if self._executor and not self._external_executor:
+        if (
+            self._executor
+            and not self._external_executor
+            and self._executor is not _SHARED_LLM_EXECUTOR
+        ):
             self._executor.shutdown(wait=False, cancel_futures=True)
-            self._executor = None
+        self._executor = None
 
     def __enter__(self):
         return self
@@ -407,62 +438,67 @@ class LLMClient:
             timeout_seconds=self.profile.request_timeout_seconds,
             extra_headers=extra_headers,
         )
-        trace_event(
-            logger,
-            "llm.request",
-            backend=backend,
-            protocol=self.profile.protocol,
-            model=self.profile.model,
-            base_url=self.profile.base_url,
-            route=extra_headers.get(AGENT_ROUTE_HEADER),
-            session_key=session_key,
-            system_prompt=summarize_trace_text(system_prompt),
-            messages=summarize_trace_messages(messages),
-            response_format=response_format,
-            temperature=self.profile.temperature,
-            context_window=self.profile.context_window,
-            max_output_tokens=self.profile.max_output_tokens,
-            timeout_seconds=self.profile.request_timeout_seconds,
-            extra_headers=extra_headers,
-            api_key=api_key,
-        )
+        trace_enabled = logger.isEnabledFor(TRACE_LEVEL)
+        trace_summary = _StreamingTraceSummary() if trace_enabled else None
+        if trace_enabled:
+            trace_event(
+                logger,
+                "llm.request",
+                backend=backend,
+                protocol=self.profile.protocol,
+                model=self.profile.model,
+                base_url=self.profile.base_url,
+                route=extra_headers.get(AGENT_ROUTE_HEADER),
+                session_key=session_key,
+                system_prompt=summarize_trace_text(system_prompt),
+                messages=summarize_trace_messages(messages),
+                response_format=response_format,
+                temperature=self.profile.temperature,
+                context_window=self.profile.context_window,
+                max_output_tokens=self.profile.max_output_tokens,
+                timeout_seconds=self.profile.request_timeout_seconds,
+                extra_headers=extra_headers,
+                api_key=api_key,
+            )
 
-        chunks = []
         try:
             for chunk in self.retry_policy.execute_with_retry(
                 lambda: adapter.stream(request)
             ):
-                chunks.append(chunk)
+                if trace_summary is not None:
+                    trace_summary.update(chunk)
+                    trace_event(
+                        logger,
+                        "llm.response.chunk",
+                        backend=backend,
+                        protocol=self.profile.protocol,
+                        model=self.profile.model,
+                        route=extra_headers.get(AGENT_ROUTE_HEADER),
+                        chunk=summarize_trace_text(chunk),
+                    )
+                yield chunk
+        except Exception as exc:
+            if trace_summary is not None:
                 trace_event(
                     logger,
-                    "llm.response.chunk",
+                    "llm.response.error",
                     backend=backend,
                     protocol=self.profile.protocol,
                     model=self.profile.model,
                     route=extra_headers.get(AGENT_ROUTE_HEADER),
-                    chunk=summarize_trace_text(chunk),
+                    error=exc,
+                    partial_response=trace_summary.summary(),
                 )
-                yield chunk
-        except Exception as exc:
-            trace_event(
-                logger,
-                "llm.response.error",
-                backend=backend,
-                protocol=self.profile.protocol,
-                model=self.profile.model,
-                route=extra_headers.get(AGENT_ROUTE_HEADER),
-                error=exc,
-                partial_response=summarize_trace_text("".join(chunks)),
-            )
             raise
         finally:
-            trace_event(
-                logger,
-                "llm.response.complete",
-                backend=backend,
-                protocol=self.profile.protocol,
-                model=self.profile.model,
-                route=extra_headers.get(AGENT_ROUTE_HEADER),
-                response=summarize_trace_text("".join(chunks)),
-                chunk_count=len(chunks),
-            )
+            if trace_summary is not None:
+                trace_event(
+                    logger,
+                    "llm.response.complete",
+                    backend=backend,
+                    protocol=self.profile.protocol,
+                    model=self.profile.model,
+                    route=extra_headers.get(AGENT_ROUTE_HEADER),
+                    response=trace_summary.summary(),
+                    chunk_count=trace_summary.chunks,
+                )
