@@ -626,6 +626,13 @@ class TurnToolLoopMixin:
                         kind=tool_name,
                         content_hash=str(tool_result.metadata.get("content_hash", "")),
                     )
+                    if (
+                        tool_result.success
+                        and observed_strategy is not None
+                        and edit_result_was_executed(tool_result)
+                        and hasattr(self.context_engine, "mark_dirty")
+                    ):
+                        self.context_engine.mark_dirty(touched_paths)
                 finally:
                     self.turn_guard.end(cmd.turn_id)
             payload_content = str(tool_args.get("content") or tool_args.get("patch") or tool_args.get("code") or "")
