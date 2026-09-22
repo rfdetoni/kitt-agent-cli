@@ -3,7 +3,8 @@ from __future__ import annotations
 import fnmatch
 import math
 import re
-from collections import Counter
+import threading
+from collections import Counter, OrderedDict
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable, List
@@ -29,6 +30,9 @@ class ProgressiveSkillLoader:
     def __init__(self, *, max_total_chars: int = 16000, min_skill_chars: int = 1200):
         self.max_total_chars = max(256, min(int(max_total_chars), 128000))
         self.min_skill_chars = max(256, min(int(min_skill_chars), 8000))
+        self._content_lock = threading.RLock()
+        self._content_cache: OrderedDict[str, tuple[int, int, str]] = OrderedDict()
+        self._content_cache_limit = 128
 
     @staticmethod
     def _terms(value: str) -> set[str]:
@@ -43,14 +47,28 @@ class ProgressiveSkillLoader:
                 paths.append(clean)
         return tuple(paths[:32])
 
-    @staticmethod
-    def _content(skill: Any) -> str:
+    def _content(self, skill: Any) -> str:
         raw_path = getattr(skill, "path", None)
         skill_path = Path(raw_path) if raw_path else Path(".")
         skill_md = skill_path / "SKILL.md"
         if skill_md.exists() and skill_md.is_file() and not skill_md.is_symlink():
             try:
-                return skill_md.read_text("utf-8", errors="ignore")[:256 * 1024]
+                stat = skill_md.stat()
+                key = str(skill_md.resolve())
+                stamp = int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+                size = int(stat.st_size)
+                with self._content_lock:
+                    cached = self._content_cache.get(key)
+                    if cached and cached[0] == stamp and cached[1] == size:
+                        self._content_cache.move_to_end(key)
+                        return cached[2]
+                text = skill_md.read_text("utf-8", errors="ignore")[:256 * 1024]
+                with self._content_lock:
+                    self._content_cache[key] = (stamp, size, text)
+                    self._content_cache.move_to_end(key)
+                    while len(self._content_cache) > self._content_cache_limit:
+                        self._content_cache.popitem(last=False)
+                return text
             except OSError:
                 pass
         return str(
