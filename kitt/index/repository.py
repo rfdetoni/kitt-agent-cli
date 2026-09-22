@@ -392,6 +392,8 @@ class RepositoryIndex:
     def update_paths(self, paths: List[str]) -> Dict[str, int]:
         """Synchronously update known changed files without scanning the whole repository."""
         updated = deleted = 0
+        impacted_source_ids: set[int] = set()
+        changed_target_names: set[str] = set()
         with self._lock, self._conn:
             modules = self._module_rows_locked()
             for raw_rel_path in dict.fromkeys(path for path in paths if path and not os.path.isabs(path)):
@@ -405,10 +407,24 @@ class RepositoryIndex:
                     "SELECT file_id, mtime_ns, size_bytes, content_hash, parser_version FROM files WHERE path=?",
                     (rel_path,),
                 ).fetchone()
+
+                def remember_existing_symbols() -> None:
+                    if not row:
+                        return
+                    impacted_source_ids.add(int(row["file_id"]))
+                    symbol_rows = self._conn.execute(
+                        "SELECT name, qualified_name FROM symbols WHERE file_id=?",
+                        (row["file_id"],),
+                    ).fetchall()
+                    for symbol_row in symbol_rows:
+                        changed_target_names.add(str(symbol_row["name"]))
+                        if symbol_row["qualified_name"]:
+                            changed_target_names.add(str(symbol_row["qualified_name"]))
                 try:
                     file_stat = self.workspace_fs.stat_regular(rel_path)
                 except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
                     if row:
+                        remember_existing_symbols()
                         self._delete_file_locked(row["file_id"])
                         deleted += 1
                     continue
@@ -429,6 +445,7 @@ class RepositoryIndex:
                     )
                 except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
                     if row:
+                        remember_existing_symbols()
                         self._delete_file_locked(row["file_id"])
                         deleted += 1
                     continue
@@ -443,12 +460,35 @@ class RepositoryIndex:
                         (file_data.mtime_ns, str(time.time()), row["file_id"]),
                     )
                     continue
+                remember_existing_symbols()
                 self._index_file_locked(
                     self.root_path / rel_path, rel_path, modules, file_data=file_data
                 )
+                indexed_row = self._conn.execute(
+                    "SELECT file_id FROM files WHERE path=?",
+                    (rel_path,),
+                ).fetchone()
+                if indexed_row:
+                    indexed_file_id = int(indexed_row["file_id"])
+                    impacted_source_ids.add(indexed_file_id)
+                    for symbol_row in self._conn.execute(
+                        "SELECT name, qualified_name FROM symbols WHERE file_id=?",
+                        (indexed_file_id,),
+                    ).fetchall():
+                        changed_target_names.add(str(symbol_row["name"]))
+                        if symbol_row["qualified_name"]:
+                            changed_target_names.add(str(symbol_row["qualified_name"]))
                 updated += 1
             if updated or deleted:
-                self._rebuild_reference_edges_locked()
+                if changed_target_names:
+                    names = sorted(changed_target_names)
+                    placeholders = ",".join("?" for _ in names)
+                    ref_rows = self._conn.execute(
+                        f"SELECT DISTINCT file_id FROM refs WHERE target_name IN ({placeholders})",
+                        tuple(names),
+                    ).fetchall()
+                    impacted_source_ids.update(int(ref_row["file_id"]) for ref_row in ref_rows)
+                self._refresh_reference_edges_for_sources_locked(impacted_source_ids)
                 self._ensure_fts_consistency_locked()
                 self._conn.execute(
                     "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
@@ -661,6 +701,47 @@ class RepositoryIndex:
     def _rebuild_reference_edges(self) -> None:
         with self._lock, self._conn:
             self._rebuild_reference_edges_locked()
+
+    def _refresh_reference_edges_for_sources_locked(
+        self,
+        source_file_ids: set[int],
+    ) -> None:
+        """Recompute only outgoing edges affected by targeted file changes."""
+        if not source_file_ids:
+            self._restore_graph_locked()
+            return
+        ids = sorted(source_file_ids)
+        placeholders = ",".join("?" for _ in ids)
+        self._conn.execute(
+            f"DELETE FROM edges WHERE source_file_id IN ({placeholders})",
+            tuple(ids),
+        )
+        rows = self._conn.execute(
+            f"""
+            SELECT r.file_id AS source_file_id, s.file_id AS target_file_id, r.kind
+            FROM refs r
+            JOIN symbols s
+              ON s.name = r.target_name OR s.qualified_name = r.target_name
+            WHERE r.file_id IN ({placeholders})
+              AND r.file_id != s.file_id
+            """,
+            tuple(ids),
+        ).fetchall()
+        self._conn.executemany(
+            """
+            INSERT INTO edges (source_file_id, target_file_id, kind, weight)
+            VALUES (?, ?, ?, 1.0)
+            ON CONFLICT(source_file_id, target_file_id, kind) DO UPDATE SET
+                weight=excluded.weight
+            """,
+            [
+                (row["source_file_id"], row["target_file_id"], row["kind"])
+                for row in rows
+            ],
+        )
+        # Restoring adjacency is O(E) and avoids the much more expensive global
+        # refs×symbols join/rebuild that previously ran after every local edit.
+        self._restore_graph_locked()
 
     def _rebuild_reference_edges_locked(self) -> None:
         self._conn.execute("DELETE FROM edges")
