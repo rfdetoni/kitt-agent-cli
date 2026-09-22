@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import inspect
 import json
@@ -93,6 +94,12 @@ from kitt.prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+_TURN_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="kitt-turn",
+)
+
 
 class TurnProcessor(
     TurnToolLoopMixin,
@@ -466,10 +473,7 @@ class TurnProcessor(
                 if not stop.is_set():
                     put(sentinel, timeout=5.0)
 
-        producer = threading.Thread(
-            target=produce, name=f"kitt-turn-{cmd.turn_id[:8]}", daemon=True
-        )
-        producer.start()
+        producer = _TURN_EXECUTOR.submit(produce)
         stream_completed = False
         try:
             while True:
@@ -479,14 +483,19 @@ class TurnProcessor(
                     break
                 yield item
         finally:
-            # Thread liveness is not cancellation state. The producer can still
-            # be alive for a scheduling tick after it has published the natural
-            # completion sentinel. Only an abandoned stream should cancel the turn.
+            # Producer capacity is globally bounded so child sessions cannot
+            # create one unbounded OS thread per turn.
             if not stream_completed:
                 self._mark_cancelled(cmd.turn_id)
             stop.set()
-            if producer.is_alive():
-                await _asyncio.to_thread(producer.join, 2.0)
+            if not producer.done():
+                try:
+                    await _asyncio.wait_for(
+                        _asyncio.shield(_asyncio.wrap_future(producer)),
+                        timeout=2.0,
+                    )
+                except (_asyncio.TimeoutError, _asyncio.CancelledError):
+                    pass
 
     def _history_context(self, conversation_id: str, max_messages: int = 12,
                          exclude_prompt: Optional[str] = None) -> str:
@@ -495,8 +504,15 @@ class TurnProcessor(
         if hasattr(self.history_service, "tree"):
             from kitt.history.context_builder import HistoryContextBuilder
             return HistoryContextBuilder(self.history_service.tree).build(conversation_id, max_tokens=1200)
-        messages = self.history_service.repo.get_messages_for_conversation(conversation_id)
-        selected = messages[-max_messages:]
+        repo = self.history_service.repo
+        if hasattr(repo, "get_recent_messages_for_conversation"):
+            selected = repo.get_recent_messages_for_conversation(
+                conversation_id,
+                max_messages,
+            )
+        else:
+            messages = repo.get_messages_for_conversation(conversation_id)
+            selected = messages[-max_messages:]
         if exclude_prompt and selected and selected[-1]["role"] == "user" and selected[-1]["content"] == exclude_prompt:
             selected = selected[:-1]
         return "\n".join(f"{m['role']}: {m['content']}" for m in selected)
