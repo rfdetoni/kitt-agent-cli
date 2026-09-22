@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from pathlib import Path
 from typing import List
 
@@ -26,7 +27,7 @@ class ContextEngine:
         repository_index=None,
         persistence_enabled: bool = True,
         cache: ContextCache | None = None,
-        refresh_interval_seconds: float = 5.0,
+        refresh_interval_seconds: float = 60.0,
     ):
         self.parser = SymbolParser()
         self.index = repository_index
@@ -36,6 +37,8 @@ class ContextEngine:
         self.cache = cache or ContextCache()
         self.refresh_interval_seconds = max(0.0, float(refresh_interval_seconds))
         self._last_refresh_monotonic = 0.0
+        self._dirty_paths: set[str] = set()
+        self._dirty_lock = threading.Lock()
         self._retrieval: HybridRetrievalPipeline | None = None
         self._retrieval_index_identity: int | None = None
         self.last_compiled_context: CompiledContext | None = None
@@ -64,7 +67,30 @@ class ContextEngine:
         finally:
             self._retrieval = None
             self._retrieval_index_identity = None
+            with self._dirty_lock:
+                self._dirty_paths.clear()
             self.cache.clear()
+
+    def mark_dirty(self, paths: List[str] | set[str] | tuple[str, ...]) -> None:
+        """Record workspace paths changed by KITT-owned mutations."""
+        normalized = {
+            str(path).replace("\\", "/").lstrip("./")
+            for path in paths
+            if path and not Path(str(path)).is_absolute()
+        }
+        normalized.discard("")
+        if not normalized:
+            return
+        with self._dirty_lock:
+            self._dirty_paths.update(normalized)
+
+    def _take_dirty_paths(self) -> list[str]:
+        with self._dirty_lock:
+            if not self._dirty_paths:
+                return []
+            paths = sorted(self._dirty_paths)
+            self._dirty_paths.clear()
+            return paths
 
     def extract_task_focus(self, task_description: str) -> TaskFocus:
         if not task_description:
@@ -103,26 +129,32 @@ class ContextEngine:
         assert self.index is not None
         generation = self.index.index_generation()
         now = time.monotonic()
+        dirty_paths = self._take_dirty_paths()
+        targeted_paths = list(dict.fromkeys([*bootstrap_paths, *dirty_paths]))
+
         if generation == 0:
-            if bootstrap_paths:
-                stats = self.index.bootstrap_then_background(bootstrap_paths)
+            if targeted_paths:
+                stats = self.index.bootstrap_then_background(targeted_paths)
             else:
                 stats = self.index.build_or_update()
             self._last_refresh_monotonic = now
             return stats
 
-        if bootstrap_paths:
-            stats = self.index.update_paths(bootstrap_paths)
-            self._last_refresh_monotonic = now
-            return stats
-
-        if (
+        reconciliation_due = (
             self.refresh_interval_seconds == 0
             or now - self._last_refresh_monotonic >= self.refresh_interval_seconds
-        ):
-            stats = self.index.build_or_update()
-            self._last_refresh_monotonic = now
+        )
+
+        if targeted_paths:
+            stats = self.index.update_paths(targeted_paths)
+            if reconciliation_due:
+                self.index.schedule_background_update()
+                self._last_refresh_monotonic = now
             return stats
+
+        if reconciliation_due:
+            self.index.schedule_background_update()
+            self._last_refresh_monotonic = now
 
         return self.index.ready_stats()
 
