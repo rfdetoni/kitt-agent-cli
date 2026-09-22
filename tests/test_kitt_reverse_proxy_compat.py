@@ -4,6 +4,7 @@ import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
 
+from kitt.children.worker import _bind_child_proxy_session
 from kitt.domain.entities import ModelProfile
 from kitt.llm.client import LLMClient
 from kitt.llm.kitt_proxy_capabilities import KittProxyCapabilities
@@ -231,6 +232,38 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         headers = {key.lower(): value for key, value in captured["request"].header_items()}
         self.assertEqual(headers["x-kitt-session-id"], "abc123")
         self.assertEqual(headers["x-kitt-request-id"], "req123")
+
+    def test_retained_children_keep_stable_proxy_sessions_without_sharing(self):
+        from kitt.core.turn_processor import TurnProcessor
+
+        profile = ModelProfile(
+            backend="kitt-reverse-proxy",
+            protocol="kitt-reverse-proxy",
+            model="chatgpt-web",
+            base_url="http://127.0.0.1:3000",
+        )
+
+        def provider_key(child_id, conversation_id):
+            processor = object.__new__(TurnProcessor)
+            runtime = MagicMock()
+            runtime.workspace_id = "workspace-a"
+            runtime.processor = processor
+            scope = _bind_child_proxy_session(runtime, {
+                "child_id": child_id,
+                "runtime_conversation_id": conversation_id,
+            })
+            return scope, processor._provider_session_key(profile, conversation_id)
+
+        scope_a1, key_a1 = provider_key("child-a", "childconv_child-a")
+        scope_a2, key_a2 = provider_key("child-a", "childconv_child-a")
+        scope_b, key_b = provider_key("child-b", "childconv_child-b")
+
+        self.assertEqual(scope_a1, scope_a2)
+        self.assertEqual(key_a1, key_a2)
+        self.assertNotEqual(scope_a1, scope_b)
+        self.assertNotEqual(key_a1, key_b)
+        self.assertIn("retained-child:workspace-a:child-a", key_a1)
+        self.assertIn("conversation:childconv_child-a", key_a1)
 
     @patch("kitt.llm.client.discover_kitt_proxy_capabilities", return_value=KittProxyCapabilities())
     def test_llm_client_uses_stable_session_per_conversation_and_unique_request_ids(self, _discover):

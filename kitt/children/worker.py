@@ -46,6 +46,19 @@ def _validate_child_conversation(runtime: KittRuntime, conversation_id: str) -> 
         )
 
 
+def _bind_child_proxy_session(runtime: KittRuntime, request: dict) -> str:
+    """Bind one retained child to one stable reverse-proxy browser session."""
+    child_id = str(request.get("child_id") or "").strip()
+    conversation_id = str(request.get("runtime_conversation_id") or "").strip()
+    workspace_id = str(runtime.workspace_id or "").strip()
+    if not child_id or not conversation_id or not workspace_id:
+        raise ValueError("Child worker request is missing stable session identity")
+
+    scope = f"retained-child:{workspace_id}:{child_id}"
+    runtime.processor.set_proxy_session_scope(scope)
+    return scope
+
+
 def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
     child_conversation = request["runtime_conversation_id"]
     _validate_child_conversation(runtime, child_conversation)
@@ -193,6 +206,7 @@ def main() -> None:
     try:
         request = json.loads(sys.stdin.read())
         runtime = KittRuntime.build(request["root"], state_root_dir=request.get("state_root"))
+        _bind_child_proxy_session(runtime, request)
         mode = str(request.get("mode", "run"))
         if mode == "run":
             result = _run_new_turn(runtime, request)

@@ -25,6 +25,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - SQLite/FTS5 repository intelligence and history.
 - Compact, policy-governed `kitt_runtime` tool surface.
 - Child agents, retained agents and bounded concurrent execution.
+- Stable per-child reverse-proxy sessions: each child gets its own browser conversation, while a retained child reuses that same session across reassigned tasks.
 - Workspace capability policy and single-use approvals.
 - MCP servers/tools, plugins, hooks and external integrations.
 - Dreaming/memory consolidation and context compaction.

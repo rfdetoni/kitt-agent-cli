@@ -188,6 +188,19 @@ class TurnProcessor(
         self._attachment_paths_by_turn: Dict[str, tuple[str, ...]] = {}
         self._attachment_wire_sent: set[str] = set()
 
+    def set_proxy_session_scope(self, scope: str) -> None:
+        """Override the reverse-proxy session namespace for a dedicated runtime.
+
+        Child workers are short-lived processes, but retained children must keep
+        the same browser conversation across task reassignments. A stable scope
+        lets those workers reuse one named proxy session while sibling children
+        remain isolated.
+        """
+        normalized = str(scope or "").strip()
+        if not normalized:
+            raise ValueError("Proxy session scope must be non-empty")
+        self._proxy_session_key = normalized
+
     def _provider_session_key(self, profile, conversation_id: str) -> str:
         if _reverse_proxy_identity(profile):
             return f"{self._proxy_session_key}:conversation:{conversation_id}"
