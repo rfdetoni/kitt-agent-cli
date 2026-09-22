@@ -628,6 +628,26 @@ class HistoryRepository:
             )
             return [dict(row) for row in cur.fetchall()]
 
+    def get_recent_messages_for_conversation(
+        self,
+        conv_id: str,
+        limit: int = 12,
+    ) -> List[Dict[str, Any]]:
+        limit = max(1, min(int(limit), 200))
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                """SELECT m.*
+                   FROM messages AS m
+                   JOIN turns AS t
+                     ON t.id = m.turn_id
+                    AND t.conversation_id = m.conversation_id
+                   WHERE m.conversation_id = ?
+                   ORDER BY t.ordinal DESC, m.created_at DESC, m.rowid DESC
+                   LIMIT ?;""",
+                (conv_id, limit),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
     def save_pending_action(self, pa: 'PendingAction'):
         import json
         with self.db.get_connection() as conn:
