@@ -21,7 +21,9 @@ from kitt.goals.completion import (
     completion_state_key,
 )
 from kitt.goals.gates import QualityGateRunner
-from kitt.goals.review import AdversarialCodeReviewer
+from kitt.goals.evidence import EvidenceLedger
+from kitt.goals.risk import ReviewRisk, classify_review_risk
+from kitt.goals.review import AdversarialCodeReviewer, combine_adversarial_reviews
 from kitt.llm.client import LLMClient
 from kitt.metrics.cost_estimator import estimate_cost
 from kitt.runtime.state import RuntimeStateStore
@@ -75,10 +77,14 @@ class GoalStepExecutor:
         )
 
     @staticmethod
-    def _review_profile(runtime):
-        """Prefer an explicit reviewer route, otherwise use the execution model."""
+    def _review_profile(runtime, route: str = "adversarial-review"):
+        """Prefer a role-specific reviewer route, then adversarial-review, then execution."""
         router = runtime.processor.router
-        configured = str(router.config.routing.get("adversarial-review") or "").strip()
+        configured = str(router.config.routing.get(route) or "").strip()
+        if not configured and route != "adversarial-review":
+            configured = str(
+                router.config.routing.get("adversarial-review") or ""
+            ).strip()
         if configured and configured in router.config.profiles:
             return configured, router.config.profiles[configured]
         return router.resolve_profile_for_task("code-generation")
@@ -300,11 +306,20 @@ class GoalStepExecutor:
             complete = False
         return snapshot, complete
 
-    def _build_reviewer(self, runtime, goal, completion_state, usage):
+    def _build_reviewer(
+        self,
+        runtime,
+        goal,
+        completion_state,
+        usage,
+        *,
+        route="adversarial-review",
+        pass_index=1,
+    ):
         if self.reviewer_factory is not None:
             return self.reviewer_factory(runtime, goal, completion_state, usage)
 
-        profile_name, profile = self._review_profile(runtime)
+        profile_name, profile = self._review_profile(runtime, route)
         iteration = int((completion_state or {}).get("iteration", 0) or 0) + 1
 
         def review_fn(system_prompt: str, user_prompt: str) -> str:
@@ -346,7 +361,7 @@ class GoalStepExecutor:
                 response = client.chat(
                     [{"role": "user", "content": clean_user}],
                     system_prompt=clean_system,
-                    session_key=f"goal-review:{goal.id}:{iteration}",
+                    session_key=f"goal-review:{goal.id}:{iteration}:{route}:{pass_index}",
                 )
 
             input_tokens = TokenCounter.count_tokens(clean_system) + TokenCounter.count_tokens(clean_user)
@@ -464,6 +479,7 @@ class GoalStepExecutor:
                 if self._is_reviewable_path(path)
             ]
             verification = completion.verify(goal, result["response"])
+            risk_name = ""
             if verification.success and review_paths:
                 snapshot, snapshot_complete = self._collect_review_snapshot(
                     runtime,
@@ -475,27 +491,84 @@ class GoalStepExecutor:
                 if not snapshot:
                     snapshot = "[REVIEW SNAPSHOT UNAVAILABLE FOR RECORDED MUTATED PATHS]"
                     snapshot_complete = False
-                if snapshot:
-                    review_usage = {"tokens": 0, "cost": 0.0, "redactions": 0}
-                    reviewer = self._build_reviewer(
-                        runtime,
-                        goal,
-                        completion_state,
-                        review_usage,
+
+                assessment = classify_review_risk(review_paths, snapshot)
+                risk_name = assessment.name
+                result["review_risk"] = assessment.to_dict()
+
+                if assessment.level != ReviewRisk.LOW and snapshot:
+                    review_usage = {
+                        "tokens": 0,
+                        "cost": 0.0,
+                        "redactions": 0,
+                        "passes": [],
+                    }
+                    reviews = []
+                    pass_count = (
+                        2 if assessment.level == ReviewRisk.CRITICAL else 1
                     )
-                    review = reviewer.review(
-                        objective=goal.objective,
-                        success_criteria=list(getattr(goal, "success_criteria", None) or []),
-                        verification=verification,
-                        change_snapshot=snapshot,
-                        previous_feedback=str((completion_state or {}).get("feedback") or ""),
-                        snapshot_complete=snapshot_complete,
-                    )
+                    for pass_index in range(1, pass_count + 1):
+                        route = (
+                            "critical-review"
+                            if pass_index == 2
+                            else "adversarial-review"
+                        )
+                        pass_usage = {
+                            "tokens": 0,
+                            "cost": 0.0,
+                            "redactions": 0,
+                        }
+                        reviewer = self._build_reviewer(
+                            runtime,
+                            goal,
+                            completion_state,
+                            pass_usage,
+                            route=route,
+                            pass_index=pass_index,
+                        )
+                        review = reviewer.review(
+                            objective=goal.objective,
+                            success_criteria=list(
+                                getattr(goal, "success_criteria", None) or []
+                            ),
+                            verification=verification,
+                            change_snapshot=snapshot,
+                            previous_feedback=str(
+                                (completion_state or {}).get("feedback") or ""
+                            ),
+                            snapshot_complete=snapshot_complete,
+                            risk_level=assessment.name,
+                        )
+                        reviews.append(review)
+                        review_usage["tokens"] += int(
+                            pass_usage.get("tokens", 0) or 0
+                        )
+                        review_usage["cost"] += float(
+                            pass_usage.get("cost", 0.0) or 0.0
+                        )
+                        review_usage["redactions"] += int(
+                            pass_usage.get("redactions", 0) or 0
+                        )
+                        review_usage["passes"].append(
+                            {
+                                "profile": pass_usage.get("profile"),
+                                "model": pass_usage.get("model"),
+                                "approved": review.approved,
+                                "status": review.status,
+                            }
+                        )
+                        if not review.approved:
+                            break
+
+                    review = combine_adversarial_reviews(reviews)
                     result["review"] = review.to_dict()
-                    result["tokens"] += int(review_usage.get("tokens", 0) or 0)
-                    result["cost"] += float(review_usage.get("cost", 0.0) or 0.0)
-                    if review_usage:
-                        result["review_usage"] = dict(review_usage)
+                    result["tokens"] += int(
+                        review_usage.get("tokens", 0) or 0
+                    )
+                    result["cost"] += float(
+                        review_usage.get("cost", 0.0) or 0.0
+                    )
+                    result["review_usage"] = review_usage
                     verification = completion.include_adversarial_review(
                         verification,
                         review,
@@ -508,15 +581,40 @@ class GoalStepExecutor:
                                 "goal_id": goal.id,
                                 "approved": review.approved,
                                 "status": review.status,
+                                "risk": assessment.name,
+                                "review_passes": len(reviews),
                                 "required_findings": sum(
-                                    1 for item in review.findings if item.required
+                                    1
+                                    for item in review.findings
+                                    if item.required
                                 ),
-                                "profile": review_usage.get("profile"),
-                                "model": review_usage.get("model"),
+                                "profiles": [
+                                    item.get("profile")
+                                    for item in review_usage["passes"]
+                                ],
+                                "models": [
+                                    item.get("model")
+                                    for item in review_usage["passes"]
+                                ],
                             },
                         )
+                else:
+                    result["review"] = {
+                        "applicable": False,
+                        "approved": True,
+                        "status": "SKIPPED_LOW_RISK",
+                        "risk": assessment.name,
+                        "summary": (
+                            "Deterministic verification is authoritative "
+                            "for this low-risk change."
+                        ),
+                    }
 
             result["verification"] = verification.to_dict()
+            result["evidence"] = EvidenceLedger.from_verification(
+                verification,
+                review_risk=risk_name,
+            ).to_dict()
             if verification.success:
                 state.delete(completion_key)
                 if resume is not None:
@@ -529,10 +627,28 @@ class GoalStepExecutor:
                     next_state,
                     ttl_seconds=self.COMPLETION_STATE_TTL_SECONDS,
                 )
+                if next_state.get("review_exhausted"):
+                    terminal_status = "REVIEW_EXHAUSTED"
+                    terminal_error = (
+                        "Adversarial review correction budget exhausted after "
+                        f"{next_state.get('review_cycles')} cycle(s). "
+                        + verification.feedback
+                    )
+                elif next_state.get("stagnation_exhausted"):
+                    terminal_status = "STAGNATION_EXHAUSTED"
+                    terminal_error = (
+                        "Autonomous correction stopped because the same failure "
+                        "repeated without measurable improvement. "
+                        + verification.feedback
+                    )
+                else:
+                    terminal_status = "INCOMPLETE"
+                    terminal_error = verification.feedback
                 result.update(
-                    status="INCOMPLETE",
-                    error=verification.feedback,
+                    status=terminal_status,
+                    error=terminal_error,
                     stagnated=bool(next_state.get("stagnated")),
                     completion_iteration=int(next_state.get("iteration", 0)),
+                    review_cycles=int(next_state.get("review_cycles", 0)),
                 )
         return result
