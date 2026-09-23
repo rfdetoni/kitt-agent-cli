@@ -253,7 +253,7 @@ KITT_RETAINED_AGENTS
 KITT_SCHEDULER
 ```
 
-`KITT_AGENT_VERIFY_FULL` is managed persistently from inside KITT (`/verify-full` or the command palette). The environment variable remains a compatibility fallback only until a persisted menu choice exists.
+`KITT_AGENT_VERIFY_FULL` is managed persistently from inside KITT (`/verify-full` or the command palette). The environment variable remains a compatibility fallback only until a persisted menu choice exists. Verification uses a trusted global baseline at `~/.kitt/verification/baselines.json` plus optional constrained project overrides in `.kitt/verification.json`; project files can tune known checks and timeouts but cannot inject arbitrary commands.
 
 Daemon/remote switches become active when `kitt-assistant-runtime` is installed.
 
