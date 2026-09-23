@@ -123,6 +123,7 @@ class AdversarialCodeReviewer:
         verification: Any,
         change_snapshot: str,
         previous_feedback: str = "",
+        risk_level: str = "MEDIUM",
     ) -> str:
         verification_checks = []
         for check in list(getattr(verification, "checks", None) or []):
@@ -179,6 +180,9 @@ class AdversarialCodeReviewer:
             "",
             "[DETERMINISTIC/SEMANTIC VERIFICATION THAT ALREADY PASSED]",
             json.dumps(verification_checks, ensure_ascii=False, separators=(",", ":")),
+            "",
+            "[DETERMINISTIC RISK CLASSIFICATION]",
+            str(risk_level or "MEDIUM").upper(),
         ]
         if previous_feedback:
             blocks.extend(
@@ -252,6 +256,7 @@ class AdversarialCodeReviewer:
         change_snapshot: str,
         previous_feedback: str = "",
         snapshot_complete: bool = True,
+        risk_level: str = "MEDIUM",
     ) -> AdversarialReview:
         snapshot = str(change_snapshot or "").strip()
         if not snapshot:
@@ -283,6 +288,7 @@ class AdversarialCodeReviewer:
             verification=verification,
             change_snapshot=snapshot,
             previous_feedback=previous_feedback,
+            risk_level=risk_level,
         )
         try:
             raw_response = self.review_fn(system_prompt, user_prompt)
@@ -536,3 +542,56 @@ class AdversarialCodeReviewer:
             feedback=_bounded(feedback, 12000),
             failure_signature=self._failure_signature(required_findings),
         )
+
+
+
+def combine_adversarial_reviews(reviews: Sequence[AdversarialReview]) -> AdversarialReview:
+    """Combine independent passes without allowing one approval to hide a rejection."""
+    items = [review for review in reviews if review is not None]
+    if not items:
+        return AdversarialReview(False, True, "NOT_APPLICABLE")
+    applicable = any(item.applicable for item in items)
+    if not applicable:
+        return AdversarialReview(False, True, "NOT_APPLICABLE")
+
+    findings: List[ReviewFinding] = []
+    reviewed_areas: List[str] = []
+    feedback_parts: List[str] = []
+    approval_parts: List[str] = []
+    signatures: List[str] = []
+    invalid = 0
+    for item in items:
+        findings.extend(item.findings)
+        for area in item.reviewed_areas:
+            if area not in reviewed_areas:
+                reviewed_areas.append(area)
+        if item.feedback:
+            feedback_parts.append(item.feedback)
+        if item.approval_evidence:
+            approval_parts.append(item.approval_evidence)
+        if item.failure_signature:
+            signatures.append(item.failure_signature)
+        invalid += int(item.invalid_required_findings or 0)
+
+    approved = all(item.approved for item in items)
+    status = "APPROVED" if approved else next(
+        (item.status for item in items if not item.approved),
+        "CHANGES_REQUIRED",
+    )
+    signature = (
+        hashlib.sha256("\n".join(sorted(signatures)).encode("utf-8")).hexdigest()
+        if signatures
+        else ""
+    )
+    return AdversarialReview(
+        applicable=True,
+        approved=approved,
+        status=status,
+        summary=" | ".join(item.summary for item in items if item.summary)[:2400],
+        findings=findings[:50],
+        reviewed_areas=reviewed_areas[:20],
+        approval_evidence="\n".join(approval_parts)[:4000],
+        feedback="\n\n".join(feedback_parts)[:12000],
+        failure_signature=signature,
+        invalid_required_findings=invalid,
+    )
