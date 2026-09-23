@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 
 from kitt.settings.control_center import runtime_overrides
+from kitt.settings.runtime_flags import verification_full_enabled
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -82,6 +83,7 @@ class RuntimeConfig:
     retained_agents_enabled: bool = True
     executable_skills_enabled: bool = True
     scheduler_enabled: bool = True
+    verify_full_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -96,6 +98,7 @@ class RuntimeConfig:
             retained_agents_enabled=_env_bool("KITT_RETAINED_AGENTS", values.get("retained_agents_enabled", True)),
             executable_skills_enabled=_env_bool("KITT_EXECUTABLE_SKILLS", values.get("executable_skills_enabled", True)),
             scheduler_enabled=_env_bool("KITT_SCHEDULER", values.get("scheduler_enabled", True)),
+            verify_full_enabled=verification_full_enabled(bool(values.get("verify_full_enabled", False))),
         )
         return cls(**values)
 
