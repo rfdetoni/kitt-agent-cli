@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable
 
 from kitt.settings.runtime_flags import verification_full_enabled
 from kitt.tools.build_detector import BuildDetector, VerificationStep
+from kitt.validation.contract import VerificationContractManager
 from kitt.validation.post_edit import GateDiagnostic, PostEditValidator
 
 
@@ -92,6 +93,7 @@ class VerificationOrchestrator:
         self.process_runner = process_runner
         self.validator = PostEditValidator(self.root, process_runner)
         self.detector = BuildDetector(str(self.root))
+        self.contracts = VerificationContractManager(self.root)
         self.full_enabled = full_enabled
 
     def _full_enabled(self) -> bool:
@@ -102,7 +104,8 @@ class VerificationOrchestrator:
         return verification_full_enabled(False)
 
     def _plan(self, paths: list[str], full: bool) -> list[VerificationStep]:
-        return self.detector.plan_verification(paths, full=full)
+        planned = self.detector.plan_verification(paths, full=full)
+        return self.contracts.apply_plan(planned)
 
     def verify(self, paths: Iterable[str]) -> VerificationReport:
         unique = list(dict.fromkeys(str(path) for path in paths if path))[:64]
