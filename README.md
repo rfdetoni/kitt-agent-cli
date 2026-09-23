@@ -97,7 +97,7 @@ kitt remote status
 kitt evolve runs
 ```
 
-Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update the execution model. With `kitt-reverse-proxy`, the Agent keeps a stable conversation/session ID and forwards reasoning effort without creating a new browser conversation every turn.
+Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update providers that support API-side reasoning control. With `kitt-reverse-proxy`, the Agent keeps a stable conversation/session ID without creating a new browser conversation every turn. For browser-backed WebChat providers, reasoning/thinking remains configured in the authenticated WebChat UI; the legacy `X-Kitt-Reasoning-Effort` header is compatibility-only and is ignored by the reverse proxy.
 
 ---
 
@@ -198,7 +198,7 @@ Heavy or independently deployable capabilities are intentionally owned elsewhere
 | `kitt-toolbox` | Rust `kitt-native-engine`, PyO3 binding and `kitt_native` wheel |
 | `kitt-assistant` | resident Rust daemon/control center and `kitt-assistant-runtime` Python package |
 | `kitt-ai-workers` | `kitt-evolution`, `kitt-evals` and optional STT/ML workers |
-| `kitt-reverse-proxy` | authorized browser/API gateway |
+| `kitt-reverse-proxy` | authorized browser/API gateway with isolated child sessions and provider-plugin SDK |
 | `kitt-memory` | shared persistent memory engine |
 | `kitt-protocol` | cross-component contracts |
 
