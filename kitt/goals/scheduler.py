@@ -380,6 +380,23 @@ class GoalScheduler:
                             state="ACTIVE",
                             next_run=time.time() + delay,
                         )
+                elif status in {"REVIEW_EXHAUSTED", "STAGNATION_EXHAUSTED"}:
+                    message = (
+                        result.get("error", status)
+                        if isinstance(result, dict)
+                        else status
+                    )
+                    self._release(
+                        goal.id,
+                        lease_id,
+                        state="FAILED",
+                        next_run=None,
+                        error=message,
+                    )
+                    self._on_event(
+                        "GoalSchedulerGovernanceStopped",
+                        {"goal_id": goal.id, "reason": status},
+                    )
                 elif status == "INCOMPLETE":
                     # Verification gaps are normal autonomous work, not an
                     # infrastructure failure. Requeue without consuming the
