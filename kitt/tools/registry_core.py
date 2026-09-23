@@ -163,6 +163,7 @@ class ToolRegistry:
         owner_plugin_id: Optional[str] = None,
         *,
         scope_aware: bool = False,
+        trusted_read_only: bool = False,
     ) -> None:
         """Register a dynamic plugin/MCP tool.
 
@@ -200,9 +201,13 @@ class ToolRegistry:
             "args": schema or {},
             "owner": owner_plugin_id,
             "scope_aware": bool(scope_aware),
+            "trusted_read_only": bool(trusted_read_only),
         }
         if hasattr(self.policy, "allow_custom_tool"):
-            self.policy.allow_custom_tool(tool_name)
+            self.policy.allow_custom_tool(
+                tool_name,
+                model_read_only=bool(trusted_read_only),
+            )
 
     def unregister_by_owner(self, owner_plugin_id: str) -> int:
         to_remove = [

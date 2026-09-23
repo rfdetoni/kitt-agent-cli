@@ -100,6 +100,14 @@ class TestBuiltinPlugins(unittest.TestCase):
                 self.assertIn("migration_guard", names)
                 self.assertIn("test_impact", names)
                 self.assertNotIn("release_plan", names)
+                self.assertEqual(
+                    self.tools.policy.evaluate_tool(
+                        "project_intel",
+                        {},
+                        origin="MODEL",
+                    ),
+                    "ALLOW",
+                )
 
                 intel = self.tools.execute_tool("project_intel", {})
                 self.assertTrue(intel.success)

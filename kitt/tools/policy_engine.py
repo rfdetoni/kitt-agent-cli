@@ -66,6 +66,7 @@ class PolicyEngine:
         self.autonomy = autonomy or AutonomyPolicy.preset("supervised")
         self.approval_manager = approval_manager
         self._allowed_custom_tools: Set[str] = set()
+        self._read_only_custom_tools: Set[str] = set()
         self.risk_budget = RiskBudgetLedger()
         self.action_reviewer = ActionReviewBroker()
 
@@ -162,11 +163,21 @@ class PolicyEngine:
             control_plane_elevation=control_plane_elevation,
         )
 
-    def allow_custom_tool(self, tool_name: str) -> None:
+    def allow_custom_tool(
+        self,
+        tool_name: str,
+        *,
+        model_read_only: bool = False,
+    ) -> None:
         self._allowed_custom_tools.add(tool_name)
+        if model_read_only:
+            self._read_only_custom_tools.add(tool_name)
+        else:
+            self._read_only_custom_tools.discard(tool_name)
 
     def disallow_custom_tool(self, tool_name: str) -> None:
         self._allowed_custom_tools.discard(tool_name)
+        self._read_only_custom_tools.discard(tool_name)
 
     def _evaluate_tool_base(
         self,
@@ -176,6 +187,11 @@ class PolicyEngine:
     ) -> Permission:
         args = args or {}
         if tool_name in self._allowed_custom_tools:
+            if (
+                origin == "MODEL"
+                and tool_name in self._read_only_custom_tools
+            ):
+                return "ALLOW"
             return "ALLOW" if origin == "SAFE_RUNTIME_BROKER" else "ASK"
 
         read_tools = {

@@ -149,19 +149,40 @@ class HookAPI:
 class ToolAPI:
     """Tool registration API requiring 'tools.register' permission."""
 
-    def __init__(self, plugin_name: str, permissions: Set[str], tool_registry=None):
+    def __init__(
+        self,
+        plugin_name: str,
+        permissions: Set[str],
+        tool_registry=None,
+        *,
+        trusted_first_party: bool = False,
+    ):
         self.plugin_name = plugin_name
         self.permissions = permissions
         self.tool_registry = tool_registry
+        self.trusted_first_party = bool(trusted_first_party)
         self.registered_tool_names: List[str] = []
 
-    def register(self, tool_name: str, handler: Callable[..., Any], description: str = "", schema: Optional[Dict[str, Any]] = None) -> None:
+    def register(
+        self,
+        tool_name: str,
+        handler: Callable[..., Any],
+        description: str = "",
+        schema: Optional[Dict[str, Any]] = None,
+    ) -> None:
         if "tools.register" not in self.permissions:
             raise PluginPermissionError(
                 f"Plugin '{self.plugin_name}' denied tool registration. Missing 'tools.register' permission."
             )
         if self.tool_registry and hasattr(self.tool_registry, "register"):
-            self.tool_registry.register(tool_name, handler, description=description, schema=schema, owner_plugin_id=self.plugin_name)
+            self.tool_registry.register(
+                tool_name,
+                handler,
+                description=description,
+                schema=schema,
+                owner_plugin_id=self.plugin_name,
+                trusted_read_only=self.trusted_first_party,
+            )
             self.registered_tool_names.append(tool_name)
 
 

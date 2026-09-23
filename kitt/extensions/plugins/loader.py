@@ -337,6 +337,9 @@ class PluginLoader:
                 manifest.name,
                 manifest.permissions,
                 self.tool_registry,
+                trusted_first_party=(
+                    manifest.source == "builtin"
+                ),
             ),
             commands=CommandAPI(
                 manifest.name,
