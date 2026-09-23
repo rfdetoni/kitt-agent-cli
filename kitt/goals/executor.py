@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
@@ -208,6 +209,41 @@ class GoalStepExecutor:
         flush()
         return "\n".join(blocks), matched_paths, complete
 
+    @staticmethod
+    def _diff_context_ranges(diff_text: str, path: str) -> list[tuple[int, int]]:
+        """Return bounded final-file line ranges around changed hunks."""
+        normalized = str(path or "").replace("\\", "/").lstrip("./")
+        current_matches = False
+        ranges: list[tuple[int, int]] = []
+        hunk_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+        for line in str(diff_text or "").splitlines():
+            if line.startswith("diff --git "):
+                try:
+                    tokens = shlex.split(line)
+                    candidates = set()
+                    for token in tokens[2:4]:
+                        value = token[2:] if token.startswith(("a/", "b/")) else token
+                        candidates.add(value.replace("\\", "/"))
+                    current_matches = normalized in candidates
+                except Exception:
+                    current_matches = False
+                continue
+            if not current_matches:
+                continue
+            match = hunk_re.match(line)
+            if not match:
+                continue
+            start = max(1, int(match.group(1)) - 24)
+            count = max(1, int(match.group(2) or 1))
+            end = start + min(count + 48, 120)
+            if ranges and start <= ranges[-1][1] + 8:
+                ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+            else:
+                ranges.append((start, end))
+            if len(ranges) >= 8:
+                break
+        return ranges
+
     @classmethod
     def _collect_review_snapshot(
         cls,
@@ -274,11 +310,35 @@ class GoalStepExecutor:
         if filtered_diff.strip():
             blocks.append("[GIT DIFF — AGENT MUTATED PATHS]\n" + filtered_diff)
 
-        # Read final content as additional context even when a diff exists. For a
-        # large tracked file, the bounded diff still covers the mutation, so a
-        # truncated final-file excerpt does not by itself make review incomplete.
-        # New/untracked files have no diff coverage and therefore must be fully readable.
+        # Tracked files are represented by their complete bounded diff plus only
+        # local final-file context around changed hunks. New/untracked files have
+        # no diff coverage, so they still require a full bounded read.
         for path in clean_paths:
+            if path in diff_paths:
+                ranges = cls._diff_context_ranges(filtered_diff, path)
+                if not ranges:
+                    ranges = [(1, 240)]
+                for start_line, end_line in ranges:
+                    result = execute(
+                        "read_file",
+                        {
+                            "path": path,
+                            "start_line": start_line,
+                            "end_line": end_line,
+                            "max_bytes": 8_000,
+                        },
+                    )
+                    if not getattr(result, "success", False):
+                        # The diff remains authoritative coverage for a tracked
+                        # path, so missing supplemental context is fail-soft.
+                        continue
+                    body = str(getattr(result, "output", "") or "")
+                    if body.strip():
+                        blocks.append(
+                            f"[CHANGED CONTEXT {path}:{start_line}-{end_line}]\n{body}"
+                        )
+                continue
+
             result = execute(
                 "read_file",
                 {
@@ -289,15 +349,17 @@ class GoalStepExecutor:
                 },
             )
             if not getattr(result, "success", False):
-                if path not in diff_paths:
-                    complete = False
+                complete = False
                 blocks.append(f"[UNREADABLE MUTATED PATH {path}]")
                 continue
             body = str(getattr(result, "output", "") or "")
-            file_truncated = bool(getattr(result, "truncated", False)) or len(body) >= cls.MAX_REVIEW_FILE_CHARS
-            if file_truncated and path not in diff_paths:
+            file_truncated = (
+                bool(getattr(result, "truncated", False))
+                or len(body) >= cls.MAX_REVIEW_FILE_CHARS
+            )
+            if file_truncated:
                 complete = False
-            label = "FINAL FILE EXCERPT" if file_truncated else "FINAL FILE"
+            label = "NEW FILE EXCERPT" if file_truncated else "NEW FILE"
             blocks.append(f"[{label} {path}]\n{body}")
 
         snapshot = "\n\n".join(blocks).strip()
@@ -320,6 +382,22 @@ class GoalStepExecutor:
             return self.reviewer_factory(runtime, goal, completion_state, usage)
 
         profile_name, profile = self._review_profile(runtime, route)
+        execution_name, execution_profile = runtime.processor.router.resolve_profile_for_task(
+            "code-generation"
+        )
+        reviewer_identity = (
+            str(getattr(profile, "backend", "") or "").casefold(),
+            str(getattr(profile, "model", "") or ""),
+            str(getattr(profile, "base_url", "") or ""),
+        )
+        execution_identity = (
+            str(getattr(execution_profile, "backend", "") or "").casefold(),
+            str(getattr(execution_profile, "model", "") or ""),
+            str(getattr(execution_profile, "base_url", "") or ""),
+        )
+        usage["route"] = route
+        usage["independent"] = reviewer_identity != execution_identity
+        usage["execution_profile"] = execution_name
         iteration = int((completion_state or {}).get("iteration", 0) or 0) + 1
 
         def review_fn(system_prompt: str, user_prompt: str) -> str:
