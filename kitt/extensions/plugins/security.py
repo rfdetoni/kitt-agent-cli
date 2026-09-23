@@ -739,6 +739,11 @@ class PluginTrustStore:
     def approved_digest(
         self, manifest: PluginManifest
     ) -> Optional[str]:
+        if manifest.source == "builtin":
+            return plugin_content_digest(
+                manifest,
+                self.workspace_root,
+            )
         data = self._data()
         record = (
             data.get("workspaces", {})
@@ -757,6 +762,11 @@ class PluginTrustStore:
         return digest
 
     def grant(self, manifest: PluginManifest) -> str:
+        if manifest.source == "builtin":
+            return plugin_content_digest(
+                manifest,
+                self.workspace_root,
+            )
         # Content trust and execution mode are separate authorities. A plugin
         # may be approved for the isolated worker without ever being eligible
         # for in-process execution.

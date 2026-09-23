@@ -102,6 +102,7 @@ class PluginLoader:
         self,
         workspace_root: str = ".",
         global_plugins_dir: Optional[str] = None,
+        builtin_plugins_dir: Optional[str] = None,
         event_bus=None,
         hook_registry=None,
         tool_registry=None,
@@ -111,6 +112,10 @@ class PluginLoader:
         self.workspace_root = Path(workspace_root).resolve()
         self.global_plugins_dir = Path(
             global_plugins_dir or (Path.home() / ".kitt" / "plugins")
+        ).resolve()
+        self.builtin_plugins_dir = Path(
+            builtin_plugins_dir
+            or (Path(__file__).resolve().parents[1] / "builtin_plugins")
         ).resolve()
         self.event_bus = event_bus
         self.hook_registry = hook_registry
@@ -123,6 +128,25 @@ class PluginLoader:
     def discover_manifests(self) -> Dict[str, PluginManifest]:
         manifests: Dict[str, PluginManifest] = {}
 
+        if self.builtin_plugins_dir.is_dir():
+            for child in sorted(self.builtin_plugins_dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                manifest_file = child / "plugin.toml"
+                if not manifest_file.is_file():
+                    continue
+                try:
+                    manifest = parse_manifest_file(
+                        manifest_file, source="builtin"
+                    )
+                    manifests[manifest.name] = manifest
+                except Exception as exc:
+                    logger.error(
+                        "Failed to parse bundled plugin manifest in %s: %s",
+                        child,
+                        exc,
+                    )
+
         if self.global_plugins_dir.is_dir():
             for child in sorted(self.global_plugins_dir.iterdir()):
                 if not child.is_dir():
@@ -134,6 +158,13 @@ class PluginLoader:
                     manifest = parse_manifest_file(
                         manifest_file, source="global"
                     )
+                    if manifest.name in manifests:
+                        logger.warning(
+                            "Ignoring global plugin '%s': name collides "
+                            "with a bundled first-party plugin.",
+                            manifest.name,
+                        )
+                        continue
                     manifests[manifest.name] = manifest
                 except Exception as exc:
                     logger.warning(
@@ -310,6 +341,7 @@ class PluginLoader:
             ),
             config=PluginConfigAPI(manifest.name),
             logger=PluginLogger(manifest.name),
+            workspace_root=self.workspace_root,
         )
         return PluginInstance(
             manifest=manifest,

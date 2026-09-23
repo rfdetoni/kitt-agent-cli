@@ -28,6 +28,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - Stable per-child reverse-proxy sessions: each child gets its own browser conversation, while a retained child reuses that same session across reassigned tasks.
 - Workspace capability policy and single-use approvals.
 - MCP servers/tools, plugins, hooks and external integrations.
+- Sixteen bundled first-party plugins for project intelligence, testing, LSP discovery, API/migration analysis, worktrees, quality, dependencies, CI, containers and opt-in integrations.
 - Dreaming/memory consolidation and context compaction.
 - Quality gates, evidence-led completion, risk-aware adversarial review and self-evolution integration.
 - Portable Python fallback plus optional native Rust acceleration.
@@ -203,6 +204,16 @@ Heavy or independently deployable capabilities are intentionally owned elsewhere
 | `kitt-protocol` | cross-component contracts |
 
 These Python distributions compose through the shared `kitt.*` namespace rather than duplicating source.
+
+---
+
+## First-party plugins
+
+KITT 0.69 ships 16 bundled plugins through the same extension subsystem used by external plugins. Ten read-only/deterministic plugins are enabled by default: project intelligence, test impact, LSP discovery, OpenAPI inspection, migration guard, Git worktree planning, quality reporting, dependency audit, CI inspection and container inspection.
+
+Release, GitHub, database, browser, cloud and observability plugins are bundled but disabled by default. Enable them per workspace with `kitt plugins enable <name>`. Bundled plugins are trusted as part of the installed KITT distribution, can be disabled, and cannot be shadowed by global/workspace plugins with the same name. Network access, credentials and mutations remain outside these plugin handlers and continue through MCP or the policy-governed runtime.
+
+See [docs/plugins.md](docs/plugins.md) for the full catalog, tool names, trust model and extension authoring guidance.
 
 ---
 

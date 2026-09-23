@@ -201,7 +201,12 @@ def handle_plugins_command(
         print(f"  Path         : {manifest.manifest_path}")
         print(f"  Permissions  : {', '.join(sorted(manifest.permissions)) or 'None'}")
         print(f"  Enabled      : {ext.plugins.is_enabled(plugin_id, manifest)}")
-        print(f"  User trusted : {trust['trusted']}")
+        trust_label = (
+            "first-party distribution"
+            if manifest.source == "builtin"
+            else str(trust["trusted"])
+        )
+        print(f"  Trust         : {trust_label}")
         print(f"  Content SHA  : {trust['digest']}")
         return 0
 
@@ -232,6 +237,12 @@ def handle_plugins_command(
         print(f"\033[32m✓ Plugin '{plugin_id}' disabled in local workspace state.\033[0m")
         return 0
     if action == "trust":
+        if manifest.source == "builtin":
+            print(
+                f"\033[32m✓ '{plugin_id}' is bundled and trusted by "
+                "the installed KITT distribution.\033[0m"
+            )
+            return 0
         try:
             digest = ext.plugin_trust.grant(manifest)
         except Exception as exc:
@@ -240,6 +251,12 @@ def handle_plugins_command(
         print(f"\033[32m✓ Trusted '{plugin_id}' for exact content hash {digest[:16]}…\033[0m")
         return 0
     if action == "untrust":
+        if manifest.source == "builtin":
+            print(
+                f"\033[33mBundled plugin '{plugin_id}' cannot be untrusted "
+                "independently; disable it instead.\033[0m"
+            )
+            return 1
         removed = ext.plugin_trust.revoke(plugin_id)
         if removed:
             daemon_res = asyncio.run(

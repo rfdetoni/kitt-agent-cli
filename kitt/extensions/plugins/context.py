@@ -27,3 +27,4 @@ class PluginContext:
     commands: CommandAPI
     config: PluginConfigAPI
     logger: PluginLogger
+    workspace_root: Optional[Path] = None

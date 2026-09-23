@@ -1,0 +1,6 @@
+"""GitHub integration inspection."""
+from kitt.extensions.builtin_plugins.shared import install
+
+
+def setup(ctx):
+    return install(ctx, "github")

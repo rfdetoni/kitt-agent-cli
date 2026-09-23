@@ -1,0 +1,10 @@
+name = "kitt-quality-report"
+version = "1.0.0"
+api_version = "1"
+entrypoint = "__init__:setup"
+description = "Deterministic quality and evidence reporting"
+author = "KITT"
+requires_kitt = ">=0.69.0"
+permissions = ["tools.register", "filesystem.read"]
+trusted_in_process = true
+enabled_by_default = true

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kitt-agent-cli"
-version = "0.68.24"
+version = "0.69.0"
 description = "K.I.T.T. autonomous AI coding agent CLI"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -29,6 +29,9 @@ kitt = "kitt.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["kitt*"]
+
+[tool.setuptools.package-data]
+"*" = ["plugin.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
