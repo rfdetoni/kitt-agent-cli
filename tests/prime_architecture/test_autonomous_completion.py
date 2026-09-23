@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from kitt.goals.completion import (
     COMPLETION_REPORT_PREFIX,
     AutonomousCompletionEngine,
+    CompletionCheck,
+    CompletionVerification,
 )
 
 
@@ -127,6 +129,34 @@ class TestAutonomousCompletionEngine(unittest.TestCase):
         self.assertFalse(verification.success)
         self.assertAlmostEqual(verification.score, 2 / 3)
         self.assertIn("Tests pass", verification.feedback)
+
+
+    def test_review_cycle_budget_stops_after_three_rejections(self):
+        engine = AutonomousCompletionEngine(max_review_cycles=3)
+        verification = CompletionVerification(
+            False,
+            0.0,
+            [CompletionCheck("review", "Adversarial code review", False, "fix required")],
+            "fix required",
+            "review-signature",
+        )
+        first = engine.next_state(None, verification)
+        second = engine.next_state(first, verification)
+        third = engine.next_state(second, verification)
+        self.assertFalse(second["review_exhausted"])
+        self.assertTrue(third["review_exhausted"])
+        self.assertEqual(third["review_cycles"], 3)
+
+    def test_stagnation_circuit_breaker_is_hard_bounded(self):
+        engine = AutonomousCompletionEngine(
+            stagnation_threshold=2,
+            stagnation_stop_threshold=4,
+        )
+        verification = engine.verify(_goal(["criterion"]), "no report")
+        state = None
+        for _ in range(4):
+            state = engine.next_state(state, verification)
+        self.assertTrue(state["stagnation_exhausted"])
 
 
 if __name__ == "__main__":
