@@ -68,12 +68,19 @@ class AutonomousCompletionEngine:
         gate_authorizer=None,
         stagnation_threshold: int = 2,
         score_epsilon: float = 0.01,
+        max_review_cycles: int = 3,
+        stagnation_stop_threshold: int = 4,
     ):
         self.gate_runner = gate_runner
         self.gate_result_recorder = gate_result_recorder
         self.gate_authorizer = gate_authorizer
         self.stagnation_threshold = max(2, int(stagnation_threshold))
         self.score_epsilon = max(0.0, float(score_epsilon))
+        self.max_review_cycles = max(1, int(max_review_cycles))
+        self.stagnation_stop_threshold = max(
+            self.stagnation_threshold + 1,
+            int(stagnation_stop_threshold),
+        )
 
     @staticmethod
     def has_contract(goal) -> bool:
@@ -144,6 +151,10 @@ class AutonomousCompletionEngine:
                     "Use a materially different diagnostic or implementation strategy this turn instead of repeating the previous patch/approach.",
                 ]
             )
+            if int(state.get("stagnation_streak", 0) or 0) >= 3:
+                blocks.append(
+                    "Escalate diagnosis: inspect additional runtime evidence and delegate a focused diagnostic child task when child capability is available."
+                )
 
         if criteria:
             example = {
@@ -390,6 +401,20 @@ class AutonomousCompletionEngine:
         streak = int(previous.get("stagnation_streak", 0) or 0) + 1 if same_failure else 1
         improved = verification.score > previous_score + self.score_epsilon
         stagnated = bool(same_failure and streak >= self.stagnation_threshold and not improved)
+        review_failed = any(
+            check.kind == "review" and not check.passed
+            for check in verification.checks
+        )
+        previous_review_cycles = int(previous.get("review_cycles", 0) or 0)
+        review_cycles = previous_review_cycles + 1 if review_failed else 0
+        review_exhausted = bool(
+            review_failed and review_cycles >= self.max_review_cycles
+        )
+        stagnation_exhausted = bool(
+            same_failure
+            and streak >= self.stagnation_stop_threshold
+            and not improved
+        )
         return {
             "iteration": iteration,
             "score": verification.score,
@@ -397,4 +422,7 @@ class AutonomousCompletionEngine:
             "failure_signature": verification.failure_signature,
             "stagnation_streak": streak,
             "stagnated": stagnated,
+            "review_cycles": review_cycles,
+            "review_exhausted": review_exhausted,
+            "stagnation_exhausted": stagnation_exhausted,
         }
