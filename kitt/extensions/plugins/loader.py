@@ -113,10 +113,11 @@ class PluginLoader:
         self.global_plugins_dir = Path(
             global_plugins_dir or (Path.home() / ".kitt" / "plugins")
         ).resolve()
-        self.builtin_plugins_dir = Path(
-            builtin_plugins_dir
-            or (Path(__file__).resolve().parents[1] / "builtin_plugins")
-        ).resolve()
+        self.builtin_plugins_dir = (
+            Path(builtin_plugins_dir).resolve()
+            if builtin_plugins_dir
+            else None
+        )
         self.event_bus = event_bus
         self.hook_registry = hook_registry
         self.tool_registry = tool_registry
@@ -128,7 +129,10 @@ class PluginLoader:
     def discover_manifests(self) -> Dict[str, PluginManifest]:
         manifests: Dict[str, PluginManifest] = {}
 
-        if self.builtin_plugins_dir.is_dir():
+        if (
+            self.builtin_plugins_dir is not None
+            and self.builtin_plugins_dir.is_dir()
+        ):
             for child in sorted(self.builtin_plugins_dir.iterdir()):
                 if not child.is_dir():
                     continue

@@ -48,6 +48,9 @@ class ExtensionManager:
         )
         self.loader = PluginLoader(
             workspace_root=str(self.workspace_root),
+            builtin_plugins_dir=str(
+                Path(__file__).resolve().parent / "builtin_plugins"
+            ),
             event_bus=event_bus,
             hook_registry=self.hooks,
             tool_registry=tool_registry,
