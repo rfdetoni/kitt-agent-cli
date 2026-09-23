@@ -125,7 +125,11 @@ class TestBuiltinPlugins(unittest.TestCase):
                     "test_impact",
                     {"paths": ["src/main/java/UserService.java"]},
                 )
-                self.assertTrue(impact.success)
+                self.assertTrue(
+                    impact.success,
+                    msg=impact.error,
+                )
+                self.assertFalse(impact.requires_approval)
                 impact_data = json.loads(impact.output)
                 self.assertIn(
                     "src/test/java/UserServiceTest.java",

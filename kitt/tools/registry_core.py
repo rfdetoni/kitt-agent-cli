@@ -935,11 +935,16 @@ class ToolRegistry:
             and grant is None
             and not automatic_budget_reserved
         ):
+            custom_metadata = self._custom_tools.get(tool_name) or {}
+            zero_risk_read = bool(
+                custom_metadata.get("trusted_read_only")
+            )
             budget_reservation = self.policy.reserve_automatic_action(
                 tool_name,
                 turn_id=turn_id,
                 conversation_id=conversation_id,
                 origin=origin,
+                risk_cost=0 if zero_risk_read else None,
             )
             if not budget_reservation.allowed:
                 permission = "ASK"
