@@ -184,6 +184,11 @@ class PlainLineUI:
             if text == "/help":
                 self._write("\n".join(f"{c.aliases[0]} - {c.description}" for c in self.commands.commands.values()) + "\n")
                 continue
+            if text == "/verify-full" or text == "/verify" or text.startswith("/verify-full ") or text.startswith("/verify "):
+                from kitt.ui.verification_commands import apply_verification_mode
+                arg = text.partition(" ")[2].strip()
+                self._write(apply_verification_mode(self.runtime, arg) + "\n")
+                continue
             if text in {"/restart-reverse-proxy", "/stop-reverse-proxy"}:
                 from kitt.ui.reverse_proxy_commands import manage_reverse_proxy
                 try:
