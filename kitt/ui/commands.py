@@ -66,6 +66,7 @@ class CommandRegistry:
             ("stats", "Telemetry Stats", "Analytics", "Show turn/context token and latency telemetry", ["/stats", "/metrics"]),
             ("gain", "Token Savings", "Analytics", "RTK-style KITT tool-output savings: /gain [tools|history|daily|graph|all|json]", ["/gain"]),
             ("status", "Runtime Status", "System", "Show runtime snapshot", ["/status"]),
+            ("verify_full", "Full Verification", "System", "Toggle bounded compile/typecheck/lint/test verification: /verify-full [on|off|status]", ["/verify-full", "/verify"]),
             ("restart_reverse_proxy", "Restart Reverse Proxy", "System", "Restart all local KITT Reverse Proxy services", ["/restart-reverse-proxy"]),
             ("stop_reverse_proxy", "Stop Reverse Proxy", "System", "Stop all local KITT Reverse Proxy services", ["/stop-reverse-proxy"]),
             ("compact", "Compact History", "Session", "Compact bounded conversation history", ["/compact"]),
