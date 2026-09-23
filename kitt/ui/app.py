@@ -521,6 +521,9 @@ class KittUIApp:
         elif found.id == "context_stats":
             config = self.runtime.config
             self._show_result(f"Context window: {config.context_window_default}\nReserved output: {config.reserved_output_tokens}")
+        elif found.id == "verify_full":
+            from kitt.ui.verification_commands import handle_verification_mode_command
+            handle_verification_mode_command(self, arg)
         elif found.id == "router":
             router = getattr(self.runtime.processor, "router", None)
             profiles = getattr(getattr(router, "config", None), "profiles", {})
