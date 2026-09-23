@@ -122,6 +122,7 @@ class SettingsDescriptorProvider:
             {"key": "tool_runtime_mode", "label": "Tool runtime mode", "type": "enum", "default": default_config.tool_runtime_mode, "options": ["auto", "native", "restricted"], "apply_mode": "component_restart"},
             {"key": "daemon_local_fallback", "label": "Daemon local fallback", "type": "boolean", "default": default_config.daemon_local_fallback, "apply_mode": "component_restart"},
             {"key": "retained_agents_enabled", "label": "Retained agents", "type": "boolean", "default": default_config.retained_agents_enabled, "apply_mode": "component_restart"},
+            {"key": "verify_full_enabled", "label": "Full verification", "type": "boolean", "default": default_config.verify_full_enabled, "apply_mode": "live", "description": "Run project compile/typecheck/lint/test verification after code edits."},
         ]
 
         context_fields = [
