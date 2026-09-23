@@ -29,7 +29,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - Workspace capability policy and single-use approvals.
 - MCP servers/tools, plugins, hooks and external integrations.
 - Dreaming/memory consolidation and context compaction.
-- Quality gates, evaluation hooks and self-evolution integration.
+- Quality gates, evidence-led completion, risk-aware adversarial review and self-evolution integration.
 - Portable Python fallback plus optional native Rust acceleration.
 - Daemon/remote integration through the separately packaged Assistant runtime.
 
@@ -97,7 +97,7 @@ kitt remote status
 kitt evolve runs
 ```
 
-Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update providers that support API-side reasoning control. With `kitt-reverse-proxy`, the Agent keeps a stable conversation/session ID without creating a new browser conversation every turn. For browser-backed WebChat providers, reasoning/thinking remains configured in the authenticated WebChat UI; the legacy `X-Kitt-Reasoning-Effort` header is compatibility-only and is ignored by the reverse proxy.
+Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update providers that support API-side reasoning control. `/verify-full` is available from the command palette/menu and toggles the persistent `KITT_AGENT_VERIFY_FULL` runtime flag. When enabled, KITT adds bounded project compile/typecheck/lint/test gates after edits; when disabled, fast structural validation and targeted checks remain active. With `kitt-reverse-proxy`, the Agent keeps a stable conversation/session ID without creating a new browser conversation every turn. For browser-backed WebChat providers, reasoning/thinking remains configured in the authenticated WebChat UI; the legacy `X-Kitt-Reasoning-Effort` header is compatibility-only and is ignored by the reverse proxy.
 
 ---
 
@@ -252,6 +252,8 @@ KITT_DAEMON_AUTO_START
 KITT_RETAINED_AGENTS
 KITT_SCHEDULER
 ```
+
+`KITT_AGENT_VERIFY_FULL` is managed persistently from inside KITT (`/verify-full` or the command palette). The environment variable remains a compatibility fallback only until a persisted menu choice exists.
 
 Daemon/remote switches become active when `kitt-assistant-runtime` is installed.
 
