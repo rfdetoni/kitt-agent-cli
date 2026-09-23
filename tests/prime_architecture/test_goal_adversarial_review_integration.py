@@ -274,5 +274,22 @@ diff --git a/unrelated.py b/unrelated.py
         self.assertEqual(calls, ["code-generation"])
 
 
+    def test_review_context_ranges_are_bounded_to_changed_hunks(self):
+        diff = """diff --git a/service.py b/service.py
+--- a/service.py
++++ b/service.py
+@@ -90,2 +100,3 @@ def load_user(user_id):
+-old
++new
+@@ -400,1 +420,2 @@ def other():
+-old
++new
+"""
+        ranges = GoalStepExecutor._diff_context_ranges(diff, "service.py")
+        self.assertEqual(ranges[0], (76, 127))
+        self.assertEqual(ranges[1], (396, 446))
+        self.assertLessEqual(len(ranges), 8)
+
+
 if __name__ == "__main__":
     unittest.main()
