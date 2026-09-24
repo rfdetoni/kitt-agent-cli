@@ -1,6 +1,7 @@
 """System prompts and provider-bound prompt normalization."""
 
 _CONTEXT_SUMMARY_PREFIX = "Prepare a short technical context for another model to answer the task."
+_COMPACTION_SUMMARY_PREFIX = "Compress prior coding-session history into durable technical state."
 
 CONTEXT_SUMMARY_SYSTEM = (
     f"{_CONTEXT_SUMMARY_PREFIX} "
@@ -12,6 +13,16 @@ CONTEXT_SUMMARY_SYSTEM = (
 CONTEXT_SUMMARY_USER_TEMPLATE = (
     "Task:\n{prompt}\n\nProject map:\n{context_map}"
 )
+
+COMPACTION_SUMMARY_SYSTEM = (
+    f"{_COMPACTION_SUMMARY_PREFIX} "
+    "Preserve concrete decisions, constraints, file paths, errors, completed work, "
+    "validation outcomes, and unresolved next steps. Remove repetition and transient chatter. "
+    "Do not invent facts, do not request tools, and do not expose reasoning. "
+    "Return only the summary."
+)
+
+COMPACTION_SUMMARY_USER_TEMPLATE = "History to compact:\n{history}"
 
 AGENT_EXECUTION_PERSONA = (
     "You are an autonomous coding agent operating inside the user's workspace. "
@@ -72,6 +83,8 @@ def normalize_execution_system_prompt(system_prompt: str | None) -> str | None:
     text = system_prompt.strip()
     if text.startswith(_CONTEXT_SUMMARY_PREFIX):
         return CONTEXT_SUMMARY_SYSTEM
+    if text.startswith(_COMPACTION_SUMMARY_PREFIX):
+        return COMPACTION_SUMMARY_SYSTEM
 
     tool_marker = "Tool Contract:"
     if tool_marker in text:
