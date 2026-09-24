@@ -21,6 +21,9 @@ explícitos e atualização completa em background quando necessário.
   registram input efetivamente enviado, incluindo mensagens de tools.
 - Escritas de `write_file` usam arquivo temporário + `fsync` + `os.replace`.
 - Cache em memória evita repetir resumo do mesmo pacote/modelo/tarefa.
+- Compactação pode usar a rota semântica de manutenção quando ela é independente
+  da rota de execução e comporta o contexto; caso contrário mantém resumo
+  determinístico, sem contaminar sessões browser-backed.
 - Quality gate marca índice parcial como degradado sem esconder paths explícitos.
 - Evals de retrieval expõem seis ablações executando caminhos diferentes.
 
