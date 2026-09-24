@@ -54,6 +54,38 @@ class TestApprovalCenter(unittest.TestCase):
         self.assertIsNotNone(grant)
         self.assertGreater(grant.expires_at, grant.granted_at)
 
+    def test_persisted_pending_request_survives_restart_and_long_wait(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            db_path = Path(tmp_dir) / "kitt.db"
+            db = HistoryDatabase(str(db_path))
+            manager = ApprovalManager(ttl_seconds=5, db=db)
+            req = manager.register_request(
+                "turn-restart",
+                "conv-restart",
+                "ws-restart",
+                "hash-restart",
+                "req-restart",
+                "process.run",
+                "Persistent approval",
+            )
+            self.assertEqual(req.expires_at, 0.0)
+
+            # Simulate a daemon/runtime restart: the new broker has no in-memory
+            # request state and must rehydrate the durable PENDING row.
+            restarted = ApprovalManager(ttl_seconds=5, db=db)
+            future = req.created_at + 14 * 24 * 60 * 60
+            with patch("kitt.tools.approval.time.time", return_value=future):
+                grant = restarted.issue_grant(
+                    "turn-restart",
+                    "conv-restart",
+                    "ws-restart",
+                    "hash-restart",
+                    "req-restart",
+                )
+
+            self.assertIsNotNone(grant)
+            self.assertGreater(grant.expires_at, grant.granted_at)
+
     def test_remembered_approval_rules_and_persistence(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             db_path = Path(tmp_dir) / "kitt.db"
