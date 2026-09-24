@@ -1140,7 +1140,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return
 
         if grant is None or grant.approval_id != pa.approval_request_id:
-            yield TurnFailed(error="Approval grant does not match the pending request.")
+            yield TurnFailed(
+                error=(
+                    "Approval grant does not match the pending request; "
+                    "tool requires explicit user confirmation (ASK policy)."
+                )
+            )
             return
         if (grant.turn_id != pa.turn_id or grant.conversation_id != pa.conversation_id
                 or grant.workspace_id != pa.workspace_id or grant.action_hash != pa.action_hash

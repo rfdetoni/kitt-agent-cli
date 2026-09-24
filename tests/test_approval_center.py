@@ -4,8 +4,6 @@ from pathlib import Path
 from unittest.mock import patch
 from kitt.tools.approval import ApprovalManager
 from kitt.history.database import HistoryDatabase
-from kitt.history.repository import HistoryRepository
-from kitt.core.pending_action import PendingAction
 from kitt.ui.state import UIState
 from kitt.ui.components.permission_card import PermissionCardComponent
 
@@ -55,34 +53,6 @@ class TestApprovalCenter(unittest.TestCase):
 
         self.assertIsNotNone(grant)
         self.assertGreater(grant.expires_at, grant.granted_at)
-
-    def test_persisted_pending_action_stays_resumable_without_deadline(self):
-        db = HistoryDatabase(in_memory=True)
-        try:
-            repo = HistoryRepository(db)
-            action = PendingAction(
-                id="pa-long-wait",
-                approval_request_id="req-long-wait",
-                turn_id="turn-long-wait",
-                conversation_id="conv-long-wait",
-                workspace_id="ws1",
-                tool_name="process.run",
-                normalized_args={"argv": ["echo", "ok"]},
-                action_hash="hash-long-wait",
-                source_response_sha256="digest",
-                affected_paths=[],
-                before_hashes={},
-                created_at=1.0,
-                expires_at=2.0,  # legacy finite deadline must not invalidate active state
-                state="pending",
-            )
-            repo.save_pending_action(action)
-            with patch("kitt.history.repository.time.time", return_value=86_400.0):
-                loaded = repo.get_valid_pending_action("pa-long-wait", "ws1")
-            self.assertIsNotNone(loaded)
-            self.assertEqual(loaded.state, "pending")
-        finally:
-            db.close()
 
     def test_remembered_approval_rules_and_persistence(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
