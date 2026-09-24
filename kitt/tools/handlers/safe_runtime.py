@@ -44,84 +44,6 @@ class SafeRuntimeHandler(ToolHandler):
         payload[PATCH_INTEGRITY_KEY] = integrity_manifest
         return affected, before_hashes
 
-    @staticmethod
-    def _coordination_paths(
-        operation: str,
-        operation_args: dict,
-        ctx: ToolContext,
-    ) -> list[str]:
-        if operation in {"repo.write_file", "repo.create_directory", "repo.delete"}:
-            target = operation_args.get("path") or operation_args.get("file")
-            return [str(target)] if target else []
-        if operation in {"repo.move", "repo.rename"}:
-            values = [
-                operation_args.get("source") or operation_args.get("path"),
-                operation_args.get("destination") or operation_args.get("target"),
-            ]
-            return [str(value) for value in values if value]
-        if operation == "patch.apply":
-            try:
-                blocks = ctx.registry.parser.parse(
-                    str(operation_args.get("patch", "") or "")
-                )
-            except Exception as exc:
-                raise ValueError(
-                    "Child runtime patch could not be parsed for mutation fencing"
-                ) from exc
-            return [
-                str(block.file_path)
-                for block in blocks
-                if str(getattr(block, "file_path", "") or "").strip()
-            ]
-        if operation == "process.run":
-            scope = getattr(ctx.security_context, "path_scope", None)
-            return sorted(scope) if scope else ["."]
-        return []
-
-    @classmethod
-    def _fence_child_runtime_mutation(
-        cls,
-        operation: str,
-        operation_args: dict,
-        ctx: ToolContext,
-    ) -> dict[str, Any]:
-        security_context = ctx.security_context
-        coordinator = getattr(ctx.registry, "coordinator", None)
-        if (
-            coordinator is None
-            or security_context is None
-            or str(getattr(security_context, "principal_type", "")).upper()
-            != "CHILD"
-            or operation == "repo.edit_symbol"
-        ):
-            return {}
-
-        paths = list(
-            dict.fromkeys(
-                path
-                for path in cls._coordination_paths(operation, operation_args, ctx)
-                if str(path).strip()
-            )
-        )
-        if not paths:
-            return {}
-        owner_id = str(getattr(security_context, "principal_id", "") or "").strip()
-        if not owner_id:
-            raise PermissionError("Child runtime mutation is missing coordination identity")
-        grants = coordinator.claim_paths(
-            paths,
-            owner_id,
-            f"{operation} mutation",
-            wait_timeout=8.0,
-        )
-        return {
-            "coordination": {
-                "owner_id": owner_id,
-                "resources": [grant.resource_id for grant in grants],
-                "mode": "WRITE",
-            }
-        }
-
     def execute(self, args: Dict[str, Any], ctx: ToolContext) -> Any:
         from kitt.tools.registry import ToolResult
 
@@ -165,33 +87,6 @@ class SafeRuntimeHandler(ToolHandler):
             )
             ctx.registry._safe_runtime_instance = safe_runtime
 
-        try:
-            coordination_metadata = self._fence_child_runtime_mutation(
-                operation,
-                operation_args,
-                ctx,
-            )
-        except Exception as exc:
-            from kitt.native.coordinator import CoordinationConflict
-
-            if isinstance(exc, CoordinationConflict):
-                return ToolResult(
-                    False,
-                    "",
-                    f"Child runtime mutation coordination conflict: {exc}",
-                    metadata={
-                        "coordination": {
-                            "state": "blocked",
-                            "operation": operation,
-                        }
-                    },
-                )
-            return ToolResult(
-                False,
-                "",
-                f"Child runtime mutation coordination failed: {exc}",
-            )
-
         result = safe_runtime.execute(
             operation=operation,
             arguments=operation_args,
@@ -201,12 +96,6 @@ class SafeRuntimeHandler(ToolHandler):
             approval_grant=ctx.approval_grant,
             expected_approval_id=ctx.expected_approval_id,
         )
-        if coordination_metadata:
-            result.metadata = {
-                **dict(result.metadata or {}),
-                **coordination_metadata,
-            }
-
         logger.debug(
             "runtime operation=%s success=%s approval=%s error=%r",
             operation,
