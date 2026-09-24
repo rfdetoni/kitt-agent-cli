@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -154,6 +156,51 @@ class ToolRegistry:
             return []
         return list(gateway.drain_images())
 
+    @staticmethod
+    def _validate_dynamic_tool_contract(
+        tool_name: str,
+        handler: Any,
+        description: str,
+        schema: Optional[Dict[str, Any]],
+    ) -> tuple[str, str, Dict[str, Any]]:
+        name = str(tool_name or "").strip()
+        if (
+            not name
+            or len(name) > 128
+            or re.search(r"[\\s\\x00-\\x1f\\x7f]", name)
+        ):
+            raise ValueError(
+                "Dynamic tool name must be 1..128 visible non-whitespace characters"
+            )
+        if not (
+            callable(handler)
+            or (
+                hasattr(handler, "execute")
+                and callable(getattr(handler, "execute"))
+            )
+        ):
+            raise TypeError("Dynamic tool handler must be callable or expose execute()")
+
+        normalized_description = str(description or "").strip()
+        if len(normalized_description) > 4096:
+            raise ValueError("Dynamic tool description exceeds 4096 characters")
+
+        normalized_schema = {} if schema is None else schema
+        if not isinstance(normalized_schema, dict):
+            raise TypeError("Dynamic tool schema must be an object")
+        try:
+            encoded = json.dumps(
+                normalized_schema,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Dynamic tool schema must be JSON serializable") from exc
+        if len(encoded.encode("utf-8")) > 65_536:
+            raise ValueError("Dynamic tool schema exceeds 64 KiB")
+        return name, normalized_description, dict(normalized_schema)
+
     def register(
         self,
         tool_name: str,
@@ -171,6 +218,24 @@ class ToolRegistry:
         intentionally fail-closed: a path-restricted child cannot escape its
         boundary through an opaque plugin or MCP implementation.
         """
+        tool_name, description, schema = self._validate_dynamic_tool_contract(
+            tool_name,
+            handler,
+            description,
+            schema,
+        )
+        existing_custom = self._custom_tools.get(tool_name)
+        if tool_name in self._handlers and existing_custom is None:
+            raise ValueError(
+                f"Dynamic tool '{tool_name}' cannot replace a built-in KITT tool"
+            )
+        if (
+            existing_custom is not None
+            and existing_custom.get("owner") != owner_plugin_id
+        ):
+            raise ValueError(
+                f"Dynamic tool '{tool_name}' is already owned by another extension"
+            )
 
         class _CustomHandler:
             def __init__(self, function):
@@ -198,7 +263,7 @@ class ToolRegistry:
         self._custom_tools[tool_name] = {
             "name": tool_name,
             "description": description or f"Custom tool {tool_name}",
-            "args": schema or {},
+            "args": schema,
             "owner": owner_plugin_id,
             "scope_aware": bool(scope_aware),
             "trusted_read_only": bool(trusted_read_only),
@@ -726,6 +791,58 @@ class ToolRegistry:
             )
         )
 
+    def _fence_child_mutation(
+        self,
+        tool_name: str,
+        args: dict,
+        security_context,
+    ) -> dict[str, Any]:
+        coordinator = getattr(self, "coordinator", None)
+        if (
+            coordinator is None
+            or security_context is None
+            or str(getattr(security_context, "principal_type", "")).upper()
+            != "CHILD"
+        ):
+            return {}
+
+        paths: list[str] = []
+        if tool_name in {"write_file", "create_directory"}:
+            target = args.get("path") or args.get("file")
+            if target:
+                paths.append(str(target))
+        elif tool_name == "apply_patch":
+            try:
+                blocks = self.parser.parse(str(args.get("patch", "") or ""))
+            except Exception:
+                blocks = []
+            paths.extend(
+                str(block.file_path)
+                for block in blocks
+                if str(getattr(block, "file_path", "") or "").strip()
+            )
+
+        paths = list(dict.fromkeys(path for path in paths if path.strip()))
+        if not paths:
+            return {}
+        owner_id = str(getattr(security_context, "principal_id", "") or "").strip()
+        if not owner_id:
+            raise PermissionError("Child mutation is missing coordination identity")
+
+        grants = coordinator.claim_paths(
+            paths,
+            owner_id,
+            f"{tool_name} mutation",
+            wait_timeout=8.0,
+        )
+        return {
+            "coordination": {
+                "owner_id": owner_id,
+                "resources": [grant.resource_id for grant in grants],
+                "mode": "WRITE",
+            }
+        }
+
     def execute_tool(
         self,
         tool_name: str,
@@ -1027,10 +1144,43 @@ class ToolRegistry:
         handler = self._handlers.get(tool_name)
         if not handler:
             return ToolResult(False, "", f"Tool '{tool_name}' execution not implemented.")
+
+        try:
+            coordination_metadata = self._fence_child_mutation(
+                tool_name,
+                handler_args,
+                security_context,
+            )
+        except Exception as exc:
+            from kitt.native.coordinator import CoordinationConflict
+
+            if isinstance(exc, CoordinationConflict):
+                return ToolResult(
+                    False,
+                    "",
+                    f"Child mutation coordination conflict: {exc}",
+                    metadata={
+                        "coordination": {
+                            "state": "blocked",
+                            "tool": tool_name,
+                        }
+                    },
+                )
+            return ToolResult(
+                False,
+                "",
+                f"Child mutation coordination failed: {exc}",
+            )
+
         started_at = time.time()
         started_perf = time.perf_counter()
         try:
             result = handler.execute(handler_args, context)
+            if coordination_metadata:
+                result.metadata = {
+                    **dict(result.metadata or {}),
+                    **coordination_metadata,
+                }
             if auto_review is not None:
                 result.metadata = {
                     **dict(result.metadata or {}),
