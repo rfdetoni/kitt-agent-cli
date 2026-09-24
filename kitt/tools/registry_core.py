@@ -167,7 +167,7 @@ class ToolRegistry:
         if (
             not name
             or len(name) > 128
-            or re.search(r"[\\s\\x00-\\x1f\\x7f]", name)
+            or re.search(r"[\s\x00-\x1f\x7f]", name)
         ):
             raise ValueError(
                 "Dynamic tool name must be 1..128 visible non-whitespace characters"
