@@ -19,6 +19,20 @@ from kitt.tools.handlers.safe_runtime import SafeRuntimeHandler
 from kitt.tools.registry import ToolRegistry
 
 
+class TestAutomaticReleaseConcurrency(unittest.TestCase):
+    def test_stale_workflow_runs_cannot_cancel_current_main_release(self):
+        workflow = (
+            Path(__file__).resolve().parents[2]
+            / ".github"
+            / "workflows"
+            / "auto-release.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("github.event.workflow_run.head_sha", workflow)
+        self.assertIn("group: automatic-release-", workflow)
+        self.assertNotIn("group: automatic-release-main", workflow)
+
+
 class TestSafeRuntimeNewFileApproval(unittest.TestCase):
     def test_new_file_integrity_uses_none_not_string_sentinel(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
