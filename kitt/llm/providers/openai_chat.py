@@ -15,6 +15,7 @@ from kitt.llm.domain import (
     ProviderHealth,
     ProviderTimeoutError,
     ProviderConnectionError,
+    ProviderProtocolError,
 )
 from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
@@ -60,21 +61,40 @@ class OpenAIChatAdapter:
             headers=headers,
         )
 
+        stream_complete = False
         try:
             with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
                     line_str = line.decode("utf-8").strip()
-                    if line_str.startswith("data: "):
-                        data_content = line_str[6:]
-                        if data_content == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_content)
-                            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                            if delta:
-                                yield delta
-                        except json.JSONDecodeError:
-                            pass
+                    if not line_str.startswith("data: "):
+                        continue
+                    data_content = line_str[6:]
+                    if data_content == "[DONE]":
+                        stream_complete = True
+                        break
+                    try:
+                        chunk = json.loads(data_content)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = chunk.get("choices", [])
+                    if (
+                        not isinstance(choices, list)
+                        or not choices
+                        or not isinstance(choices[0], dict)
+                    ):
+                        continue
+                    choice = choices[0]
+                    if choice.get("finish_reason") is not None:
+                        stream_complete = True
+                    delta = choice.get("delta", {})
+                    if isinstance(delta, dict):
+                        content = delta.get("content", "")
+                        if isinstance(content, str) and content:
+                            yield content
+            if not stream_complete:
+                raise ProviderProtocolError(
+                    "OpenAI stream ended before a completion marker"
+                )
         except socket.timeout as exc:
             raise ProviderTimeoutError(f"OpenAI request timed out after {request.timeout_seconds}s") from exc
         except urllib.error.HTTPError as e:

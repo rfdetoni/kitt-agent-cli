@@ -562,38 +562,73 @@ def handle_daemon_command(action: str = "status", root_dir: str = ".") -> int:
     return 1
 
 
-def handle_sessions_command(root_dir: str = ".") -> int:
+def handle_sessions_command(
+    root_dir: str = ".",
+    *,
+    limit: int = 20,
+    show_all: bool = False,
+    json_output: bool = False,
+) -> int:
     import asyncio
-    from kitt.daemon.client import DaemonClient
+
+    from kitt.cli.operations import build_session_report, render_session_report
 
     async def _sessions():
-        client = DaemonClient(workspace_root=root_dir)
-        if not await client.connect():
-            # Fallback to local database
-            from kitt.core.runtime import KittRuntime
-            from kitt.core.runtime_config import RuntimeConfig
-            rt = KittRuntime.build(root_dir, config=RuntimeConfig())
-            convs = rt.history.list_history(limit=20)
-            active = rt.history.get_active_read_only()
-            active_id = active["id"] if active else ""
-            print("\n\033[1;36m=== KITT Sessions (Local) ===\033[0m")
-            for c in convs:
-                tag = "\033[32m[ACTIVE]\033[0m" if c.get("id") == active_id else ""
-                print(f"  • \033[1m{c.get('id', '')[:12]}\033[0m {tag} {c.get('title', '')}")
-            rt.close()
-            return 0
+        daemon_rows = None
+        active_id = ""
+        try:
+            from kitt.daemon.client import DaemonClient
+        except ModuleNotFoundError as exc:
+            if exc.name and not exc.name.startswith("kitt.daemon"):
+                raise
+            DaemonClient = None
 
-        resp = await client.list_sessions(workspace=root_dir)
-        sessions = resp.get("sessions", [])
-        active_id = resp.get("active_session_id", "")
-        print("\n\033[1;36m=== KITT Daemon Sessions ===\033[0m")
-        for s in sessions:
-            tag = "\033[32m[ACTIVE]\033[0m" if s["id"] == active_id else ""
-            print(f"  • \033[1m{s['id'][:12]}\033[0m {tag} {s['title']} ({s['status']})")
-        await client.close()
+        if DaemonClient is not None:
+            client = DaemonClient(workspace_root=root_dir)
+            try:
+                if await client.connect():
+                    resp = await client.list_sessions(workspace=root_dir)
+                    if resp.get("status") == "ok":
+                        daemon_rows = resp.get("sessions", [])
+                        active_id = str(resp.get("active_session_id") or "")
+            finally:
+                await client.close()
+
+        effective_limit = 100 if show_all else min(100, max(1, int(limit)))
+        rows = build_session_report(
+            root_dir,
+            daemon_rows,
+            active_id=active_id,
+            limit=effective_limit,
+        )
+        print(render_session_report(rows, json_output=json_output))
         return 0
 
     return asyncio.run(_sessions())
+
+
+def handle_incident_command(
+    root_dir: str = ".",
+    *,
+    since: str = "1h",
+    session: Optional[str] = None,
+    limit: int = 100,
+    json_output: bool = False,
+) -> int:
+    from kitt.cli.operations import collect_incidents, render_incident_report
+
+    try:
+        incidents = collect_incidents(
+            root_dir,
+            since=since,
+            session=session,
+            limit=limit,
+        )
+    except ValueError as exc:
+        print(f"\033[31mInvalid incident window: {exc}\033[0m", file=sys.stderr)
+        return 2
+    print(render_incident_report(incidents, json_output=json_output))
+    return 0
 
 
 def handle_attach_command(session_id: str, root_dir: str = ".") -> int:

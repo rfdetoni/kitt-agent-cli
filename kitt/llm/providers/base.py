@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import urllib.error
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Protocol
 
@@ -59,6 +61,25 @@ class ProviderAdapter(Protocol):
         ...
 
 
+def _retry_after_seconds(headers) -> Optional[float]:
+    if not headers:
+        return None
+    raw = headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        pass
+    try:
+        when = parsedate_to_datetime(str(raw))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def handle_http_error(e: urllib.error.HTTPError, url: str, body: Optional[str] = None) -> None:
     """Translate bounded, redacted HTTP failures into typed provider errors."""
     if body is None:
@@ -70,12 +91,7 @@ def handle_http_error(e: urllib.error.HTTPError, url: str, body: Optional[str] =
     if e.code == 404:
         raise ProviderModelNotFoundError(f"Model or endpoint not found ({msg})")
     if e.code == 429:
-        retry_after = None
-        if e.headers and "Retry-After" in e.headers:
-            try:
-                retry_after = float(e.headers["Retry-After"])
-            except (TypeError, ValueError):
-                pass
+        retry_after = _retry_after_seconds(e.headers)
         raise ProviderRateLimitError(
             f"Rate limited by provider ({msg})",
             retry_after=retry_after,

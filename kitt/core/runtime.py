@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Optional
 
 from kitt.artifacts.store import ArtifactStore
@@ -10,6 +10,7 @@ from kitt.children.manager import ChildAgentManager
 from kitt.children.repository import ChildRepository
 from kitt.compaction.service import CompactionService
 from kitt.context.working_set import ConversationWorkingSetStore
+from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.context_engine.engine import ContextEngine
 from kitt.core.autonomy_store import AutonomyStore
 from kitt.core.event_bus import EventBus
@@ -28,7 +29,9 @@ from kitt.history.service import HistoryService
 from kitt.history.session_tree import SessionTreeRepository
 from kitt.index.repository import RepositoryIndex
 from kitt.llm.client import LLMClient
+from kitt.llm.retry import RetryConfig, RetryPolicy
 from kitt.memory.memory_manager import MemoryManager
+from kitt.prompts import COMPACTION_SUMMARY_SYSTEM, COMPACTION_SUMMARY_USER_TEMPLATE
 from kitt.metrics.collector import MetricsCollector
 from kitt.queueing.repository import InputQueueRepository
 from kitt.queueing.service import InputQueueService
@@ -44,6 +47,89 @@ from kitt.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from kitt.extensions.manager import ExtensionManager
+
+
+_REVERSE_PROXY_BACKENDS = {"kitt-reverse-proxy", "kitt-proxy"}
+
+
+def _profile_identity(profile) -> tuple[str, str, str, str]:
+    return (
+        str(getattr(profile, "backend", "") or "").strip().lower(),
+        str(getattr(profile, "protocol", "") or "").strip().lower(),
+        str(getattr(profile, "base_url", "") or "").strip().rstrip("/").lower(),
+        str(getattr(profile, "model", "") or "").strip(),
+    )
+
+
+def _is_reverse_proxy_profile(profile) -> bool:
+    backend, protocol, _, _ = _profile_identity(profile)
+    return backend in _REVERSE_PROXY_BACKENDS or protocol == "kitt-reverse-proxy"
+
+
+def _build_compaction_summarizer(router: TaskRouter):
+    """Build a bounded maintenance summarizer without reusing the execution lane."""
+    _, execution_profile = router.resolve_profile_for_task("code-generation")
+    execution_identity = _profile_identity(execution_profile)
+
+    def summarize(history: str) -> str:
+        fallback = CompactionService._deterministic_summary(history)
+        user_prompt = COMPACTION_SUMMARY_USER_TEMPLATE.format(history=history)
+        seen: set[tuple[str, str, str, str]] = set()
+
+        for route_name in ("summarize", "context-gather"):
+            _, profile = router.resolve_profile_for_task(route_name)
+            identity = _profile_identity(profile)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if identity == execution_identity or _is_reverse_proxy_profile(profile):
+                continue
+
+            reserve = max(
+                64,
+                min(int(getattr(profile, "max_output_tokens", 512) or 512), 1024),
+            )
+            window = int(getattr(profile, "context_window", 0) or 0)
+            required = (
+                TokenCounter.count_tokens(COMPACTION_SUMMARY_SYSTEM)
+                + TokenCounter.count_tokens(user_prompt)
+                + reserve
+            )
+            if window > 0 and required > window:
+                continue
+
+            maintenance_profile = replace(
+                profile,
+                max_output_tokens=reserve,
+                temperature=0.0,
+                request_timeout_seconds=min(
+                    45,
+                    max(1, int(getattr(profile, "request_timeout_seconds", 45) or 45)),
+                ),
+            )
+            try:
+                policy = RetryPolicy(
+                    RetryConfig(
+                        max_retries=1,
+                        base_delay_ms=250,
+                        max_delay_ms=1000,
+                        retry_timeouts=False,
+                    )
+                )
+                with LLMClient(maintenance_profile, retry_policy=policy) as client:
+                    result = client.chat(
+                        [{"role": "user", "content": user_prompt}],
+                        system_prompt=COMPACTION_SUMMARY_SYSTEM,
+                        reasoning_effort=None,
+                    )
+                visible = TurnProcessor._without_thinking(result).strip()
+                if visible:
+                    return visible
+            except Exception:
+                continue
+        return fallback
+
+    return summarize
 
 
 @dataclass
@@ -167,9 +253,11 @@ class KittRuntime:
         harness = HarnessService(HarnessRepository(database))
         goals = GoalService(database)
         queue = InputQueueService(InputQueueRepository(database))
+        task_router = TaskRouter(root_dir=canonical_root)
         compaction = CompactionService(
             database,
             session_tree,
+            summarizer=_build_compaction_summarizer(task_router),
             keep_recent=config.compaction_keep_recent,
         )
         events = EventBus()
@@ -238,7 +326,6 @@ class KittRuntime:
         path_policy = PathPolicy(canonical_root)
         network_policy = NetworkPolicy()
 
-        task_router = TaskRouter(root_dir=canonical_root)
         _, context_profile = task_router.resolve_profile_for_task("context-gather")
         dream_llm = LLMClient(context_profile)
         dream_service = DreamingService(
