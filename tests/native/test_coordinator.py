@@ -155,3 +155,53 @@ def test_waiting_mutation_acquires_after_owner_releases(tmp_path: Path):
     assert acquired and acquired[0].owner_id == "child-b"
     coordinator.release_owner("child-b")
     db.close()
+
+
+
+def test_new_writer_cannot_jump_a_persisted_waiter(tmp_path: Path):
+    db = HistoryDatabase(str(tmp_path))
+    coordinator = WorkspaceCoordinator(str(tmp_path), str(tmp_path), db, "ws")
+    coordinator.acquire("path:src", "holder", "WRITE", "holder")
+
+    queued_at = time.time() - 1.0
+    with db.get_connection() as conn:
+        conn.execute(
+            """INSERT INTO coordination_wait_queue(
+                   workspace_id,ticket_id,owner_id,resources_json,intent,
+                   created_at,expires_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                "ws",
+                "wait-first",
+                "waiting-child",
+                '[{"resource_id":"path:src/service.py","mode":"WRITE"}]',
+                "waiting edit",
+                queued_at,
+                time.time() + 30.0,
+            ),
+        )
+    coordinator.release_owner("holder")
+
+    with pytest.raises(CoordinationConflict):
+        coordinator.acquire(
+            "path:src/other.py",
+            "late-child",
+            "WRITE",
+            "late edit",
+            wait_timeout=0.0,
+        )
+
+    db.close()
+
+
+def test_history_schema_creates_coordination_wait_queue(tmp_path: Path):
+    db = HistoryDatabase(str(tmp_path))
+    with db.get_connection() as conn:
+        version = conn.execute("SELECT version FROM schema_info LIMIT 1").fetchone()[0]
+        table = conn.execute(
+            """SELECT name FROM sqlite_master
+               WHERE type='table' AND name='coordination_wait_queue'"""
+        ).fetchone()
+    assert int(version) >= 4
+    assert table is not None
+    db.close()
