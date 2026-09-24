@@ -347,6 +347,7 @@ def test_kitt_runtime_child_write_acquires_mutation_fence(tmp_path):
 
     registry = ToolRegistry(root_dir=str(tmp_path))
     registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+    registry.policy.evaluate_tool = lambda *_args, **_kwargs: "ALLOW"
     probe = _LeaseProbe()
     registry.coordinator = probe
     context = ExecutionSecurityContext(
@@ -447,6 +448,7 @@ def test_kitt_runtime_child_move_fences_source_and_destination(tmp_path):
 
     registry = ToolRegistry(root_dir=str(tmp_path))
     registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+    registry.policy.evaluate_tool = lambda *_args, **_kwargs: "ALLOW"
     probe = _LeaseProbe()
     registry.coordinator = probe
     context = ExecutionSecurityContext(
