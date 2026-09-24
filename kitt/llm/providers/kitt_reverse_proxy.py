@@ -398,9 +398,9 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             url = f"{base}/v1/chat/completions"
 
         native_system_prompt, tools = prepare_reverse_proxy_system_prompt(request.system_prompt)
-        if not tools and _allows_workspace_execution(request.extra_headers) and _requires_workspace_execution(request.messages):
-            tools = [_safe_runtime_openai_tool()]
-            native_system_prompt = _ensure_agent_execution_prompt(native_system_prompt)
+        # The ContextPlan/Tool Contract is the execution authority. Never infer or
+        # resurrect host tools from user text here: doing so can advertise a tool
+        # that ToolRegistry will correctly reject as disabled for this turn.
 
         messages: List[Dict[str, Any]] = []
         if native_system_prompt:
