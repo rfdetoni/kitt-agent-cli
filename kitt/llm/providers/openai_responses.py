@@ -15,6 +15,7 @@ from kitt.llm.domain import (
     ProviderHealth,
     ProviderTimeoutError,
     ProviderConnectionError,
+    ProviderProtocolError,
 )
 from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
@@ -58,21 +59,41 @@ class OpenAIResponsesAdapter:
             headers=headers,
         )
 
+        stream_complete = False
         try:
             with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
                     line_str = line.decode("utf-8").strip()
-                    if line_str.startswith("data: "):
-                        data_content = line_str[6:]
-                        if data_content == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_content)
-                            delta = chunk.get("output_text_delta", "") or chunk.get("delta", {}).get("text", "")
-                            if delta:
-                                yield delta
-                        except json.JSONDecodeError:
-                            pass
+                    if not line_str.startswith("data: "):
+                        continue
+                    data_content = line_str[6:]
+                    if data_content == "[DONE]":
+                        stream_complete = True
+                        break
+                    try:
+                        chunk = json.loads(data_content)
+                    except json.JSONDecodeError:
+                        continue
+                    event_type = str(chunk.get("type") or "")
+                    if event_type in {"response.completed", "response.done"}:
+                        stream_complete = True
+                    elif event_type in {"response.failed", "error"}:
+                        raise ProviderProtocolError(
+                            f"OpenAI Responses stream reported {event_type}"
+                        )
+                    delta = chunk.get("output_text_delta", "")
+                    if not isinstance(delta, str) or not delta:
+                        raw_delta = chunk.get("delta")
+                        if isinstance(raw_delta, str):
+                            delta = raw_delta
+                        elif isinstance(raw_delta, dict):
+                            delta = raw_delta.get("text", "")
+                    if isinstance(delta, str) and delta:
+                        yield delta
+            if not stream_complete:
+                raise ProviderProtocolError(
+                    "OpenAI Responses stream ended before a completion marker"
+                )
         except socket.timeout as exc:
             raise ProviderTimeoutError(f"OpenAI Responses request timed out after {request.timeout_seconds}s") from exc
         except urllib.error.HTTPError as e:
