@@ -383,7 +383,7 @@ def test_kitt_runtime_child_write_acquires_mutation_fence(tmp_path):
             (
                 ["src/runtime_fenced.py"],
                 "child-safe-runtime",
-                "repo.write_file mutation",
+                "write_file mutation",
                 8.0,
             )
         ]
