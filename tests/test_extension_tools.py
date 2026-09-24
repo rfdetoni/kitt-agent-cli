@@ -43,10 +43,6 @@ class TestExtensionTools(unittest.TestCase):
         self.assertFalse(res_after.success)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 
 class _CoordinatorProbe:
     def __init__(self):
@@ -138,3 +134,7 @@ class TestExtensionToolContracts(unittest.TestCase):
                 )
             finally:
                 reg.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
