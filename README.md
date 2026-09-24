@@ -24,7 +24,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - Provider/model routing for local and remote models.
 - SQLite/FTS5 repository intelligence and history.
 - Compact, policy-governed `kitt_runtime` tool surface.
-- Child agents, retained agents and bounded concurrent execution.
+- Child agents, retained agents and bounded concurrent execution with atomic mutation fencing and fair contention handling.
 - Stable per-child reverse-proxy sessions: each child gets its own browser conversation, while a retained child reuses that same session across reassigned tasks.
 - Workspace capability policy and single-use approvals.
 - MCP servers/tools, plugins, hooks and external integrations.
@@ -132,6 +132,19 @@ timeline from KITT's structured local logs. See
 Completed, failed, cancelled and timed-out child history no longer consumes
 the resident-child admission limit; only live/reusable retained state counts
 toward that bound.
+
+Child mutations are coordinated at the real side-effect boundary. Path and
+symbol leases are acquired atomically after policy/approval checks, overlapping
+directory/file writes conflict, waiting writers use a durable FIFO queue, and
+active child owners renew their leases while running or waiting for approval.
+Structural edits may additionally hold read leases on bounded dependencies.
+This complements per-child Git worktrees instead of replacing them.
+
+Dynamic plugin/MCP tools pass a bounded registration contract before becoming
+model-visible: names, handler shape, description and JSON schema are validated,
+built-in tools cannot be shadowed, and another extension cannot take over an
+existing tool name. Mutable GitHub Actions used by install-hygiene are pinned to
+immutable revisions as part of the same supply-chain boundary.
 
 ### Approval and update lifecycle
 
