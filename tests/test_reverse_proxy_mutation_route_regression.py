@@ -175,6 +175,13 @@ class ReverseProxyMutationRouteRegressionTests(unittest.TestCase):
         )
         self.assertEqual(route, "code-edit")
 
+    def test_workspace_conversion_request_is_code_edit(self):
+        route = infer_agent_route(
+            _system_prompt("kitt_runtime", "git_status"),
+            [{"role": "user", "content": "converta o backend deste projeto para maven"}],
+        )
+        self.assertEqual(route, "code-edit")
+
     def test_validation_only_request_keeps_validate_diff(self):
         route = infer_agent_route(
             _system_prompt("run_command", "git_diff"),
