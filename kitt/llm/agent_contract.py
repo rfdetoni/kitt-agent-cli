@@ -67,7 +67,9 @@ _MUTATING_CREATE_TERMS = (
 _MUTATING_EDIT_TERMS = (
     "corrija", "corrigir", "conserte", "consertar", "repare", "reparar", "refatore",
     "refatorar", "atualize", "atualizar", "modifique", "modificar", "altere", "alterar",
-    "edite", "editar", "remova", "remover", "fix", "repair", "refactor", "update",
+    "edite", "editar", "remova", "remover", "converta", "converter", "convert",
+    "migre", "migrar", "migrate", "troque", "trocar", "substitua", "substituir",
+    "replace", "switch", "porte", "portar", "port", "fix", "repair", "refactor", "update",
     "modify", "change", "edit", "remove", "delete",
 )
 _WORKSPACE_TARGET_TERMS = (
