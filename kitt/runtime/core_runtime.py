@@ -799,12 +799,38 @@ class SafeRuntime:
             handles.append(f"artifact:{metadata['artifact_id']}")
         if tool_name == "child_spawn" and metadata.get("child_id"):
             handles.append(f"child:{metadata['child_id']}")
+        requires_approval = bool(getattr(tool_result, "requires_approval", False))
+        approval_payload = metadata.get("approval_payload")
+        if requires_approval and not isinstance(approval_payload, dict):
+            approval_payload = dict(args)
+        approval_action = metadata.get("approval_action")
+        if requires_approval and not approval_action:
+            approval_action = tool_name
+        resume_tool_name = metadata.get("resume_tool_name")
+        if requires_approval and not resume_tool_name:
+            resume_tool_name = tool_name
+
         return SafeRuntimeResult(
             success=tool_result.success,
             operation=operation,
             data=tool_result.output,
             error=tool_result.error,
             context_handles=handles,
+            requires_approval=requires_approval,
+            approval_action=(
+                str(approval_action) if requires_approval and approval_action else None
+            ),
+            approval_payload=approval_payload if requires_approval else None,
+            required_capability=(
+                str(metadata.get("required_capability"))
+                if requires_approval and metadata.get("required_capability")
+                else None
+            ),
+            resume_tool_name=(
+                str(resume_tool_name)
+                if requires_approval and resume_tool_name
+                else None
+            ),
             metadata={"effective_tool_name": tool_name, **metadata},
         )
 
