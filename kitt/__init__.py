@@ -17,6 +17,6 @@ except PackageNotFoundError:
     __version__ = "0.69.9"
 
 KITT_VERSION = __version__
-STATE_SCHEMA_VERSION = 2
+STATE_SCHEMA_VERSION = 4
 DAEMON_PROTOCOL_VERSION = 2
 NATIVE_PROTOCOL_VERSION = 1
