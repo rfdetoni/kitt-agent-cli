@@ -97,6 +97,15 @@ More autonomous execution requires stronger capability scoping, path policy,
 approval boundaries, credential isolation, cancellation barriers, leases/fencing
 and bounded subprocess/network behavior.
 
+Mutation ownership is acquired at the last responsible moment: after policy and
+human-approval gates, but before the first side effect. Multi-resource claims must
+be atomic, and contention must be explicit durable state rather than an implicit
+race or a prompt-level convention.
+
+Extensible tools are executable authority. Their model-visible contract must be
+bounded and validated at registration, built-in authority must not be shadowable,
+and an extension must not be able to seize another extension's tool identity.
+
 No efficiency optimization is allowed to bypass an existing security or approval
 boundary.
 
