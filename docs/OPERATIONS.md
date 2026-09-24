@@ -92,3 +92,35 @@ by the separate active-child limit.
 
 No daemon protocol revision or new package dependency is required by these
 operator and resilience changes.
+
+
+## Child mutation coordination
+
+Retained children use Git worktrees for filesystem isolation and a separate
+KITT coordination layer for semantic/write ownership. Before a child performs a
+workspace mutation, KITT acquires the required write claims atomically. A
+directory claim conflicts with descendants, structural symbol edits may include
+bounded dependency read claims, and failed batches leave no partial leases.
+
+The fence is deliberately placed after policy and approval checks and
+immediately before the mutation. An approval that remains pending therefore
+does not reserve source files indefinitely. Once a child owns resources, a
+lightweight lease keeper renews them while the child is running, queued or
+waiting for an approval. Completion, cancellation, failure and shutdown release
+the owner.
+
+Conflicting writers enter a bounded durable FIFO queue. A newly arriving writer
+cannot bypass an older conflicting waiter. Expired leases and stale queue
+entries are garbage-collected, and a timed-out wait returns an explicit
+coordination failure rather than silently racing the filesystem.
+
+## Extension tool admission
+
+Dynamic plugin/MCP tools are validated before registration. KITT bounds the tool
+name, description and JSON schema, requires an executable handler, prevents
+dynamic tools from shadowing built-ins, and prevents one extension from taking
+over another extension's registered name. Path-scoped children still fail
+closed for dynamic tools that are not explicitly scope-aware.
+
+These checks complement runtime capability policy; registration validation does
+not grant a tool additional authority.
