@@ -91,7 +91,7 @@ stop_kitt_services() {
     pattern='(kittd([[:space:]]|$)|kitt[.]cli[.]main.*daemon[[:space:]]+run|kitt-reverse-proxy([[:space:]]|$)|kitt-agent-gateway([[:space:]]|$)|kitt-reverse-proxy/.*/dist/(gateway/)?cli[.]js)'
     kitt_pids="$(pgrep -u "$uid" -f "$pattern" 2>/dev/null || true)"
     for pid in $kitt_pids; do
-      [[ "$pid" != "$" && "$pid" != "$PPID" ]] || continue
+      [[ "$pid" != "$$" && "$pid" != "$PPID" ]] || continue
       kill -TERM "$pid" >/dev/null 2>&1 || true
     done
     for _ in {1..30}; do
@@ -103,7 +103,7 @@ stop_kitt_services() {
       sleep 0.1
     done
     for pid in $kitt_pids; do
-      [[ "$pid" != "$" && "$pid" != "$PPID" ]] || continue
+      [[ "$pid" != "$$" && "$pid" != "$PPID" ]] || continue
       kill -KILL "$pid" >/dev/null 2>&1 || true
     done
   fi
