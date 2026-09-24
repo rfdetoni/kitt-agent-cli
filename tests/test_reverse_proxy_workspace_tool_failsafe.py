@@ -45,7 +45,7 @@ class ReverseProxyWorkspaceToolFailsafeTests(unittest.TestCase):
             list(KittReverseProxyAdapter().stream(request))
         return captured['payload']
 
-    def test_meufaztudo_mutation_recovers_runtime_tool_when_contract_is_missing(self):
+    def test_mutation_text_does_not_resurrect_runtime_when_contract_is_missing(self):
         payload = self._capture_payload(LLMRequest(
             model='gemini-web',
             system_prompt=(
@@ -53,24 +53,20 @@ class ReverseProxyWorkspaceToolFailsafeTests(unittest.TestCase):
                 'Project context:\nRepository map:\n## Context v2'
             ),
             messages=[{'role': 'user', 'content': MEUFAZTUDO_PROMPT}],
+            extra_headers={'X-Kitt-Route': 'code-generation'},
         ))
 
-        self.assertEqual(payload['tool_choice'], 'auto')
-        self.assertFalse(payload['parallel_tool_calls'])
+        self.assertNotIn('tools', payload)
+        self.assertNotIn('tool_choice', payload)
         self.assertEqual(
-            [tool['function']['name'] for tool in payload['tools']],
-            ['kitt_runtime'],
-        )
-        runtime_schema = payload['tools'][0]['function']['parameters']
-        self.assertIn('operation', runtime_schema['required'])
-        self.assertIn('repo.write_file', runtime_schema['properties']['operation']['enum'])
-        self.assertIn(KITT_AGENT_PERSONA, payload['messages'][0]['content'])
-        self.assertNotIn(
-            'Answer in one direct, concise sentence. Do not expose reasoning.',
             payload['messages'][0]['content'],
+            (
+                'Answer in one direct, concise sentence. Do not expose reasoning.\n\n'
+                'Project context:\nRepository map:\n## Context v2'
+            ),
         )
 
-    def test_execution_followup_keeps_runtime_tool_from_original_mutation(self):
+    def test_execution_followup_without_contract_does_not_gain_runtime_tool(self):
         payload = self._capture_payload(LLMRequest(
             model='gemini-web',
             system_prompt='Answer directly and concisely.',
@@ -79,9 +75,33 @@ class ReverseProxyWorkspaceToolFailsafeTests(unittest.TestCase):
                 {'role': 'assistant', 'content': 'Posso implementar.'},
                 {'role': 'user', 'content': 'faça isso'},
             ],
+            extra_headers={'X-Kitt-Route': 'code-edit'},
         ))
 
-        self.assertEqual(payload['tools'][0]['function']['name'], 'kitt_runtime')
+        self.assertNotIn('tools', payload)
+        self.assertNotIn('tool_choice', payload)
+
+    def test_explicit_context_plan_contract_is_the_only_runtime_tool_authority(self):
+        payload = self._capture_payload(LLMRequest(
+            model='gemini-web',
+            system_prompt=(
+                "Tool Contract:\n"
+                "Available host tools: [{'name': 'kitt_runtime', 'description': 'Workspace runtime', "
+                "'args': {'operation': {'type': 'string', 'enum': ['repo.read', 'repo.write_file']}, "
+                "'arguments': {'type': 'object', 'additionalProperties': True}}}]\n"
+                "For a host tool, respond with exactly: <kitt-tool>...</kitt-tool>\n\n"
+                "Memory:\nnone"
+            ),
+            messages=[{'role': 'user', 'content': MEUFAZTUDO_PROMPT}],
+            extra_headers={'X-Kitt-Route': 'code-generation'},
+        ))
+
+        self.assertEqual(payload['tool_choice'], 'auto')
+        self.assertEqual(
+            [tool['function']['name'] for tool in payload['tools']],
+            ['kitt_runtime'],
+        )
+        self.assertIn(KITT_AGENT_PERSONA, payload['messages'][0]['content'])
 
     def test_meufaztudo_context_summary_never_gains_mutation_tool(self):
         payload = self._capture_payload(LLMRequest(
