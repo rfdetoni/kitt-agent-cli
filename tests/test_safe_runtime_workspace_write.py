@@ -443,3 +443,61 @@ def test_kitt_runtime_child_process_fences_entire_path_scope(tmp_path):
         ]
     finally:
         registry.close()
+
+
+
+def test_kitt_runtime_child_move_fences_source_and_destination(tmp_path):
+    from kitt.core.autonomy_policy import AutonomyPolicy
+    from kitt.security.capabilities import CAP_REPO_WRITE
+    from kitt.security.context import ExecutionSecurityContext
+    from kitt.tools.registry import ToolRegistry
+
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "old.py").write_text("value = 1\n", encoding="utf-8")
+
+    registry = ToolRegistry(root_dir=str(tmp_path))
+    registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+    probe = _LeaseProbe()
+    registry.coordinator = probe
+    context = ExecutionSecurityContext(
+        workspace_id="ws",
+        conversation_id="conv",
+        turn_id="turn",
+        origin="AGENT",
+        principal_type="CHILD",
+        principal_id="child-move",
+        capabilities=frozenset({CAP_REPO_WRITE}),
+        trace_id="trace",
+        path_scope=frozenset({"src"}),
+    )
+    try:
+        result = registry.execute_tool(
+            "kitt_runtime",
+            {
+                "operation": "repo.move",
+                "arguments": {
+                    "source": "src/old.py",
+                    "destination": "src/new.py",
+                },
+            },
+            turn_id="turn",
+            conversation_id="conv",
+            workspace_id="ws",
+            enabled_tools=["kitt_runtime"],
+            origin="AGENT",
+            security_context=context,
+        )
+        assert result.success, result.error
+        assert probe.calls == [
+            (
+                ["src/old.py", "src/new.py"],
+                "child-move",
+                "repo.move mutation",
+                8.0,
+            )
+        ]
+        assert not (source / "old.py").exists()
+        assert (source / "new.py").exists()
+    finally:
+        registry.close()
