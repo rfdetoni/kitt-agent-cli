@@ -332,7 +332,10 @@ Keep the hot path small, observable and deterministic. Prefer KISS/DRY/YAGNI ove
 
 ## License
 
-MIT. See [LICENSE](LICENSE).\n
+MIT. See [LICENSE](LICENSE).
+
 ## Prompt language policy
 
 K.I.T.T.-generated system, developer, orchestration, recovery, retry, tool-protocol, and validation prompts sent to models are authored in English. User-authored requests are preserved verbatim in their original language. Multilingual routing and intent-detection vocabularies remain multilingual because they are classifier data, not model instructions.
+
+Deterministic semantic routing treats imperative workspace conversions and migrations (for example, converting a Gradle backend to Maven) as mutation-capable implementation work, while explanatory `how to` questions remain read-only.
