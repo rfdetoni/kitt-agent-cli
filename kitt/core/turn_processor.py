@@ -224,8 +224,10 @@ class TurnProcessor(
             "corrija", "corrigir", "conserte", "consertar", "repare", "reparar",
             "refatore", "refatorar", "atualize", "atualizar", "modifique",
             "modificar", "altere", "alterar", "edite", "editar", "remova",
-            "remover", "fix", "repair", "refactor", "update", "modify",
-            "change", "edit", "remove", "delete",
+            "remover", "converta", "converter", "convert", "migre", "migrar",
+            "migrate", "troque", "trocar", "substitua", "substituir", "replace",
+            "switch", "porte", "portar", "port", "fix", "repair", "refactor", "update",
+            "modify", "change", "edit", "remove", "delete",
         )
         create_terms = (
             "crie", "criar", "cria", "implemente", "implementar", "gere",
