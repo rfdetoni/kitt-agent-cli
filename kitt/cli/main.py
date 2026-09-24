@@ -259,7 +259,32 @@ def build_parser() -> argparse.ArgumentParser:
         remote_parser.add_argument("--tls-cert", default=None, help="PEM certificate path")
         remote_parser.add_argument("--tls-key", default=None, help="PEM private-key path")
 
-    subparsers.add_parser("sessions", parents=[common], help="List active and saved KITT sessions")
+    sessions_parser = subparsers.add_parser(
+        "sessions",
+        parents=[common],
+        help="List active and saved KITT sessions with runtime state",
+    )
+    sessions_parser.add_argument("--all", action="store_true", dest="show_all")
+    sessions_parser.add_argument("--json", action="store_true", dest="json_output")
+    sessions_parser.add_argument("--limit", type=int, default=20)
+
+    incident_parser = subparsers.add_parser(
+        "incident",
+        parents=[common],
+        help="Reconstruct noteworthy runtime events from local structured logs",
+    )
+    incident_parser.add_argument(
+        "--since",
+        default="1h",
+        help="Duration (30m, 2h, 1d) or ISO timestamp",
+    )
+    incident_parser.add_argument(
+        "--session",
+        default=None,
+        help="Filter by session/conversation/turn id",
+    )
+    incident_parser.add_argument("--json", action="store_true", dest="json_output")
+    incident_parser.add_argument("--limit", type=int, default=100)
 
     attach_parser = subparsers.add_parser(
         "attach",
@@ -479,21 +504,25 @@ def main(argv=None) -> int:
         )
 
     if args.subcommand == "sessions":
-        if not _module_available("kitt.daemon.client"):
-            from kitt.core.runtime import KittRuntime
-            from kitt.core.runtime_config import RuntimeConfig
-            rt = KittRuntime.build(args.root, config=RuntimeConfig(daemon_enabled=False))
-            try:
-                convs = rt.history.list_history(limit=20)
-                print("\n\033[1;36m=== KITT Sessions (Local) ===\033[0m")
-                for conv in convs:
-                    print(f"  • \033[1m{conv.get('id', '')[:12]}\033[0m {conv.get('title', '')}")
-                return 0
-            finally:
-                rt.close()
         from kitt.cli.commands import handle_sessions_command
 
-        return handle_sessions_command(root_dir=args.root)
+        return handle_sessions_command(
+            root_dir=args.root,
+            limit=args.limit,
+            show_all=bool(args.show_all),
+            json_output=bool(args.json_output),
+        )
+
+    if args.subcommand == "incident":
+        from kitt.cli.commands import handle_incident_command
+
+        return handle_incident_command(
+            root_dir=args.root,
+            since=args.since,
+            session=args.session,
+            limit=args.limit,
+            json_output=bool(args.json_output),
+        )
 
     if args.subcommand == "attach":
         if not _module_available("kitt.daemon.client"):
