@@ -98,7 +98,14 @@ kitt remote status
 kitt evolve runs
 ```
 
-Tool/command approval prompts remain active without an automatic timeout until the user explicitly allows, denies, or cancels them; issued grants remain short-lived and single-use. Install/update scripts also stop resident KITT services before replacing the runtime. Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update providers that support API-side reasoning control. `/verify-full` is available from the command palette/menu and toggles the persistent `KITT_AGENT_VERIFY_FULL` runtime flag. When enabled, KITT adds bounded project compile/typecheck/lint/test gates after edits; when disabled, fast structural validation and targeted checks remain active. With `kitt-reverse-proxy`, the Agent keeps a stable conversation/session ID without creating a new browser conversation every turn. For browser-backed WebChat providers, reasoning/thinking remains configured in the authenticated WebChat UI; the legacy `X-Kitt-Reasoning-Effort` header is compatibility-only and is ignored by the reverse proxy.
+### Approval and update lifecycle
+
+- Tool/command approval prompts remain active **without an automatic timeout** until the user explicitly allows, denies, or cancels them.
+- An issued grant remains short-lived, action-bound and single-use; removing the waiting timeout does not make grants reusable.
+- Pending tool conversations stay pinned in `kitt-reverse-proxy`, so session idle/LRU eviction cannot discard a conversation while KITT is waiting for the human decision.
+- Standalone install/update scripts stop resident KITT services, including the daemon and known proxy/gateway services, before replacing the runtime.
+
+Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update providers that support API-side reasoning control. `/verify-full` is available from the command palette/menu and toggles the persistent `KITT_AGENT_VERIFY_FULL` runtime flag. When enabled, KITT adds bounded project compile/typecheck/lint/test gates after edits; when disabled, fast structural validation and targeted checks remain active. With `kitt-reverse-proxy`, the Agent keeps a stable conversation/session ID without creating a new browser conversation every turn. For browser-backed WebChat providers, reasoning/thinking remains configured in the authenticated WebChat UI; the legacy `X-Kitt-Reasoning-Effort` header is compatibility-only and is ignored by the reverse proxy.
 
 ---
 
