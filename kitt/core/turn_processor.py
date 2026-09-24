@@ -630,6 +630,12 @@ class TurnProcessor(
             runtime_definition = dict(
                 self.registry.get_tool_definitions(["kitt_runtime"])[0]
             )
+            runtime_args = dict(runtime_definition.get("args") or {})
+            runtime_args["operation"] = {
+                "type": "string",
+                "enum": list(operations),
+            }
+            runtime_definition["args"] = runtime_args
 
             examples = []
             if edit_strategy == "architect_editor":

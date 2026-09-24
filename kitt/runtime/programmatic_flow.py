@@ -320,6 +320,7 @@ class ProgrammaticToolFlow:
             refs = _references(step.get("arguments", {}))
             if "foreach" in step:
                 refs.update(_references(step["foreach"]))
+                refs.discard(str(step.get("as") or "item"))
             refs.update(str(item) for item in explicit)
             refs.discard(step["id"])
             unknown = sorted(refs - known_ids)
