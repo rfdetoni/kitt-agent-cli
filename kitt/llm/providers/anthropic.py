@@ -15,6 +15,7 @@ from kitt.llm.domain import (
     ProviderHealth,
     ProviderTimeoutError,
     ProviderConnectionError,
+    ProviderProtocolError,
 )
 from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
@@ -59,22 +60,37 @@ class AnthropicAdapter:
             headers=headers,
         )
 
+        stream_complete = False
         try:
             with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
                     line_str = line.decode("utf-8").strip()
-                    if line_str.startswith("data: "):
-                        data_content = line_str[6:]
-                        if data_content == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_content)
-                            if chunk.get("type") == "content_block_delta":
-                                delta = chunk.get("delta", {}).get("text", "")
-                                if delta:
-                                    yield delta
-                        except json.JSONDecodeError:
-                            pass
+                    if not line_str.startswith("data: "):
+                        continue
+                    data_content = line_str[6:]
+                    if data_content == "[DONE]":
+                        stream_complete = True
+                        break
+                    try:
+                        chunk = json.loads(data_content)
+                    except json.JSONDecodeError:
+                        continue
+                    event_type = str(chunk.get("type") or "")
+                    if event_type == "message_stop":
+                        stream_complete = True
+                        continue
+                    if event_type == "error":
+                        raise ProviderProtocolError(
+                            "Anthropic stream reported an error event"
+                        )
+                    if event_type == "content_block_delta":
+                        delta = chunk.get("delta", {}).get("text", "")
+                        if isinstance(delta, str) and delta:
+                            yield delta
+            if not stream_complete:
+                raise ProviderProtocolError(
+                    "Anthropic stream ended before a completion marker"
+                )
         except socket.timeout as exc:
             raise ProviderTimeoutError(f"Anthropic request timed out after {request.timeout_seconds}s") from exc
         except urllib.error.HTTPError as e:
