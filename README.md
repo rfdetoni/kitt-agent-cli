@@ -102,6 +102,7 @@ kitt evolve runs
 
 - Tool/command approval prompts remain active **without an automatic timeout** until the user explicitly allows, denies, or cancels them.
 - An issued grant remains short-lived, action-bound and single-use; removing the waiting timeout does not make grants reusable.
+- If autonomous `process.run` cannot use a strong OS sandbox, KITT degrades to a durable user approval instead of returning a terminal ASK-policy error to the model.
 - Pending tool conversations stay pinned in `kitt-reverse-proxy`, so session idle/LRU eviction cannot discard a conversation while KITT is waiting for the human decision.
 - Daemon-backed approvals require `kitt-assistant-runtime >= 0.2.14`; that runtime treats `PENDING` decisions as durable state with no wall-clock expiry and never evicts an active approval to make room for a newer one.
 - Standalone install/update scripts stop resident KITT services, including the daemon and known proxy/gateway services, before replacing the runtime.
