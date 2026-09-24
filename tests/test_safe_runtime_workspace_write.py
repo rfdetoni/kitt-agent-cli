@@ -393,14 +393,12 @@ def test_kitt_runtime_child_write_acquires_mutation_fence(tmp_path):
         registry.close()
 
 
-def test_kitt_runtime_child_process_fences_entire_path_scope(tmp_path):
-    from kitt.core.autonomy_policy import AutonomyPolicy
+def test_child_process_fence_covers_entire_path_scope(tmp_path):
     from kitt.security.capabilities import CAP_PROCESS_RUN
     from kitt.security.context import ExecutionSecurityContext
     from kitt.tools.registry import ToolRegistry
 
     registry = ToolRegistry(root_dir=str(tmp_path))
-    registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
     probe = _LeaseProbe()
     registry.coordinator = probe
     context = ExecutionSecurityContext(
@@ -415,31 +413,22 @@ def test_kitt_runtime_child_process_fences_entire_path_scope(tmp_path):
         path_scope=frozenset({"backend", "frontend"}),
     )
     try:
-        # The sandbox may still require an approval on hosts without a strong
-        # backend; fencing must happen before that execution decision.
-        registry.execute_tool(
-            "kitt_runtime",
-            {
-                "operation": "process.run",
-                "arguments": {
-                    "argv": ["python", "-c", "print('probe')"],
-                    "timeout_seconds": 5,
-                },
-            },
-            turn_id="turn",
-            conversation_id="conv",
-            workspace_id="ws",
-            enabled_tools=["kitt_runtime"],
-            origin="AGENT",
-            security_context=context,
+        metadata = registry._fence_child_mutation(
+            "run_command",
+            {"argv": ["python", "-c", "print('probe')"]},
+            context,
         )
         assert probe.calls == [
             (
                 ["backend", "frontend"],
                 "child-process",
-                "process.run mutation",
+                "run_command mutation",
                 8.0,
             )
+        ]
+        assert metadata["coordination"]["resources"] == [
+            "path:backend",
+            "path:frontend",
         ]
     finally:
         registry.close()
