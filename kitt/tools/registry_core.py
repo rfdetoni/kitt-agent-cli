@@ -814,13 +814,18 @@ class ToolRegistry:
         elif tool_name == "apply_patch":
             try:
                 blocks = self.parser.parse(str(args.get("patch", "") or ""))
-            except Exception:
-                blocks = []
+            except Exception as exc:
+                raise ValueError(
+                    "Child patch could not be parsed for mutation fencing"
+                ) from exc
             paths.extend(
                 str(block.file_path)
                 for block in blocks
                 if str(getattr(block, "file_path", "") or "").strip()
             )
+        elif tool_name == "run_command":
+            scope = getattr(security_context, "path_scope", None)
+            paths.extend(sorted(scope) if scope else ["."])
 
         paths = list(dict.fromkeys(path for path in paths if path.strip()))
         if not paths:
