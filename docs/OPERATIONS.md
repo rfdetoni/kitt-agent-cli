@@ -1,0 +1,94 @@
+# Runtime operations and resilience
+
+This document describes the Agent CLI's operator-facing diagnostics and the
+runtime recovery rules that protect coding sessions from duplicate work,
+truncated provider streams, and maintenance traffic competing with the
+execution lane.
+
+## Session report
+
+```bash
+kitt sessions
+kitt sessions --limit 40
+kitt sessions --all
+kitt sessions --json
+```
+
+When the Assistant daemon is available, the command starts from its visible
+session roster and enriches every row with the Agent's durable SQLite state.
+Without the daemon it reads the same durable state locally.
+
+The report includes the session status, latest turn state, age since the last
+known activity, last durable turn error, and accumulated telemetry tokens.
+Titles are stripped of terminal control characters before rendering. JSON mode
+is intended for scripts and support bundles.
+
+## Incident timeline
+
+```bash
+kitt incident --since 30m
+kitt incident --since 2h --session <session-or-turn-id>
+kitt incident --since 2026-09-24T17:00:00Z --json
+```
+
+`--since` accepts ISO-8601 timestamps or bounded relative forms using
+seconds, minutes, hours, or days (`30m`, `2h`, `1d`). The reader scans the
+newest local structured log files under `.kitt/logs` and `.kitt/daemon`,
+plus an explicitly configured `KITT_LOG_FILE`. It reads only a bounded tail
+of each candidate file and keeps noteworthy warnings, failures, retries,
+recovery actions, disconnects, truncations, cancellations, and related
+runtime events.
+
+The logger already applies KITT's secret and URL sanitization before records
+reach disk. The incident reader additionally removes control characters from
+operator-visible fields.
+
+## Maintenance compaction
+
+Conversation compaction uses KITT's existing semantic router rather than a
+second model-selection subsystem.
+
+1. The `summarize` route is considered first.
+2. The context route is a fallback candidate when it is distinct.
+3. A candidate is skipped when it is the exact execution lane, is backed by
+   the KITT browser reverse proxy, or cannot fit the compaction request and
+   completion reserve in its declared context window.
+4. Maintenance summaries request no reasoning and use a short timeout with
+   one bounded transient retry.
+5. If no independent maintenance route succeeds, KITT uses the deterministic
+   compaction summary.
+
+This keeps browser conversations and the execution model's provider cache free
+from one-off maintenance prompts.
+
+## Provider recovery
+
+Provider retry decisions use typed provider failures.
+
+- HTTP 429 honors the provider's `Retry-After` value, including HTTP-date
+  form.
+- Other transient failures use exponential delay with bounded proportional
+  jitter so concurrent sessions do not synchronize their retries.
+- Authentication, protocol, safety/policy, and KITT semantic contract
+  failures are not treated as transient provider outages.
+- Once any stream output has been emitted, the generic retry layer will not
+  replay that request. A later failure is surfaced to the caller so recovery
+  can occur with session-aware context instead of duplicating output or side
+  effects.
+
+Direct streaming adapters require provider-specific completion evidence:
+OpenAI-compatible chat accepts `[DONE]` or a final choice reason, OpenAI
+Responses accepts its completed event (or `[DONE]`), and Anthropic accepts
+`message_stop` (or `[DONE]`). A connection that ends before those markers is
+reported as a protocol error.
+
+## Child admission
+
+Child records remain durable for diagnostics and history, but terminal records
+do not permanently consume spawn capacity. The historical row count is not an
+admission gate. Live, queued, approval-waiting, idle, and deliberately retained
+children count toward the resident limit, while concurrency remains governed
+by the separate active-child limit.
+
+No daemon protocol revision or new package dependency is required by these
+operator and resilience changes.
