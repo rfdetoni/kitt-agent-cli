@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from kitt.core.runtime_config import RuntimeConfig
+from kitt.core.autonomy_policy import AutonomyPolicy
 from kitt.domain.entities import ContextPlan
 from kitt.history.database import HistoryDatabase
 from kitt.security.capabilities import CAP_PROCESS_RUN
@@ -50,6 +51,38 @@ class TestSafeRuntimeIntegration(unittest.TestCase):
         self.assertFalse(res.success)
         self.assertFalse(res.requires_approval)
         self.assertIn("ExecutionSecurityContext", res.error)
+
+    def test_autonomous_process_without_strong_sandbox_surfaces_approval(self):
+        self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
+        self.registry.process_runner.sandbox.is_strong_available = lambda _profile: False
+        sec = ExecutionSecurityContext.create_user_context(
+            "test_ws", "test_conv", "turn_sandbox", capabilities={CAP_PROCESS_RUN}
+        )
+        ctx = ToolContext(
+            workspace_id="test_ws",
+            conversation_id="test_conv",
+            turn_id="turn_sandbox",
+            registry=self.registry,
+            origin="MODEL",
+            security_context=sec,
+        )
+
+        res = SafeRuntimeHandler().execute(
+            {
+                "operation": "process.run",
+                "arguments": {"argv": ["python", "--version"]},
+            },
+            ctx,
+        )
+
+        self.assertFalse(res.success)
+        self.assertTrue(res.requires_approval)
+        self.assertEqual(res.metadata["approval_action"], "run_command")
+        self.assertEqual(
+            res.metadata["approval_payload"],
+            {"argv": ["python", "--version"]},
+        )
+        self.assertEqual(res.metadata["resume_tool_name"], "run_command")
 
     def test_handler_preserves_structured_approval_with_explicit_capability(self):
         sec = ExecutionSecurityContext.create_user_context(
