@@ -44,6 +44,12 @@ _CONCISE_AGENT_PREFIXES = (
     "Answer directly and concisely.",
     "Answer in one direct, concise sentence. Do not expose reasoning.",
 )
+_TOOL_RETRY_PROMPT = (
+    "[KITT TOOL RETRY] The request is not complete yet. "
+    "Emit exactly one valid JSON <tool_call> envelope now, with quotes, backslashes, "
+    "and line breaks correctly escaped; execute the requested mutation. "
+    "Do not respond with code, a read result, or an explanation."
+)
 _WORKSPACE_ACTION_TERMS = (
     "crie", "criar", "implemente", "implementar", "gere", "gerar", "construa",
     "adicione", "adicionar", "edite", "editar", "altere", "alterar", "corrija",
@@ -541,12 +547,7 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                     retry_messages = [dict(message) for message in request.messages]
                     retry_messages.append({
                         "role": "user",
-                        "content": (
-                            "[KITT TOOL RETRY] A solicitação ainda não foi concluída. "
-                            "Emita agora um único envelope <tool_call> JSON válido, com escape "
-                            "correto de aspas, barras e quebras de linha; execute a mutação solicitada. "
-                            "Não responda com código, leitura ou explicação."
-                        ),
+                        "content": _TOOL_RETRY_PROMPT,
                     })
                     retry_request = LLMRequest(
                         model=request.model,

@@ -332,4 +332,7 @@ Keep the hot path small, observable and deterministic. Prefer KISS/DRY/YAGNI ove
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).\n
+## Prompt language policy
+
+K.I.T.T.-generated system, developer, orchestration, recovery, retry, tool-protocol, and validation prompts sent to models are authored in English. User-authored requests are preserved verbatim in their original language. Multilingual routing and intent-detection vocabularies remain multilingual because they are classifier data, not model instructions.

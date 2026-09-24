@@ -1,6 +1,7 @@
 import unittest
 
 from kitt.llm.providers.kitt_reverse_proxy import (
+    _TOOL_RETRY_PROMPT,
     extract_openai_tools,
     prepare_reverse_proxy_system_prompt,
 )
@@ -58,6 +59,12 @@ none
         )
         self.assertIn("Tool Contract:", prepared)
         self.assertIn("<kitt-tool>", prepared)
+
+    def test_internal_reverse_proxy_retry_prompt_is_english(self):
+        self.assertIn("The request is not complete yet.", _TOOL_RETRY_PROMPT)
+        self.assertIn("execute the requested mutation", _TOOL_RETRY_PROMPT)
+        for portuguese in ("solicitação", "Emita agora", "mutação solicitada", "Não responda"):
+            self.assertNotIn(portuguese, _TOOL_RETRY_PROMPT)
 
     def test_plain_chat_without_tool_contract_keeps_non_agent_system_prompt(self):
         system_prompt = "Answer in one direct, concise sentence. Do not expose reasoning."
