@@ -1,4 +1,3 @@
-import time
 from kitt.ui.theme import DEFAULT_THEME
 from kitt.ui.state import UIState
 
@@ -26,9 +25,6 @@ class PermissionCardComponent:
         args = req.get("args", {})
         affected_paths = req.get("affected_paths", [])
         diff_preview = req.get("diff_preview", "")
-        expires_at = req.get("expires_at", 0)
-        expires_in = max(0, int(expires_at - time.time())) if expires_at else 300
-
         # Risk classification
         if tool_name in ("apply_patch", "write_file", "delete_file", "replace_file_content", "patch.apply"):
             risk_label = "Modificação de arquivos no workspace"
@@ -38,7 +34,7 @@ class PermissionCardComponent:
             risk_label = "Chamada de ferramenta do sistema"
 
         lines = [
-            t.format_primary(f"┌── APROVAÇÃO NECESSÁRIA{queue_note} ─── expira em {expires_in}s ─┐"),
+            t.format_primary(f"┌── APROVAÇÃO NECESSÁRIA{queue_note} ─── sem timeout; aguardando sua decisão ─┐"),
             f"│ Ferramenta: {tool_name:<28} │",
             f"│ Risco     : {risk_label:<28} │",
         ]

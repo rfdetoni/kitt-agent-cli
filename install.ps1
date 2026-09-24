@@ -21,6 +21,51 @@ $Venv = Join-Path $Root 'venv'
 $Dist = Join-Path $Root 'dist-native'
 $Launcher = Join-Path $Bin 'kitt.cmd'
 
+function Stop-KittServices {
+  Write-Host 'Stopping active K.I.T.T. services before install/update...'
+
+  try {
+    if (Get-Command kittctl -ErrorAction SilentlyContinue) {
+      & kittctl service stop *> $null
+    }
+  } catch {}
+
+  try {
+    $Task = Get-ScheduledTask -TaskName 'KITT Assistant' -ErrorAction SilentlyContinue
+    if ($Task) { Stop-ScheduledTask -TaskName 'KITT Assistant' -ErrorAction SilentlyContinue }
+  } catch {}
+
+  try {
+    Get-Service -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.Name -match '(?i)^kitt' -or
+        $_.DisplayName -match '(?i)^K\.I\.T\.T\.|^KITT'
+      } |
+      ForEach-Object { Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue }
+  } catch {}
+
+  $ExistingKitt = Join-Path $Venv 'Scripts\kitt.exe'
+  try {
+    if (Test-Path $ExistingKitt) { & $ExistingKitt daemon stop *> $null }
+    elseif (Get-Command kitt -ErrorAction SilentlyContinue) { & kitt daemon stop *> $null }
+  } catch {}
+
+  try {
+    $Pattern = '(?i)(kittd(?:\.exe)?|kitt\.cli\.main.+daemon\s+run|kitt-reverse-proxy(?:\.cmd|\.exe)?|kitt-agent-gateway(?:\.cmd|\.exe)?|kitt-reverse-proxy[\\/].*dist[\\/](?:gateway[\\/])?cli\.js)'
+    $Processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.ProcessId -ne $PID -and
+        $_.CommandLine -and
+        $_.CommandLine -match $Pattern
+      })
+    foreach ($Process in $Processes) {
+      Stop-Process -Id $Process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+  } catch {}
+}
+
+Stop-KittServices
+
 if ($Uninstall) {
   Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $Launcher -Force -ErrorAction SilentlyContinue

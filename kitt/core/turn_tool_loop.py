@@ -557,7 +557,7 @@ class TurnToolLoopMixin:
                         affected,
                         before,
                         now,
-                        now + self.config.approval_ttl_seconds,
+                        0.0,  # active approval requests do not expire automatically
                         "pending",
                         security_context=sec_dict,
                     )

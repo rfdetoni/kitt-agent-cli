@@ -677,10 +677,8 @@ class HistoryRepository:
             if not row:
                 return None
                 
-            if time.time() > row["expires_at"]:
-                conn.execute("UPDATE pending_actions SET state = 'expired' WHERE id = ?;", (action_id,))
-                return None
-                
+            # Pending tool actions remain resumable until the user explicitly
+            # approves, denies, or cancels the decision.
             return PendingAction(
                 id=row["id"],
                 approval_request_id=row["approval_request_id"],

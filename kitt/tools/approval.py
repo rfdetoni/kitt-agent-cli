@@ -221,7 +221,9 @@ class ApprovalManager:
             tool_name=tool_name,
             normalized_args_hash=action_hash,
             created_at=now,
-            expires_at=now + self.ttl_seconds,
+            # Active user decisions do not expire automatically. The persisted
+            # zero sentinel is replaced by a short TTL only after grant issuance.
+            expires_at=0.0,
             summary=summary,
         )
         with self._lock:
@@ -322,13 +324,13 @@ class ApprovalManager:
             or req.conversation_id != conversation_id
             or req.workspace_id != workspace_id
             or req.normalized_args_hash != action_hash
-            or time.time() > req.expires_at
         ):
             return None
 
         nonce = uuid.uuid4().hex
         nonce_hash = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
         now = time.time()
+        grant_expires_at = now + self.ttl_seconds
 
         if self.db:
             try:
@@ -336,9 +338,9 @@ class ApprovalManager:
                     conn.execute("BEGIN IMMEDIATE")
                     cur = conn.execute(
                         "UPDATE approval_requests SET state='GRANTED',"
-                        "decided_at=?,nonce_hash=? WHERE approval_id=? "
-                        "AND state='PENDING' AND CAST(expires_at AS REAL)>?",
-                        (str(now), nonce_hash, req.approval_id, now),
+                        "decided_at=?,nonce_hash=?,expires_at=? WHERE approval_id=? "
+                        "AND state='PENDING'",
+                        (str(now), nonce_hash, str(grant_expires_at), req.approval_id),
                     )
                     if cur.rowcount != 1:
                         conn.rollback()
@@ -347,7 +349,7 @@ class ApprovalManager:
             except Exception:
                 return None
 
-        granted_req = replace(req, state="GRANTED")
+        granted_req = replace(req, state="GRANTED", expires_at=grant_expires_at)
         with self._lock:
             self._issued_nonce_hashes[req.approval_id] = nonce_hash
             self._requests_by_id[req.approval_id] = granted_req
@@ -362,7 +364,7 @@ class ApprovalManager:
             workspace_id=req.workspace_id,
             action_hash=req.normalized_args_hash,
             granted_at=now,
-            expires_at=min(req.expires_at, now + self.ttl_seconds),
+            expires_at=grant_expires_at,
             nonce=nonce,
         )
 
@@ -450,14 +452,14 @@ class ApprovalManager:
         workspace_id: str = "",
         conversation_id: Optional[str] = None,
     ) -> list[ApprovalRequest]:
+        # Pending approvals are human-interaction state and intentionally have
+        # no timeout. expire_pending() only reaps already-issued stale grants.
         self.expire_pending()
-        now = time.time()
         with self._lock:
             requests = list(self._requests_by_id.values())
         return [
             req for req in requests
-            if req.expires_at > now
-            and req.state == "PENDING"
+            if req.state == "PENDING"
             and (not workspace_id or req.workspace_id == workspace_id)
             and (not conversation_id or req.conversation_id == conversation_id)
         ]
@@ -494,7 +496,7 @@ class ApprovalManager:
         expired_count = 0
         with self._lock:
             for aid, req in list(self._requests_by_id.items()):
-                if req.expires_at <= now and req.state in {"PENDING", "GRANTED"}:
+                if req.state == "GRANTED" and req.expires_at > 0 and req.expires_at <= now:
                     expired = replace(req, state="EXPIRED")
                     self._requests_by_id[aid] = expired
                     self._requests_by_binding[
@@ -507,7 +509,7 @@ class ApprovalManager:
                 with self.db.get_connection() as conn:
                     cur = conn.execute(
                         "UPDATE approval_requests SET state='EXPIRED' "
-                        "WHERE state IN ('PENDING','GRANTED') "
+                        "WHERE state='GRANTED' AND CAST(expires_at AS REAL)>0 "
                         "AND CAST(expires_at AS REAL)<=?",
                         (now,),
                     )

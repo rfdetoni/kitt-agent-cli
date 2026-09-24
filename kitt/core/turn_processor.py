@@ -1132,7 +1132,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             if db_pa:
                 pa = db_pa
 
-        if not pa or pa.state != "pending" or time.time() > pa.expires_at:
+        if not pa or pa.state != "pending":
             if pa and hist_svc:
                 hist_svc.repo.cancel_pending_action(pa.id)
             self.pending_actions.pop(turn_id, None)
