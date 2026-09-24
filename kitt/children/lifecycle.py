@@ -30,6 +30,8 @@ REUSABLE_CHILD_STATES = {"RETAINED", "COMPLETED", "IDLE"}
 class ChildAgentManager:
     """Manage isolated retained agents, lifecycle, scope and correlated messaging."""
 
+    LEASE_RENEW_INTERVAL_SECONDS = 20.0
+
     def __init__(
         self,
         root_dir: str,
@@ -102,7 +104,7 @@ class ChildAgentManager:
             "WAITING_APPROVAL",
         }
         try:
-            while not stop.wait(20.0):
+            while not stop.wait(self.LEASE_RENEW_INTERVAL_SECONDS):
                 if self._closed or self.coordinator is None:
                     return
                 child = self.repo.get(child_id)
