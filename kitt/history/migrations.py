@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -708,6 +708,25 @@ SCHEMA_V3_STATEMENTS = [
     """,
 ]
 
+SCHEMA_V4_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS coordination_wait_queue (
+        workspace_id TEXT NOT NULL,
+        ticket_id TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        resources_json TEXT NOT NULL,
+        intent TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        expires_at REAL NOT NULL,
+        PRIMARY KEY(workspace_id, ticket_id)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_coordination_wait_queue_order
+    ON coordination_wait_queue(workspace_id, created_at, ticket_id);
+    """,
+]
+
 
 class IncompatibleSchemaError(RuntimeError):
     """Raised when an incompatible database schema is detected."""
@@ -742,7 +761,7 @@ class MigrationRunner:
                 "Run: kitt doctor --reset-state"
             )
 
-        if current_version not in (0, 1, 2):
+        if current_version not in (0, 1, 2, 3):
             raise IncompatibleSchemaError(
                 f"State schema version {current_version} is incompatible with this development build. "
                 "Run: kitt doctor --reset-state"
@@ -773,6 +792,14 @@ class MigrationRunner:
                 conn.execute("UPDATE schema_info SET version = 3;")
             current_version = 3
             logger.info("Migrated KITT SQLite schema to version 3")
+
+        if current_version == 3:
+            with conn:
+                for statement in SCHEMA_V4_STATEMENTS:
+                    conn.execute(statement)
+                conn.execute("UPDATE schema_info SET version = 4;")
+            current_version = 4
+            logger.info("Migrated KITT SQLite schema to version 4")
 
         if current_version != self.target_version:
             raise IncompatibleSchemaError(
