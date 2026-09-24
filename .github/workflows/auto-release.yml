@@ -12,7 +12,9 @@ permissions:
   actions: write
 
 concurrency:
-  group: automatic-release-main
+  # Scope cancellation to the validated source SHA. A late workflow_run from an
+  # older main commit must never cancel the release run for the current main.
+  group: automatic-release-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
