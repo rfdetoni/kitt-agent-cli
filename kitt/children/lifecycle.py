@@ -109,8 +109,12 @@ class ChildAgentManager:
             raise ValueError("Child spawn rate limit: please wait 2 seconds")
 
         existing = self.repo.list(parent_conversation_id, 100)
-        if len(existing) >= 10:
-            raise ValueError("Total child spawn limit reached")
+        resident_states = {
+            "CREATED", "RUNNING", "QUEUED", "WAITING_APPROVAL", "RETAINED", "IDLE"
+        }
+        resident_count = sum(child.state in resident_states for child in existing)
+        if resident_count >= 10:
+            raise ValueError("Resident child limit reached")
         active_count = sum(
             child.state in {"CREATED", "RUNNING", "QUEUED", "WAITING_APPROVAL"}
             for child in existing
