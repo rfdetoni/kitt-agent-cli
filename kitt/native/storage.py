@@ -79,6 +79,19 @@ CREATE TABLE IF NOT EXISTS coordination_leases (
 );
 CREATE INDEX IF NOT EXISTS idx_coordination_leases_expiry ON coordination_leases(workspace_id, expires_at);
 
+CREATE TABLE IF NOT EXISTS coordination_wait_queue (
+    workspace_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    resources_json TEXT NOT NULL,
+    intent TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    PRIMARY KEY(workspace_id, ticket_id)
+);
+CREATE INDEX IF NOT EXISTS idx_coordination_wait_queue_order
+ON coordination_wait_queue(workspace_id, created_at, ticket_id);
+
 CREATE TABLE IF NOT EXISTS child_worktrees (
     child_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,

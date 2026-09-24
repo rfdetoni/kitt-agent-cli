@@ -203,6 +203,18 @@ class SafeRuntime(_core.SafeRuntime):
         if not source or not destination:
             raise ValueError(f"'{op}' requires source and destination")
         self._assert_path_scope(security_context, [source, destination])
+        coordinator = getattr(self.registry, "coordinator", None) if self.registry else None
+        if (
+            coordinator is not None
+            and security_context is not None
+            and str(getattr(security_context, "principal_type", "")).upper() == "CHILD"
+        ):
+            coordinator.claim_paths(
+                [source, destination],
+                str(security_context.principal_id),
+                f"{op} mutation",
+                wait_timeout=8.0,
+            )
         fs = WorkspaceFileSystem(self.root)
         data = move_path(
             fs,
@@ -230,6 +242,18 @@ class SafeRuntime(_core.SafeRuntime):
         if not path:
             raise ValueError("'repo.delete' requires path")
         self._assert_path_scope(security_context, [path])
+        coordinator = getattr(self.registry, "coordinator", None) if self.registry else None
+        if (
+            coordinator is not None
+            and security_context is not None
+            and str(getattr(security_context, "principal_type", "")).upper() == "CHILD"
+        ):
+            coordinator.claim_paths(
+                [path],
+                str(security_context.principal_id),
+                "repo.delete mutation",
+                wait_timeout=8.0,
+            )
         fs = WorkspaceFileSystem(self.root)
         data = delete_path(
             fs,

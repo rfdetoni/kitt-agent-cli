@@ -1,6 +1,8 @@
 import subprocess
 import tempfile
+import time
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 from kitt.artifacts.store import ArtifactStore
@@ -113,6 +115,55 @@ class TestChildrenEvents(unittest.TestCase):
             self.assertIsNone(finished["error"])
 
             manager.close()
+
+
+
+class _HeartbeatRepo:
+    def get(self, _child_id):
+        return SimpleNamespace(state="RUNNING")
+
+
+class _HeartbeatCoordinator:
+    def __init__(self, state_root):
+        self.state_root = Path(state_root)
+        self.refreshes = 0
+        self.releases = 0
+
+    def refresh_owner(self, _owner_id, ttl_seconds=180.0):
+        self.refreshes += 1
+        return 1
+
+    def gc_expired_leases(self):
+        return 0
+
+    def release_owner(self, _owner_id):
+        self.releases += 1
+        return 1
+
+
+class TestChildLeaseKeeper(unittest.TestCase):
+    def test_running_child_renews_and_releases_coordination_lease(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            coordinator = _HeartbeatCoordinator(tmp_dir)
+            manager = ChildAgentManager(
+                root_dir=tmp_dir,
+                repository=_HeartbeatRepo(),
+                artifacts=None,
+                workspace_id="ws",
+                messaging_repo=object(),
+            )
+            manager.LEASE_RENEW_INTERVAL_SECONDS = 0.01
+            manager.attach_coordinator(coordinator)
+            try:
+                manager._ensure_lease_keeper("child-heartbeat")
+                deadline = time.time() + 0.5
+                while coordinator.refreshes == 0 and time.time() < deadline:
+                    time.sleep(0.01)
+                self.assertGreaterEqual(coordinator.refreshes, 1)
+            finally:
+                manager.close()
+            self.assertGreaterEqual(coordinator.releases, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

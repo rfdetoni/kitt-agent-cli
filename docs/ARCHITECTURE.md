@@ -29,7 +29,7 @@ kitt-agent-cli (Python control plane)
 
 The Agent keeps `kitt/native/bridge.py` and the portable fallback because runtime selection, policy integration and graceful degradation are control-plane responsibilities. If `kitt_native` is installed, the bridge selects the Rust backend; otherwise the same interfaces use the Python fallback.
 
-`rfdetoni/kitt-assistant` owns the persistent Assistant service and the companion Python daemon/remote runtime. `rfdetoni/kitt-ai-workers` owns separately packaged Evolution/Evals plus optional heavier AI workers. The official installers compose these packages into one `kitt` namespace.
+`rfdetoni/kitt-assistant` owns the persistent Assistant service and the companion Python daemon/remote runtime. `rfdetoni/kitt-ai-workers` owns separately packaged Evolution/Evals plus optional heavier AI workers. `rfdetoni/kitt-memory` owns the reusable persistent memory data plane: bounded baselines, FTS/hybrid-ready retrieval, durable corrections and reusable knowledge. The official installers compose these packages into one `kitt` namespace.
 
 `kitt/extensions` and `kitt/integrations` intentionally remain in the Agent. Plugins, MCP, hooks and external-tool selection execute inside the Agent policy/security boundary and therefore belong to the coding control plane rather than to AI workers or the native toolbox.
 
@@ -41,7 +41,18 @@ The model still sees the compact policy-governed `kitt_runtime` surface. Native 
 
 ## Memory and multi-agent state
 
-Dreaming, history, goals, approvals, artifacts and workspace state remain Agent-owned. Native acceleration augments these systems but does not create a second authority. Child worktrees isolate code edits while the original workspace remains the state root for history, approvals, memory and coordination.
+Dreaming, history, goals, approvals, artifacts and workspace execution state remain Agent-owned. Reusable durable memory primitives belong in `kitt-memory`; the Agent remains responsible for deciding when session evidence becomes durable knowledge and for orchestrating Dreaming/consolidation.
+
+Child worktrees isolate code edits while the original workspace remains the state root for history, approvals, memory and coordination. Isolation is reinforced by KITT's own mutation coordination layer:
+
+- path and symbol claims are acquired atomically, including bounded dependency reads for structural edits;
+- path claims understand ancestor/descendant overlap, so a directory writer conflicts with writers below it;
+- contention is represented in a durable ordered wait queue rather than by unbounded model retries;
+- active retained children renew ownership leases across execution and approval waits;
+- mutation fencing occurs after authority/approval checks but immediately before the side effect;
+- terminal child history remains durable without permanently consuming execution capacity.
+
+These mechanisms extend the existing runtime and EventBus/state model; KITT does not introduce a second agent/workflow framework for coordination.
 
 ## Packaging
 

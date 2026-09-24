@@ -30,6 +30,8 @@ REUSABLE_CHILD_STATES = {"RETAINED", "COMPLETED", "IDLE"}
 class ChildAgentManager:
     """Manage isolated retained agents, lifecycle, scope and correlated messaging."""
 
+    LEASE_RENEW_INTERVAL_SECONDS = 20.0
+
     def __init__(
         self,
         root_dir: str,
@@ -63,6 +65,7 @@ class ChildAgentManager:
         self.enabled = bool(enabled)
         self._execution_lock = threading.RLock()
         self._processes: dict[str, subprocess.Popen] = {}
+        self._lease_keepers: dict[str, tuple[threading.Event, threading.Thread]] = {}
         self._closed = False
         self.coordinator = None
 
@@ -71,6 +74,60 @@ class ChildAgentManager:
         coordinator_state_root = getattr(coordinator, "state_root", None)
         if coordinator_state_root is not None:
             self.state_root = Path(coordinator_state_root).resolve()
+
+    def _ensure_lease_keeper(self, child_id: str) -> None:
+        if self.coordinator is None or self._closed:
+            return
+        with self._execution_lock:
+            existing = self._lease_keepers.get(child_id)
+            if existing is not None and existing[1].is_alive():
+                return
+            stop = threading.Event()
+            thread = threading.Thread(
+                target=self._lease_keeper_loop,
+                args=(child_id, stop),
+                name=f"kitt-lease-{child_id[:12]}",
+                daemon=True,
+            )
+            self._lease_keepers[child_id] = (stop, thread)
+            thread.start()
+
+    def _lease_keeper_loop(
+        self,
+        child_id: str,
+        stop: threading.Event,
+    ) -> None:
+        active_states = {
+            "CREATED",
+            "RUNNING",
+            "QUEUED",
+            "WAITING_APPROVAL",
+        }
+        try:
+            while not stop.wait(self.LEASE_RENEW_INTERVAL_SECONDS):
+                if self._closed or self.coordinator is None:
+                    return
+                child = self.repo.get(child_id)
+                if child is None or child.state not in active_states:
+                    return
+                try:
+                    self.coordinator.refresh_owner(child_id, ttl_seconds=180.0)
+                    self.coordinator.gc_expired_leases()
+                except Exception:
+                    # Coordination renewal is best-effort here; the mutation
+                    # fence itself still fails closed if the lease was lost.
+                    continue
+        finally:
+            with self._execution_lock:
+                current = self._lease_keepers.get(child_id)
+                if current is not None and current[0] is stop:
+                    self._lease_keepers.pop(child_id, None)
+
+    def _stop_lease_keeper(self, child_id: str) -> None:
+        with self._execution_lock:
+            keeper = self._lease_keepers.pop(child_id, None)
+        if keeper is not None:
+            keeper[0].set()
 
     def spawn(
         self,
@@ -192,6 +249,7 @@ class ChildAgentManager:
             "ChildAgentSpawned",
             {"child_id": child.id, "name": name, "task": task},
         )
+        self._ensure_lease_keeper(child.id)
         self._pool.submit(
             self._run_child,
             child.id,
@@ -405,6 +463,7 @@ class ChildAgentManager:
             context_summary=output[-4000:],
             error=None,
         )
+        self._stop_lease_keeper(child_id)
         self._on_event(
             "ChildAgentFinished",
             {"child_id": child_id, "status": "COMPLETED", "error": None},
@@ -445,6 +504,7 @@ class ChildAgentManager:
             state = "TIMED_OUT" if isinstance(exc, TimeoutError) else "FAILED"
             if self.coordinator is not None:
                 self.coordinator.abandon_child(child_id, preserve_worktree=True)
+            self._stop_lease_keeper(child_id)
             self.repo.update(
                 child_id,
                 state=state,
@@ -562,6 +622,7 @@ class ChildAgentManager:
             self._kill_tree(process)
         if self.coordinator is not None:
             self.coordinator.abandon_child(child_id, preserve_worktree=True)
+        self._stop_lease_keeper(child_id)
         return True
 
     def cancel_for_turn(
@@ -638,6 +699,7 @@ class ChildAgentManager:
             task_started_at=time.time(),
         )
         queued_child = self.repo.get(child_id)
+        self._ensure_lease_keeper(child_id)
         self._pool.submit(
             self._run_child,
             child_id,
@@ -679,6 +741,7 @@ class ChildAgentManager:
             float(timeout_seconds or child.timeout_seconds), self.max_worker_seconds
         )
         self.repo.update(child_id, state="QUEUED", error=None, completed_at=None)
+        self._ensure_lease_keeper(child_id)
         self._pool.submit(
             self._resume_child,
             child_id,
@@ -905,6 +968,7 @@ class ChildAgentManager:
     def shutdown_all(self) -> None:
         with self._execution_lock:
             processes = list(self._processes.items())
+            keepers = list(self._lease_keepers.items())
         for child_id, process in processes:
             self._kill_tree(process)
             child = self.repo.get(child_id)
@@ -915,6 +979,14 @@ class ChildAgentManager:
                     error="cancelled during shutdown",
                     completed_at=time.time(),
                 )
+            if self.coordinator is not None:
+                self.coordinator.release_owner(child_id)
+        for child_id, (stop, _thread) in keepers:
+            stop.set()
+            if self.coordinator is not None:
+                self.coordinator.release_owner(child_id)
+        with self._execution_lock:
+            self._lease_keepers.clear()
 
     def close(self):
         if self._closed:
