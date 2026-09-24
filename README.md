@@ -86,6 +86,8 @@ Use `--no-native` / `-NoNative` to explicitly skip native acceleration.
 kitt
 kitt --root /path/to/project
 kitt models
+kitt sessions
+kitt incident --since 30m
 kitt doctor
 kitt --help
 ```
@@ -97,6 +99,39 @@ kitt daemon status
 kitt remote status
 kitt evolve runs
 ```
+
+### Runtime resilience and operations
+
+KITT keeps maintenance work separate from the execution hot path. Context
+compaction can use the configured `summarize`/context route when that route
+is independent from the execution lane, fits the request, and is not a
+browser-backed reverse proxy session. If no suitable maintenance model is
+available, compaction stays deterministic.
+
+Provider recovery is replay-aware: rate-limit responses honor `Retry-After`,
+transient retries use bounded proportional jitter, and a request is never
+automatically replayed after it has already emitted stream output. Direct
+OpenAI-compatible, OpenAI Responses, and Anthropic streams also require an
+explicit protocol completion signal instead of silently accepting a truncated
+connection.
+
+For operator visibility:
+
+```bash
+kitt sessions
+kitt sessions --all --json
+kitt incident --since 30m
+kitt incident --since 2h --session <id> --json
+```
+
+`kitt sessions` enriches daemon/local sessions with durable turn state,
+staleness, last error and token usage. `kitt incident` reconstructs a bounded
+timeline from KITT's structured local logs. See
+[docs/OPERATIONS.md](docs/OPERATIONS.md) for details.
+
+Completed, failed, cancelled and timed-out child history no longer consumes
+the resident-child admission limit; only live/reusable retained state counts
+toward that bound.
 
 ### Approval and update lifecycle
 
