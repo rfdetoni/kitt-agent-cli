@@ -124,3 +124,27 @@ closed for dynamic tools that are not explicitly scope-aware.
 
 These checks complement runtime capability policy; registration validation does
 not grant a tool additional authority.
+
+## Context efficiency controls
+
+The runtime defaults are intentionally conservative and can still be overridden
+through the normal Control Center/runtime configuration path:
+
+- `compaction_trigger_ratio = 0.75` triggers history compaction from measured
+  token pressure against the selected execution model's usable input budget.
+- `compaction_min_tokens = 0` may raise the minimum absolute threshold when an
+  operator wants to avoid compaction on small-context sessions.
+- `tool_receipt_min_tokens = 160` is the minimum already-consumed host result
+  eligible for receipt replacement on stateless/local providers.
+- `tool_receipt_excerpt_chars = 320` bounds the diagnostic excerpt retained in
+  each receipt.
+- `flow.execute` accepts `parallel` (default true) and `max_parallel`
+  (1..8, default 4). Data references such as `$scan.result` and explicit
+  `depends_on` arrays create dependency edges; only ready read-only steps are
+  scheduled together.
+
+Receipt compaction is deliberately disabled for browser-backed reverse-proxy
+sessions because rewriting historical user messages can invalidate provider
+conversation identity. Large outputs continue to use artifacts independently
+of receipts.
+

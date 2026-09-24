@@ -42,7 +42,11 @@ class RuntimeConfig:
 
     compaction_keep_recent: int = 6
     compaction_min_tokens: int = 0
+    compaction_trigger_ratio: float = 0.75
     max_compaction_cycles: int = 2
+
+    tool_receipt_min_tokens: int = 160
+    tool_receipt_excerpt_chars: int = 320
 
     max_skills_per_prompt: int = 3
     max_skill_body_chars: int = 16000

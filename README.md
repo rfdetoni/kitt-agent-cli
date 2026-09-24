@@ -30,6 +30,9 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - MCP servers/tools, plugins, hooks and external integrations.
 - Sixteen bundled first-party plugins for project intelligence, testing, LSP discovery, API/migration analysis, worktrees, quality, dependencies, CI, containers and opt-in integrations.
 - Dreaming/memory consolidation and context compaction.
+- Stable prompt-prefix layout with dynamic turn context moved behind invariant execution/tool contracts.
+- Consumed tool-result receipts reclaim model context without mutating browser-backed conversation identity.
+- Token-pressure history compaction and dependency-aware parallel read-only programmatic flows.
 - Quality gates, evidence-led completion, risk-aware adversarial review and self-evolution integration.
 - Portable Python fallback plus optional native Rust acceleration.
 - Daemon/remote integration through the separately packaged Assistant runtime.
@@ -102,8 +105,25 @@ kitt evolve runs
 
 ### Runtime resilience and operations
 
-KITT keeps maintenance work separate from the execution hot path. Context
-compaction can use the configured `summarize`/context route when that route
+KITT keeps maintenance work separate from the execution hot path. Prompt
+construction also keeps the invariant agent/tool contract at the front of the
+provider request; query-specific memory, skills, formatting, harness state,
+repository evidence and conversation history are appended afterwards so
+provider prefix caches can reuse the stable portion.
+
+After a stateless/local model consumes a sufficiently large host-tool result and
+proposes its next action, KITT replaces that old payload with a deterministic
+receipt containing provenance, digest and a bounded excerpt. Browser-backed
+reverse-proxy histories are left byte-stable to avoid session resets. History
+compaction is driven by token pressure against the selected model's real input
+budget instead of a fixed message-count threshold.
+
+Read-only `flow.execute` plans form a bounded dependency DAG. Independent steps
+run concurrently by default (bounded by `max_parallel`), while references such
+as `$step.field` and explicit `depends_on` edges preserve ordering. Intermediate
+payloads remain hidden from the model.
+
+Context compaction can use the configured `summarize`/context route when that route
 is independent from the execution lane, fits the request, and is not a
 browser-backed reverse proxy session. If no suitable maintenance model is
 available, compaction stays deterministic.

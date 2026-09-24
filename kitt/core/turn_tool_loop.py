@@ -307,6 +307,19 @@ class TurnToolLoopMixin:
                     return
             tool_calls += 1
             tool_name, tool_args = ("python_compute", python_args) if python_args is not None else general_call
+
+            compacted_receipts = self._compact_consumed_tool_results(
+                execution_messages, exe_profile
+            )
+            if compacted_receipts:
+                trace_event(
+                    logger,
+                    "tool_loop.receipts_compacted",
+                    turn_id=cmd.turn_id,
+                    count=compacted_receipts,
+                    call=tool_calls,
+                )
+
             operation_args = (
                 tool_args.get("arguments", {})
                 if tool_name == "kitt_runtime"

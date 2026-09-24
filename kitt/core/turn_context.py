@@ -281,6 +281,7 @@ class TurnContextMixin:
         mandatory_constraints = [c.text for c in task.constraints if c.mandatory]
         use_agent_prompt = bool(plan.enabled_tools) or agent_addressed
         tools_for_contract = exposed_tools if exposed_tools is not None else plan.enabled_tools
+        turn_context = ""
         if plan.enabled_tools:
             tool_contract = self._tool_instructions(
                 tools_for_contract,
@@ -293,7 +294,9 @@ class TurnContextMixin:
             )
             base_sys = (
                 f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
-                f"Tool Contract:\n{tool_contract}\n\n"
+                f"Tool Contract:\n{tool_contract}"
+            ).strip()
+            turn_context = (
                 f"Memory:\n{self.memory.get_memory_context(cmd.prompt)}\n\n"
                 f"Active Skills:\n{skills_str}\n\n"
                 f"Project Guidelines:\n{agents_str}\n\n"
@@ -325,13 +328,19 @@ class TurnContextMixin:
             repo_map=context_map_str,
             files_context=explicit_str,
             history_context=self._history_context(cmd.conversation_id, exclude_prompt=cmd.prompt),
-            recent_results=""
+            recent_results=turn_context
         )
 
         constraints_part = f"Mandatory Constraints:\n{allocated['constraints_text']}\n\n" if allocated.get('constraints_text') else ""
+        dynamic_part = (
+            f"Turn Context:\n{allocated['recent_results']}\n\n"
+            if allocated.get("recent_results")
+            else ""
+        )
         sys_prompt = (
             f"{allocated['system_prompt']}\n\n"
             f"{constraints_part}"
+            f"{dynamic_part}"
             f"Files Context:\n{allocated['files_context']}\n\n"
             f"Repo Map:\n{allocated['repo_map']}\n\n"
             f"Recent Conversation:\n{allocated['history_context']}"

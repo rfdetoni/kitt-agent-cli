@@ -187,9 +187,38 @@ class TurnFinalizationMixin:
         )
         if self.compaction_service and self.history_service and hasattr(self.history_service, "tree"):
             try:
-                path = self.history_service.tree.get_active_path(cmd.conversation_id)
-                if len(path) > 12:
-                    self.compaction_service.compact(cmd.conversation_id, keep_recent=self.config.compaction_keep_recent)
+                path = [
+                    entry
+                    for entry in self.history_service.tree.get_active_path(cmd.conversation_id)
+                    if entry.include_in_context
+                ]
+                if len(path) > self.config.compaction_keep_recent:
+                    history_text = "\n".join(
+                        str(
+                            entry.payload.get("content")
+                            or entry.payload.get("summary")
+                            or entry.payload
+                        )
+                        for entry in path
+                    )
+                    history_tokens = TokenCounter.count_tokens(history_text)
+                    max_input_tokens = max(
+                        1,
+                        int(exe_profile.context_window) - int(exe_profile.max_output_tokens),
+                    )
+                    trigger_ratio = max(
+                        0.50,
+                        min(float(self.config.compaction_trigger_ratio), 0.95),
+                    )
+                    trigger_tokens = max(
+                        int(self.config.compaction_min_tokens),
+                        int(max_input_tokens * trigger_ratio),
+                    )
+                    if history_tokens >= trigger_tokens:
+                        self.compaction_service.compact(
+                            cmd.conversation_id,
+                            keep_recent=self.config.compaction_keep_recent,
+                        )
             except Exception:
                 pass
 

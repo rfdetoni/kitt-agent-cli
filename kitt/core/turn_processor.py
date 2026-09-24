@@ -27,6 +27,7 @@ from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.context_filter.semantic_filter import SemanticFilter
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
+from kitt.context.tool_receipts import compact_consumed_tool_results as compact_tool_results
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.edit_format.parser import PatchParser
 from kitt.edit_format.strategy import (
@@ -341,6 +342,26 @@ class TurnProcessor(
                 return list(edit_result.applied_files + edit_result.created_files)
         return []
 
+    def _compact_consumed_tool_results(
+        self,
+        messages: List[Dict[str, str]],
+        profile,
+    ) -> int:
+        """Replace already-consumed host payloads with compact receipts.
+
+        Browser-backed reverse-proxy sessions retain the original message history
+        as part of their conversation identity, so their messages stay untouched.
+        Stateless/local providers can safely reclaim those tokens after the model
+        has already consumed the result and proposed its next action.
+        """
+        if _reverse_proxy_identity(profile) is not None:
+            return 0
+        return compact_tool_results(
+            messages,
+            min_tokens=max(32, int(self.config.tool_receipt_min_tokens)),
+            max_excerpt_chars=max(80, int(self.config.tool_receipt_excerpt_chars)),
+        )
+
     def _fit_tool_output(
         self,
         system_prompt: str,
@@ -603,15 +624,12 @@ class TurnProcessor(
             )
             operations_text = ", ".join(operations) or "(none)"
 
+            # Keep the model-facing runtime schema stable across turns. The
+            # per-turn operation allowlist is still enforced by the host and is
+            # appended after the invariant contract for provider prefix caching.
             runtime_definition = dict(
                 self.registry.get_tool_definitions(["kitt_runtime"])[0]
             )
-            runtime_args = dict(runtime_definition.get("args") or {})
-            runtime_args["operation"] = {
-                "type": "string",
-                "enum": list(operations),
-            }
-            runtime_definition["args"] = runtime_args
 
             examples = []
             if edit_strategy == "architect_editor":
@@ -679,13 +697,15 @@ Use browser.inspect for bounded DOM/text and browser.screenshot for visual valid
 
             return f"""
 Available host tool: {[runtime_definition]}
-{examples_text}
-Supported operations for this turn: {operations_text}.
-RULES:
+CORE RULES:
 - Never use process.run, shell redirection, printf, cat, echo, heredocs, or mkdir to create/edit workspace files. Use repo.write_file, repo.create_directory, or patch.apply instead.
 1. Focus strictly on user request.
 2. Do not expose chain-of-thought. Emit the tool call directly when action is needed.
 3. Once fulfilled, STOP calling tools and answer directly.
+
+TURN TOOL POLICY:
+Supported operations for this turn: {operations_text}.
+{examples_text}
 """.strip()
 
         instructions = f"""

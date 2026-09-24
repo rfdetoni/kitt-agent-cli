@@ -63,3 +63,29 @@ The standalone and ecosystem installers install the Agent first, then compose co
 ## Development gates
 
 Agent changes are validated with Python compilation/tests and the clean-room provenance guard. Rust formatting, Clippy and workspace tests belong to `kitt-toolbox`. Cross-repository compatibility is validated by the frozen-SHA workflow in `rfdetoni/kitt`.
+
+## Context lifecycle and provider-cache boundary
+
+The provider-facing prompt is split into an invariant prefix and a dynamic turn
+tail. The invariant prefix contains execution behavior plus the stable
+model-facing host-tool contract. Query-specific memory, skills, formatting
+rules, harness guidance, retrieved files, repository maps and conversation
+history follow it. Host authorization remains authoritative; moving the
+per-turn operation allowlist later in the prompt does not broaden runtime
+capabilities.
+
+For stateless/local providers, host results that have already been consumed by
+the model are eligible for receipt compaction. A receipt retains the tool name,
+content digest, original token estimate, optional artifact identifier and a
+bounded excerpt. Browser-backed reverse-proxy histories are not rewritten,
+because their message sequence participates in browser conversation identity.
+
+History compaction is pressure-based: KITT compares active-history tokens with
+the selected model's usable input budget and compacts only after the configured
+ratio is reached. This avoids treating a dozen tiny messages the same as a
+dozen very large messages.
+
+`flow.execute` remains read-only and policy bounded. Its steps are interpreted
+as a dependency graph: independent nodes may run concurrently, while data
+references and explicit `depends_on` edges create deterministic barriers.
+
