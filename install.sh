@@ -61,9 +61,10 @@ stop_kitt_services() {
   # Stop registered resident services first so restart policies cannot respawn
   # old binaries while the installation tree is being replaced.
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl --user stop kitt-assistant.service kitt-reverse-proxy.service kitt-agent-gateway.service >/dev/null 2>&1 || true
+    systemctl --user stop kitt-daemon.service kitt-assistant.service kitt-reverse-proxy.service kitt-agent-gateway.service >/dev/null 2>&1 || true
   fi
   if command -v launchctl >/dev/null 2>&1; then
+    launchctl stop com.kitt.daemon >/dev/null 2>&1 || true
     launchctl stop com.kitt.assistant >/dev/null 2>&1 || true
     launchctl stop com.kitt.reverse-proxy >/dev/null 2>&1 || true
   fi
