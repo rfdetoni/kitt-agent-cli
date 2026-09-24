@@ -12,6 +12,21 @@ _WORKSPACE_CREATION_NOUNS = (
     "pasta", "folder", "diretório", "diretorio", "directory",
     "arquivo", "file", "backend", "frontend", "front end",
 )
+_WORKSPACE_MUTATION_VERBS = (
+    *_WORKSPACE_CREATION_VERBS,
+    "converta", "converter", "converta", "convert",
+    "migre", "migrar", "migração", "migracao", "migrate",
+    "troque", "trocar", "substitua", "substituir", "replace", "switch",
+    "mova", "mover", "move", "porte", "portar", "port",
+    "corrija", "corrigir", "altere", "alterar", "modifique", "modificar",
+    "atualize", "atualizar", "edite", "editar", "refatore", "refatorar",
+    "fix", "change", "modify", "update", "edit", "refactor",
+)
+_WORKSPACE_MUTATION_NOUNS = (
+    *_WORKSPACE_CREATION_NOUNS,
+    "código", "codigo", "code", "build", "gradle", "maven", "pom.xml",
+    "build.gradle", "dependência", "dependencia", "dependency", "dependencies",
+)
 _WORKSPACE_HOW_TO_PREFIXES = (
     "como ", "how ", "explique ", "explain ", "qual a forma de ",
     "qual é a forma de ", "qual e a forma de ", "como faço para ", "como faco para ",
@@ -31,6 +46,17 @@ def is_workspace_creation_request(prompt: str) -> bool:
     return (
         any(term in text for term in _WORKSPACE_CREATION_VERBS)
         and any(term in text for term in _WORKSPACE_CREATION_NOUNS)
+    )
+
+
+def is_workspace_mutation_request(prompt: str) -> bool:
+    """Detect explicit workspace transformations that must stay execution-capable."""
+    text = prompt.lower().strip()
+    if text.startswith(_WORKSPACE_HOW_TO_PREFIXES):
+        return False
+    return (
+        any(term in text for term in _WORKSPACE_MUTATION_VERBS)
+        and any(term in text for term in _WORKSPACE_MUTATION_NOUNS)
     )
 
 
@@ -89,6 +115,7 @@ class DeterministicFallbackPlanner:
         intent: TaskIntent = 'IMPLEMENT'
         prompt_lower = prompt.lower()
         creation_request = is_workspace_creation_request(prompt)
+        mutation_request = is_workspace_mutation_request(prompt)
         direct_execution = any(kw in prompt_lower for kw in (
             "crie o arquivo", "crie um arquivo", "crie a pasta", "crie uma pasta",
             "crie o diretório", "crie um diretório", "execute", "rode",
@@ -96,7 +123,7 @@ class DeterministicFallbackPlanner:
         conversational_request = any(word in prompt_lower for word in (
             'explique', 'diga', 'responda', 'como ', 'por que', 'porque', '?',
         ))
-        if creation_request:
+        if creation_request or mutation_request:
             # Creation is the primary workspace intent even when the same request also
             # asks to run tests/builds afterward. Validation is a completion step, not
             # a reason to downgrade the execution route to validate-diff.
