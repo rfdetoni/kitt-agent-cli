@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
 import subprocess
@@ -174,15 +173,26 @@ class WorkspaceCoordinator:
         owner_id: str,
         requests: list[LeaseRequest],
     ) -> bool:
-        if not ticket_id or queued_at is None:
-            return False
-        rows = conn.execute(
-            """SELECT ticket_id,owner_id,resources_json
-               FROM coordination_wait_queue
-               WHERE workspace_id=? AND created_at<=? AND ticket_id<>?
-               ORDER BY created_at ASC,ticket_id ASC""",
-            (self.workspace_id, queued_at, ticket_id),
-        ).fetchall()
+        if ticket_id and queued_at is not None:
+            rows = conn.execute(
+                """SELECT ticket_id,owner_id,resources_json
+                   FROM coordination_wait_queue
+                   WHERE workspace_id=?
+                     AND (
+                       created_at<?
+                       OR (created_at=? AND ticket_id<?)
+                     )
+                   ORDER BY created_at ASC,ticket_id ASC""",
+                (self.workspace_id, queued_at, queued_at, ticket_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT ticket_id,owner_id,resources_json
+                   FROM coordination_wait_queue
+                   WHERE workspace_id=?
+                   ORDER BY created_at ASC,ticket_id ASC""",
+                (self.workspace_id,),
+            ).fetchall()
         for row in rows:
             if str(row[1]) == owner_id:
                 continue
