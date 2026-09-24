@@ -184,7 +184,7 @@ def test_new_writer_cannot_jump_a_persisted_waiter(tmp_path: Path):
 
     with pytest.raises(CoordinationConflict):
         coordinator.acquire(
-            "path:src/other.py",
+            "path:src/service.py",
             "late-child",
             "WRITE",
             "late edit",
