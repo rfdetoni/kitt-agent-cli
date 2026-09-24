@@ -31,8 +31,10 @@ function Stop-KittServices {
   } catch {}
 
   try {
-    $Task = Get-ScheduledTask -TaskName 'KITT Assistant' -ErrorAction SilentlyContinue
-    if ($Task) { Stop-ScheduledTask -TaskName 'KITT Assistant' -ErrorAction SilentlyContinue }
+    foreach ($TaskName in @('KITT Daemon', 'KITT Assistant', 'KITT Reverse Proxy', 'KITT Agent Gateway')) {
+      $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      if ($Task) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue }
+    }
   } catch {}
 
   try {
