@@ -312,9 +312,3 @@ def _provider_defaults(ui, provider: str) -> tuple[str, str]:
     env_host = os.environ.get(f"{provider.upper().replace('-', '_').replace(' ', '_')}_HOST", "http://localhost:11434" if "ollama" in p_lower else "http://localhost:8000/v1")
     return (env_host, env_key)
 
-_set_model_role = _model_service._set_model_role
-_toggle_role_local_limits = _model_service._toggle_role_local_limits
-_models_for_provider = _model_service._models_for_provider
-_prepare_model_setup = _model_service._prepare_model_setup
-_model_setup_search_changed = _model_service._model_setup_search_changed
-_open_model_setup_overlay = _model_service._open_model_setup_overlay

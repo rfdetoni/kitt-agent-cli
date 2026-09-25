@@ -330,7 +330,3 @@ async def _export_conversation(ui, fmt: str) -> None:
     out_path.write_text(content, encoding="utf-8")
     ui._show_result(f"Exportado: {filename}")
 
-_parse_model_command = _model_service._parse_model_command
-_role_tasks = _model_service._role_tasks
-_model_for_role = _model_service._model_for_role
-_profile_for_role = _model_service._profile_for_role

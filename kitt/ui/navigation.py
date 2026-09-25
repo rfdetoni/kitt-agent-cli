@@ -20,19 +20,6 @@ def toggle_turn_mode(ui, target_mode: str | None = None) -> str:
         ui.application.invalidate()
     return ui.state.turn_mode
 
-_model_setup_mouse_handler = _mouse.model_setup_mouse_handler
-_provider_popup_mouse_handler = _mouse.provider_popup_mouse_handler
-_select_popup_action = _provider_flow._select_popup_action
-_open_provider_popup_overlay = _provider_flow._open_provider_popup_overlay
-_provider_popup_text = _provider_flow._provider_popup_text
-_persist_custom_providers = _provider_flow._persist_custom_providers
-_open_add_provider_overlay = _provider_flow._open_add_provider_overlay
-_open_edit_provider_overlay = _provider_flow._open_edit_provider_overlay
-_delete_custom_provider = _provider_flow._delete_custom_provider
-_add_provider_help_text = _provider_flow._add_provider_help_text
-_accept_add_provider = _provider_flow._accept_add_provider
-_finish_add_provider = _provider_flow._finish_add_provider
-_open_provider_endpoint_overlay = _provider_flow._open_provider_endpoint_overlay
 
 async def _open_session_picker_overlay(ui) -> None:
     await ui.session_picker_model.reload()
