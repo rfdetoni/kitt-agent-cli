@@ -114,8 +114,6 @@ def _preview_interaction(ui, surface: str, region) -> None:
         ui.approval_menu_index = int(region.value[0])
     elif region.action == "reverse_proxy.item":
         ui.reverse_proxy_model.selected_index = int(region.value)
-    elif region.action == "model.role":
-        ui.model_setup_model.role_index = int(region.value)
     if ui.application:
         ui.application.invalidate()
 

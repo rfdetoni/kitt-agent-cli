@@ -123,6 +123,6 @@ def test_model_header_click_uses_existing_role_controller():
             ui, "model_setup_header", _mouse(MouseEventType.MOUSE_UP, 4, 2)
         )
         await asyncio.sleep(0)
-        ui._move_model_role.assert_awaited_once_with(0)
+        ui._move_model_role.assert_awaited_once_with(1)
 
     asyncio.run(scenario())
