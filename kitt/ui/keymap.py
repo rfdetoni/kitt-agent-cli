@@ -65,8 +65,11 @@ class KeyMap:
         spec = self.bindings[action]
 
         def decorator(handler):
+            options = {"eager": eager}
+            if filter is not None:
+                options["filter"] = filter
             for sequence in spec.sequences:
-                key_bindings.add(*sequence, filter=filter, eager=eager)(handler)
+                key_bindings.add(*sequence, **options)(handler)
             return handler
 
         return decorator
