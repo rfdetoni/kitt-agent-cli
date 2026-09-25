@@ -85,10 +85,17 @@ class DiffViewerModel:
 
 
 from kitt.ui.model_picker_state import ModelSelectionBehavior
-from kitt.ui.provider_picker_state import PROVIDER_PATTERNS, ProviderSelectionBehavior
+from kitt.ui.provider_picker_state import PROVIDER_PATTERNS, ProviderPatternBehavior
+from kitt.ui.provider_catalog_state import ProviderCatalogBehavior
+from kitt.ui.provider_popup_state import ProviderPopupBehavior
 
 
-class ModelSetupModel(ModelSelectionBehavior, ProviderSelectionBehavior):
+class ModelSetupModel(
+    ModelSelectionBehavior,
+    ProviderPatternBehavior,
+    ProviderCatalogBehavior,
+    ProviderPopupBehavior,
+):
     """Compatibility facade composing independent model and provider selection behaviors."""
 
     def __init__(self):
