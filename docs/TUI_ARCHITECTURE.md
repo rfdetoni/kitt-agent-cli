@@ -20,11 +20,16 @@ The refactor in Agent CLI 0.70.0 replaces the former monolithic UI implementatio
 | `kitt/ui/render/core.py` | Home, header, transcript, sidebar, status and toast projections |
 | `kitt/ui/render/overlays.py` | Modal/context projection functions |
 | `kitt/ui/command_dispatcher.py` | Slash-command dispatch |
-| `kitt/ui/model_service.py` | Model/profile selection and discovery |
+| `kitt/ui/model_service.py` | Model/profile application and discovery |
+| `kitt/ui/model_picker_state.py` | Model/role selection state and model badges |
+| `kitt/ui/provider_picker_state.py` | Provider protocol-template selection |
+| `kitt/ui/provider_catalog_state.py` | Provider ordering, favorites and custom-provider CRUD |
+| `kitt/ui/provider_popup_state.py` | Provider-popup navigation and mouse row mapping |
 | `kitt/ui/provider_flow.py` | Provider setup/authentication workflow |
+| `kitt/ui/navigation.py` | Palette/sidebar/context navigation actions |
 | `kitt/ui/runtime_actions.py` | UI-facing runtime/tool/workspace/approval actions |
 
-No extracted module introduces another application class or state owner.
+No extracted module introduces another application owner. `ModelSetupModel` is a compatibility facade composed from small selection behaviors; each behavior has one reason to change.
 
 ## Scroll invariant
 
@@ -71,3 +76,15 @@ Context-specific keys are captured into the same runtime key map so active bindi
 ## Compatibility
 
 The TUI preserves method-level contracts consumed by KITT runtime/bridge/command modules through thin `KittUIApp` wrappers. No protocol, daemon, native, assistant-runtime, memory or reverse-proxy interface changed in 0.70.0, so sibling KITT repositories do not require a compatibility bump for this UI-only change.
+
+
+## Architectural regression guards
+
+`tests/test_tui_architecture_boundaries.py` makes the structural limits executable:
+
+- `KittUIApp` stays at or below 500 source lines;
+- `layout.py` stays at or below five physical `Float` surfaces;
+- global `Ctrl+X` chords stay capped at three;
+- model/provider selection behaviors stay below 200 lines each.
+
+These are guardrails, not style metrics: crossing one means a new responsibility should be extracted rather than appended to an existing owner.
