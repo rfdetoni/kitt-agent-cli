@@ -83,6 +83,43 @@ def test_reverse_proxy_overlay_opens_before_control_plane_snapshot_loads():
     asyncio.run(scenario())
 
 
+def test_reverse_proxy_button_hover_changes_label_without_moving_hit_target():
+    model = ReverseProxyPanelModel(page="plugins")
+    model.plugins = [
+        ReverseProxyPlugin(
+            id="gemini",
+            name="Gemini Web",
+            version="1",
+            source="builtin",
+            default_url="https://gemini.google.com/app",
+            default_model="gemini-web",
+            transports=("webchat",),
+            auth="browser",
+        )
+    ]
+    ui = SimpleNamespace(
+        reverse_proxy_model=model,
+        interactions=InteractionMap(),
+    )
+
+    initial = _reverse_proxy_text(ui)
+    lines = initial.splitlines()
+    row = next(i for i, line in enumerate(lines) if "[Enter] Iniciar serviço" in line)
+    x = lines[row].index("[Enter] Iniciar serviço")
+    hovered = ui.interactions.hover("reverse_proxy", x, row)
+    assert hovered is not None
+    assert hovered.action == "reverse_proxy.start"
+
+    rerendered = _reverse_proxy_text(ui)
+    hovered_lines = rerendered.splitlines()
+    assert "[ENTER] INICIAR SERVIÇO" in hovered_lines[row]
+    assert hovered_lines[row].index("[ENTER] INICIAR SERVIÇO") == x
+
+    region = ui.interactions.resolve("reverse_proxy", x, row)
+    assert region is not None
+    assert region.action == "reverse_proxy.start"
+
+
 def test_reverse_proxy_modal_registers_clickable_start_service_action():
     model = ReverseProxyPanelModel(page="plugins")
     model.plugins = [
