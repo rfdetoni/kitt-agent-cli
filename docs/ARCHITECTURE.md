@@ -33,6 +33,13 @@ The Agent keeps `kitt/native/bridge.py` and the portable fallback because runtim
 
 `kitt/extensions` and `kitt/integrations` intentionally remain in the Agent. Plugins, MCP, hooks and external-tool selection execute inside the Agent policy/security boundary and therefore belong to the coding control plane rather than to AI workers or the native toolbox.
 
+
+## TUI ownership and performance boundary
+
+The full-screen TUI is a thin presentation layer around the existing runtime contracts. `KittRuntime`, `TurnEventBridge`, repository/context services and command handlers remain authoritative for execution and data. UI modules are separated by responsibility: retained controls, keybindings, scroll/mouse routing, rendering, command dispatch, model/provider flows and runtime actions. See [TUI_ARCHITECTURE.md](TUI_ARCHITECTURE.md).
+
+The UI keeps `Window`, `Control` and `Buffer` instances stable after construction. Rendering functions are stateless projections over `UIState`; `invalidate()` does not rebuild the container tree. Mouse wheel routing is local to a registered surface, which prevents cross-panel state mutations and avoids global scroll dispatch on the hot render path.
+
 ## Native code intelligence
 
 The toolbox native engine is provider/UI/session agnostic. Its public domain is repository/file/symbol/query/reference/edit/output. It provides gitignore-aware walking, token-budgeted search, Tree-sitter symbol intelligence, optimistic structural edits with source hashes, syntax validation and deterministic process-output reduction.

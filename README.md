@@ -103,6 +103,20 @@ kitt remote status
 kitt evolve runs
 ```
 
+
+### TUI navigation
+
+The full-screen TUI uses retained `prompt_toolkit` controls and enables application mouse support by default:
+
+- **Mouse wheel** scrolls only the panel under the pointer. Scroll routing is isolated through a central panel registry.
+- **F10** or `/mouse` toggles TUI mouse reporting off/on. Turn it off when native terminal text selection is preferred.
+- **Ctrl+P** is the universal discovery path for commands and actions.
+- Direct `Ctrl+X` chords are intentionally limited to **Ctrl+X N** (new conversation), **Ctrl+X B** (sidebar) and **Ctrl+X A** (agents).
+- **F12** opens the model/provider wizard. Provider selection, endpoint configuration and authentication remain inside the same modal surface.
+- Conversation, timeline, diff, agents, autonomy and help share one contextual panel; **Left/Right** switches its active tab.
+
+See [docs/TUI_ARCHITECTURE.md](docs/TUI_ARCHITECTURE.md) for implementation boundaries and performance invariants.
+
 ### Runtime resilience and operations
 
 KITT keeps maintenance work separate from the execution hot path. Prompt
