@@ -200,8 +200,23 @@ async def _reverse_proxy_bind_selected(ui, role: str) -> None:
     ui.state.add_toast(f"{normalize_role(role).title()} → {instance.provider}/{instance.model}")
 
 
+def _hovered_button_text(ui, text: str, action: str, value=None) -> str:
+    hovered = ui.interactions.hovered("reverse_proxy")
+    if hovered and hovered.action == action and repr(hovered.value) == repr(value):
+        return text.upper()
+    return text
+
+
 def _register_button(ui, row: int, line: str, text: str, action: str, value=None) -> None:
-    ui.interactions.add_text("reverse_proxy", row, line, text, action, value)
+    visible = _hovered_button_text(ui, text, action, value)
+    ui.interactions.add_text("reverse_proxy", row, line, visible, action, value)
+
+
+def _buttons_line(ui, buttons: list[tuple[str, str, object | None]]) -> str:
+    return "  ".join(
+        _hovered_button_text(ui, text, action, value)
+        for text, action, value in buttons
+    )
 
 
 def _reverse_proxy_text(ui) -> str:
@@ -239,9 +254,15 @@ def _reverse_proxy_text(ui) -> str:
             ui.interactions.add_row(
                 "reverse_proxy", len(lines) - 1, "reverse_proxy.item", index
             )
+        plugin_buttons = [
+            ("[Enter] Iniciar serviço", "reverse_proxy.start", None),
+            ("[u] Informar URL", "reverse_proxy.url", None),
+            ("[p] Perfis", "reverse_proxy.show", "profiles"),
+            ("[i] Serviços", "reverse_proxy.show", "instances"),
+        ]
         lines.extend([
             "",
-            "[Enter] Iniciar serviço  [u] Informar URL  [p] Perfis  [i] Serviços",
+            _buttons_line(ui, plugin_buttons),
         ])
         row = len(lines) - 1
         line = lines[row]
@@ -270,9 +291,15 @@ def _reverse_proxy_text(ui) -> str:
             ui.interactions.add_row(
                 "reverse_proxy", len(lines) - 1, "reverse_proxy.item", index
             )
+        profile_buttons = [
+            ("[a] Criar perfil", "reverse_proxy.profile_create", None),
+            ("[d] Remover registro", "reverse_proxy.profile_remove", None),
+            ("[n] Iniciar serviço", "reverse_proxy.show", "plugins"),
+            ("[i] Serviços", "reverse_proxy.show", "instances"),
+        ]
         lines.extend([
             "",
-            "[a] Criar perfil  [d] Remover registro  [n] Iniciar serviço  [i] Serviços",
+            _buttons_line(ui, profile_buttons),
             "Dados Chromium só são apagados quando solicitado diretamente ao reverse-proxy.",
         ])
         row = len(lines) - 2
@@ -307,10 +334,22 @@ def _reverse_proxy_text(ui) -> str:
         ui.interactions.add_row(
             "reverse_proxy", len(lines) - 1, "reverse_proxy.item", index
         )
+    service_buttons = [
+        ("[n] Novo serviço", "reverse_proxy.show", "plugins"),
+        ("[p] Perfis", "reverse_proxy.show", "profiles"),
+        ("[F5] Atualizar", "reverse_proxy.refresh", None),
+        ("[r] Reiniciar", "reverse_proxy.restart", None),
+        ("[x] Parar", "reverse_proxy.stop", None),
+    ]
+    role_buttons = [
+        ("[c] Usar em Contexto", "reverse_proxy.bind", "context"),
+        ("[e] Usar em Código", "reverse_proxy.bind", "principal"),
+        ("[v] Usar em Validação", "reverse_proxy.bind", "validation"),
+    ]
     lines.extend([
         "",
-        "[n] Novo serviço  [p] Perfis  [F5] Atualizar  [r] Reiniciar  [x] Parar",
-        "[c] Usar em Contexto  [e] Usar em Código  [v] Usar em Validação",
+        _buttons_line(ui, service_buttons),
+        _buttons_line(ui, role_buttons),
         "[←/→] outros painéis  [Esc] Fechar",
     ])
     actions_row = len(lines) - 3
