@@ -34,9 +34,21 @@ def _live_agents_text(ui) -> str:
 
 def _permission_text(ui):
     from kitt.ui.components.permission_card import PermissionCardComponent
-    return PermissionCardComponent().render(
+
+    text = PermissionCardComponent().render(
         ui.state, max(50, ui.state.width - 10), ui.approval_menu_index
     )
+    ui.interactions.begin("permission")
+    lines = text.splitlines()
+    for index, (action, label, shortcut) in enumerate(PermissionCardComponent.ACTIONS):
+        marker = f"[{shortcut}] {label}"
+        for row, line in enumerate(lines):
+            if marker in line:
+                ui.interactions.add_row(
+                    "permission", row, "permission.action", (index, action)
+                )
+                break
+    return text
 
 
 def _autonomy_text(ui) -> str:
@@ -50,7 +62,7 @@ def _autonomy_text(ui) -> str:
     rules = getattr(ui.runtime.approval, "remembered_rules", [])
     rules_str = "\n".join(f"  • {r.tool_name} ({r.path_glob or '*'}) -> {r.decision.upper()} [{r.scope}]" for r in rules[-5:]) if rules else "  (Nenhuma regra salva)"
 
-    return (
+    text = (
         t.format_primary("┌── CENTRAL DE PERMISSÕES & AUTONOMIA / AUTONOMY CONTROL ───────────────────┐\n") +
         f"│ Perfil Atual: [ {curr.level.upper()} ]  Comandos: [ {command_mode} ]\n" +
         "│\n" +
@@ -65,20 +77,52 @@ def _autonomy_text(ui) -> str:
         "│ Controles: [1] Allow All  [2] Ask  [3] Deny  [r] Limpar Regras  [Esc] Sair\n" +
         t.format_primary("└────────────────────────────────────────────────────────────────────────────┘")
     )
+    ui.interactions.begin("autonomy")
+    for row, line in enumerate(text.splitlines()):
+        if "[1] ALLOW ALL" in line:
+            ui.interactions.add_row("autonomy", row, "autonomy.profile", "autonomous")
+        elif "[2] ASK" in line:
+            ui.interactions.add_row("autonomy", row, "autonomy.profile", "supervised")
+        elif "[3] DENY" in line:
+            ui.interactions.add_row("autonomy", row, "autonomy.profile", "read_only")
+        elif "Controles:" in line:
+            ui.interactions.add_text(
+                "autonomy", row, line, "[r] Limpar Regras", "autonomy.clear"
+            )
+    return text
 
 
 def _palette_text(ui):
     from kitt.ui.components.command_palette import CommandPaletteComponent
-    return CommandPaletteComponent(ui.commands, ui.keymap).render(
-        query=ui.palette_buffer.text,
+
+    query = ui.palette_buffer.text
+    commands = ui.commands.search(query)
+    window_size = 10
+    text = CommandPaletteComponent(ui.commands, ui.keymap).render(
+        query=query,
         selected_index=ui.palette_index,
         width=max(40, ui.state.width - 16),
-        window_size=10,
+        window_size=window_size,
     )
+    ui.interactions.begin("palette")
+    if commands:
+        total = len(commands)
+        start = min(
+            max(0, ui.palette_index - (window_size // 2)),
+            max(0, total - window_size),
+        )
+        end = min(total, start + window_size)
+        row = 1 if start > 0 else 0
+        for index in range(start, end):
+            ui.interactions.add_row("palette", row, "palette.item", index)
+            ui.interactions.add_row("palette", row + 1, "palette.item", index)
+            row += 2
+    return text
 
 
 def _session_picker_text(ui):
     sessions = ui.session_picker_model.sessions
+    ui.interactions.begin("session_picker")
     if not sessions:
         q = ui.session_picker_model.query.strip()
         if q:
@@ -93,10 +137,14 @@ def _session_picker_text(ui):
     if start > 0:
         lines.append(f"  ▲ ... ({start} conversas anteriores)")
 
+    ui.interactions.begin("session_picker")
     for idx in range(start, end):
         s = sessions[idx]
         prefix = "> " if idx == ui.session_picker_model.selected_index else "  "
         lines.append(f"{prefix}[{idx+1}/{total}] {s.get('id', '')[:8]}  {s.get('title', 'Sem título')}")
+        ui.interactions.add_row(
+            "session_picker", len(lines) - 1, "session.item", idx
+        )
 
     if end < total:
         lines.append(f"  ▼ ... ({total - end} conversas mais antigas)")
@@ -105,6 +153,7 @@ def _session_picker_text(ui):
 
 def _timeline_text(ui):
     turns = ui.timeline_model.turns
+    ui.interactions.begin("timeline")
     if not turns:
         return "  Nenhum turno registrado na conversa ativa."
     total = len(turns)
@@ -120,6 +169,7 @@ def _timeline_text(ui):
         t = turns[idx]
         prefix = "> " if idx == ui.timeline_model.selected_index else "  "
         lines.append(f"{prefix}[{idx+1}/{total}] Turno {t.get('ordinal', idx+1)} ({t.get('id', '')[:8]})")
+        ui.interactions.add_row("timeline", len(lines) - 1, "timeline.item", idx)
 
     if end < total:
         lines.append(f"  ▼ ... ({total - end} turnos seguintes)")

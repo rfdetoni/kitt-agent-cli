@@ -13,6 +13,7 @@ from kitt.ui.commands import CommandRegistry
 from kitt.ui.event_bridge import TurnEventBridge
 from kitt.ui.git import read_git_branch_name
 from kitt.ui.keymap import KeyMap
+from kitt.ui.interaction import InteractionMap
 from kitt.ui.layout import LayoutDimensions, build_root_container
 from kitt.ui.overlay_models import DiffViewerModel, ModelSetupModel, OverlayFrame, SessionPickerModel, TimelineModel
 from kitt.ui.reducer import reduce_ui_event
@@ -55,6 +56,7 @@ class KittUIApp:
         self.mouse_support_enabled: bool = True
         self.editing_provider_name: Optional[str] = None
         self.scrollable_windows: dict[str, Any] = {}
+        self.interactions = InteractionMap()
         self.state.mouse_enabled = True
 
         self._init_models_from_runtime()
@@ -269,6 +271,7 @@ class KittUIApp:
 
     _model_setup_mouse_handler = _mouse.model_setup_mouse_handler
     _provider_popup_mouse_handler = _mouse.provider_popup_mouse_handler
+    _interactive_mouse_handler = _mouse.interactive_surface_mouse_handler
 
     _select_popup_action = _provider_flow._select_popup_action
     _open_provider_popup_overlay = _provider_flow._open_provider_popup_overlay

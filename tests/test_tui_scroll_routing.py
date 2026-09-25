@@ -22,6 +22,7 @@ class TestTUIScrollRouting(unittest.TestCase):
         "diff",
         "agents",
         "autonomy",
+        "reverse_proxy",
         "help",
     }
 

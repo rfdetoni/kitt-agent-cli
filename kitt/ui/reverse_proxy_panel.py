@@ -46,7 +46,8 @@ class ReverseProxyPanelModel:
     def selected_profile(self) -> ReverseProxyProfile | None:
         if not self.profiles:
             return None
-        return self.profiles[min(self.profile_index, len(self.profiles) - 1)]
+        index = self.selected_index if self.page == "profiles" else self.profile_index
+        return self.profiles[min(index, len(self.profiles) - 1)]
 
     def cycle_profile(self, delta: int) -> None:
         if self.profiles:
@@ -188,17 +189,27 @@ async def _reverse_proxy_bind_selected(ui, role: str) -> None:
     ui.state.add_toast(f"{normalize_role(role).title()} → {instance.provider}/{instance.model}")
 
 
+def _register_button(ui, row: int, line: str, text: str, action: str, value=None) -> None:
+    ui.interactions.add_text("reverse_proxy", row, line, text, action, value)
+
+
 def _reverse_proxy_text(ui) -> str:
     model = ui.reverse_proxy_model
+    ui.interactions.begin("reverse_proxy")
     if model.loading:
         return "KITT Reverse Proxy\n\n  Carregando serviços, perfis e plugins..."
     if model.error:
-        return (
+        text = (
             "KITT Reverse Proxy\n\n"
             f"  ⚠ {model.error}\n\n"
             "  Atualize o kitt-reverse-proxy para uma versão com control plane v1.\n"
             "  [F5] Tentar novamente  [Esc] Fechar"
         )
+        lines = text.splitlines()
+        _register_button(
+            ui, len(lines) - 1, lines[-1], "[F5] Tentar novamente", "reverse_proxy.refresh"
+        )
+        return text
 
     if model.page == "plugins":
         profile = model.selected_profile()
@@ -210,11 +221,27 @@ def _reverse_proxy_text(ui) -> str:
         ]
         for index, plugin in enumerate(model.plugins):
             marker = ">" if index == model.selected_index else " "
-            lines.append(f"{marker} {plugin.name:<20} {plugin.default_model:<20} {plugin.source}")
+            lines.append(
+                f"{marker} [{index + 1}/{len(model.plugins)}] "
+                f"{plugin.name:<20} {plugin.default_model:<20} {plugin.source}"
+            )
+            ui.interactions.add_row(
+                "reverse_proxy", len(lines) - 1, "reverse_proxy.item", index
+            )
         lines.extend([
             "",
-            "[Enter] Iniciar selecionado  [u] Informar URL  [p] Perfis  [Esc] Serviços",
+            "[Enter] Iniciar selecionado  [u] Informar URL  [p] Perfis  [i] Serviços",
         ])
+        row = len(lines) - 1
+        line = lines[row]
+        _register_button(ui, row, line, "[Enter] Iniciar selecionado", "reverse_proxy.start")
+        _register_button(ui, row, line, "[u] Informar URL", "reverse_proxy.url")
+        _register_button(ui, row, line, "[p] Perfis", "reverse_proxy.show", "profiles")
+        _register_button(ui, row, line, "[i] Serviços", "reverse_proxy.show", "instances")
+        profile_line = lines[2]
+        _register_button(
+            ui, 2, profile_line, "[Tab] alternar", "reverse_proxy.profile_next"
+        )
         return "\n".join(lines)
 
     if model.page == "profiles":
@@ -225,12 +252,24 @@ def _reverse_proxy_text(ui) -> str:
             marker = ">" if index == model.selected_index else " "
             providers = ", ".join(profile.providers) or "sem provider associado"
             legacy = " · legado" if profile.legacy else ""
-            lines.append(f"{marker} {profile.name:<24} {providers}{legacy}")
+            lines.append(
+                f"{marker} [{index + 1}/{len(model.profiles)}] "
+                f"{profile.name:<24} {providers}{legacy}"
+            )
+            ui.interactions.add_row(
+                "reverse_proxy", len(lines) - 1, "reverse_proxy.item", index
+            )
         lines.extend([
             "",
-            "[a] Criar perfil  [d] Remover registro  [n] Iniciar serviço  [Esc] Serviços",
+            "[a] Criar perfil  [d] Remover registro  [n] Iniciar serviço  [i] Serviços",
             "Dados Chromium só são apagados quando solicitado diretamente ao reverse-proxy.",
         ])
+        row = len(lines) - 2
+        line = lines[row]
+        _register_button(ui, row, line, "[a] Criar perfil", "reverse_proxy.profile_create")
+        _register_button(ui, row, line, "[d] Remover registro", "reverse_proxy.profile_remove")
+        _register_button(ui, row, line, "[n] Iniciar serviço", "reverse_proxy.show", "plugins")
+        _register_button(ui, row, line, "[i] Serviços", "reverse_proxy.show", "instances")
         return "\n".join(lines)
 
     router = ui.runtime.processor.router
@@ -250,8 +289,12 @@ def _reverse_proxy_text(ui) -> str:
     for index, instance in enumerate(model.instances):
         marker = ">" if index == model.selected_index else " "
         lines.append(
-            f"{marker} {instance.id:<20} {instance.provider:<10} "
+            f"{marker} [{index + 1}/{len(model.instances)}] "
+            f"{instance.id:<20} {instance.provider:<10} "
             f"{instance.status:<9} {instance.endpoint} · perfil {instance.profile_id}"
+        )
+        ui.interactions.add_row(
+            "reverse_proxy", len(lines) - 1, "reverse_proxy.item", index
         )
     lines.extend([
         "",
@@ -259,6 +302,18 @@ def _reverse_proxy_text(ui) -> str:
         "[c] Usar em Contexto  [e] Usar em Código  [v] Usar em Validação",
         "[←/→] outros painéis  [Esc] Fechar",
     ])
+    actions_row = len(lines) - 3
+    role_row = len(lines) - 2
+    actions_line = lines[actions_row]
+    role_line = lines[role_row]
+    _register_button(ui, actions_row, actions_line, "[n] Novo", "reverse_proxy.show", "plugins")
+    _register_button(ui, actions_row, actions_line, "[p] Perfis", "reverse_proxy.show", "profiles")
+    _register_button(ui, actions_row, actions_line, "[F5] Atualizar", "reverse_proxy.refresh")
+    _register_button(ui, actions_row, actions_line, "[r] Reiniciar", "reverse_proxy.restart")
+    _register_button(ui, actions_row, actions_line, "[x] Parar", "reverse_proxy.stop")
+    _register_button(ui, role_row, role_line, "[c] Usar em Contexto", "reverse_proxy.bind", "context")
+    _register_button(ui, role_row, role_line, "[e] Usar em Código", "reverse_proxy.bind", "principal")
+    _register_button(ui, role_row, role_line, "[v] Usar em Validação", "reverse_proxy.bind", "validation")
     return "\n".join(lines)
 
 
