@@ -108,6 +108,7 @@ def build_controls(ui) -> None:
     ui.timeline_control = FormattedTextControl(ui._timeline_text, focusable=True)
     ui.timeline_control.mouse_handler = lambda event: ui._interactive_mouse_handler("timeline", event)
     ui.diff_control = FormattedTextControl(ui._diff_text, focusable=True)
+    ui.diff_control.mouse_handler = lambda event: ui._interactive_mouse_handler("diff", event)
     ui.pending_model_selection: tuple[str, str, str, str | None] | None = None
     ui.model_setup_search_buffer = Buffer(multiline=False, accept_handler=ui._accept_model_setup_search)
     ui.model_setup_search_buffer.on_text_changed += lambda _: ui._model_setup_search_changed()
@@ -128,6 +129,7 @@ def build_controls(ui) -> None:
     ui.autonomy_control = FormattedTextControl(ui._autonomy_text, focusable=True)
     ui.autonomy_control.mouse_handler = lambda event: ui._interactive_mouse_handler("autonomy", event)
     ui.agents_control = FormattedTextControl(ui._agents_text, focusable=True)
+    ui.agents_control.mouse_handler = lambda event: ui._interactive_mouse_handler("agents", event)
     ui.live_agents_control = FormattedTextControl(ui._live_agents_text)
     ui.target_auth_provider: str | None = None
     ui.provider_endpoint_help_control = FormattedTextControl(ui._provider_endpoint_text)
@@ -137,6 +139,7 @@ def build_controls(ui) -> None:
     ui.reverse_proxy_control = FormattedTextControl(ui._reverse_proxy_text, focusable=True)
     ui.reverse_proxy_control.mouse_handler = lambda event: ui._interactive_mouse_handler("reverse_proxy", event)
     ui.help_control = FormattedTextControl(ui._help_text, focusable=True)
+    ui.help_control.mouse_handler = lambda event: ui._interactive_mouse_handler("help", event)
     ui.toast_control = FormattedTextControl(ui._toast_text)
     ui._remote_server = None
 
