@@ -67,8 +67,10 @@ class KittUIApp:
         self.timeline_model = TimelineModel(runtime)
         self.diff_model = DiffViewerModel(str(root))
         self.model_setup_model = ModelSetupModel()
-        self.mouse_support_enabled: bool = False
+        self.mouse_support_enabled: bool = True
         self.editing_provider_name: Optional[str] = None
+        self.scrollable_windows: dict[str, Any] = {}
+        self.state.mouse_enabled = True
 
         self._init_models_from_runtime()
         self.commands = CommandRegistry()
@@ -81,6 +83,7 @@ class KittUIApp:
         self.palette_index = 0
         self.focus_stack: list[OverlayFrame] = []
         self.overlay_manager = OverlayManager(self)
+        self.state.add_toast("Mouse ativo — role sobre qualquer painel para navegar. /mouse alterna para seleção nativa.", duration=5.0)
 
         self._build_controls()
 
@@ -915,7 +918,8 @@ class KittUIApp:
         return None
 
     def toggle_mouse_support(self) -> bool:
-        self.mouse_support_enabled = not getattr(self, "mouse_support_enabled", False)
+        self.mouse_support_enabled = not getattr(self, "mouse_support_enabled", True)
+        self.state.mouse_enabled = self.mouse_support_enabled
         if self.application and hasattr(self.application, "output"):
             try:
                 if self.mouse_support_enabled:

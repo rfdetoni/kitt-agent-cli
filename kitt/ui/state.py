@@ -96,6 +96,7 @@ class UIState:
     active_tool_name: str | None = None
     active_tasks: list[AgentTaskStep] = field(default_factory=list)
     sidebar_open: bool = False
+    mouse_enabled: bool = True
     active_overlay: str | None = None
     overlay_stack: list[str] = field(default_factory=list)
     transcript: list[TranscriptBlock] = field(default_factory=list)

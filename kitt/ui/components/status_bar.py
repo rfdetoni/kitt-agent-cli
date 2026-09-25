@@ -56,7 +56,8 @@ class StatusBarComponent:
             if getattr(state, "reasoning_controls_visible", True)
             else ""
         )
-        right = f"{ctx_part}{reasoning_part}Ctrl+P "
+        mouse_part = "🖱 on │ " if getattr(state, "mouse_enabled", True) else "🖱 off │ "
+        right = f"{ctx_part}{reasoning_part}{mouse_part}Ctrl+P "
 
         # Space balancing
         needed = len(left) + len(center) + len(right)
@@ -68,7 +69,7 @@ class StatusBarComponent:
         else:
             # Fallback if wide
             compact_left = f" ⬡ F4: {mode_tag} │ F12"
-            compact_right = f"{ctx_part}Ctrl+P "
+            compact_right = f"{ctx_part}{mouse_part}Ctrl+P "
             spaces = max(1, width - len(compact_left) - len(center) - len(compact_right))
             line = compact_left + (" " * (spaces // 2)) + t.format_primary(center) + (" " * (spaces - spaces // 2)) + t.format_muted(compact_right)
 
