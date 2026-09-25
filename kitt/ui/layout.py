@@ -42,6 +42,7 @@ _CONTEXT_TABS = {
     "diff": "Diff",
     "agents": "Agentes",
     "autonomy_control": "Autonomia",
+    "reverse_proxy": "Reverse Proxy",
     "help": "Ajuda",
 }
 
@@ -180,6 +181,11 @@ def build_root_container(ui):
         ui,
         "palette",
         Window(ui.palette_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
+        wheel_handler=make_index_wheel_handler(
+            ui._move_palette,
+            get_window=lambda: ui.scrollable_windows.get("palette"),
+            invalidate=lambda: ui.application.invalidate() if ui.application else None,
+        ),
     )
     palette = HSplit([
         Window(ui.palette_search_control, height=1),
@@ -258,16 +264,31 @@ def build_root_container(ui):
             ui,
             "session_picker",
             Window(ui.session_picker_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
+            wheel_handler=make_index_wheel_handler(
+                ui.session_picker_model.move_selection,
+                get_window=lambda: ui.scrollable_windows.get("session_picker"),
+                invalidate=lambda: ui.application.invalidate() if ui.application else None,
+            ),
         ),
         "timeline": register_scrollable_window(
             ui,
             "timeline",
             Window(ui.timeline_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
+            wheel_handler=make_index_wheel_handler(
+                ui.timeline_model.move_selection,
+                get_window=lambda: ui.scrollable_windows.get("timeline"),
+                invalidate=lambda: ui.application.invalidate() if ui.application else None,
+            ),
         ),
         "diff": register_scrollable_window(
             ui,
             "diff",
             Window(ui.diff_control, wrap_lines=False, right_margins=[ScrollbarMargin(display_arrows=True)]),
+            wheel_handler=make_index_wheel_handler(
+                ui.diff_model.scroll,
+                get_window=lambda: ui.scrollable_windows.get("diff"),
+                invalidate=lambda: ui.application.invalidate() if ui.application else None,
+            ),
         ),
         "agents": register_scrollable_window(
             ui,
@@ -283,6 +304,11 @@ def build_root_container(ui):
             ui,
             "reverse_proxy",
             Window(ui.reverse_proxy_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
+            wheel_handler=make_index_wheel_handler(
+                ui.reverse_proxy_model.move,
+                get_window=lambda: ui.scrollable_windows.get("reverse_proxy"),
+                invalidate=lambda: ui.application.invalidate() if ui.application else None,
+            ),
         ),
         "help": register_scrollable_window(
             ui,
