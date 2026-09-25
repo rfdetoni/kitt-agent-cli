@@ -91,7 +91,8 @@ def build_controls(ui) -> None:
     ui.transcript_control = FormattedTextControl(ui._transcript_text, get_cursor_position=ui._transcript_cursor_position, focusable=True)
     ui.sidebar_control = FormattedTextControl(ui._sidebar_text)
     ui.status_control = FormattedTextControl(ui._status_text)
-    ui.permission_control = FormattedTextControl(ui._permission_text, focusable=True)\n    ui.permission_control.mouse_handler = lambda event: ui._interactive_mouse_handler("permission", event)
+    ui.permission_control = FormattedTextControl(ui._permission_text, focusable=True)
+    ui.permission_control.mouse_handler = lambda event: ui._interactive_mouse_handler("permission", event)
     from prompt_toolkit.layout import Window
     from prompt_toolkit.layout.margins import ScrollbarMargin
     ui.permission_window = Window(
@@ -124,7 +125,8 @@ def build_controls(ui) -> None:
     ui.add_provider_url_buffer = Buffer(multiline=False, accept_handler=ui._accept_add_provider)
     ui.add_provider_url_control = BufferControl(buffer=ui.add_provider_url_buffer, focusable=True)
     ui.add_provider_help_control = FormattedTextControl(ui._add_provider_help_text)
-    ui.autonomy_control = FormattedTextControl(ui._autonomy_text, focusable=True)\n    ui.autonomy_control.mouse_handler = lambda event: ui._interactive_mouse_handler("autonomy", event)
+    ui.autonomy_control = FormattedTextControl(ui._autonomy_text, focusable=True)
+    ui.autonomy_control.mouse_handler = lambda event: ui._interactive_mouse_handler("autonomy", event)
     ui.agents_control = FormattedTextControl(ui._agents_text, focusable=True)
     ui.live_agents_control = FormattedTextControl(ui._live_agents_text)
     ui.target_auth_provider: str | None = None
@@ -132,7 +134,8 @@ def build_controls(ui) -> None:
     ui.auth_login_buffer = Buffer(multiline=False, accept_handler=ui._accept_auth_login)
     ui.auth_login_control = BufferControl(buffer=ui.auth_login_buffer, focusable=True)
     ui.auth_login_help_control = FormattedTextControl(ui._auth_login_help_text)
-    ui.reverse_proxy_control = FormattedTextControl(ui._reverse_proxy_text, focusable=True)\n    ui.reverse_proxy_control.mouse_handler = lambda event: ui._interactive_mouse_handler("reverse_proxy", event)
+    ui.reverse_proxy_control = FormattedTextControl(ui._reverse_proxy_text, focusable=True)
+    ui.reverse_proxy_control.mouse_handler = lambda event: ui._interactive_mouse_handler("reverse_proxy", event)
     ui.help_control = FormattedTextControl(ui._help_text, focusable=True)
     ui.toast_control = FormattedTextControl(ui._toast_text)
     ui._remote_server = None
