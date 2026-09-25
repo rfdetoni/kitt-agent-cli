@@ -1,5 +1,14 @@
 import os
+import re
 from dataclasses import dataclass
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove terminal escape sequences before text enters retained TUI controls."""
+    return _ANSI_ESCAPE_RE.sub("", text)
+
 
 @dataclass(frozen=True)
 class Theme:
