@@ -82,9 +82,16 @@ def _load_snapshot(client: ReverseProxyClient):
 
 
 async def _open_reverse_proxy_overlay(ui) -> None:
-    await _refresh_reverse_proxy(ui)
-    ui.reverse_proxy_model.show("instances")
+    model = ui.reverse_proxy_model
+    model.show("instances")
+    model.loading = True
+    model.error = ""
+    # Open first so the command is visibly responsive while the control-plane
+    # subprocesses load instances, profiles and plugins.
     ui.open_overlay("reverse_proxy", ui.reverse_proxy_control)
+    if ui.application:
+        ui.application.invalidate()
+    await _refresh_reverse_proxy(ui)
 
 
 def _reverse_proxy_move(ui, delta: int) -> None:
@@ -128,8 +135,12 @@ def _reverse_proxy_prepare_profile_create(ui) -> None:
 async def _reverse_proxy_start_selected(ui) -> None:
     plugin = ui.reverse_proxy_model.selected_plugin()
     if not plugin:
+        ui.state.add_toast("Selecione um plugin para iniciar o serviço.", persistent=True)
         return
     profile = ui.reverse_proxy_model.selected_profile()
+    ui.state.add_toast(f"Iniciando Reverse Proxy: {plugin.name}...")
+    if ui.application:
+        ui.application.invalidate()
     try:
         instance = await ui._run_blocking(
             ui.reverse_proxy_client.start_instance,
@@ -214,7 +225,7 @@ def _reverse_proxy_text(ui) -> str:
     if model.page == "plugins":
         profile = model.selected_profile()
         lines = [
-            "INICIAR SERVIÇO — Plugins de conexão",
+            "NOVO SERVIÇO — escolha um plugin de conexão",
             "",
             f"Perfil: {profile.name if profile else 'automático por provider'}  [Tab] alternar",
             "",
@@ -230,11 +241,11 @@ def _reverse_proxy_text(ui) -> str:
             )
         lines.extend([
             "",
-            "[Enter] Iniciar selecionado  [u] Informar URL  [p] Perfis  [i] Serviços",
+            "[Enter] Iniciar serviço  [u] Informar URL  [p] Perfis  [i] Serviços",
         ])
         row = len(lines) - 1
         line = lines[row]
-        _register_button(ui, row, line, "[Enter] Iniciar selecionado", "reverse_proxy.start")
+        _register_button(ui, row, line, "[Enter] Iniciar serviço", "reverse_proxy.start")
         _register_button(ui, row, line, "[u] Informar URL", "reverse_proxy.url")
         _register_button(ui, row, line, "[p] Perfis", "reverse_proxy.show", "profiles")
         _register_button(ui, row, line, "[i] Serviços", "reverse_proxy.show", "instances")
@@ -298,7 +309,7 @@ def _reverse_proxy_text(ui) -> str:
         )
     lines.extend([
         "",
-        "[n] Novo  [p] Perfis  [F5] Atualizar  [r] Reiniciar  [x] Parar",
+        "[n] Novo serviço  [p] Perfis  [F5] Atualizar  [r] Reiniciar  [x] Parar",
         "[c] Usar em Contexto  [e] Usar em Código  [v] Usar em Validação",
         "[←/→] outros painéis  [Esc] Fechar",
     ])
@@ -306,7 +317,7 @@ def _reverse_proxy_text(ui) -> str:
     role_row = len(lines) - 2
     actions_line = lines[actions_row]
     role_line = lines[role_row]
-    _register_button(ui, actions_row, actions_line, "[n] Novo", "reverse_proxy.show", "plugins")
+    _register_button(ui, actions_row, actions_line, "[n] Novo serviço", "reverse_proxy.show", "plugins")
     _register_button(ui, actions_row, actions_line, "[p] Perfis", "reverse_proxy.show", "profiles")
     _register_button(ui, actions_row, actions_line, "[F5] Atualizar", "reverse_proxy.refresh")
     _register_button(ui, actions_row, actions_line, "[r] Reiniciar", "reverse_proxy.restart")
