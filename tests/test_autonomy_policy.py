@@ -198,5 +198,157 @@ class TestAutonomyPolicy(unittest.TestCase):
                 reg_sup.close()
 
 
+    def test_runtime_forwards_valid_grant_to_late_sandbox_gate(self):
+        import tempfile
+        from kitt.runtime.safe_runtime import SafeRuntime
+        from kitt.security.context import ExecutionSecurityContext
+        from kitt.tools.registry import ToolRegistry
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ToolRegistry(root_dir=tmpdir)
+            try:
+                registry.policy = PolicyEngine(
+                    root_dir=tmpdir,
+                    autonomy=AutonomyPolicy.preset("allow_all"),
+                )
+                registry.process_runner.sandbox.is_strong_available = lambda *_args, **_kwargs: False
+
+                run_args = {
+                    "argv": [sys.executable, "-c", "print('approved-runtime')"],
+                }
+                turn_id = "runtime-late-gate"
+                conversation_id = "conv-late-gate"
+                workspace_id = "ws-late-gate"
+                security_context = ExecutionSecurityContext.from_dict({
+                    "workspace_id": workspace_id,
+                    "conversation_id": conversation_id,
+                    "turn_id": turn_id,
+                    "origin": "MODEL",
+                    "principal_type": "assistant",
+                    "principal_id": "agent-late-gate",
+                    "capabilities": ["process.run"],
+                    "trace_id": "trace-late-gate",
+                })
+
+                action_hash = registry.policy.generate_action_hash("run_command", run_args)
+                approval_id = "approval-late-sandbox"
+                registry.approval_manager.register_request(
+                    turn_id,
+                    conversation_id,
+                    workspace_id,
+                    action_hash,
+                    approval_id,
+                    "run_command",
+                )
+                grant = registry.approval_manager.issue_grant(
+                    turn_id,
+                    conversation_id,
+                    workspace_id,
+                    action_hash,
+                    approval_id,
+                )
+                self.assertIsNotNone(grant)
+
+                runtime = SafeRuntime(
+                    workspace_root=tmpdir,
+                    workspace_id=workspace_id,
+                    conversation_id=conversation_id,
+                    tool_registry=registry,
+                )
+                result = runtime.execute(
+                    "process.run",
+                    run_args,
+                    turn_id=turn_id,
+                    origin="MODEL",
+                    security_context=security_context,
+                    approval_grant=grant,
+                    expected_approval_id=approval_id,
+                )
+
+                self.assertTrue(result.success, result.error)
+                self.assertIn("approved-runtime", result.data)
+                self.assertTrue(registry.approval_manager.is_nonce_used(grant.nonce))
+            finally:
+                registry.close()
+
+    def test_runtime_rejects_mismatched_delegated_grant_before_execution(self):
+        import tempfile
+        from kitt.runtime.safe_runtime import SafeRuntime
+        from kitt.security.context import ExecutionSecurityContext
+        from kitt.tools.registry import ToolRegistry
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ToolRegistry(root_dir=tmpdir)
+            try:
+                registry.policy = PolicyEngine(
+                    root_dir=tmpdir,
+                    autonomy=AutonomyPolicy.preset("allow_all"),
+                )
+                registry.process_runner.sandbox.is_strong_available = lambda *_args, **_kwargs: False
+
+                approved_args = {
+                    "argv": [sys.executable, "-c", "print('approved-command')"],
+                }
+                actual_args = {
+                    "argv": [sys.executable, "-c", "print('must-not-run')"],
+                }
+                turn_id = "runtime-mismatched-grant"
+                conversation_id = "conv-mismatched-grant"
+                workspace_id = "ws-mismatched-grant"
+                security_context = ExecutionSecurityContext.from_dict({
+                    "workspace_id": workspace_id,
+                    "conversation_id": conversation_id,
+                    "turn_id": turn_id,
+                    "origin": "MODEL",
+                    "principal_type": "assistant",
+                    "principal_id": "agent-mismatched-grant",
+                    "capabilities": ["process.run"],
+                    "trace_id": "trace-mismatched-grant",
+                })
+
+                approved_hash = registry.policy.generate_action_hash(
+                    "run_command", approved_args
+                )
+                approval_id = "approval-mismatched-command"
+                registry.approval_manager.register_request(
+                    turn_id,
+                    conversation_id,
+                    workspace_id,
+                    approved_hash,
+                    approval_id,
+                    "run_command",
+                )
+                grant = registry.approval_manager.issue_grant(
+                    turn_id,
+                    conversation_id,
+                    workspace_id,
+                    approved_hash,
+                    approval_id,
+                )
+                self.assertIsNotNone(grant)
+
+                runtime = SafeRuntime(
+                    workspace_root=tmpdir,
+                    workspace_id=workspace_id,
+                    conversation_id=conversation_id,
+                    tool_registry=registry,
+                )
+                result = runtime.execute(
+                    "process.run",
+                    actual_args,
+                    turn_id=turn_id,
+                    origin="MODEL",
+                    security_context=security_context,
+                    approval_grant=grant,
+                    expected_approval_id=approval_id,
+                )
+
+                self.assertFalse(result.success)
+                self.assertIn("mismatched", result.error)
+                self.assertFalse(registry.approval_manager.is_nonce_used(grant.nonce))
+            finally:
+                registry.close()
+
+
 if __name__ == "__main__":
     unittest.main()
