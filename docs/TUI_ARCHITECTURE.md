@@ -34,7 +34,9 @@ No extracted module introduces another application owner. `ModelSetupModel` is a
 
 ## Scroll invariant
 
-Every potentially scrollable surface is registered in `ui.scrollable_windows`. A wheel event is bound to the window under the pointer and cannot mutate the vertical scroll of another registered window. Virtualized model/provider selectors use the same routing contract while also advancing their selected index.
+Every potentially scrollable surface is registered in `ui.scrollable_windows`. A wheel event is bound to the window under the pointer and cannot mutate the vertical scroll of another registered window. Virtualized selectors advance their selected index through the same router.
+
+Plain `FormattedTextControl` surfaces receive a synthetic cursor anchored to the requested scroll row. This prevents prompt_toolkit's cursor-visibility algorithm from resetting `Window.vertical_scroll` to row zero on the next render. The prompt still keeps its own buffer cursor and the transcript keeps its tail-follow cursor; neither is overwritten.
 
 The prompt no longer delegates wheel events to the transcript. This is enforced by `tests/test_tui_scroll_routing.py`.
 
@@ -49,7 +51,8 @@ Agent CLI 0.72 adopts the interaction principles that fit the existing retained 
 - `InteractionMap` is a lightweight local-cell hit grid rebuilt by the render function for each interactive surface.
 - Visible rows and buttons register semantic action ids rather than embedding business logic in mouse handlers.
 - Hover updates the same selected-index state used by keyboard navigation.
-- Mouse down records the pressed target; mouse up activates only when it resolves to the same target, avoiding accidental drag-release activation.
+- Mouse down records the pressed target **without changing selection**; this keeps virtualized geometry stable until mouse up.
+- Mouse up previews and activates only when it resolves to the same semantic target, avoiding both accidental drag-release activation and click loss caused by rerendered lists.
 - Clicking a surface restores focus to that surface before activation.
 - Action activation calls the same controller methods used by keybindings, keeping keyboard and mouse behavior equivalent.
 - The interaction registry stores only visible hit regions, so memory and dispatch cost remain bounded by the rendered viewport.
@@ -103,3 +106,10 @@ The TUI preserves method-level contracts consumed by KITT runtime/bridge/command
 - model/provider selection behaviors stay below 200 lines each.
 
 These are guardrails, not style metrics: crossing one means a new responsibility should be extracted rather than appended to an existing owner.
+
+
+## Retained-text hygiene — Agent CLI 0.72.2
+
+Modal projections that return plain strings are sanitized before they enter prompt_toolkit. Raw CSI/ANSI escape sequences are never used as styling inside retained controls; prompt_toolkit style classes remain the renderer-owned styling mechanism. This prevents artifacts such as `^[`, `^[[0m` and other escape bytes from appearing as modal content.
+
+The Reverse Proxy context tab is part of the same retained contextual Float. `/reverse-proxy` opens that surface first, displays a loading state, and only then performs the control-plane snapshot refresh so subprocess latency cannot make the command appear inert.

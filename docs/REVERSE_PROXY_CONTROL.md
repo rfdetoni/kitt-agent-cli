@@ -6,12 +6,12 @@ Agent CLI may use multiple KITT Reverse Proxy instances at once. The reverse-pro
 
 ## TUI
 
-Open `Ctrl+P -> KITT Reverse Proxy` or `/reverse-proxy`.
+Open `Ctrl+P -> KITT Reverse Proxy` or `/reverse-proxy`. Agent CLI opens the retained contextual modal immediately with a loading state, then refreshes the control-plane snapshot asynchronously from the UI event loop.
 
 The contextual surface has three views. Every listed row and action control is usable by keyboard or mouse:
 
 - **Services**: active instances and their local endpoints; click a row to select it, then click Restart, Stop or a role-binding action.
-- **Plugins**: connection plugins reported by reverse-proxy; click a plugin row to select it and click **Iniciar selecionado** to launch it.
+- **Plugins / Novo serviço**: connection plugins reported by reverse-proxy; click a plugin row to select it, choose/cycle the Chromium profile, then click **Iniciar serviço** (or press Enter) to launch a new instance without leaving the modal.
 - **Profiles**: named Chromium profiles. Click a profile row to select it. Profile data is credential material and remains owned by reverse-proxy.
 
 The panel reuses the existing contextual Float, so the TUI architectural limit remains five physical Floats.
@@ -64,3 +64,11 @@ Principal/Code -> chatgpt-code   -> ChatGPT Web -> http://127.0.0.1:3001
 ```
 
 The Agent test validates that both roles persist through the existing model router with distinct `base_url` values. The reverse-proxy suite validates that the Gemini and ChatGPT presets resolve to different canonical plugins and can coexist as separate instance records.
+
+
+## TUI interaction hardening in Agent CLI 0.72.2
+
+- The Reverse Proxy tab is explicitly included in the contextual-panel visibility map; setting `active_overlay=reverse_proxy` therefore always paints the modal.
+- Pointer press no longer changes a virtualized selection before release, so a normal click cannot move its own semantic target during rerender.
+- Wheel routing advances virtualized selections and retained plain-text windows keep their requested vertical scroll across renders.
+- Modal strings are ANSI-sanitized before prompt_toolkit rendering; terminal escape sequences are not part of the retained text contract.

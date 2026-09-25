@@ -139,3 +139,16 @@ Agent CLI 0.70.2 completes the planned harness-evolution control plane:
 - Preserve the 0.72 mouse-first TUI and multi-instance Reverse Proxy implementation unchanged.
 - Keep package metadata, runtime fallback and `uv.lock` synchronized at 0.72.1.
 - This patch closes the internal ecosystem pin boundary discovered by the frozen lock validation.
+
+
+## Agent CLI 0.72.2 TUI interaction hardening — 2026-09-25
+
+- Restored the Reverse Proxy contextual modal by including `reverse_proxy` in the retained context-surface visibility map.
+- Changed `/reverse-proxy` to paint the modal/loading state before invoking control-plane subprocess reads.
+- Kept new-service creation inside the Reverse Proxy modal through the Plugins / **Novo serviço** view and clickable **Iniciar serviço** action.
+- Fixed mouse click loss by recording the press without changing virtualized selection until hover/release.
+- Added pointer focus for diff, agents and help surfaces and preserved semantic hover state through repaint.
+- Fixed modal wheel scrolling by anchoring plain FormattedTextControl cursor state to the requested scroll row and routing virtualized palette/session/timeline/diff/reverse-proxy wheels through their models.
+- Sanitized ANSI/CSI sequences from retained modal strings so escape bytes such as `^[` and `^[[0m` cannot leak into visible content.
+- Added regressions for click lifecycle, modal scroll anchoring, Reverse Proxy open-before-load/start action and ANSI sanitization.
+- Bumped package metadata and `uv.lock` to 0.72.2.

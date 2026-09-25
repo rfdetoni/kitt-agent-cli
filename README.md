@@ -116,7 +116,7 @@ The full-screen TUI uses retained `prompt_toolkit` controls and enables applicat
 - **Ctrl+P** is the universal discovery path for commands and actions.
 - Direct `Ctrl+X` chords are intentionally limited to **Ctrl+X N** (new conversation), **Ctrl+X B** (sidebar) and **Ctrl+X A** (agents).
 - **F12** opens the model/provider wizard. Provider selection, endpoint configuration and authentication remain inside the same modal surface.
-- Conversation, timeline, diff, agents, autonomy and help share one contextual panel; **Left/Right** switches its active tab.
+- Conversation, timeline, diff, agents, autonomy, **KITT Reverse Proxy** and help share one contextual panel; **Left/Right** switches its active tab.
 
 See [docs/TUI_ARCHITECTURE.md](docs/TUI_ARCHITECTURE.md) for implementation boundaries and performance invariants.
 
@@ -480,15 +480,17 @@ Mouse and keyboard share the same controller actions:
 
 Mouse support remains enabled by default. Use `F10` or `/mouse` when native terminal text selection/copy is preferred. Wheel routing remains isolated to the panel under the pointer.
 
+Agent CLI **0.72.2** hardens this path: mouse-down records the semantic target without virtualizing the list before mouse-up, plain-text modal scrolling no longer snaps back to row zero, and modal projections strip raw ANSI escape sequences before prompt_toolkit renders them.
+
 The interaction layer is inspired by OpenTUI's rendered-cell hit testing, focus ownership and keyboard/mouse parity, but is an independent KITT implementation with no OpenTUI runtime dependency.
 
 ## KITT Reverse Proxy control center
 
 Agent CLI 0.72 integrates the multi-instance control plane from KITT Reverse Proxy 4.2. Open **KITT Reverse Proxy** from `Ctrl+P` or run `/reverse-proxy`.
 
-The panel shows active instances, named browser profiles and connection plugins without exposing process-management details. Common controls:
+The panel opens immediately in a loading state and then refreshes active instances, named browser profiles and connection plugins without blocking the visible modal. Common controls:
 
-- `n`: choose a provider plugin and start a new instance.
+- `n`: open **Novo serviço**, choose a provider plugin/profile and start the instance from inside the modal with **Enter** or a mouse click on **Iniciar serviço**.
 - `p`: manage named browser profiles.
 - `u`: start from a custom WebChat URL.
 - `c`: bind the selected instance to Context.
