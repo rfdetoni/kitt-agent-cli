@@ -63,6 +63,15 @@ class SessionReplayService:
         clean_name = str(name or "").strip()
         if not clean_name:
             raise ValueError("golden replay name is required")
+        if turn_id is not None:
+            with self.ledger.db.get_connection() as conn:
+                known_turn = conn.execute(
+                    """SELECT 1 FROM turns
+                       WHERE id=? AND conversation_id=?""",
+                    (turn_id, conversation_id),
+                ).fetchone()
+            if not known_turn:
+                raise ValueError("golden replay turn is not part of the conversation")
         requests = self.model_requests(conversation_id, turn_id=turn_id)
         fingerprint = self.fingerprint(conversation_id, turn_id=turn_id)
         golden_key = f"{conversation_id}:{turn_id or ''}:{clean_name}"

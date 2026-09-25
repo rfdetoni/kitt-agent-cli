@@ -395,6 +395,13 @@ def test_golden_replay_detects_model_request_drift(tmp_path: Path):
     db = HistoryDatabase(str(tmp_path), in_memory=True)
     try:
         _identity, conversation = _conversation(db, str(tmp_path))
+        with db.get_connection() as conn:
+            conn.execute(
+                """INSERT INTO turns(
+                       id,conversation_id,ordinal,state,mode,started_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                ("turn-golden", conversation["id"], 1, "COMPLETED", "auto", 1.0),
+            )
         ledger = SessionLedger(db)
         ledger.append_model_request(
             conversation["id"],
