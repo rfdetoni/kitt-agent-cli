@@ -272,7 +272,7 @@ async def _open_model_setup_overlay(ui, base_url: str | None = None, provider: s
 
 
 
-def _provider_defaults(provider: str) -> tuple[str, str]:
+def _provider_defaults(ui, provider: str) -> tuple[str, str]:
     defaults = {
         "ollama": (os.environ.get("OLLAMA_HOST", "http://localhost:11434"), ""),
         "lmstudio": (os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"), ""),

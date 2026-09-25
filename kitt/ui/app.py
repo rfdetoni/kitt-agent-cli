@@ -338,4 +338,3 @@ class KittUIApp:
     _diff_text = _render_overlays._diff_text
     _model_setup_header_text = _render_overlays._model_setup_header_text
     _model_setup_text = _render_overlays._model_setup_text
-    _provider_endpoint_text = _provider_flow._provider_endpoint_text
