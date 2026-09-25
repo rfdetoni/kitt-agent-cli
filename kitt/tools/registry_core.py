@@ -953,6 +953,28 @@ class ToolRegistry:
                 f"Execution denied by PolicyEngine for tool '{tool_name}'.",
             )
 
+        # Any supplied grant is authority-bearing input. Validate and consume it
+        # against the exact effective tool action before it can influence later
+        # sandbox/risk gates or reach a handler. This also supports approvals
+        # requested by a delegated SafeRuntime operation.
+        if grant is not None:
+            expected_hash = self.policy.generate_action_hash(tool_name, args)
+            approval_validated = self.approval_manager.validate_and_consume(
+                grant,
+                expected_hash,
+                turn_id,
+                conversation_id,
+                workspace_id,
+                expected_approval_id=expected_approval_id,
+            )
+            if not approval_validated:
+                return ToolResult(
+                    False,
+                    "",
+                    "Approval grant is invalid, expired, mismatched, or already consumed.",
+                    requires_approval=True,
+                )
+
         control_plane_gate = None
         if control_paths:
             from kitt.security.capabilities import CAP_CONTROL_PLANE_WRITE
@@ -1083,15 +1105,17 @@ class ToolRegistry:
                 )
 
         if permission == "ASK":
-            expected_hash = self.policy.generate_action_hash(tool_name, args)
-            valid = self.approval_manager.validate_and_consume(
-                grant,
-                expected_hash,
-                turn_id,
-                conversation_id,
-                workspace_id,
-                expected_approval_id=expected_approval_id,
-            )
+            valid = approval_validated
+            if not valid:
+                expected_hash = self.policy.generate_action_hash(tool_name, args)
+                valid = self.approval_manager.validate_and_consume(
+                    grant,
+                    expected_hash,
+                    turn_id,
+                    conversation_id,
+                    workspace_id,
+                    expected_approval_id=expected_approval_id,
+                )
             if not valid:
                 approval_metadata = {}
                 if budget_reservation is not None:
