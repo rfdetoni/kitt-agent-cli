@@ -477,3 +477,10 @@ async def _apply_selected_model(ui) -> None:
     if ui.application:
         ui.application.invalidate()
 
+
+
+def _provider_endpoint_text(ui) -> str:
+    return (
+        "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n"
+        "[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
+    )

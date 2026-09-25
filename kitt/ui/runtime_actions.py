@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from pathlib import Path
@@ -304,3 +305,32 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
     if ui.application:
         ui.application.invalidate()
 
+
+
+async def _export_conversation(ui, fmt: str) -> None:
+    conv = ui.runtime.history.get_active_read_only()
+    if not conv:
+        ui._show_result("Nenhuma conversa ativa.")
+        return
+    msgs = await ui._run_blocking(
+        ui.runtime.history.repo.get_messages_for_conversation, conv["id"]
+    )
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    if fmt == "json":
+        content = json.dumps(msgs, indent=2, ensure_ascii=False)
+        filename = f"kitt_export_{timestamp}.json"
+    else:
+        lines = ["# K.I.T.T. Conversation Export\n"]
+        for m in msgs:
+            role = "**User**" if m["role"] == "user" else "**K.I.T.T.**"
+            lines.append(f"\n{role}:\n\n{m['content']}\n\n---")
+        content = "\n".join(lines)
+        filename = f"kitt_export_{timestamp}.md"
+    out_path = Path(ui.state.workspace_path) / filename
+    out_path.write_text(content, encoding="utf-8")
+    ui._show_result(f"Exportado: {filename}")
+
+_parse_model_command = _model_service._parse_model_command
+_role_tasks = _model_service._role_tasks
+_model_for_role = _model_service._model_for_role
+_profile_for_role = _model_service._profile_for_role

@@ -270,3 +270,51 @@ async def _open_model_setup_overlay(ui, base_url: str | None = None, provider: s
     ui.model_setup_model.search_query = ""
     ui.open_overlay("model_setup", ui.model_setup_search_control)
 
+
+
+def _provider_defaults(provider: str) -> tuple[str, str]:
+    defaults = {
+        "ollama": (os.environ.get("OLLAMA_HOST", "http://localhost:11434"), ""),
+        "lmstudio": (os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"), ""),
+        "openai": ("https://api.openai.com", os.environ.get("OPENAI_API_KEY", "")),
+        "anthropic": ("https://api.anthropic.com", os.environ.get("ANTHROPIC_API_KEY", "")),
+        "gemini": ("https://generativelanguage.googleapis.com", os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")),
+        "deepseek": ("https://api.deepseek.com", os.environ.get("DEEPSEEK_API_KEY", "")),
+        "groq": ("https://api.groq.com/openai", os.environ.get("GROQ_API_KEY", "")),
+        "together": ("https://api.together.xyz", os.environ.get("TOGETHER_API_KEY", "")),
+        "mistral": ("https://api.mistral.ai", os.environ.get("MISTRAL_API_KEY", "")),
+        "openrouter": ("https://openrouter.ai/api", os.environ.get("OPENROUTER_API_KEY", "")),
+        "xai": ("https://api.xai.com", os.environ.get("XAI_API_KEY", "")),
+        "fireworks": ("https://api.fireworks.ai/inference", os.environ.get("FIREWORKS_API_KEY", "")),
+        "cohere": ("https://api.cohere.com", os.environ.get("COHERE_API_KEY", "")),
+        "azure": (os.environ.get("AZURE_OPENAI_ENDPOINT", "https://your-resource.openai.azure.com"), os.environ.get("AZURE_OPENAI_API_KEY", "")),
+        "antigravity": ("https://api.antigravity.dev", os.environ.get("ANTIGRAVITY_API_KEY", "")),
+        "kitt-reverse-proxy": (os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000"), ""),
+        "kitt-proxy": (os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000"), ""),
+    }
+    if provider in defaults:
+        return defaults[provider]
+    p_lower = (provider or "").strip().lower()
+    if "ollama" in p_lower:
+        return (os.environ.get("OLLAMA_HOST", "http://localhost:11434"), "")
+    if "lmstudio" in p_lower:
+        return (os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"), "")
+    try:
+        from kitt.llm.catalog import ProviderCatalogService
+        cat = ProviderCatalogService()
+        cat_p = cat.provider(provider)
+        if cat_p and cat_p.base_url:
+            env_val = os.environ.get(cat_p.env_vars[0], "") if cat_p.env_vars else ""
+            return (cat_p.base_url, env_val)
+    except Exception:
+        pass
+    env_key = os.environ.get(f"{provider.upper().replace('-', '_').replace(' ', '_')}_API_KEY", "")
+    env_host = os.environ.get(f"{provider.upper().replace('-', '_').replace(' ', '_')}_HOST", "http://localhost:11434" if "ollama" in p_lower else "http://localhost:8000/v1")
+    return (env_host, env_key)
+
+_set_model_role = _model_service._set_model_role
+_toggle_role_local_limits = _model_service._toggle_role_local_limits
+_models_for_provider = _model_service._models_for_provider
+_prepare_model_setup = _model_service._prepare_model_setup
+_model_setup_search_changed = _model_service._model_setup_search_changed
+_open_model_setup_overlay = _model_service._open_model_setup_overlay

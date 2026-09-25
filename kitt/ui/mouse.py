@@ -41,3 +41,41 @@ def provider_popup_mouse_handler(ui, mouse_event) -> Any:
                 asyncio.create_task(ui._prepare_model_setup())
         return None
     return NotImplemented
+
+
+def _scroll_transcript(ui, delta: int) -> None:
+    if not hasattr(ui, "transcript_window"):
+        return
+    window = ui.transcript_window
+    if delta < 0:
+        ui.state.follow_tail = False
+        window.vertical_scroll = max(0, window.vertical_scroll + delta)
+    else:
+        info = getattr(window, "render_info", None)
+        if info is not None and info.bottom_visible:
+            ui.state.follow_tail = True
+            ui.state.unseen_output = False
+            window.vertical_scroll = 10**9
+        else:
+            window.vertical_scroll += delta
+    if ui.application:
+        ui.application.invalidate()
+
+
+def toggle_mouse_support(ui) -> bool:
+    ui.mouse_support_enabled = not getattr(ui, "mouse_support_enabled", True)
+    ui.state.mouse_enabled = ui.mouse_support_enabled
+    if ui.application and hasattr(ui.application, "output"):
+        try:
+            if ui.mouse_support_enabled:
+                ui.application.output.enable_mouse_support()
+            else:
+                ui.application.output.disable_mouse_support()
+        except Exception:
+            pass
+    msg = "Mouse TUI ativado (Scroll Interativo)" if ui.mouse_support_enabled else "Mouse Terminal Nativo (Seleção/Cópia de Texto Habilitada)"
+    ui.state.add_toast(msg)
+    if ui.application:
+        ui.application.invalidate()
+    return ui.mouse_support_enabled
+

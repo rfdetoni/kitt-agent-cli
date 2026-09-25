@@ -3,10 +3,8 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import functools
-import json
 import os
 import re
-import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -26,6 +24,7 @@ from kitt.ui import model_service as _model_service
 from kitt.ui import provider_flow as _provider_flow
 from kitt.ui import runtime_actions as _runtime_actions
 from kitt.ui import mouse as _mouse
+from kitt.ui import navigation as _navigation
 from kitt.ui.render import core as _render_core
 from kitt.ui.render import overlays as _render_overlays
 
@@ -250,178 +249,21 @@ class KittUIApp:
             self.application.invalidate()
 
     _execute_command = _command_dispatcher._execute_command
-    async def _export_conversation(self, fmt: str) -> None:
-        conv = self.runtime.history.get_active_read_only()
-        if not conv:
-            self._show_result("Nenhuma conversa ativa.")
-            return
-        msgs = await self._run_blocking(
-            self.runtime.history.repo.get_messages_for_conversation, conv["id"]
-        )
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        if fmt == "json":
-            content = json.dumps(msgs, indent=2, ensure_ascii=False)
-            filename = f"kitt_export_{timestamp}.json"
-        else:
-            lines = ["# K.I.T.T. Conversation Export\n"]
-            for m in msgs:
-                role = "**User**" if m["role"] == "user" else "**K.I.T.T.**"
-                lines.append(f"\n{role}:\n\n{m['content']}\n\n---")
-            content = "\n".join(lines)
-            filename = f"kitt_export_{timestamp}.md"
-        out_path = Path(self.state.workspace_path) / filename
-        out_path.write_text(content, encoding="utf-8")
-        self._show_result(f"Exportado: {filename}")
-
-    _parse_model_command = _model_service._parse_model_command
-    _role_tasks = _model_service._role_tasks
-    _model_for_role = _model_service._model_for_role
-    _profile_for_role = _model_service._profile_for_role
-    @staticmethod
-    def _provider_defaults(provider: str) -> tuple[str, str]:
-        defaults = {
-            "ollama": (os.environ.get("OLLAMA_HOST", "http://localhost:11434"), ""),
-            "lmstudio": (os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"), ""),
-            "openai": ("https://api.openai.com", os.environ.get("OPENAI_API_KEY", "")),
-            "anthropic": ("https://api.anthropic.com", os.environ.get("ANTHROPIC_API_KEY", "")),
-            "gemini": ("https://generativelanguage.googleapis.com", os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")),
-            "deepseek": ("https://api.deepseek.com", os.environ.get("DEEPSEEK_API_KEY", "")),
-            "groq": ("https://api.groq.com/openai", os.environ.get("GROQ_API_KEY", "")),
-            "together": ("https://api.together.xyz", os.environ.get("TOGETHER_API_KEY", "")),
-            "mistral": ("https://api.mistral.ai", os.environ.get("MISTRAL_API_KEY", "")),
-            "openrouter": ("https://openrouter.ai/api", os.environ.get("OPENROUTER_API_KEY", "")),
-            "xai": ("https://api.xai.com", os.environ.get("XAI_API_KEY", "")),
-            "fireworks": ("https://api.fireworks.ai/inference", os.environ.get("FIREWORKS_API_KEY", "")),
-            "cohere": ("https://api.cohere.com", os.environ.get("COHERE_API_KEY", "")),
-            "azure": (os.environ.get("AZURE_OPENAI_ENDPOINT", "https://your-resource.openai.azure.com"), os.environ.get("AZURE_OPENAI_API_KEY", "")),
-            "antigravity": ("https://api.antigravity.dev", os.environ.get("ANTIGRAVITY_API_KEY", "")),
-            "kitt-reverse-proxy": (os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000"), ""),
-            "kitt-proxy": (os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000"), ""),
-        }
-        if provider in defaults:
-            return defaults[provider]
-        p_lower = (provider or "").strip().lower()
-        if "ollama" in p_lower:
-            return (os.environ.get("OLLAMA_HOST", "http://localhost:11434"), "")
-        if "lmstudio" in p_lower:
-            return (os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"), "")
-        try:
-            from kitt.llm.catalog import ProviderCatalogService
-            cat = ProviderCatalogService()
-            cat_p = cat.provider(provider)
-            if cat_p and cat_p.base_url:
-                env_val = os.environ.get(cat_p.env_vars[0], "") if cat_p.env_vars else ""
-                return (cat_p.base_url, env_val)
-        except Exception:
-            pass
-        env_key = os.environ.get(f"{provider.upper().replace('-', '_').replace(' ', '_')}_API_KEY", "")
-        env_host = os.environ.get(f"{provider.upper().replace('-', '_').replace(' ', '_')}_HOST", "http://localhost:11434" if "ollama" in p_lower else "http://localhost:8000/v1")
-        return (env_host, env_key)
-
-    _set_model_role = _model_service._set_model_role
-    _toggle_role_local_limits = _model_service._toggle_role_local_limits
-    _models_for_provider = _model_service._models_for_provider
-    _prepare_model_setup = _model_service._prepare_model_setup
-    _model_setup_search_changed = _model_service._model_setup_search_changed
-    _open_model_setup_overlay = _model_service._open_model_setup_overlay
-    def _scroll_transcript(self, delta: int) -> None:
-        if not hasattr(self, "transcript_window"):
-            return
-        window = self.transcript_window
-        if delta < 0:
-            self.state.follow_tail = False
-            window.vertical_scroll = max(0, window.vertical_scroll + delta)
-        else:
-            info = getattr(window, "render_info", None)
-            if info is not None and info.bottom_visible:
-                self.state.follow_tail = True
-                self.state.unseen_output = False
-                window.vertical_scroll = 10**9
-            else:
-                window.vertical_scroll += delta
-        if self.application:
-            self.application.invalidate()
-
-    def toggle_mouse_support(self) -> bool:
-        self.mouse_support_enabled = not getattr(self, "mouse_support_enabled", True)
-        self.state.mouse_enabled = self.mouse_support_enabled
-        if self.application and hasattr(self.application, "output"):
-            try:
-                if self.mouse_support_enabled:
-                    self.application.output.enable_mouse_support()
-                else:
-                    self.application.output.disable_mouse_support()
-            except Exception:
-                pass
-        msg = "Mouse TUI ativado (Scroll Interativo)" if self.mouse_support_enabled else "Mouse Terminal Nativo (Seleção/Cópia de Texto Habilitada)"
-        self.state.add_toast(msg)
-        if self.application:
-            self.application.invalidate()
-        return self.mouse_support_enabled
-
-    def toggle_turn_mode(self, target_mode: str | None = None) -> str:
-        modes = ["code", "plan", "ask"]
-        if target_mode and target_mode.lower() in modes:
-            self.state.turn_mode = target_mode.lower()
-        else:
-            curr_idx = modes.index(self.state.turn_mode) if self.state.turn_mode in modes else 0
-            self.state.turn_mode = modes[(curr_idx + 1) % len(modes)]
-
-        self.state.planning_mode = (self.state.turn_mode == "plan")
-        mode_descs = {
-            "code": "Modo [CODE] ativo: edição e execução de ferramentas habilitadas",
-            "plan": "Modo [PLAN] ativo: análise e planejamento (sem escrita de código)",
-            "ask": "Modo [ASK] ativo: pergunta e dúvidas (sem chamadas de ferramentas)",
-        }
-        self.state.add_toast(mode_descs.get(self.state.turn_mode, f"Modo: {self.state.turn_mode.upper()}"), persistent=False)
-        if self.application:
-            self.application.invalidate()
-        return self.state.turn_mode
-
-    _model_setup_mouse_handler = _mouse.model_setup_mouse_handler
-    _provider_popup_mouse_handler = _mouse.provider_popup_mouse_handler
-    _select_popup_action = _provider_flow._select_popup_action
-    _open_provider_popup_overlay = _provider_flow._open_provider_popup_overlay
-    _provider_popup_text = _provider_flow._provider_popup_text
-    _persist_custom_providers = _provider_flow._persist_custom_providers
-    _open_add_provider_overlay = _provider_flow._open_add_provider_overlay
-    _open_edit_provider_overlay = _provider_flow._open_edit_provider_overlay
-    _delete_custom_provider = _provider_flow._delete_custom_provider
-    _add_provider_help_text = _provider_flow._add_provider_help_text
-    _accept_add_provider = _provider_flow._accept_add_provider
-    _finish_add_provider = _provider_flow._finish_add_provider
-    _open_provider_endpoint_overlay = _provider_flow._open_provider_endpoint_overlay
-    @staticmethod
-    def _provider_endpoint_text():
-        return "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
-
-    _submit_provider_endpoint = _provider_flow._submit_provider_endpoint
-    _auth_login_help_text = _provider_flow._auth_login_help_text
-    _start_oauth_flow = _provider_flow._start_oauth_flow
-    _accept_model_setup_search = _provider_flow._accept_model_setup_search
-    _open_auth_login_overlay = _provider_flow._open_auth_login_overlay
-    _accept_auth_login = _provider_flow._accept_auth_login
-    _apply_pending_model = _provider_flow._apply_pending_model
-    _agents_text = _render_overlays._agents_text
-    _live_agents_text = _render_overlays._live_agents_text
+    _export_conversation = _runtime_actions._export_conversation
+    _provider_defaults = _model_service._provider_defaults
+    _scroll_transcript = _mouse._scroll_transcript
+    toggle_mouse_support = _mouse.toggle_mouse_support
+    toggle_turn_mode = _navigation.toggle_turn_mode
+    _provider_endpoint_text = _provider_flow._provider_endpoint_text
     def open_overlay(self, name: str, control=None, parent_name: str | None = None) -> None:
         self.overlay_manager.open(name, control, parent_name=parent_name)
 
     def close_overlay(self) -> None:
         self.overlay_manager.close()
 
-    async def _open_session_picker_overlay(self) -> None:
-        await self.session_picker_model.reload()
-        self.open_overlay("session_picker", self.session_picker_control)
-
-    async def _open_timeline_overlay(self) -> None:
-        await self.timeline_model.reload(self.state.active_conversation_id)
-        self.open_overlay("timeline", self.timeline_control)
-
-    async def _open_diff_overlay(self) -> None:
-        await self.diff_model.reload()
-        self.open_overlay("diff", self.diff_control)
-
+    _open_session_picker_overlay = _navigation._open_session_picker_overlay
+    _open_timeline_overlay = _navigation._open_timeline_overlay
+    _open_diff_overlay = _navigation._open_diff_overlay
     def request_exit(self) -> None:
         if getattr(self, "_remote_server", None):
             try:
@@ -436,65 +278,13 @@ class KittUIApp:
         from kitt.ui.keybindings import build_key_bindings
         return build_key_bindings(self)
 
-    def _toggle_sidebar(self):
-        self.state.sidebar_open = not self.state.sidebar_open
-        if self.application: self.application.invalidate()
-
-    def _palette_changed(self):
-        self.palette_index = 0
-        if self.application: self.application.invalidate()
-
-    def _move_palette(self, amount: int) -> None:
-        matches = self.commands.search(self.palette_buffer.text)
-        self.palette_index = (self.palette_index + amount) % max(1, len(matches))
-        if self.application: self.application.invalidate()
-
-    async def _move_model_role(self, amount: int) -> None:
-        self.model_setup_model.move_role(amount)
-        self.model_setup_model.base_url_override = None
-        profile = self._profile_for_role(self.model_setup_model.selected_role)
-        if profile and profile.backend in self.model_setup_model.providers:
-            self.model_setup_model.provider_index = self.model_setup_model.providers.index(profile.backend)
-        provider = self.model_setup_model.selected_provider
-        base_url = profile.base_url if profile and profile.backend == provider else self._provider_defaults(provider)[0]
-        self.model_setup_model.models = await self._models_for_provider(provider, base_url)
-        selected = self._model_for_role(self.model_setup_model.selected_role)
-        if selected in self.model_setup_model.models:
-            self.model_setup_model.model_index = self.model_setup_model.models.index(selected)
-        else:
-            self.model_setup_model.model_index = 0
-        if self.application:
-            self.application.invalidate()
-
-    async def _move_model_provider(self, amount: int) -> None:
-        self.model_setup_model.move_provider(amount)
-        self.model_setup_model.base_url_override = None
-        provider = self.model_setup_model.selected_provider
-        base_url, _ = self._provider_defaults(provider)
-        self.model_setup_model.models = await self._models_for_provider(provider, base_url)
-        selected = self._model_for_role(self.model_setup_model.selected_role)
-        if selected in self.model_setup_model.models:
-            self.model_setup_model.model_index = self.model_setup_model.models.index(selected)
-        else:
-            self.model_setup_model.model_index = 0
-        if self.application:
-            self.application.invalidate()
-
-    def _new_conversation(self) -> None:
-        conversation = self.runtime.history.new_conversation()
-        self.state.active_conversation_id = conversation["id"]
-        self.state.route = "home"
-        self.state.transcript.clear()
-        self.explicit_files.clear()
-        self.prompt_buffer.reset()
-        if self.application: self.application.invalidate()
-
-    async def _run_selected_palette(self):
-        matches = self.commands.search(self.palette_buffer.text)
-        if matches:
-            self.close_overlay()
-            await self._execute_command(matches[self.palette_index].aliases[0])
-
+    _toggle_sidebar = _navigation._toggle_sidebar
+    _palette_changed = _navigation._palette_changed
+    _move_palette = _navigation._move_palette
+    _move_model_role = _navigation._move_model_role
+    _move_model_provider = _navigation._move_model_provider
+    _new_conversation = _navigation._new_conversation
+    _run_selected_palette = _navigation._run_selected_palette
     async def _animate(self):
         while not self._shutdown:
             if (self.state.is_thinking or self.state.active_agent_count() > 0) and not self.no_animation:
@@ -548,8 +338,4 @@ class KittUIApp:
     _diff_text = _render_overlays._diff_text
     _model_setup_header_text = _render_overlays._model_setup_header_text
     _model_setup_text = _render_overlays._model_setup_text
-    @staticmethod
-    def _provider_endpoint_text():
-        return "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
-
-    _help_text = _render_overlays._help_text
+    _provider_endpoint_text = _provider_flow._provider_endpoint_text
