@@ -46,6 +46,32 @@ def test_mouse_release_only_activates_same_pressed_region():
     assert hit_map.release("surface", 2, 1).action == "left"
 
 
+def test_click_does_not_virtualize_target_on_mouse_down():
+    async def scenario():
+        ui = SimpleNamespace(
+            interactions=InteractionMap(),
+            palette_index=0,
+            application=MagicMock(),
+            _run_selected_palette=AsyncMock(),
+        )
+        ui.application.layout.focus = MagicMock()
+        ui.palette_control = object()
+        ui.interactions.begin("palette")
+        ui.interactions.add_row("palette", 3, "palette.item", 4)
+
+        interactive_surface_mouse_handler(
+            ui, "palette", _mouse(MouseEventType.MOUSE_DOWN, 2, 3)
+        )
+        assert ui.palette_index == 0
+
+        interactive_surface_mouse_handler(
+            ui, "palette", _mouse(MouseEventType.MOUSE_UP, 2, 3)
+        )
+        await asyncio.sleep(0)
+        assert ui.palette_index == 4
+        ui._run_selected_palette.assert_awaited_once()
+
+
 def test_palette_mouse_path_matches_keyboard_selection_and_activation():
     async def scenario():
         ui = SimpleNamespace(
