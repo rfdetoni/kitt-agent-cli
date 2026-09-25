@@ -388,8 +388,17 @@ class SafeRuntime:
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
 
-        delegated_grant = None
-        delegated_approval_id = None
+        # A grant returned after a delegated tool requested approval must follow
+        # the resume path back to that exact tool. The nested ToolRegistry remains
+        # the authority that validates/consumes the grant against tool+args+scope.
+        delegated_grant = (
+            approval_grant
+            if approval_grant is not None and spec.resume_tool_name
+            else None
+        )
+        delegated_approval_id = (
+            expected_approval_id if delegated_grant is not None else None
+        )
         requested_control_paths = self._requested_control_plane_paths(op, args)
         control_plane_elevation = bool(
             requested_control_paths
