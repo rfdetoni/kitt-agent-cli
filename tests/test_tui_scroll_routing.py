@@ -64,6 +64,16 @@ class TestTUIScrollRouting(unittest.TestCase):
                             f"scroll on {target_name} leaked into {other_name}",
                         )
 
+    def test_plain_text_modal_scroll_anchor_tracks_requested_row(self):
+        ui = self._build_ui()
+        help_window = ui.scrollable_windows["help"]
+        help_window.vertical_scroll = 7
+
+        cursor = ui.help_control.get_cursor_position()
+
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor.y, 7)
+
     def test_prompt_wheel_never_moves_transcript(self):
         ui = self._build_ui()
         ui.transcript_window.vertical_scroll = 25
