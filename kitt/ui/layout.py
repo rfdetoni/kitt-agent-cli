@@ -66,9 +66,12 @@ def build_root_container(ui):
     from prompt_toolkit.widgets import Box, Frame
 
     visible = lambda name: Condition(lambda: ui.state.active_overlay == name)
-    desktop_sidebar = Condition(lambda: ui.state.route == "session" and ui.dimensions.mode == "desktop")
-    tablet_sidebar = Condition(
-        lambda: ui.state.route == "session" and ui.dimensions.mode == "tablet" and ui.state.sidebar_open
+    sidebar_visible = Condition(
+        lambda: ui.state.route == "session"
+        and (
+            ui.dimensions.mode == "desktop"
+            or (ui.dimensions.mode == "tablet" and ui.state.sidebar_open)
+        )
     )
     short = Condition(lambda: ui.state.height < 18)
     model_wizard_visible = Condition(lambda: ui.state.active_overlay in _MODEL_STEPS)
@@ -124,7 +127,7 @@ def build_root_container(ui):
         ),
     )
     ui.sidebar_window = sidebar
-    body = VSplit([transcript, ConditionalContainer(sidebar, filter=desktop_sidebar)], padding=1)
+    body = VSplit([transcript, ConditionalContainer(sidebar, filter=sidebar_visible)], padding=1)
 
     header = ConditionalContainer(
         Window(ui.header_control, height=1, wrap_lines=False, style="class:surface.raised"),
@@ -147,7 +150,11 @@ def build_root_container(ui):
             "F12: Modelos  │  Alt+Enter: Nova Linha"
         ),
     )
-    session = HSplit([header, body, live_agents, prompt, status_bar()])
+    notice = ConditionalContainer(
+        Window(ui.toast_control, height=2, wrap_lines=False, style="class:warning"),
+        filter=Condition(lambda: bool(ui.state.active_toasts())),
+    )
+    session = HSplit([header, body, live_agents, prompt, notice, status_bar()])
 
     home = HSplit([
         Window(height=Dimension(weight=1)),
@@ -162,6 +169,7 @@ def build_root_container(ui):
         ),
         Window(ui.hints_control, height=2, align=WindowAlign.CENTER),
         Window(height=Dimension(weight=1)),
+        notice,
         status_bar(),
     ])
     content = DynamicContainer(lambda: home if ui.state.route == "home" else session)
@@ -177,17 +185,6 @@ def build_root_container(ui):
         Window(ui.palette_search_control, height=1),
         palette_window,
     ])
-
-    ui.sidebar_mobile_control = FormattedTextControl(ui._sidebar_text)
-    sidebar_mobile = register_scrollable_window(
-        ui,
-        "sidebar_mobile",
-        Window(
-            ui.sidebar_mobile_control,
-            wrap_lines=False,
-            right_margins=[ScrollbarMargin(display_arrows=True)],
-        ),
-    )
 
     model_setup_window = register_scrollable_window(
         ui,
@@ -321,16 +318,6 @@ def build_root_container(ui):
         ),
         Float(
             content=ConditionalContainer(
-                Box(Frame(sidebar_mobile, title="Sidebar"), padding=1),
-                filter=tablet_sidebar,
-            ),
-            right=1,
-            top=2,
-            bottom=2,
-            width=42,
-        ),
-        Float(
-            content=ConditionalContainer(
                 Box(
                     Frame(
                         model_wizard,
@@ -363,15 +350,6 @@ def build_root_container(ui):
             right=6,
             top=2,
             bottom=3,
-        ),
-        Float(
-            content=ConditionalContainer(
-                Frame(Window(ui.toast_control, height=3, wrap_lines=False), title="Notice"),
-                filter=Condition(lambda: bool(ui.state.active_toasts())),
-            ),
-            right=1,
-            top=1,
-            width=60,
         ),
     ]
     return FloatContainer(content=content, floats=floats)

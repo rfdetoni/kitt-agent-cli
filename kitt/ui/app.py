@@ -87,7 +87,7 @@ class KittUIApp:
         self.application = None
         self.bridge = None
         self._animation_task = None
-        self._blocking_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="kitt-ui-blocking")
+        self._blocking_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="kitt-ui-blocking")
         self._shutdown = False
         self.palette_index = 0
         self.focus_stack: list[OverlayFrame] = []
@@ -144,26 +144,22 @@ class KittUIApp:
         except Exception:
             pass
 
-        # Autonomous detection of KITT Reverse Proxy
+        # Register the local KITT Reverse Proxy descriptor without probing the network.
+        # Availability is checked lazily when the provider is selected/used, keeping TUI
+        # construction deterministic and eliminating a startup timeout from the hot path.
         try:
-            from kitt.llm.health import ProviderHealthChecker
-            proxy_url = os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000")
-            online, _ = ProviderHealthChecker.check_kitt_reverse_proxy(proxy_url, timeout=0.8)
-            if online:
-                if hasattr(self, "model_setup_model"):
-                    if "kitt-reverse-proxy" not in self.model_setup_model.favorite_providers:
-                        self.model_setup_model.favorite_providers.insert(0, "kitt-reverse-proxy")
-                if hasattr(self.runtime.processor, "registry"):
-                    from kitt.llm.catalog import ProviderDescriptor
-                    self.runtime.processor.registry.register_provider(ProviderDescriptor(
-                        id="kitt-reverse-proxy",
-                        name="KITT Reverse Proxy",
-                        protocol="kitt-reverse-proxy",
-                        base_url=proxy_url,
-                        env_vars=("KITT_REVERSE_PROXY_API_KEY", "KITT_REVERSE_PROXY_URL"),
-                        auth_methods=("api_key",),
-                        local=True,
-                    ))
+            if hasattr(self.runtime.processor, "registry"):
+                from kitt.llm.catalog import ProviderDescriptor
+                proxy_url = os.environ.get("KITT_REVERSE_PROXY_URL", "http://127.0.0.1:3000")
+                self.runtime.processor.registry.register_provider(ProviderDescriptor(
+                    id="kitt-reverse-proxy",
+                    name="KITT Reverse Proxy",
+                    protocol="kitt-reverse-proxy",
+                    base_url=proxy_url,
+                    env_vars=("KITT_REVERSE_PROXY_API_KEY", "KITT_REVERSE_PROXY_URL"),
+                    auth_methods=("api_key",),
+                    local=True,
+                ))
         except Exception:
             pass
 
@@ -629,10 +625,11 @@ class KittUIApp:
 
     async def _animate(self):
         while not self._shutdown:
-            if (self.state.route == "home" or self.state.is_thinking or self.state.active_agent_count() > 0) and not self.no_animation:
+            if (self.state.is_thinking or self.state.active_agent_count() > 0) and not self.no_animation:
                 self.state.scanner_step += 1
-                if self.application: self.application.invalidate()
-            await asyncio.sleep(0.1)
+                if self.application:
+                    self.application.invalidate()
+            await asyncio.sleep(0.15)
 
     async def run_async(self) -> int:
         app = self.application or self.build_application()

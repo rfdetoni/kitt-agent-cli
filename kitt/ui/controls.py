@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
-
 def build_controls(ui) -> None:
     from prompt_toolkit.buffer import Buffer
     from prompt_toolkit.completion import Completer, Completion

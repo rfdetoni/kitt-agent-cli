@@ -38,7 +38,7 @@ Application mouse support is enabled by default. This makes hover-local wheel na
 
 ## Modal architecture
 
-The physical layout uses a small number of shared surfaces rather than one Float per task:
+The physical layout uses exactly five retained `Float` surfaces rather than one Float per task:
 
 1. approval/security modal;
 2. command palette;
@@ -46,7 +46,7 @@ The physical layout uses a small number of shared surfaces rather than one Float
 4. contextual panel;
 5. toast/notice.
 
-The prompt completion menu and responsive tablet sidebar remain implementation Floats but are not independent workflows.
+Prompt completion remains one of the five implementation Floats. Responsive sidebar and notices are inline retained containers, so they add no modal surface.
 
 The model wizard keeps model selection, provider selection/addition, endpoint setup and authentication inside one retained modal surface. The contextual panel hosts conversation picker, timeline, diff, agents, autonomy and help; Left/Right switches tabs without allocating a new overlay frame.
 
@@ -62,8 +62,10 @@ Context-specific keys are captured into the same runtime key map so active bindi
 - Rendering is functional over existing state; invalidation never rebuilds controls.
 - Context-tab switching mutates the active overlay frame in place instead of pushing/popping a new frame.
 - Scroll dispatch is O(1) to the target control; it does not scan panels.
-- No animation task is created when animation is disabled or the terminal is dumb.
+- No animation task is created when animation is disabled or the terminal is dumb; idle/home rendering does not continuously invalidate the screen.
 - Blocking work stays on the existing bounded UI executor rather than the render/event loop.
+- TUI construction performs no reverse-proxy network probe; provider availability is resolved lazily on use.
+- The bounded UI executor uses two workers, sufficient for interactive blocking calls without reserving a wider pool.
 - The refactor adds no runtime dependency.
 
 ## Compatibility
