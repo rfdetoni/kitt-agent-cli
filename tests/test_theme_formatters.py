@@ -1,6 +1,6 @@
 import os
 import unittest
-from kitt.ui.theme import Theme
+from kitt.ui.theme import Theme, strip_ansi
 from kitt.ui.state import UIState, AgentTaskStep
 from kitt.ui.components.sidebar import SidebarComponent
 
@@ -18,6 +18,11 @@ class TestThemeFormatters(unittest.TestCase):
         self.assertTrue(err.startswith("\033[38;2;"))
         self.assertTrue(suc.startswith("\033[38;2;"))
         self.assertTrue(warn.startswith("\033[38;2;"))
+
+    def test_strip_ansi_removes_csi_sequences(self):
+        raw = "\033[38;2;227;27;35mKITT\033[0m"
+        self.assertEqual(strip_ansi(raw), "KITT")
+        self.assertNotIn("\x1b", strip_ansi(raw))
 
     def test_sidebar_render_with_error_task(self):
         state = UIState()
