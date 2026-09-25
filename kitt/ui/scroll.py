@@ -58,18 +58,25 @@ def make_index_wheel_handler(
     move: Callable[[int], None],
     *,
     step: int = 1,
+    get_window: Callable[[], Any] | None = None,
+    min_scroll: int = 0,
     invalidate: Callable[[], None] | None = None,
 ) -> MouseHandler:
-    """Wheel adapter for virtualized selectors whose scroll is their selected index."""
+    """Wheel adapter for virtualized selectors while preserving the scroll invariant."""
     step = max(1, int(step))
 
     def handle(mouse_event):
         if mouse_event.event_type == MouseEventType.SCROLL_UP:
-            move(-step)
+            delta = -step
         elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            move(step)
+            delta = step
         else:
             return NotImplemented
+        move(delta)
+        if get_window is not None:
+            window = get_window()
+            if window is not None:
+                window.vertical_scroll = max(min_scroll, int(window.vertical_scroll) + delta)
         if invalidate is not None:
             invalidate()
         return None

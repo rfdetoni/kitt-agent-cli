@@ -195,6 +195,7 @@ def build_root_container(ui):
         Window(ui.model_setup_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
         wheel_handler=make_index_wheel_handler(
             ui.model_setup_model.move_model,
+            get_window=lambda: ui.scrollable_windows.get("model_setup"),
             invalidate=lambda: ui.application.invalidate() if ui.application else None,
         ),
     )
@@ -204,6 +205,7 @@ def build_root_container(ui):
         Window(ui.provider_popup_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
         wheel_handler=make_index_wheel_handler(
             ui.model_setup_model.move_popup_selection,
+            get_window=lambda: ui.scrollable_windows.get("provider_popup"),
             invalidate=lambda: ui.application.invalidate() if ui.application else None,
         ),
     )

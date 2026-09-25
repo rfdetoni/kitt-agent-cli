@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import time
+import uuid
 from pathlib import Path
+
+from kitt.ui.state import safe_text
 
 def _show_result(ui, text: str) -> None:
     ui.state.route = "session"

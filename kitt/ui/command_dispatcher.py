@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from pathlib import Path
 
 from kitt.ui.model_commands import (
     handle_model_command, handle_setup_models_command, handle_add_provider_command,

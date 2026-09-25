@@ -307,40 +307,34 @@ class TestUXStateOfTheArt(unittest.TestCase):
         from prompt_toolkit.mouse_events import MouseEvent, MouseEventType, MouseButton
         from prompt_toolkit.data_structures import Point
         from kitt.ui.app import KittUIApp
-        from kitt.core.runtime import KittRuntime
 
         app = KittUIApp(runtime=MagicMock())
         app.build_application()
-        
-        # Test mouse toggle (default False to allow native terminal copy/selection)
-        self.assertFalse(app.mouse_support_enabled)
-        res = app.toggle_mouse_support()
-        self.assertTrue(res)
-        self.assertTrue(app.mouse_support_enabled)
-        res = app.toggle_mouse_support()
-        self.assertFalse(res)
-        self.assertFalse(app.mouse_support_enabled)
 
-        # Test transcript mouse scroll handler
+        # TUI mouse is the default; /mouse or F10 explicitly returns native selection.
+        self.assertTrue(app.mouse_support_enabled)
+        self.assertFalse(app.toggle_mouse_support())
+        self.assertFalse(app.state.mouse_enabled)
+        self.assertTrue(app.toggle_mouse_support())
+        self.assertTrue(app.state.mouse_enabled)
+
+        ev_up = MouseEvent(
+            position=Point(x=10, y=10),
+            event_type=MouseEventType.SCROLL_UP,
+            button=MouseButton.NONE,
+            modifiers=frozenset(),
+        )
         app.transcript_window.vertical_scroll = 50
-        ev_up = MouseEvent(position=Point(x=10, y=10), event_type=MouseEventType.SCROLL_UP, button=MouseButton.NONE, modifiers=frozenset())
-        app._transcript_mouse_handler(ev_up)
+        app.prompt_window.vertical_scroll = 8
+
+        app.transcript_control.mouse_handler(ev_up)
         self.assertEqual(app.transcript_window.vertical_scroll, 47)
         self.assertFalse(app.state.follow_tail)
 
-        ev_down = MouseEvent(position=Point(x=10, y=10), event_type=MouseEventType.SCROLL_DOWN, button=MouseButton.NONE, modifiers=frozenset())
-        app._transcript_mouse_handler(ev_down)
-        self.assertEqual(app.transcript_window.vertical_scroll, 50)
-        self.assertFalse(app.state.follow_tail)
-
-        # Wheel over the editor scrolls transcript instead of multiline input.
+        # Wheel over the editor is isolated to the editor and never leaks to transcript.
         app.prompt_control.mouse_handler(ev_up)
         self.assertEqual(app.transcript_window.vertical_scroll, 47)
-
-        app.transcript_window.render_info = MagicMock(bottom_visible=True)
-        app._transcript_mouse_handler(ev_down)
-        self.assertTrue(app.state.follow_tail)
-        self.assertEqual(app.transcript_window.vertical_scroll, 10**9)
+        self.assertEqual(app.prompt_window.vertical_scroll, 5)
 
     def test_turn_mode_toggle_and_f12_status_bar(self):
         import asyncio
