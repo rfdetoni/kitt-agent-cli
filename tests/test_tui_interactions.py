@@ -100,3 +100,29 @@ def test_pressed_target_survives_rerender_but_must_match_new_hit_target():
     hit_map.add("surface", 3, 10, 20, "left")
     hit_map.add("surface", 3, 21, 30, "right")
     assert hit_map.release("surface", 22, 3) is None
+
+
+def test_model_header_click_uses_existing_role_controller():
+    async def scenario():
+        model = SimpleNamespace(role_index=0, selected_role="principal", selected_provider="openai")
+        ui = SimpleNamespace(
+            interactions=InteractionMap(),
+            model_setup_model=model,
+            application=MagicMock(),
+            _move_model_role=AsyncMock(),
+        )
+        ui.application.layout.focus = MagicMock()
+        ui.model_setup_search_control = object()
+        ui.interactions.begin("model_setup_header")
+        ui.interactions.add_row("model_setup_header", 2, "model.role", 1)
+
+        interactive_surface_mouse_handler(
+            ui, "model_setup_header", _mouse(MouseEventType.MOUSE_DOWN, 4, 2)
+        )
+        interactive_surface_mouse_handler(
+            ui, "model_setup_header", _mouse(MouseEventType.MOUSE_UP, 4, 2)
+        )
+        await asyncio.sleep(0)
+        ui._move_model_role.assert_awaited_once_with(0)
+
+    asyncio.run(scenario())

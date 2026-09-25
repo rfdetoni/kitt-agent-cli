@@ -186,17 +186,37 @@ def _diff_text(ui):
 
 def _model_setup_header_text(ui) -> str:
     setup = ui.model_setup_model
+    ui.interactions.begin("model_setup_header")
     lines = [
         " [Tab] Alternar Cargo  |  [T] Limites Locais  |  [P / Espaço] Menu Provedores (★)  |  [L] Login/Auth  |  [Enter] Selecionar  |  [Esc] Fechar",
         " Atribuições de Modelos por Cargo:"
     ]
-    for role in setup.roles:
+    ui.interactions.add_text(
+        "model_setup_header", 0, lines[0], "[Tab] Alternar Cargo", "model.role_next"
+    )
+    ui.interactions.add_text(
+        "model_setup_header", 0, lines[0], "[T] Limites Locais", "model.limits"
+    )
+    ui.interactions.add_text(
+        "model_setup_header", 0, lines[0], "[P / Espaço] Menu Provedores (★)", "model.providers"
+    )
+    ui.interactions.add_text(
+        "model_setup_header", 0, lines[0], "[L] Login/Auth", "model.auth"
+    )
+    ui.interactions.add_text(
+        "model_setup_header", 0, lines[0], "[Enter] Selecionar", "model.apply"
+    )
+
+    for role_index, role in enumerate(setup.roles):
         marker = ">" if role == setup.selected_role else " "
         profile = ui._profile_for_role(role)
         endpoint = profile.base_url if profile else "?"
         enforced = getattr(profile, "enforce_local_limits", True) if profile else True
         lim_badge = "[Lim: On]" if enforced else "[Lim: Off]"
         lines.append(f" {marker} {role.title():10} {(profile.backend if profile else '?')}/{ui._model_for_role(role)} @ {endpoint} {lim_badge}")
+        ui.interactions.add_row(
+            "model_setup_header", len(lines) - 1, "model.role", role_index
+        )
     
     profile = ui._profile_for_role(setup.selected_role)
     endpoint = setup.base_url_override or (profile.base_url if (profile and profile.backend == setup.selected_provider) else ui._provider_defaults(setup.selected_provider)[0])
@@ -214,6 +234,16 @@ def _model_setup_header_text(ui) -> str:
 
     src_badge = f"(Origem: {setup.source})" if hasattr(setup, "source") and setup.source else ""
     lines.append(f" Provedor Selecionado: {star} {setup.selected_provider} @ {endpoint} {auth_badge} {src_badge}")
+    ui.interactions.add_row(
+        "model_setup_header", len(lines) - 1, "model.providers"
+    )
+    ui.interactions.add_text(
+        "model_setup_header",
+        len(lines) - 1,
+        lines[-1],
+        auth_badge,
+        "model.auth",
+    )
     return "\n".join(lines)
 
 

@@ -91,6 +91,7 @@ def _focus_surface(ui, surface: str) -> None:
         "permission": getattr(ui, "permission_control", None),
         "autonomy": getattr(ui, "autonomy_control", None),
         "reverse_proxy": getattr(ui, "reverse_proxy_control", None),
+        "model_setup_header": getattr(ui, "model_setup_search_control", None),
     }
     target = controls.get(surface)
     if target is not None:
@@ -113,6 +114,8 @@ def _preview_interaction(ui, surface: str, region) -> None:
         ui.approval_menu_index = int(region.value[0])
     elif region.action == "reverse_proxy.item":
         ui.reverse_proxy_model.selected_index = int(region.value)
+    elif region.action == "model.role":
+        ui.model_setup_model.role_index = int(region.value)
     if ui.application:
         ui.application.invalidate()
 
@@ -156,6 +159,25 @@ def _activate_interaction(ui, region) -> None:
         ui._reverse_proxy_prepare_profile_create()
     elif action == "reverse_proxy.profile_remove":
         asyncio.create_task(ui._reverse_proxy_remove_profile())
+    elif action == "model.role_next":
+        asyncio.create_task(ui._move_model_role(1))
+    elif action == "model.role":
+        target = int(value)
+        current = int(ui.model_setup_model.role_index)
+        asyncio.create_task(ui._move_model_role(target - current))
+    elif action == "model.limits":
+        asyncio.create_task(
+            ui._toggle_role_local_limits(ui.model_setup_model.selected_role)
+        )
+    elif action == "model.providers":
+        ui._open_provider_popup_overlay()
+    elif action == "model.auth":
+        ui._open_auth_login_overlay(
+            ui.model_setup_model.selected_provider,
+            parent_name="model_setup",
+        )
+    elif action == "model.apply":
+        asyncio.create_task(ui._apply_selected_model())
 
 
 def interactive_surface_mouse_handler(ui, surface: str, mouse_event) -> Any:

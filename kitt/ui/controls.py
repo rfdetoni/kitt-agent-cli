@@ -112,6 +112,9 @@ def build_controls(ui) -> None:
     ui.model_setup_search_buffer.on_text_changed += lambda _: ui._model_setup_search_changed()
     ui.model_setup_search_control = BufferControl(buffer=ui.model_setup_search_buffer, focusable=True)
     ui.model_setup_header_control = FormattedTextControl(ui._model_setup_header_text)
+    ui.model_setup_header_control.mouse_handler = (
+        lambda event: ui._interactive_mouse_handler("model_setup_header", event)
+    )
     ui.model_setup_control = FormattedTextControl(ui._model_setup_text, focusable=True)
     ui.model_setup_control.mouse_handler = ui._model_setup_mouse_handler
     ui.provider_popup_control = FormattedTextControl(ui._provider_popup_text, focusable=True)
