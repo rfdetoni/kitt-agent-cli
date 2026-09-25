@@ -12,6 +12,10 @@ if TYPE_CHECKING:
     from kitt.ui.app import KittUIApp
 
 
+
+CONTEXT_TABS = ("session_picker", "timeline", "diff", "agents", "autonomy_control", "help")
+
+
 class OverlayPriority(IntEnum):
     BACKGROUND = 0
     PASSIVE = 100
@@ -104,6 +108,12 @@ OVERLAY_SPECS: Dict[str, OverlaySpec] = {
     ),
     "agents": OverlaySpec(
         name="agents",
+        priority=OverlayPriority.NAVIGATION,
+        modal=True,
+        blocks_input_below=True,
+    ),
+    "autonomy_control": OverlaySpec(
+        name="autonomy_control",
         priority=OverlayPriority.NAVIGATION,
         modal=True,
         blocks_input_below=True,
@@ -290,6 +300,34 @@ class OverlayManager:
             self.app.application.invalidate()
 
         return top.spec.name
+
+
+    def cycle_context_tab(self, delta: int) -> str | None:
+        """Switch tabs in-place so context navigation does not churn overlay frames."""
+        frame = self.top_frame()
+        if frame is None or frame.spec.name not in CONTEXT_TABS:
+            return None
+        current = CONTEXT_TABS.index(frame.spec.name)
+        target = CONTEXT_TABS[(current + delta) % len(CONTEXT_TABS)]
+        frame.spec = self.get_spec(target)
+        controls = {
+            "session_picker": getattr(self.app, "session_picker_control", None),
+            "timeline": getattr(self.app, "timeline_control", None),
+            "diff": getattr(self.app, "diff_control", None),
+            "agents": getattr(self.app, "agents_control", None),
+            "autonomy_control": getattr(self.app, "autonomy_control", None),
+            "help": getattr(self.app, "help_control", None),
+        }
+        frame.preferred_focus = controls.get(target)
+        self._sync_state()
+        if self.app.application:
+            if frame.preferred_focus:
+                try:
+                    self.app.application.layout.focus(frame.preferred_focus)
+                except (ValueError, KeyError):
+                    pass
+            self.app.application.invalidate()
+        return target
 
     def close_all(self) -> None:
         while self.frames:

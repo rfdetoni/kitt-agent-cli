@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kitt.ui.keymap import KeyMap
 from kitt.ui.commands import CommandRegistry, CommandSpec
 from kitt.ui.theme import DEFAULT_THEME
 
 
 class CommandPaletteComponent:
-    def __init__(self, registry: CommandRegistry):
+    def __init__(self, registry: CommandRegistry, keymap: "KeyMap | None" = None):
         self.registry = registry
+        self.keymap = keymap
 
     def render(
         self,
@@ -41,7 +45,9 @@ class CommandPaletteComponent:
             cursor = ">" if is_selected else " "
             alias_str = f"[{c.aliases[0]}]"
             cat_str = f"[{c.category.upper()}]"
-            line1 = f"{cursor} [{idx+1}/{total}] {c.title:<28} {cat_str:<12} {alias_str}"
+            shortcut = self.keymap.label_for_command(c.id) if self.keymap else ""
+            shortcut_str = f"  {shortcut}" if shortcut else ""
+            line1 = f"{cursor} [{idx+1}/{total}] {c.title:<28} {cat_str:<12} {alias_str}{shortcut_str}"
             line2 = f"    {c.description}"
             if is_selected:
                 lines.append(t.format_primary(line1))

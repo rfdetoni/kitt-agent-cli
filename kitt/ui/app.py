@@ -19,6 +19,7 @@ from kitt.core.turn_events import ApprovalRequired
 from kitt.ui.commands import CommandRegistry
 from kitt.ui.event_bridge import TurnEventBridge
 from kitt.ui.git import read_git_branch_name
+from kitt.ui.keymap import KeyMap
 from kitt.ui.layout import LayoutDimensions, build_root_container
 from kitt.ui.overlay_models import DiffViewerModel, ModelSetupModel, OverlayFrame, SessionPickerModel, TimelineModel
 from kitt.ui.reducer import reduce_ui_event
@@ -74,6 +75,7 @@ class KittUIApp:
 
         self._init_models_from_runtime()
         self.commands = CommandRegistry()
+        self.keymap = KeyMap()
         self.explicit_files: set[str] = set()
         self.application = None
         self.bridge = None
@@ -512,6 +514,8 @@ class KittUIApp:
                 await self._switch_workspace(arg)
         elif found.id == "mouse":
             self.toggle_mouse_support()
+        elif found.id == "sidebar":
+            self._toggle_sidebar()
         elif found.id == "run":
             if arg:
                 try:
@@ -2090,7 +2094,7 @@ class KittUIApp:
 
     def _palette_text(self):
         from kitt.ui.components.command_palette import CommandPaletteComponent
-        return CommandPaletteComponent(self.commands).render(
+        return CommandPaletteComponent(self.commands, self.keymap).render(
             query=self.palette_buffer.text,
             selected_index=self.palette_index,
             width=max(40, self.state.width - 16),
@@ -2231,4 +2235,8 @@ class KittUIApp:
         return "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
 
     def _help_text(self):
-        return "\n".join(f"{c.aliases[0]:16} {c.description}" for c in self.commands.commands.values())
+        shortcuts = ["ATALHOS — Ctrl+P descobre todas as ações", ""]
+        shortcuts.extend(f"{keys:22} {description}" for _, keys, description in self.keymap.get_help_list())
+        shortcuts.extend(["", "COMANDOS", ""])
+        shortcuts.extend(f"{c.aliases[0]:22} {c.description}" for c in self.commands.commands.values())
+        return "\n".join(shortcuts)

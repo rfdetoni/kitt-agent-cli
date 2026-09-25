@@ -19,6 +19,7 @@ def build_key_bindings(ui):
     provider_endpoint = Condition(lambda: ui.state.active_overlay == "provider_endpoint")
     auth_login = Condition(lambda: ui.state.active_overlay == "auth_login")
     editor_focused = Condition(lambda: ui.application and ui.application.layout.current_control is ui.prompt_control)
+    context_panel = Condition(lambda: ui.state.active_overlay in {"session_picker", "timeline", "diff", "agents", "autonomy_control", "help"})
 
     @kb.add("tab", filter=auth_login)
     def _(event):
@@ -66,53 +67,35 @@ def build_key_bindings(ui):
     @kb.add("up", filter=palette)
     def _(event): ui._move_palette(-1)
 
-    @kb.add("c-x", "n")
+    @ui.keymap.bind(kb, "new_session")
     def _(event): ui._new_conversation()
 
-    @kb.add("c-x", "b")
+    @ui.keymap.bind(kb, "toggle_sidebar")
     def _(event): ui._toggle_sidebar()
 
-    @kb.add("c-x", "l")
-    def _(event): asyncio.create_task(ui._open_session_picker_overlay())
-
-    @kb.add("c-x", "g")
-    def _(event): asyncio.create_task(ui._open_timeline_overlay())
-
-    @kb.add("c-x", "d")
-    def _(event): asyncio.create_task(ui._open_diff_overlay())
-
-    @kb.add("c-x", "m")
-    def _(event): asyncio.create_task(ui._open_model_setup_overlay())
-
-    @kb.add("c-x", "a")
-    @kb.add("c-x", "c-a")
+    @ui.keymap.bind(kb, "agents")
     def _(event): ui.open_overlay("agents", ui.agents_control)
 
-    @kb.add("c-x", "r")
-    def _(event):
-        from kitt.ui.remote_commands import handle_remote_command
-        asyncio.create_task(handle_remote_command(ui, ""))
-
-    @kb.add("c-x", "s")
-    def _(event): ui.state.add_toast(ui._status_text()); event.app.invalidate()
-
-    @kb.add("c-x", "c")
-    def _(event): ui.state.add_toast(ui._context_details_text(), persistent=True); event.app.invalidate()
-
-    @kb.add("c-o", filter=~palette & ~auth_login & ~model_setup)
+    @ui.keymap.bind(kb, "collapse_tool", filter=~palette & ~auth_login & ~model_setup)
     def _(event): ui.state.toggle_last_tool_collapse(); event.app.invalidate()
 
-    @kb.add("c-right", filter=~model_setup & ~palette)
-    @kb.add("c-x", "right")
+    @ui.keymap.bind(kb, "reasoning_up", filter=~model_setup & ~palette)
     def increase_reasoning(event):
         target = min(100, ui.state.reasoning_effort + 10)
         asyncio.create_task(ui._set_reasoning_effort(target))
 
-    @kb.add("c-left", filter=~model_setup & ~palette)
-    @kb.add("c-x", "left")
+    @ui.keymap.bind(kb, "reasoning_down", filter=~model_setup & ~palette)
     def decrease_reasoning(event):
         target = max(0, ui.state.reasoning_effort - 10)
         asyncio.create_task(ui._set_reasoning_effort(target))
+
+    @kb.add("left", filter=context_panel)
+    def _(event):
+        ui.overlay_manager.cycle_context_tab(-1)
+
+    @kb.add("right", filter=context_panel)
+    def _(event):
+        ui.overlay_manager.cycle_context_tab(1)
 
     @kb.add("down", filter=session_picker)
     @kb.add("c-n", filter=session_picker)
@@ -390,20 +373,19 @@ def build_key_bindings(ui):
 
         ui._scroll_transcript(3)
 
-    @kb.add("f10")
+    @ui.keymap.bind(kb, "mouse")
     def _(event):
         ui.toggle_mouse_support()
 
-    @kb.add("f12")
+    @ui.keymap.bind(kb, "models")
     def _(event):
         asyncio.create_task(ui._open_model_setup_overlay())
 
-    @kb.add("f4")
-    @kb.add("c-t")
+    @ui.keymap.bind(kb, "mode")
     def _(event):
         ui.toggle_turn_mode()
 
-    @kb.add("c-c")
+    @ui.keymap.bind(kb, "cancel")
     def _(event):
         if ui.state.is_thinking or (ui.bridge and ui.bridge.is_active):
             if ui.state.active_overlay:
@@ -509,5 +491,5 @@ def build_key_bindings(ui):
     @kb.add("s-tab", filter=Condition(lambda: ui.state.active_overlay is not None and ui.state.active_overlay != "model_setup"))
     def _(event): event.app.layout.focus_previous()
 
+    ui.keymap.capture(kb)
     return kb
-

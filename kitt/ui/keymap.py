@@ -1,28 +1,111 @@
-from dataclasses import dataclass, field
-from typing import Dict, List
+from __future__ import annotations
 
-@dataclass
+from dataclasses import dataclass
+from typing import Iterable
+
+
+@dataclass(frozen=True)
 class KeyBinding:
     action: str
-    keys: List[str]
+    sequences: tuple[tuple[str, ...], ...]
     description: str
+    scope: str = "global"
+    command_id: str | None = None
+    discoverable: bool = True
+
+    @property
+    def label(self) -> str:
+        def pretty(sequence: tuple[str, ...]) -> str:
+            labels = {
+                "c-x": "Ctrl+X",
+                "c-p": "Ctrl+P",
+                "c-o": "Ctrl+O",
+                "c-t": "Ctrl+T",
+                "c-c": "Ctrl+C",
+                "c-d": "Ctrl+D",
+                "c-right": "Ctrl+→",
+                "c-left": "Ctrl+←",
+                "s-tab": "Shift+Tab",
+                "escape": "Esc",
+                "enter": "Enter",
+                "pageup": "PgUp",
+                "pagedown": "PgDn",
+            }
+            return " ".join(labels.get(key, key.upper() if key.startswith("f") else key) for key in sequence)
+        return " / ".join(pretty(sequence) for sequence in self.sequences)
+
 
 class KeyMap:
-    def __init__(self):
-        self.bindings: Dict[str, KeyBinding] = {
-            "palette": KeyBinding("palette", ["c-p"], "Open Command Palette"),
-            "new_session": KeyBinding("new_session", ["c-x n"], "Start New Session"),
-            "sessions": KeyBinding("sessions", ["c-x l"], "List / Pick Sessions"),
-            "toggle_sidebar": KeyBinding("toggle_sidebar", ["c-x b"], "Toggle Sidebar"),
-            "status": KeyBinding("status", ["c-x s"], "Show System Status"),
-            "context_details": KeyBinding("context_details", ["c-x c"], "Show Context Details"),
-            "timeline": KeyBinding("timeline", ["c-x g"], "Show Session Timeline"),
-            "models": KeyBinding("models", ["c-x m"], "Switch Models"),
-            "agents": KeyBinding("agents", ["c-x a"], "Open Agents Dashboard"),
-            "external_editor": KeyBinding("external_editor", ["c-x e"], "Open External Editor"),
-            "toggle_collapse": KeyBinding("toggle_collapse", ["c-o"], "Expandir/recolher último bloco de ferramenta"),
-            "cancel": KeyBinding("cancel", ["escape", "c-c"], "Cancel Execution or Overlay"),
-        }
+    """Runtime source of truth for shortcuts, help labels and palette annotations."""
 
-    def get_help_list(self) -> List[tuple[str, str, str]]:
-        return [(kb.action, ", ".join(kb.keys), kb.description) for kb in self.bindings.values()]
+    def __init__(self) -> None:
+        self.bindings: dict[str, KeyBinding] = {}
+        self._captured_counter = 0
+        self._register_defaults()
+
+    def _register_defaults(self) -> None:
+        defaults = (
+            KeyBinding("palette", (("c-p",),), "Abrir Command Palette"),
+            KeyBinding("new_session", (("c-x", "n"),), "Nova conversa", command_id="new"),
+            KeyBinding("toggle_sidebar", (("c-x", "b"),), "Alternar sidebar", command_id="sidebar"),
+            KeyBinding("agents", (("c-x", "a"),), "Painel de agentes", command_id="tasks"),
+            KeyBinding("help", (("f1",),), "Ajuda", command_id="help"),
+            KeyBinding("models", (("f12",),), "Configurar modelos e provedores", command_id="setup_models"),
+            KeyBinding("mode", (("f4",), ("c-t",)), "Alternar modo CODE/PLAN/ASK", command_id="mode"),
+            KeyBinding("mouse", (("f10",),), "Alternar mouse TUI/seleção nativa", command_id="mouse"),
+            KeyBinding("collapse_tool", (("c-o",),), "Expandir/recolher último bloco de ferramenta"),
+            KeyBinding("reasoning_up", (("c-right",),), "Aumentar reasoning", command_id="reasoning"),
+            KeyBinding("reasoning_down", (("c-left",),), "Reduzir reasoning", command_id="reasoning"),
+            KeyBinding("cancel", (("c-c",),), "Cancelar turno/overlay", command_id="cancel"),
+        )
+        for spec in defaults:
+            self.bindings[spec.action] = spec
+
+    def bind(self, key_bindings, action: str, *, filter=None, eager: bool = False):
+        spec = self.bindings[action]
+
+        def decorator(handler):
+            for sequence in spec.sequences:
+                key_bindings.add(*sequence, filter=filter, eager=eager)(handler)
+            return handler
+
+        return decorator
+
+    def capture(self, key_bindings) -> None:
+        """Capture every contextual binding so no active shortcut is invisible to KeyMap."""
+        known = {sequence for spec in self.bindings.values() for sequence in spec.sequences}
+        for binding in key_bindings.bindings:
+            sequence = tuple(
+                getattr(key, "value", str(key)).lower().replace("keys.", "")
+                for key in binding.keys
+            )
+            if not sequence or sequence in known:
+                continue
+            self._captured_counter += 1
+            action = f"context_{self._captured_counter}"
+            self.bindings[action] = KeyBinding(
+                action=action,
+                sequences=(sequence,),
+                description="Atalho contextual",
+                scope="context",
+                discoverable=False,
+            )
+            known.add(sequence)
+
+    def label_for_command(self, command_id: str) -> str:
+        labels = [
+            spec.label
+            for spec in self.bindings.values()
+            if spec.command_id == command_id and spec.discoverable
+        ]
+        return " · ".join(labels)
+
+    def get_help_list(self, *, include_contextual: bool = False) -> list[tuple[str, str, str]]:
+        return [
+            (spec.action, spec.label, spec.description)
+            for spec in self.bindings.values()
+            if spec.discoverable or include_contextual
+        ]
+
+    def __len__(self) -> int:
+        return len(self.bindings)
