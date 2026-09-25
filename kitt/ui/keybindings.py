@@ -17,7 +17,8 @@ def build_key_bindings(ui):
     provider_popup = Condition(lambda: ui.state.active_overlay == "provider_popup")
     add_provider = Condition(lambda: ui.state.active_overlay == "add_provider")
     provider_endpoint = Condition(lambda: ui.state.active_overlay == "provider_endpoint")
-    auth_login = Condition(lambda: ui.state.active_overlay == "auth_login")\n    reverse_proxy = Condition(lambda: ui.state.active_overlay == "reverse_proxy")
+    auth_login = Condition(lambda: ui.state.active_overlay == "auth_login")
+    reverse_proxy = Condition(lambda: ui.state.active_overlay == "reverse_proxy")
     editor_focused = Condition(lambda: ui.application and ui.application.layout.current_control is ui.prompt_control)
     context_panel = Condition(lambda: ui.state.active_overlay in {"session_picker", "timeline", "diff", "agents", "autonomy_control", "reverse_proxy", "help"})
 

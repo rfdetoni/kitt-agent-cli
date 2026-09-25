@@ -24,7 +24,9 @@ from kitt.ui import model_service as _model_service
 from kitt.ui import provider_flow as _provider_flow
 from kitt.ui import runtime_actions as _runtime_actions
 from kitt.ui import mouse as _mouse
-from kitt.ui import navigation as _navigation\nfrom kitt.ui import reverse_proxy_panel as _reverse_proxy_panel\nfrom kitt.reverse_proxy.client import ReverseProxyClient
+from kitt.ui import navigation as _navigation
+from kitt.ui import reverse_proxy_panel as _reverse_proxy_panel
+from kitt.reverse_proxy.client import ReverseProxyClient
 from kitt.ui.render import core as _render_core
 from kitt.ui.render import overlays as _render_overlays
 
@@ -47,7 +49,9 @@ class KittUIApp:
         self.session_picker_model = SessionPickerModel(runtime)
         self.timeline_model = TimelineModel(runtime)
         self.diff_model = DiffViewerModel(str(root))
-        self.model_setup_model = ModelSetupModel()\n        self.reverse_proxy_model = _reverse_proxy_panel.ReverseProxyPanelModel()\n        self.reverse_proxy_client = ReverseProxyClient()
+        self.model_setup_model = ModelSetupModel()
+        self.reverse_proxy_model = _reverse_proxy_panel.ReverseProxyPanelModel()
+        self.reverse_proxy_client = ReverseProxyClient()
         self.mouse_support_enabled: bool = True
         self.editing_provider_name: Optional[str] = None
         self.scrollable_windows: dict[str, Any] = {}
@@ -401,4 +405,5 @@ class KittUIApp:
     _model_setup_text = _render_overlays._model_setup_text
     _agents_text = _render_overlays._agents_text
     _live_agents_text = _render_overlays._live_agents_text
-    _reverse_proxy_text = _reverse_proxy_panel._reverse_proxy_text\n    _help_text = _render_overlays._help_text
+    _reverse_proxy_text = _reverse_proxy_panel._reverse_proxy_text
+    _help_text = _render_overlays._help_text
