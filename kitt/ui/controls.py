@@ -104,7 +104,7 @@ def build_controls(ui) -> None:
     ui.session_picker_control = FormattedTextControl(ui._session_picker_text, focusable=True)
     ui.timeline_control = FormattedTextControl(ui._timeline_text, focusable=True)
     ui.diff_control = FormattedTextControl(ui._diff_text, focusable=True)
-    ui.pending_model_selection: Optional[Tuple[str, str, str, Optional[str]]] = None
+    ui.pending_model_selection: tuple[str, str, str, str | None] | None = None
     ui.model_setup_search_buffer = Buffer(multiline=False, accept_handler=ui._accept_model_setup_search)
     ui.model_setup_search_buffer.on_text_changed += lambda _: ui._model_setup_search_changed()
     ui.model_setup_search_control = BufferControl(buffer=ui.model_setup_search_buffer, focusable=True)

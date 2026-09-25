@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import time
 
-from kitt.ui.theme import DEFAULT_THEME
 
 def _select_popup_action(ui, entry: dict) -> None:
     ui.close_overlay()
