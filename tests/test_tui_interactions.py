@@ -78,3 +78,25 @@ def test_profile_page_uses_visible_selection_instead_of_stale_cycle_index():
     ]
 
     assert model.selected_profile().id == "second"
+
+
+def test_pressed_target_survives_rerender_but_must_match_new_hit_target():
+    hit_map = InteractionMap()
+    hit_map.begin("surface")
+    hit_map.add("surface", 1, 0, 5, "open", "profile")
+    hit_map.press("surface", 2, 1)
+
+    # A render pass rebuilds coordinates but preserves the semantic press.
+    hit_map.begin("surface")
+    hit_map.add("surface", 2, 10, 20, "open", "profile")
+    assert hit_map.release("surface", 12, 2).action == "open"
+
+    # A moved pointer over another semantic target must not activate the old press.
+    hit_map.begin("surface")
+    hit_map.add("surface", 2, 10, 20, "left")
+    hit_map.add("surface", 2, 21, 30, "right")
+    hit_map.press("surface", 12, 2)
+    hit_map.begin("surface")
+    hit_map.add("surface", 3, 10, 20, "left")
+    hit_map.add("surface", 3, 21, 30, "right")
+    assert hit_map.release("surface", 22, 3) is None

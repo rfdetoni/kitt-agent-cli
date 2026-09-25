@@ -101,8 +101,11 @@ def build_controls(ui) -> None:
     )
     ui.approval_menu_index = 0
     ui.palette_control = FormattedTextControl(ui._palette_text, focusable=True)
+    ui.palette_control.mouse_handler = lambda event: ui._interactive_mouse_handler("palette", event)
     ui.session_picker_control = FormattedTextControl(ui._session_picker_text, focusable=True)
+    ui.session_picker_control.mouse_handler = lambda event: ui._interactive_mouse_handler("session_picker", event)
     ui.timeline_control = FormattedTextControl(ui._timeline_text, focusable=True)
+    ui.timeline_control.mouse_handler = lambda event: ui._interactive_mouse_handler("timeline", event)
     ui.diff_control = FormattedTextControl(ui._diff_text, focusable=True)
     ui.pending_model_selection: tuple[str, str, str, str | None] | None = None
     ui.model_setup_search_buffer = Buffer(multiline=False, accept_handler=ui._accept_model_setup_search)
