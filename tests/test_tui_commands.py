@@ -193,6 +193,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             "/delete-provider meu-ollama",
             "/mode plan",
             "/mouse",
+            "/sidebar",
             "/remote status",
             "/local-limits",
         ]

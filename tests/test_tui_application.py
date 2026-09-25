@@ -48,14 +48,19 @@ class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("PromptSession", type(app).__name__)
             self.assertEqual(app.cursor.get_cursor_shape(app), CursorShape.BLINKING_BEAM)
 
-    async def test_home_scanner_moves_when_idle(self):
+    async def test_scanner_stays_idle_until_work_is_active(self):
         with create_pipe_input() as pipe:
             ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput())
             ui.build_application()
             animation = asyncio.create_task(ui._animate())
             start = ui.state.scanner_step
-            await asyncio.sleep(0.12)
+            await asyncio.sleep(0.18)
+            self.assertEqual(ui.state.scanner_step, start)
+
+            ui.state.is_thinking = True
+            await self._wait_until(lambda: ui.state.scanner_step > start)
             self.assertGreater(ui.state.scanner_step, start)
+
             await ui.shutdown()
             await asyncio.gather(animation, return_exceptions=True)
 

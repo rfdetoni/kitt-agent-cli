@@ -15,8 +15,8 @@ class KeyBinding:
 
     @property
     def keys(self) -> tuple[str, ...]:
-        """Compatibility/introspection view with unique raw keys across sequences."""
-        return tuple(dict.fromkeys(key for sequence in self.sequences for key in sequence))
+        """Compatibility/introspection view that preserves complete shortcut chords."""
+        return tuple(" ".join(sequence) for sequence in self.sequences)
 
     @property
     def label(self) -> str:

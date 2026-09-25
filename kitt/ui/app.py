@@ -298,7 +298,7 @@ class KittUIApp:
     _clear_remembered_approvals = _runtime_actions._clear_remembered_approvals
     resolve_approval = _runtime_actions.resolve_approval
     _export_conversation = _runtime_actions._export_conversation
-    _provider_defaults = _model_service._provider_defaults
+    _provider_defaults = staticmethod(_model_service._provider_defaults)
     _scroll_transcript = _mouse._scroll_transcript
     toggle_mouse_support = _mouse.toggle_mouse_support
     toggle_turn_mode = _navigation.toggle_turn_mode

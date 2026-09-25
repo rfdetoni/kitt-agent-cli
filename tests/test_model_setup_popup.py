@@ -214,7 +214,7 @@ class TestModelSetupPopup(unittest.IsolatedAsyncioTestCase):
     def test_keymap_no_single_letter_conflicts(self):
         from kitt.ui.keymap import KeyMap
         km = KeyMap()
-        # Verify no action is bound to a single un-prefixed alphabetic key
+        # Verify no action is exposed as a single un-prefixed alphabetic shortcut
         for action, binding in km.bindings.items():
             for k in binding.keys:
                 self.assertFalse(k.isalpha() and len(k) == 1, f"Found single letter shortcut '{k}' in action '{action}'")

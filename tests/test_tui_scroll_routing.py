@@ -15,7 +15,6 @@ class TestTUIScrollRouting(unittest.TestCase):
         "prompt",
         "permission",
         "palette",
-        "sidebar_mobile",
         "model_setup",
         "provider_popup",
         "session_picker",
