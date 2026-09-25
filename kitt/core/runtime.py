@@ -303,6 +303,7 @@ class KittRuntime:
         )
         memory = native.memory
         children.attach_coordinator(native.coordinator)
+        harness.attach_coordinator(native.coordinator)
         registry.native_engine = native.engine
         registry.output_optimizer = native.output
         registry.coordinator = native.coordinator
@@ -466,34 +467,191 @@ class KittRuntime:
                 await self.extensions.start()
             try:
                 from kitt.runtime.core_runtime import OPERATION_SPECS
+                manifests = (
+                    self.extensions.plugins.list_manifests()
+                    if self.extensions is not None
+                    else []
+                )
+                installed_skills = (
+                    self.skills.list_skills()
+                    if self.skills is not None
+                    else []
+                )
+                active_skills = (
+                    self.skills.get_active_skills()
+                    if self.skills is not None
+                    else []
+                )
+                active_skill_set = set(active_skills)
+                loaded_plugin_ids = {
+                    str(getattr(instance.manifest, "name", ""))
+                    for instance in (
+                        self.extensions.plugins.list()
+                        if self.extensions is not None
+                        else []
+                    )
+                    if str(getattr(instance.manifest, "name", ""))
+                }
+                mcp_servers = (
+                    self.extensions.mcp.list_servers()
+                    if self.extensions is not None
+                    else []
+                )
                 runtime_facts = {
                     "runtime_operations": sorted(OPERATION_SPECS),
                     "plugins": sorted(
-                        manifest.name
-                        for manifest in (
-                            self.extensions.plugins.list_manifests()
-                            if self.extensions is not None
-                            else []
-                        )
+                        str(getattr(manifest, "name", ""))
+                        for manifest in manifests
+                        if str(getattr(manifest, "name", ""))
+                    ),
+                    "loaded_plugins": sorted(loaded_plugin_ids),
+                    "active_skills": sorted(active_skills),
+                    "mcp_servers": sorted(
+                        str(getattr(server, "server_id", ""))
+                        for server in mcp_servers
+                        if str(getattr(server, "server_id", ""))
                     ),
                 }
                 snapshot = self.harness.capture_snapshot(
                     self.workspace_id,
                     runtime_facts=runtime_facts,
                 )
+
+                components = [
+                    {
+                        "kind": "runtime-operation",
+                        "id": operation,
+                        "source": "safe-runtime",
+                        "revision": "1",
+                        "state": "materialized",
+                    }
+                    for operation in runtime_facts["runtime_operations"]
+                ]
+                components.extend(
+                    {
+                        "kind": "plugin",
+                        "id": str(getattr(manifest, "name", "")),
+                        "source": "plugin-registry",
+                        "revision": str(getattr(manifest, "version", "") or ""),
+                        "state": (
+                            "materialized"
+                            if str(getattr(manifest, "name", "")) in loaded_plugin_ids
+                            else "requested"
+                            if self.extensions.plugins.is_enabled(
+                                str(getattr(manifest, "name", "")),
+                                manifest,
+                            )
+                            else "disabled"
+                        ),
+                    }
+                    for manifest in manifests
+                    if str(getattr(manifest, "name", ""))
+                )
+                components.extend(
+                    {
+                        "kind": "skill",
+                        "id": str(getattr(skill, "name", "")),
+                        "source": str(getattr(skill, "source", "") or ""),
+                        "revision": str(getattr(skill, "version", "") or ""),
+                        "state": "active"
+                        if str(getattr(skill, "name", "")) in active_skill_set
+                        else "inactive",
+                    }
+                    for skill in installed_skills
+                    if str(getattr(skill, "name", ""))
+                )
+                components.extend(
+                    {
+                        "kind": "mcp-server",
+                        "id": str(getattr(server, "server_id", "")),
+                        "source": "mcp",
+                        "revision": "",
+                        "state": str(
+                            self.extensions.mcp.get_server_status(
+                                str(getattr(server, "server_id", ""))
+                            )
+                        ),
+                    }
+                    for server in mcp_servers
+                    if str(getattr(server, "server_id", ""))
+                )
+                component_snapshot = self.harness.capture_components(
+                    self.workspace_id,
+                    components,
+                )
+                preset = self.harness.ensure_preset(
+                    self.workspace_id,
+                    "runtime-default",
+                    {
+                        "harness_snapshot_id": snapshot["id"],
+                        "component_snapshot_id": component_snapshot["id"],
+                        "runtime": runtime_facts,
+                        "policies": {
+                            "retained_agents_enabled": bool(
+                                self.config.retained_agents_enabled
+                            ),
+                            "executable_skills_enabled": bool(
+                                self.config.executable_skills_enabled
+                            ),
+                        },
+                    },
+                    activate=True,
+                )
+
+                receipts = [
+                    {
+                        "component_kind": "runtime-operation",
+                        "component_id": operation,
+                        "requested": True,
+                        "resolved": True,
+                        "materialized": True,
+                        "mechanism": "safe-runtime",
+                    }
+                    for operation in runtime_facts["runtime_operations"]
+                ]
+                receipts.extend(
+                    {
+                        "component_kind": "plugin",
+                        "component_id": item["id"],
+                        "requested": item["state"] in {"requested", "materialized"},
+                        "resolved": True,
+                        "materialized": item["state"] == "materialized",
+                        "mechanism": "plugin-registry",
+                        "detail": {"revision": item["revision"]},
+                    }
+                    for item in components
+                    if item["kind"] == "plugin"
+                )
+                receipts.extend(
+                    {
+                        "component_kind": "skill",
+                        "component_id": item["id"],
+                        "requested": item["state"] == "active",
+                        "resolved": True,
+                        "materialized": item["state"] == "active",
+                        "mechanism": "skill-manager",
+                        "detail": {"revision": item["revision"]},
+                    }
+                    for item in components
+                    if item["kind"] == "skill"
+                )
+                receipts.append(
+                    {
+                        "component_kind": "preset",
+                        "component_id": preset.id,
+                        "requested": True,
+                        "resolved": True,
+                        "materialized": True,
+                        "mechanism": "harness-preset",
+                        "detail": {
+                            "revision": preset.revision,
+                            "content_hash": preset.content_hash,
+                        },
+                    }
+                )
                 self.harness.record_materializations(
                     snapshot["id"],
-                    [
-                        {
-                            "component_kind": "runtime-operation",
-                            "component_id": operation,
-                            "requested": True,
-                            "resolved": True,
-                            "materialized": True,
-                            "mechanism": "safe-runtime",
-                        }
-                        for operation in runtime_facts["runtime_operations"]
-                    ],
+                    receipts,
                 )
             except Exception:
                 # Runtime evidence is diagnostic and must never prevent startup.

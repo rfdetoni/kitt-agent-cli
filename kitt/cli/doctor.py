@@ -80,6 +80,10 @@ class DoctorCheck:
                         "task_episodes",
                         "evidence_records",
                         "runtime_invariant_results",
+                        "harness_presets",
+                        "harness_component_snapshots",
+                        "harness_experiments",
+                        "session_replay_goldens",
                     }
                     evidence_ready = required.issubset(tables)
                     results.append(
@@ -105,6 +109,21 @@ class DoctorCheck:
                                 if int(total or 0) == 0
                                 else f"{int(total)} observations; {int(failed or 0)} failure(s)",
                                 status="INFO" if int(total or 0) == 0 else "WARN" if int(failed or 0) else "PASS",
+                            )
+                        )
+                        active_presets = int(
+                            evidence_conn.execute(
+                                "SELECT COUNT(*) FROM harness_presets WHERE is_active=1"
+                            ).fetchone()[0]
+                        )
+                        results.append(
+                            _check(
+                                "Harness Revision",
+                                "CONFIGURED" if active_presets else "UNOBSERVED",
+                                f"{active_presets} active revision(s)"
+                                if active_presets
+                                else "runtime has not materialized a revisioned preset yet",
+                                status="PASS" if active_presets else "INFO",
                             )
                         )
             except Exception as exc:

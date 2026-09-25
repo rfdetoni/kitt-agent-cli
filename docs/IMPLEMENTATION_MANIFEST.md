@@ -85,3 +85,28 @@ without adding a second workflow framework:
   remains owned by `kitt-toolbox`; this release changes Python control-plane
   contracts only.
 - no sibling KITT protocol/API change is required by this release.
+
+
+## Agent CLI 0.70.2 controlled-evolution boundary
+
+Agent CLI 0.70.2 completes the planned harness-evolution control plane:
+
+- SQLite schema v6 adds revisioned presets, component snapshots, controlled
+  experiments/arms and named golden replay fixtures.
+- runtime startup materializes a content-addressed harness snapshot, a logical
+  component snapshot and an active `runtime-default` preset revision.
+- preset revisions are deduplicated by canonical content hash.
+- controlled baseline/candidate experiments reuse
+  `WorkspaceCoordinator.prepare_isolated_workspace`; no second Git/worktree
+  manager is introduced.
+- experiment execution fails closed when an isolated Git worktree cannot be
+  created.
+- learning capture groups comparable completed Task Episodes and returns a
+  deterministic smallest-owner proposal instead of auto-writing memory.
+- Episode efficiency separates wall time from observed active time and preserves
+  missing token/latency measurements as unobserved rather than zero.
+- golden replay fingerprints exact provider-boundary model requests and can be
+  verified without provider access.
+- the implementation remains Python control-plane code. Native acceleration
+  remains an optional `kitt-toolbox` concern and no sibling protocol bump is
+  required.

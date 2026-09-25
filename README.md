@@ -146,6 +146,16 @@ adds bounded `call`, `set`, `for_each`, `if`, and `return` control over
 the same read-only SafeRuntime operations. It never evaluates model-supplied
 Python, JavaScript or shell code.
 
+Runtime state is also captured as revisioned presets and privacy-safe component
+snapshots. Controlled baseline/candidate experiments reuse the existing
+WorkspaceCoordinator worktree isolation, learning capture emits smallest-owner
+proposals, Episode efficiency keeps missing telemetry distinct from zero, and
+golden replay verifies provider-boundary request stability without calling a
+model.
+
+See [docs/HARNESS_EVOLUTION.md](docs/HARNESS_EVOLUTION.md) for the complete
+evidence, experiment and controlled-evolution lifecycle.
+
 ### Runtime resilience and operations
 
 KITT keeps maintenance work separate from the execution hot path. Prompt

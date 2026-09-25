@@ -524,14 +524,32 @@ class WorkspaceCoordinator:
             wait_timeout=wait_timeout,
         )
 
-    def prepare_child(self, child_id: str) -> WorktreeState:
-        safe = self._safe_id(child_id)
+    def prepare_isolated_workspace(
+        self,
+        owner_id: str,
+        *,
+        namespace: str = "child",
+        base_ref: str = "HEAD",
+    ) -> WorktreeState:
+        owner = str(owner_id or "").strip()
+        if not owner:
+            raise ValueError("isolated workspace owner is required")
+        safe = self._safe_id(owner)
+        ns = self._safe_id(namespace or "work")
         self.worktree_root.mkdir(parents=True, exist_ok=True)
-        path = self.worktree_root / safe
-        branch = f"kitt/child/{safe}"
+        path = (
+            self.worktree_root / safe
+            if ns == "child"
+            else self.worktree_root / f"{ns}-{safe}"
+        )
+        branch = (
+            f"kitt/child/{safe}"
+            if ns == "child"
+            else f"kitt/{ns}/{safe}"
+        )
         if not self.is_git_repository():
             return WorktreeState(
-                child_id,
+                owner,
                 str(self.execution_root),
                 "",
                 "SHARED_FALLBACK",
@@ -539,11 +557,11 @@ class WorkspaceCoordinator:
         with self.db.get_connection() as conn:
             row = conn.execute(
                 "SELECT path,branch,state FROM child_worktrees WHERE child_id=?",
-                (child_id,),
+                (owner,),
             ).fetchone()
             if row and Path(row[0]).exists():
                 return WorktreeState(
-                    child_id,
+                    owner,
                     str(row[0]),
                     str(row[1]),
                     str(row[2]),
@@ -560,7 +578,9 @@ class WorkspaceCoordinator:
         if branch_exists:
             self._git(["worktree", "add", "--", str(path), branch])
         else:
-            self._git(["worktree", "add", "-b", branch, "--", str(path), "HEAD"])
+            self._git(
+                ["worktree", "add", "-b", branch, "--", str(path), str(base_ref)]
+            )
         now = time.time()
         with self.db.get_connection() as conn:
             conn.execute(
@@ -569,17 +589,48 @@ class WorkspaceCoordinator:
                        created_at,updated_at,last_error
                    ) VALUES(?,?,?,?,?,?,?,?,NULL)""",
                 (
-                    child_id,
+                    owner,
                     self.workspace_id,
                     str(path),
                     branch,
-                    "HEAD",
+                    str(base_ref),
                     "READY",
                     now,
                     now,
                 ),
             )
-        return WorktreeState(child_id, str(path), branch, "READY")
+        return WorktreeState(owner, str(path), branch, "READY")
+
+    def discard_isolated_workspace(
+        self,
+        owner_id: str,
+        *,
+        delete_branch: bool = True,
+    ) -> None:
+        owner = str(owner_id or "").strip()
+        if not owner:
+            return
+        self.release_owner(owner)
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT path,branch FROM child_worktrees WHERE child_id=?",
+                (owner,),
+            ).fetchone()
+        if not row:
+            return
+        self._cleanup(
+            owner,
+            Path(row[0]),
+            str(row[1]),
+            delete_branch=bool(delete_branch),
+        )
+
+    def prepare_child(self, child_id: str) -> WorktreeState:
+        return self.prepare_isolated_workspace(
+            child_id,
+            namespace="child",
+            base_ref="HEAD",
+        )
 
     def mark_running(self, child_id: str) -> None:
         with self.db.get_connection() as conn:

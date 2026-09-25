@@ -19,7 +19,7 @@ The current working directory must never be mistaken for the user's home directo
 
 ## Evidence-plane durability
 
-Schema v5 keeps evidence in the existing project history SQLite database rather
+Schema v6 keeps evidence in the existing project history SQLite database rather
 than introducing a parallel store. Exact model requests are local project state.
 Projection checkpoints are disposable accelerators: the append-only session event
 stream is authoritative and can replay a projection after cache loss.
@@ -28,3 +28,9 @@ Task Episodes and harness interventions are durable project evidence. They are n
 global memories and are not promoted to `~/.kitt/` automatically. Cross-project
 learning must pass through the existing memory/Dreaming ownership and provenance
 rules.
+
+
+Revisioned harness presets, component snapshots, controlled-experiment records
+and golden replay fixtures remain in the same project history database. Temporary
+experiment worktrees use the coordinator-owned project worktree area and are
+removed after each arm; they are not promoted to global state.

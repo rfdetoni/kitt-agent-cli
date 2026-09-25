@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -905,6 +905,103 @@ SCHEMA_V5_STATEMENTS = [
 ]
 
 
+SCHEMA_V6_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS harness_presets (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        content_hash TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 0,
+        created_at REAL NOT NULL,
+        UNIQUE(workspace_id, name, revision),
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_harness_presets_content
+    ON harness_presets(workspace_id, name, content_hash);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_harness_presets_active
+    ON harness_presets(workspace_id, is_active, created_at DESC);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS harness_component_snapshots (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        snapshot_hash TEXT NOT NULL,
+        components_json TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        UNIQUE(workspace_id, snapshot_hash),
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS harness_experiments (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        intervention_id TEXT,
+        name TEXT NOT NULL,
+        task_json TEXT NOT NULL,
+        baseline_snapshot_id TEXT NOT NULL,
+        candidate_snapshot_id TEXT NOT NULL,
+        primary_metric_json TEXT NOT NULL,
+        guardrail_metric_json TEXT NOT NULL,
+        state TEXT NOT NULL,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        created_at REAL NOT NULL,
+        completed_at REAL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(intervention_id) REFERENCES harness_interventions(id) ON DELETE SET NULL,
+        FOREIGN KEY(baseline_snapshot_id) REFERENCES harness_snapshots(id),
+        FOREIGN KEY(candidate_snapshot_id) REFERENCES harness_snapshots(id)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS harness_experiment_arms (
+        experiment_id TEXT NOT NULL,
+        arm TEXT NOT NULL,
+        snapshot_id TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        state TEXT NOT NULL,
+        metrics_json TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        started_at REAL NOT NULL,
+        completed_at REAL,
+        PRIMARY KEY(experiment_id, arm),
+        FOREIGN KEY(experiment_id) REFERENCES harness_experiments(id) ON DELETE CASCADE,
+        FOREIGN KEY(snapshot_id) REFERENCES harness_snapshots(id)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_harness_experiments_workspace
+    ON harness_experiments(workspace_id, created_at DESC);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_replay_goldens (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        turn_id TEXT,
+        name TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        request_count INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        UNIQUE(conversation_id, name),
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+        FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_replay_goldens_conversation
+    ON session_replay_goldens(conversation_id, created_at DESC);
+    """,
+]
+
+
 class IncompatibleSchemaError(RuntimeError):
     """Raised when an incompatible database schema is detected."""
 
@@ -938,7 +1035,7 @@ class MigrationRunner:
                 "Run: kitt doctor --reset-state"
             )
 
-        if current_version not in (0, 1, 2, 3, 4):
+        if current_version not in (0, 1, 2, 3, 4, 5):
             raise IncompatibleSchemaError(
                 f"State schema version {current_version} is incompatible with this development build. "
                 "Run: kitt doctor --reset-state"
@@ -985,6 +1082,14 @@ class MigrationRunner:
                 conn.execute("UPDATE schema_info SET version = 5;")
             current_version = 5
             logger.info("Migrated KITT SQLite schema to version 5")
+
+        if current_version == 5:
+            with conn:
+                for statement in SCHEMA_V6_STATEMENTS:
+                    conn.execute(statement)
+                conn.execute("UPDATE schema_info SET version = 6;")
+            current_version = 6
+            logger.info("Migrated KITT SQLite schema to version 6")
 
         if current_version != self.target_version:
             raise IncompatibleSchemaError(

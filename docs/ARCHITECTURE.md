@@ -113,8 +113,14 @@ The intervention ledger stores baseline metrics, candidate causes, owner,
 validation route, guardrail metric, comparison window and stop/revert condition.
 Later comparable evidence determines `IMPROVING`, `UNCHANGED`,
 `REGRESSING` or `OUTCOME_SUPPORTED`; same-window validation alone does not
-prove longitudinal effectiveness. Heavy experiment execution remains owned by
-`kitt-ai-workers`; the Agent owns the local evidence and handoff contracts.
+prove longitudinal effectiveness.
+
+The local control plane also owns revisioned presets, component drift snapshots,
+Episode efficiency, golden replay and bounded baseline/candidate experiments.
+Experiment arms reuse `WorkspaceCoordinator` Git worktrees and fail closed when
+isolation is unavailable. Heavy batch/model-scale evaluation remains suitable
+for `kitt-ai-workers`; both paths share the same evidence and snapshot
+contracts. See [HARNESS_EVOLUTION.md](HARNESS_EVOLUTION.md).
 
 ## Packaging
 

@@ -136,6 +136,14 @@ Evidence states are not pass/fail labels. `UNOBSERVED` must remain distinct from
 or wired. Longitudinal improvement requires a comparable later outcome and a
 non-regressing guardrail.
 
+Controlled experiments must compare the same task in isolated workspaces. A
+candidate is not better merely because it is cheaper; the primary metric must
+improve without guardrail regression. Same-window experiment evidence may justify
+an intervention, but durable outcome support comes from later comparable Episodes.
+
+Learning should be captured by the smallest durable owner that fits the repeated
+pattern. Do not turn every recurrence into global memory or prompt text.
+
 ### Observability is part of correctness
 
 Important decisions must be measurable: selected context, model/provider, token

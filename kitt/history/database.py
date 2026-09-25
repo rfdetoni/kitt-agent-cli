@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 from typing import Optional
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class _FileConnection(sqlite3.Connection):

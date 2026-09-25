@@ -1,5 +1,6 @@
 """Durable evidence, replay and projection primitives for KITT."""
 
+from .efficiency import EpisodeEfficiencyService
 from .episodes import TaskEpisodeService
 from .invariants import RuntimeInvariantService
 from .ledger import SessionLedger
@@ -9,6 +10,7 @@ from .replay import SessionReplayService
 
 __all__ = [
     "EvidenceState",
+    "EpisodeEfficiencyService",
     "RuntimeInvariantService",
     "SessionEventRecord",
     "SessionLedger",
