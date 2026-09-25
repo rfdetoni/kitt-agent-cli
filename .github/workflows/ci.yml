@@ -58,7 +58,7 @@ jobs:
       - name: Compose Assistant runtime namespace
         run: >-
           python -m pip install --no-deps
-          "git+https://github.com/rfdetoni/kitt-assistant.git@50b37efb456bfc758ee5411117c06ace366c7f97#subdirectory=packages/kitt-assistant-runtime"
+          "git+https://github.com/rfdetoni/kitt-assistant.git@5f582b8ea4d069ed4b52251f5d94b74e836b4de0#subdirectory=packages/kitt-assistant-runtime"
       - name: Regression suite
         run: python -m pytest -q
       - name: Compile package
