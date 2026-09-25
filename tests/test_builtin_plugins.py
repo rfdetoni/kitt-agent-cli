@@ -64,6 +64,15 @@ class TestBuiltinPlugins(unittest.TestCase):
             "DROP TABLE obsolete_table;",
             encoding="utf-8",
         )
+        (self.root / "compose.yaml").write_text(
+            "services:\n  api:\n    image: example:latest\n",
+            encoding="utf-8",
+        )
+        (self.root / "k8s").mkdir()
+        (self.root / "k8s" / "deployment.yaml").write_text(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n",
+            encoding="utf-8",
+        )
 
         self.tools = ToolRegistry(root_dir=str(self.root))
         self.manager = ExtensionManager(
@@ -135,6 +144,23 @@ class TestBuiltinPlugins(unittest.TestCase):
                     "src/test/java/UserServiceTest.java",
                     impact_data["candidate_tests"],
                 )
+
+                container = self.tools.execute_tool(
+                    "container_inspect",
+                    {"action": "compose-up", "runtime": "docker", "service": "api"},
+                )
+                self.assertTrue(container.success, msg=container.error)
+                container_data = json.loads(container.output)
+                self.assertIn("compose.yaml", container_data["descriptors"])
+                self.assertIn("k8s/deployment.yaml", container_data["descriptors"])
+                self.assertIn("docker", container_data["runtimes"])
+                self.assertIn("podman", container_data["runtimes"])
+                self.assertIn("kubectl", container_data["runtimes"])
+                self.assertEqual(
+                    container_data["proposed_argv"],
+                    ["docker", "compose", "up", "-d", "api"],
+                )
+                self.assertEqual(container_data["risk"], "state-changing")
             finally:
                 await self.manager.plugins.stop_all()
 

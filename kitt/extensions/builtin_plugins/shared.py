@@ -215,16 +215,105 @@ def _ci(root: Path) -> dict[str, Any]:
     return {"systems":systems}
 
 
-def _container(root: Path) -> dict[str, Any]:
+def _container(root: Path, args: dict[str, Any]) -> dict[str, Any]:
     descriptors, findings = [], []
     for path in _files(root, limit=3000):
-        rel = _rel(root, path); low = rel.lower()
-        if not (path.name.startswith("Dockerfile") or any(x in low for x in ("compose", "/k8s/", "/kubernetes/", "/helm/"))): continue
+        rel = _rel(root, path); low = rel.lower(); name = path.name.lower()
+        if not (
+            name.startswith("dockerfile")
+            or name == "containerfile"
+            or "compose" in low
+            or any(x in f"/{low}" for x in ("/k8s/", "/kubernetes/", "/helm/"))
+        ):
+            continue
         descriptors.append(rel); text = _read(path)
-        for kind, pattern in (("privileged", r"(?i)privileged:\s*true"), ("docker_socket", r"/var/run/docker\.sock"), ("latest_tag", r"(?i)(?:image:|from)\s+\S+:latest\b")):
-            if re.search(pattern, text): findings.append({"path":rel, "kind":kind})
-    return {"descriptors":descriptors[:128], "findings":findings[:128]}
+        for kind, pattern in (
+            ("privileged", r"(?i)privileged:\s*true"),
+            ("docker_socket", r"/var/run/docker\.sock"),
+            ("latest_tag", r"(?i)(?:image:|from)\s+\S+:latest\b"),
+            ("host_network", r"(?i)(?:network_mode:\s*host|hostNetwork:\s*true)"),
+        ):
+            if re.search(pattern, text):
+                findings.append({"path": rel, "kind": kind})
 
+    runtime_commands = {
+        "docker": "docker",
+        "podman": "podman",
+        "kubectl": "kubectl",
+        "helm": "helm",
+    }
+    runtimes = {}
+    for name, command in runtime_commands.items():
+        executable = shutil.which(command)
+        runtimes[name] = {"available": bool(executable), "path": executable}
+
+    action = str(args.get("action") or "inspect").strip().lower()
+    runtime = str(args.get("runtime") or "").strip().lower()
+    service = str(args.get("service") or "").strip()
+    namespace = str(args.get("namespace") or "").strip()
+    resource = str(args.get("resource") or "pods").strip()
+    manifest = str(args.get("manifest") or "").strip().replace("\\", "/")
+
+    safe_token = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
+    if service and not safe_token.fullmatch(service):
+        service = ""
+    if namespace and not safe_token.fullmatch(namespace):
+        namespace = ""
+    if resource and not safe_token.fullmatch(resource):
+        resource = "pods"
+    if manifest and (
+        manifest.startswith("/")
+        or ".." in Path(manifest).parts
+        or not safe_token.fullmatch(manifest)
+    ):
+        manifest = ""
+
+    proposed_argv: list[str] | None = None
+    risk = "read-only"
+    compose_actions = {
+        "compose-config", "compose-ps", "compose-logs", "compose-build",
+        "compose-up", "compose-down", "compose-restart",
+    }
+    if action in compose_actions:
+        engine = (
+            runtime
+            if runtime in {"docker", "podman"}
+            else ("docker" if runtimes["docker"]["available"] else "podman")
+        )
+        verb = action.removeprefix("compose-")
+        proposed_argv = [engine, "compose", verb]
+        if verb == "up":
+            proposed_argv.append("-d")
+        if service and verb in {"logs", "build", "up", "restart"}:
+            proposed_argv.append(service)
+        risk = "read-only" if verb in {"config", "ps", "logs"} else "state-changing"
+    elif action in {
+        "k8s-get", "k8s-describe", "k8s-diff", "k8s-apply", "k8s-rollout-status"
+    }:
+        if action == "k8s-get":
+            proposed_argv = ["kubectl", "get", resource]
+        elif action == "k8s-describe":
+            proposed_argv = ["kubectl", "describe", resource]
+        elif action in {"k8s-diff", "k8s-apply"} and manifest:
+            proposed_argv = ["kubectl", action.removeprefix("k8s-"), "-f", manifest]
+        elif action == "k8s-rollout-status":
+            proposed_argv = ["kubectl", "rollout", "status", resource]
+        if proposed_argv and namespace:
+            proposed_argv.extend(["-n", namespace])
+        risk = "state-changing" if action == "k8s-apply" else "read-only"
+
+    return {
+        "descriptors": descriptors[:128],
+        "findings": findings[:128],
+        "runtimes": runtimes,
+        "requested_action": action,
+        "proposed_argv": proposed_argv,
+        "risk": risk,
+        "execution": (
+            "execute proposed_argv only through kitt_runtime process.run; "
+            "PolicyEngine and approval remain authoritative"
+        ),
+    }
 
 def _release(root: Path, args: dict[str, Any]) -> dict[str, Any]:
     versions = []
@@ -296,7 +385,18 @@ _SPECS = {
     "quality-report":("quality_report", "Build the deterministic verification plan.", {"paths":"optional changed paths", "full":"full verification"}),
     "dependency-audit":("dependency_audit", "Inspect dependency manifests and lockfiles.", {}),
     "ci":("ci_inspect", "Inspect local CI configuration.", {}),
-    "container":("container_inspect", "Inspect container descriptors and common risks.", {}),
+    "container":(
+        "container_inspect",
+        "Inspect Docker/Podman/Kubernetes descriptors, local runtimes and governed command plans.",
+        {
+            "action":"inspect|compose-config|compose-ps|compose-logs|compose-build|compose-up|compose-down|compose-restart|k8s-get|k8s-describe|k8s-diff|k8s-apply|k8s-rollout-status",
+            "runtime":"optional docker|podman",
+            "service":"optional compose service",
+            "namespace":"optional Kubernetes namespace",
+            "resource":"optional Kubernetes resource",
+            "manifest":"optional workspace-relative manifest path",
+        },
+    ),
     "release":("release_plan", "Produce a non-mutating release/version plan.", {"bump":"major|minor|patch"}),
     "github":("github_inspect", "Inspect local GitHub integration state.", {}),
     "database":("database_inspect", "Inspect database technologies without connecting.", {}),
@@ -307,7 +407,7 @@ _SPECS = {
 
 
 def _execute(plugin_id: str, root: Path, args: dict[str, Any]) -> dict[str, Any]:
-    fn = {"project-intel":lambda:_intel(root), "test-impact":lambda:_test_impact(root,args), "lsp":lambda:_lsp(root), "openapi":lambda:_openapi(root), "migration-guard":lambda:_migration(root,args), "git-worktree":lambda:_worktree(root,args), "quality-report":lambda:_quality(root,args), "dependency-audit":lambda:_dependencies(root), "ci":lambda:_ci(root), "container":lambda:_container(root), "release":lambda:_release(root,args), "github":lambda:_github(root), "database":lambda:_database(root), "browser":lambda:_browser(root), "cloud":lambda:_cloud(root), "observability":lambda:_observability(root)}.get(plugin_id)
+    fn = {"project-intel":lambda:_intel(root), "test-impact":lambda:_test_impact(root,args), "lsp":lambda:_lsp(root), "openapi":lambda:_openapi(root), "migration-guard":lambda:_migration(root,args), "git-worktree":lambda:_worktree(root,args), "quality-report":lambda:_quality(root,args), "dependency-audit":lambda:_dependencies(root), "ci":lambda:_ci(root), "container":lambda:_container(root,args), "release":lambda:_release(root,args), "github":lambda:_github(root), "database":lambda:_database(root), "browser":lambda:_browser(root), "cloud":lambda:_cloud(root), "observability":lambda:_observability(root)}.get(plugin_id)
     if fn is None: raise ValueError(f"unknown builtin plugin: {plugin_id}")
     return fn()
 

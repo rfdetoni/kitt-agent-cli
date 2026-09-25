@@ -25,6 +25,7 @@ from kitt.skills.loader import ProgressiveSkillLoader
 from kitt.context_engine.engine import ContextEngine
 from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.context_filter.semantic_filter import SemanticFilter
+from kitt.context_filter.fallback import is_container_runtime_request
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context.tool_receipts import compact_consumed_tool_results as compact_tool_results
@@ -214,7 +215,12 @@ class TurnProcessor(
             return "context-gather"
 
         original_prompt = str(getattr(task, "original_prompt", "") or "")
-        text = (original_prompt or prompt or "").casefold()
+        source_prompt = original_prompt or prompt or ""
+        text = source_prompt.casefold()
+        if is_container_runtime_request(source_prompt):
+            # Container lifecycle commands must remain execution-capable even when
+            # semantic extraction has no repository path or symbol to anchor on.
+            return "validate-diff"
         workspace_targets = (
             "projeto", "project", "site", "app", "aplicação", "aplicacao",
             "backend", "frontend", "front end", "repositório", "repositorio",

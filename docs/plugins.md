@@ -27,7 +27,7 @@ External plugins continue to use API version 1 and require explicit content trus
 | `kitt-quality-report` | `quality_report` | enabled | Build targeted/full deterministic verification plans. |
 | `kitt-dependency-audit` | `dependency_audit` | enabled | Inspect dependency manifests and lockfiles. |
 | `kitt-ci` | `ci_inspect` | enabled | Inspect CI systems and GitHub Actions references. |
-| `kitt-container` | `container_inspect` | enabled | Inspect Docker/Compose/Kubernetes descriptors and common risks. |
+| `kitt-container` | `container_inspect` | enabled | Inspect Docker/Podman/Kubernetes descriptors, discover local runtimes, and produce governed argv plans for Compose/kubectl operations. |
 | `kitt-release` | `release_plan` | disabled | Produce semantic version/release plans without mutating files. |
 | `kitt-github` | `github_inspect` | disabled | Inspect local GitHub remote/MCP integration state. |
 | `kitt-database` | `database_inspect` | disabled | Detect database technologies and migration posture without connecting. |
@@ -36,6 +36,8 @@ External plugins continue to use API version 1 and require explicit content trus
 | `kitt-observability` | `observability_inspect` | disabled | Detect local observability libraries/configuration. |
 
 All bundled handlers are lazy and read-only. They do not open database connections, contact cloud/GitHub services, launch browsers, start LSP processes, modify Git state, or read credentials.
+
+`kitt-container` detects local `docker`, `podman`, `kubectl`, and `helm` executables but never invokes them itself. Supported Compose/Kubernetes actions return a bounded `proposed_argv`; execution goes back through `kitt_runtime process.run`, preserving PolicyEngine classification, explicit approvals, sandboxing, and auditability.
 
 ## Why mutating plugins return plans
 

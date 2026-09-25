@@ -1,8 +1,8 @@
 name = "kitt-container"
-version = "1.0.0"
+version = "1.1.0"
 api_version = "1"
 entrypoint = "__init__:setup"
-description = "Container and orchestration inspection"
+description = "Docker, Podman and Kubernetes inspection with governed execution plans"
 author = "KITT"
 requires_kitt = ">=0.69.0"
 permissions = ["tools.register", "filesystem.read"]

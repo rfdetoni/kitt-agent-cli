@@ -32,6 +32,45 @@ _WORKSPACE_HOW_TO_PREFIXES = (
     "qual é a forma de ", "qual e a forma de ", "como faço para ", "como faco para ",
 )
 
+_CONTAINER_RUNTIME_TERMS = (
+    "docker", "docker compose", "compose", "podman", "podman compose",
+    "podman-compose", "kubernetes", "k8s", "kubectl", "helm",
+    "container", "containers", "contêiner", "conteiner", "contêineres", "conteineres",
+)
+_CONTAINER_EXECUTION_WORDS = {
+    "execute", "executar", "rode", "rodar", "suba", "subir", "inicie", "iniciar",
+    "start", "up", "pare", "parar", "stop", "down", "reinicie", "reiniciar",
+    "restart", "rebuild", "build", "teste", "testar", "test", "valide", "validar",
+    "validate", "verifique", "verificar", "check", "status", "logs", "ps",
+    "deploy", "aplique", "aplicar", "apply", "rollout", "scale",
+}
+
+
+def is_container_runtime_request(prompt: str) -> bool:
+    """Detect imperative Docker/Podman/Kubernetes operations needing host execution."""
+    text = prompt.lower().strip()
+    if text.startswith(_WORKSPACE_HOW_TO_PREFIXES):
+        return False
+    words = set(re.findall(r"\b[\w-]+\b", text))
+    return (
+        any(term in text for term in _CONTAINER_RUNTIME_TERMS)
+        and bool(words & _CONTAINER_EXECUTION_WORDS)
+    )
+
+
+def _container_technologies(prompt: str) -> list[str]:
+    text = prompt.lower()
+    technologies: list[str] = []
+    if "docker" in text or ("compose" in text and "podman" not in text):
+        technologies.append("docker")
+    if "podman" in text:
+        technologies.append("podman")
+    if any(term in text for term in ("kubernetes", "k8s", "kubectl")):
+        technologies.append("kubernetes")
+    if "helm" in text:
+        technologies.append("helm")
+    return technologies
+
 
 def is_workspace_creation_request(prompt: str) -> bool:
     """Detect explicit requests to create workspace/project content without an LLM.
@@ -60,10 +99,21 @@ def is_workspace_mutation_request(prompt: str) -> bool:
     )
 
 
-def _execution_actions(prompt_lower: str, intent: TaskIntent, creation_request: bool) -> list[str]:
+def _execution_actions(
+    prompt_lower: str,
+    intent: TaskIntent,
+    creation_request: bool,
+    container_runtime_request: bool = False,
+) -> list[str]:
     """Build host-oriented steps while preserving stable semantic action markers."""
     if intent == 'ASK':
         return ['analyze', 'answer without changing the workspace']
+    if container_runtime_request:
+        return [
+            'analyze',
+            'run the requested container/orchestration command through governed host execution',
+            'inspect command output and report the resulting runtime status',
+        ]
 
     # ``analyze`` and ``edit`` are stable semantic markers consumed by existing
     # routing/completion logic. Keep them in addition to the richer execution
@@ -116,7 +166,8 @@ class DeterministicFallbackPlanner:
         prompt_lower = prompt.lower()
         creation_request = is_workspace_creation_request(prompt)
         mutation_request = is_workspace_mutation_request(prompt)
-        direct_execution = any(kw in prompt_lower for kw in (
+        container_runtime_request = is_container_runtime_request(prompt)
+        direct_execution = container_runtime_request or any(kw in prompt_lower for kw in (
             "crie o arquivo", "crie um arquivo", "crie a pasta", "crie uma pasta",
             "crie o diretório", "crie um diretório", "execute", "rode",
         ))
@@ -128,6 +179,11 @@ class DeterministicFallbackPlanner:
             # asks to run tests/builds afterward. Validation is a completion step, not
             # a reason to downgrade the execution route to validate-diff.
             intent = 'IMPLEMENT'
+        elif container_runtime_request:
+            # Container lifecycle/inspection commands are operational execution, not
+            # conversational chat. TEST maps to an execution-capable route without
+            # granting repository-write authority that the request did not ask for.
+            intent = 'TEST'
         elif (
             (not paths and not symbols and not direct_execution)
             or prompt_lower.strip() in {'oi', 'olá', 'ola', 'hello', 'hi'}
@@ -148,10 +204,19 @@ class DeterministicFallbackPlanner:
             intent = 'PLAN'
 
         goal = prompt.strip()[:300]
-        actions = _execution_actions(prompt_lower, intent, creation_request)
+        actions = _execution_actions(
+            prompt_lower,
+            intent,
+            creation_request,
+            container_runtime_request=container_runtime_request,
+        )
         validation_hints = []
         if intent == 'TEST':
-            validation_hints = ['run the requested tests and inspect their results']
+            validation_hints = [
+                'run the requested host/container command and inspect its result'
+                if container_runtime_request
+                else 'run the requested tests and inspect their results'
+            ]
         elif intent not in {'ASK', 'PLAN'}:
             validation_hints = [
                 'run relevant build, test, lint, or check commands for every changed project scope'
@@ -164,6 +229,7 @@ class DeterministicFallbackPlanner:
             actions=actions,
             symbols=symbols,
             paths=paths,
+            technologies=_container_technologies(prompt),
             constraints=constraints,
             validation_hints=validation_hints,
             risk='LOW',
@@ -173,6 +239,23 @@ class DeterministicFallbackPlanner:
     def generate_plan(self, task: SemanticTask) -> ContextPlan:
         if task.intent == 'ASK' and not task.paths and not task.symbols:
             return ContextPlan(confidence=1.0)
+        container_runtime = task.intent == 'TEST' and any(
+            tech in {"docker", "podman", "kubernetes", "helm"}
+            for tech in task.technologies
+        )
+        if container_runtime:
+            return ContextPlan(
+                search_queries=task.symbols + task.paths,
+                candidate_symbols=task.symbols,
+                preferred_paths=task.paths,
+                enabled_tools=[
+                    "read_file", "run_command", "repository_map",
+                    "artifact_read", "artifact_store",
+                ],
+                instruction_modules=task.technologies,
+                validation_commands=task.validation_hints,
+                confidence=1.0,
+            )
         tools = [
             "create_directory",
             "write_file",
