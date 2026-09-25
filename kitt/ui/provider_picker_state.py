@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
-
 PROVIDER_PATTERNS = [
     {
         "id": "ollama",
@@ -34,30 +31,6 @@ PROVIDER_PATTERNS = [
     },
 ]
 
-
-class _ProvidersProperty:
-    def __get__(self, instance, owner):
-        if instance is None:
-            return owner.default_providers
-        custom_names = [
-            cp["name"]
-            for cp in instance.custom_providers
-            if cp["name"] not in instance.default_providers
-        ]
-        ordered: list[str] = []
-        for provider in instance.favorite_providers:
-            if provider not in ordered:
-                ordered.append(provider)
-        for provider in instance.default_providers:
-            if provider not in ordered:
-                ordered.append(provider)
-        for provider in custom_names:
-            if provider not in ordered:
-                ordered.append(provider)
-        return tuple(ordered)
-
-
-
 class ProviderPatternBehavior:
     """Provider protocol-template selection only."""
 
@@ -66,13 +39,9 @@ class ProviderPatternBehavior:
         idx = max(0, min(self.pattern_index, len(PROVIDER_PATTERNS) - 1))
         return PROVIDER_PATTERNS[idx]
 
-
-
     def cycle_pattern(self, delta: int = 1) -> dict:
         self.pattern_index = (self.pattern_index + delta) % len(PROVIDER_PATTERNS)
         return self.selected_pattern
-
-
 
     def set_pattern_by_id(self, pattern_id: str) -> bool:
         pid = (pattern_id or "").strip().lower()
@@ -81,5 +50,4 @@ class ProviderPatternBehavior:
                 self.pattern_index = idx
                 return True
         return False
-
 
