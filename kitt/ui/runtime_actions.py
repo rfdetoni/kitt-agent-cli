@@ -5,6 +5,10 @@ import time
 import uuid
 from pathlib import Path
 
+from kitt.core.turn_events import ApprovalRequired
+from kitt.ui.event_bridge import TurnEventBridge
+from kitt.ui.git import read_git_branch_name
+from kitt.ui.overlay_models import SessionPickerModel, TimelineModel
 from kitt.ui.state import safe_text
 
 def _show_result(ui, text: str) -> None:

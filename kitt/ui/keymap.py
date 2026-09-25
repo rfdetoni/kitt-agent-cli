@@ -14,6 +14,11 @@ class KeyBinding:
     discoverable: bool = True
 
     @property
+    def keys(self) -> tuple[str, ...]:
+        """Compatibility/introspection view with unique raw keys across sequences."""
+        return tuple(dict.fromkeys(key for sequence in self.sequences for key in sequence))
+
+    @property
     def label(self) -> str:
         def pretty(sequence: tuple[str, ...]) -> str:
             labels = {
