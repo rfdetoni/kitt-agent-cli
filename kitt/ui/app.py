@@ -6,15 +6,10 @@ import functools
 import json
 import os
 import re
-import shlex
-import urllib.request
-import uuid
 import time
-from dataclasses import replace
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
-from importlib.metadata import PackageNotFoundError, version as package_version
 from kitt.core.turn_events import ApprovalRequired
 from kitt.ui.commands import CommandRegistry
 from kitt.ui.event_bridge import TurnEventBridge
@@ -23,22 +18,8 @@ from kitt.ui.keymap import KeyMap
 from kitt.ui.layout import LayoutDimensions, build_root_container
 from kitt.ui.overlay_models import DiffViewerModel, ModelSetupModel, OverlayFrame, SessionPickerModel, TimelineModel
 from kitt.ui.reducer import reduce_ui_event
-from kitt.ui.state import UIState, safe_text
+from kitt.ui.state import UIState
 from kitt.ui.theme import DEFAULT_THEME
-from kitt.ui.model_commands import (
-    handle_model_command, handle_setup_models_command, handle_add_provider_command,
-    handle_edit_provider_command, handle_delete_provider_command, handle_local_limits_command, parse_model_command
-)
-from kitt.ui.session_commands import (
-    handle_resume_command, handle_fork_command, handle_export_command,
-    handle_compact_command, handle_stats_command, handle_gain_command,
-    handle_status_command
-)
-from kitt.ui.skill_commands import (
-    handle_setup_skills_command, handle_skill_install_command, handle_skill_remove_command,
-    handle_remember_command, handle_clear_memory_command, handle_doctor_command
-)
-from kitt.ui.dream_commands import handle_dream_command, handle_memory_extended_command
 from kitt.ui.overlay_manager import OverlayManager
 from kitt.ui import command_dispatcher as _command_dispatcher
 from kitt.ui import model_service as _model_service
@@ -47,13 +28,6 @@ from kitt.ui import runtime_actions as _runtime_actions
 from kitt.ui import mouse as _mouse
 from kitt.ui.render import core as _render_core
 from kitt.ui.render import overlays as _render_overlays
-
-
-def _agent_version() -> str:
-    try:
-        return package_version("kitt-agent-cli")
-    except PackageNotFoundError:
-        return "dev"
 
 
 class KittUIApp:
@@ -275,9 +249,7 @@ class KittUIApp:
         if self.application:
             self.application.invalidate()
 
-    async def _execute_command(self, *args, **kwargs):
-        return await _command_dispatcher._execute_command(self, *args, **kwargs)
-
+    _execute_command = _command_dispatcher._execute_command
     async def _export_conversation(self, fmt: str) -> None:
         conv = self.runtime.history.get_active_read_only()
         if not conv:
@@ -301,18 +273,10 @@ class KittUIApp:
         out_path.write_text(content, encoding="utf-8")
         self._show_result(f"Exportado: {filename}")
 
-    def _parse_model_command(self, *args, **kwargs):
-        return _model_service._parse_model_command(self, *args, **kwargs)
-
-    def _role_tasks(self, *args, **kwargs):
-        return _model_service._role_tasks(self, *args, **kwargs)
-
-    def _model_for_role(self, *args, **kwargs):
-        return _model_service._model_for_role(self, *args, **kwargs)
-
-    def _profile_for_role(self, *args, **kwargs):
-        return _model_service._profile_for_role(self, *args, **kwargs)
-
+    _parse_model_command = _model_service._parse_model_command
+    _role_tasks = _model_service._role_tasks
+    _model_for_role = _model_service._model_for_role
+    _profile_for_role = _model_service._profile_for_role
     @staticmethod
     def _provider_defaults(provider: str) -> tuple[str, str]:
         defaults = {
@@ -354,24 +318,12 @@ class KittUIApp:
         env_host = os.environ.get(f"{provider.upper().replace('-', '_').replace(' ', '_')}_HOST", "http://localhost:11434" if "ollama" in p_lower else "http://localhost:8000/v1")
         return (env_host, env_key)
 
-    async def _set_model_role(self, *args, **kwargs):
-        return await _model_service._set_model_role(self, *args, **kwargs)
-
-    async def _toggle_role_local_limits(self, *args, **kwargs):
-        return await _model_service._toggle_role_local_limits(self, *args, **kwargs)
-
-    async def _models_for_provider(self, *args, **kwargs):
-        return await _model_service._models_for_provider(self, *args, **kwargs)
-
-    async def _prepare_model_setup(self, *args, **kwargs):
-        return await _model_service._prepare_model_setup(self, *args, **kwargs)
-
-    def _model_setup_search_changed(self, *args, **kwargs):
-        return _model_service._model_setup_search_changed(self, *args, **kwargs)
-
-    async def _open_model_setup_overlay(self, *args, **kwargs):
-        return await _model_service._open_model_setup_overlay(self, *args, **kwargs)
-
+    _set_model_role = _model_service._set_model_role
+    _toggle_role_local_limits = _model_service._toggle_role_local_limits
+    _models_for_provider = _model_service._models_for_provider
+    _prepare_model_setup = _model_service._prepare_model_setup
+    _model_setup_search_changed = _model_service._model_setup_search_changed
+    _open_model_setup_overlay = _model_service._open_model_setup_overlay
     def _scroll_transcript(self, delta: int) -> None:
         if not hasattr(self, "transcript_window"):
             return
@@ -426,112 +378,32 @@ class KittUIApp:
             self.application.invalidate()
         return self.state.turn_mode
 
-    def _model_setup_mouse_handler(self, *args, **kwargs):
-        return _mouse._model_setup_mouse_handler(self, *args, **kwargs)
-
-    def _provider_popup_mouse_handler(self, *args, **kwargs):
-        return _mouse._provider_popup_mouse_handler(self, *args, **kwargs)
-
-    def _select_popup_action(self, *args, **kwargs):
-        return _provider_flow._select_popup_action(self, *args, **kwargs)
-
-    def _open_provider_popup_overlay(self, *args, **kwargs):
-        return _provider_flow._open_provider_popup_overlay(self, *args, **kwargs)
-
-    def _provider_popup_text(self, *args, **kwargs):
-        return _provider_flow._provider_popup_text(self, *args, **kwargs)
-
-    async def _persist_custom_providers(self, *args, **kwargs):
-        return await _provider_flow._persist_custom_providers(self, *args, **kwargs)
-
-    def _open_add_provider_overlay(self, *args, **kwargs):
-        return _provider_flow._open_add_provider_overlay(self, *args, **kwargs)
-
-    def _open_edit_provider_overlay(self, *args, **kwargs):
-        return _provider_flow._open_edit_provider_overlay(self, *args, **kwargs)
-
-    async def _delete_custom_provider(self, *args, **kwargs):
-        return await _provider_flow._delete_custom_provider(self, *args, **kwargs)
-
-    def _add_provider_help_text(self, *args, **kwargs):
-        return _provider_flow._add_provider_help_text(self, *args, **kwargs)
-
-    def _accept_add_provider(self, *args, **kwargs):
-        return _provider_flow._accept_add_provider(self, *args, **kwargs)
-
-    async def _finish_add_provider(self, *args, **kwargs):
-        return await _provider_flow._finish_add_provider(self, *args, **kwargs)
-
-    def _open_provider_endpoint_overlay(self, *args, **kwargs):
-        return _provider_flow._open_provider_endpoint_overlay(self, *args, **kwargs)
-
+    _model_setup_mouse_handler = _mouse.model_setup_mouse_handler
+    _provider_popup_mouse_handler = _mouse.provider_popup_mouse_handler
+    _select_popup_action = _provider_flow._select_popup_action
+    _open_provider_popup_overlay = _provider_flow._open_provider_popup_overlay
+    _provider_popup_text = _provider_flow._provider_popup_text
+    _persist_custom_providers = _provider_flow._persist_custom_providers
+    _open_add_provider_overlay = _provider_flow._open_add_provider_overlay
+    _open_edit_provider_overlay = _provider_flow._open_edit_provider_overlay
+    _delete_custom_provider = _provider_flow._delete_custom_provider
+    _add_provider_help_text = _provider_flow._add_provider_help_text
+    _accept_add_provider = _provider_flow._accept_add_provider
+    _finish_add_provider = _provider_flow._finish_add_provider
+    _open_provider_endpoint_overlay = _provider_flow._open_provider_endpoint_overlay
     @staticmethod
     def _provider_endpoint_text():
         return "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
 
-    async def _submit_provider_endpoint(self, *args, **kwargs):
-        return await _provider_flow._submit_provider_endpoint(self, *args, **kwargs)
-
-    def _auth_login_help_text(self, *args, **kwargs):
-        return _provider_flow._auth_login_help_text(self, *args, **kwargs)
-
-    async def _start_oauth_flow(self, *args, **kwargs):
-        return await _provider_flow._start_oauth_flow(self, *args, **kwargs)
-
-    def _accept_model_setup_search(self, *args, **kwargs):
-        return _provider_flow._accept_model_setup_search(self, *args, **kwargs)
-
-    def _open_auth_login_overlay(self, *args, **kwargs):
-        return _provider_flow._open_auth_login_overlay(self, *args, **kwargs)
-
-    def _accept_auth_login(self, *args, **kwargs):
-        return _provider_flow._accept_auth_login(self, *args, **kwargs)
-
-    async def _apply_pending_model(self, *args, **kwargs):
-        return await _provider_flow._apply_pending_model(self, *args, **kwargs)
-
-    def _agents_text(self, *args, **kwargs):
-        return _render_overlays._agents_text(self, *args, **kwargs)
-
-    def _live_agents_text(self, *args, **kwargs):
-        return _render_overlays._live_agents_text(self, *args, **kwargs)
-
-    def _is_local_or_no_auth_provider(self, *args, **kwargs):
-        return _provider_flow._is_local_or_no_auth_provider(self, *args, **kwargs)
-
-    async def _apply_selected_model(self, *args, **kwargs):
-        return await _provider_flow._apply_selected_model(self, *args, **kwargs)
-
-    def _show_result(self, *args, **kwargs):
-        return _runtime_actions._show_result(self, *args, **kwargs)
-
-    async def _show_history(self, *args, **kwargs):
-        return await _runtime_actions._show_history(self, *args, **kwargs)
-
-    async def _show_active_history(self, *args, **kwargs):
-        return await _runtime_actions._show_active_history(self, *args, **kwargs)
-
-    async def _load_conversation(self, *args, **kwargs):
-        return await _runtime_actions._load_conversation(self, *args, **kwargs)
-
-    async def _execute_direct_tool(self, *args, **kwargs):
-        return await _runtime_actions._execute_direct_tool(self, *args, **kwargs)
-
-    async def _switch_workspace(self, *args, **kwargs):
-        return await _runtime_actions._switch_workspace(self, *args, **kwargs)
-
-    async def _set_reasoning_effort(self, *args, **kwargs):
-        return await _runtime_actions._set_reasoning_effort(self, *args, **kwargs)
-
-    async def _set_autonomy_profile(self, *args, **kwargs):
-        return await _runtime_actions._set_autonomy_profile(self, *args, **kwargs)
-
-    async def _clear_remembered_approvals(self, *args, **kwargs):
-        return await _runtime_actions._clear_remembered_approvals(self, *args, **kwargs)
-
-    async def resolve_approval(self, *args, **kwargs):
-        return await _runtime_actions.resolve_approval(self, *args, **kwargs)
-
+    _submit_provider_endpoint = _provider_flow._submit_provider_endpoint
+    _auth_login_help_text = _provider_flow._auth_login_help_text
+    _start_oauth_flow = _provider_flow._start_oauth_flow
+    _accept_model_setup_search = _provider_flow._accept_model_setup_search
+    _open_auth_login_overlay = _provider_flow._open_auth_login_overlay
+    _accept_auth_login = _provider_flow._accept_auth_login
+    _apply_pending_model = _provider_flow._apply_pending_model
+    _agents_text = _render_overlays._agents_text
+    _live_agents_text = _render_overlays._live_agents_text
     def open_overlay(self, name: str, control=None, parent_name: str | None = None) -> None:
         self.overlay_manager.open(name, control, parent_name=parent_name)
 
@@ -660,57 +532,24 @@ class KittUIApp:
                         pass
         self._blocking_executor.shutdown(wait=True, cancel_futures=True)
 
-    def _home_text(self, *args, **kwargs):
-        return _render_core._home_text(self, *args, **kwargs)
-
-    def _header_text(self, *args, **kwargs):
-        return _render_core._header_text(self, *args, **kwargs)
-
-    def _transcript_text(self, *args, **kwargs):
-        return _render_core._transcript_text(self, *args, **kwargs)
-
-    def _transcript_cursor_position(self, *args, **kwargs):
-        return _render_core._transcript_cursor_position(self, *args, **kwargs)
-
-    def _sidebar_text(self, *args, **kwargs):
-        return _render_core._sidebar_text(self, *args, **kwargs)
-
-    def _status_text(self, *args, **kwargs):
-        return _render_core._status_text(self, *args, **kwargs)
-
-    def _context_details_text(self, *args, **kwargs):
-        return _render_core._context_details_text(self, *args, **kwargs)
-
-    def _toast_text(self, *args, **kwargs):
-        return _render_core._toast_text(self, *args, **kwargs)
-
-    def _permission_text(self, *args, **kwargs):
-        return _render_overlays._permission_text(self, *args, **kwargs)
-
-    def _autonomy_text(self, *args, **kwargs):
-        return _render_overlays._autonomy_text(self, *args, **kwargs)
-
-    def _palette_text(self, *args, **kwargs):
-        return _render_overlays._palette_text(self, *args, **kwargs)
-
-    def _session_picker_text(self, *args, **kwargs):
-        return _render_overlays._session_picker_text(self, *args, **kwargs)
-
-    def _timeline_text(self, *args, **kwargs):
-        return _render_overlays._timeline_text(self, *args, **kwargs)
-
-    def _diff_text(self, *args, **kwargs):
-        return _render_overlays._diff_text(self, *args, **kwargs)
-
-    def _model_setup_header_text(self, *args, **kwargs):
-        return _render_overlays._model_setup_header_text(self, *args, **kwargs)
-
-    def _model_setup_text(self, *args, **kwargs):
-        return _render_overlays._model_setup_text(self, *args, **kwargs)
-
+    _home_text = _render_core._home_text
+    _header_text = _render_core._header_text
+    _transcript_text = _render_core._transcript_text
+    _transcript_cursor_position = _render_core._transcript_cursor_position
+    _sidebar_text = _render_core._sidebar_text
+    _status_text = _render_core._status_text
+    _context_details_text = _render_core._context_details_text
+    _toast_text = _render_core._toast_text
+    _permission_text = _render_overlays._permission_text
+    _autonomy_text = _render_overlays._autonomy_text
+    _palette_text = _render_overlays._palette_text
+    _session_picker_text = _render_overlays._session_picker_text
+    _timeline_text = _render_overlays._timeline_text
+    _diff_text = _render_overlays._diff_text
+    _model_setup_header_text = _render_overlays._model_setup_header_text
+    _model_setup_text = _render_overlays._model_setup_text
     @staticmethod
     def _provider_endpoint_text():
         return "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
 
-    def _help_text(self, *args, **kwargs):
-        return _render_overlays._help_text(self, *args, **kwargs)
+    _help_text = _render_overlays._help_text
