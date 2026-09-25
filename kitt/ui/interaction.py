@@ -40,8 +40,7 @@ class InteractionMap:
 
     def begin(self, surface: str) -> None:
         self._regions[surface] = []
-        self._hovered.pop(surface, None)
-        # Keep the pressed semantic target across demand-driven rerenders.
+        # Keep hover and press semantic targets across demand-driven rerenders.
         # Mouse-up will only activate when the freshly rendered target has
         # the same semantic key, so stale layout coordinates cannot fire.
 
