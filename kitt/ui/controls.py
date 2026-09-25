@@ -8,18 +8,18 @@ def build_controls(ui) -> None:
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 
-    ui = ui
+    app = ui
 
     class KittCompleter(Completer):
-        def get_completions(ui, document, complete_event):
+        def get_completions(self, document, complete_event):
             from kitt.skills.discovery import SkillDiscovery
             word = document.get_word_before_cursor(WORD=True)
             if not word:
                 return
 
             roots = [
-                Path(ui.state.workspace_path) / ".kitt" / "skills",
-                Path(ui.state.workspace_path) / ".gemini" / "skills",
+                Path(app.state.workspace_path) / ".kitt" / "skills",
+                Path(app.state.workspace_path) / ".gemini" / "skills",
                 Path.home() / ".kitt" / "skills",
                 Path.home() / ".gemini" / "config" / "plugins",
                 Path.home() / ".gemini" / "antigravity-cli" / "builtin" / "skills",
@@ -29,7 +29,7 @@ def build_controls(ui) -> None:
             if word.startswith("/"):
                 # 1. Built-in slash commands
                 seen = set()
-                for command in ui.commands.search(word):
+                for command in app.commands.search(word):
                     alias = command.aliases[0]
                     seen.add(alias)
                     yield Completion(alias, start_position=-len(word), display_meta=command.description)
@@ -48,8 +48,8 @@ def build_controls(ui) -> None:
                 prefix = word[1:]
                 # 1. Files & Directories in workspace
                 try:
-                    for path in Path(ui.state.workspace_path).glob(prefix + "*"):
-                        name = str(path.relative_to(ui.state.workspace_path)) + ("/" if path.is_dir() else "")
+                    for path in Path(app.state.workspace_path).glob(prefix + "*"):
+                        name = str(path.relative_to(app.state.workspace_path)) + ("/" if path.is_dir() else "")
                         yield Completion("@" + name, start_position=-len(word), display_meta="file")
                 except Exception:
                     pass

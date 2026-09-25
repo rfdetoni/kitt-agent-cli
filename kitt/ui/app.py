@@ -89,8 +89,6 @@ class KittUIApp:
         self.palette_index = 0
         self.focus_stack: list[OverlayFrame] = []
         self.overlay_manager = OverlayManager(self)
-        self.state.add_toast("Mouse ativo — role sobre qualquer painel para navegar. /mouse alterna para seleção nativa.", duration=5.0)
-
         self._build_controls()
 
     async def _run_blocking(self, func, *args, **kwargs):
@@ -1090,7 +1088,7 @@ class KittUIApp:
         return "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
 
     def _help_text(self):
-        shortcuts = ["ATALHOS — Ctrl+P descobre todas as ações", ""]
+        shortcuts = ["ATALHOS — Ctrl+P descobre todas as ações", "Mouse ativo por padrão: role sobre o painel desejado; /mouse alterna para seleção nativa.", ""]
         shortcuts.extend(f"{keys:22} {description}" for _, keys, description in self.keymap.get_help_list())
         shortcuts.extend(["", "COMANDOS", ""])
         shortcuts.extend(f"{c.aliases[0]:22} {c.description}" for c in self.commands.commands.values())
