@@ -38,7 +38,8 @@ class TestTUIArchitectureBoundaries(unittest.TestCase):
             for sequence in binding.sequences
             if sequence and sequence[0] == "c-x"
         ]
-        self.assertLessEqual(ctrl_x, [("c-x", "a"), ("c-x", "b"), ("c-x", "n")])
+        allowed = {("c-x", "a"), ("c-x", "b"), ("c-x", "n")}
+        self.assertTrue(set(ctrl_x).issubset(allowed))
         self.assertLessEqual(len(ctrl_x), 3)
 
     def test_model_setup_uses_small_composed_behaviors(self):
