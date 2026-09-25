@@ -46,7 +46,7 @@ Application mouse support is enabled by default. This makes hover-local wheel na
 
 ### OpenTUI-inspired interaction model
 
-Agent CLI 0.72 adopts the interaction principles that fit the existing retained prompt_toolkit architecture without porting OpenTUI's renderer, Zig runtime or flexbox layer.
+Agent CLI 0.72 adopts the interaction principles that fit the existing retained prompt_toolkit architecture without porting OpenTUI's renderer, Zig runtime or flexbox layer. Agent CLI 0.72.3 additionally requires actionable text controls to expose hover feedback without changing their cell geometry.
 
 - `InteractionMap` is a lightweight local-cell hit grid rebuilt by the render function for each interactive surface.
 - Visible rows and buttons register semantic action ids rather than embedding business logic in mouse handlers.
@@ -113,3 +113,8 @@ These are guardrails, not style metrics: crossing one means a new responsibility
 Modal projections that return plain strings are sanitized before they enter prompt_toolkit. Raw CSI/ANSI escape sequences are never used as styling inside retained controls; prompt_toolkit style classes remain the renderer-owned styling mechanism. This prevents artifacts such as `^[`, `^[[0m` and other escape bytes from appearing as modal content.
 
 The Reverse Proxy context tab is part of the same retained contextual Float. `/reverse-proxy` opens that surface first, displays a loading state, and only then performs the control-plane snapshot refresh so subprocess latency cannot make the command appear inert.
+
+
+## Hover geometry invariant — Agent CLI 0.72.3
+
+Hover feedback must never change the start column or visible width of a registered hit region. Reverse Proxy text actions therefore use same-length label transformations for hover state. This keeps the semantic target stable across repaint and preserves the press/release invariant.

@@ -480,7 +480,7 @@ Mouse and keyboard share the same controller actions:
 
 Mouse support remains enabled by default. Use `F10` or `/mouse` when native terminal text selection/copy is preferred. Wheel routing remains isolated to the panel under the pointer.
 
-Agent CLI **0.72.2** hardens this path: mouse-down records the semantic target without virtualizing the list before mouse-up, plain-text modal scrolling no longer snaps back to row zero, and modal projections strip raw ANSI escape sequences before prompt_toolkit renders them.
+Agent CLI **0.72.3** hardens this path: mouse-down records the semantic target without virtualizing the list before mouse-up, plain-text modal scrolling no longer snaps back to row zero, modal projections strip raw ANSI escape sequences before prompt_toolkit renders them, and Reverse Proxy action buttons expose explicit hover feedback without moving their hit-test geometry.
 
 The interaction layer is inspired by OpenTUI's rendered-cell hit testing, focus ownership and keyboard/mouse parity, but is an independent KITT implementation with no OpenTUI runtime dependency.
 
@@ -518,3 +518,10 @@ Equivalent commands:
 Role bindings reuse the existing model router and are persisted in `.kitt-router.json`. Agent CLI does not scan OS process tables; lifecycle and provider discovery remain owned by the reverse-proxy control plane.
 
 See `docs/REVERSE_PROXY_CONTROL.md`.
+
+
+### Agent CLI 0.72.3 — Reverse Proxy mouse polish
+
+- Reverse Proxy action buttons now expose visible hover feedback while preserving identical cell geometry between normal and hovered states.
+- Click activation continues to use the same semantic controller actions as keyboard shortcuts, with press/release target matching.
+- This patch completes the mouse/scroll/modal cleanup introduced in 0.72.2 without adding a new renderer or UI dependency.

@@ -66,9 +66,14 @@ Principal/Code -> chatgpt-code   -> ChatGPT Web -> http://127.0.0.1:3001
 The Agent test validates that both roles persist through the existing model router with distinct `base_url` values. The reverse-proxy suite validates that the Gemini and ChatGPT presets resolve to different canonical plugins and can coexist as separate instance records.
 
 
-## TUI interaction hardening in Agent CLI 0.72.2
+## TUI interaction hardening in Agent CLI 0.72.3
 
 - The Reverse Proxy tab is explicitly included in the contextual-panel visibility map; setting `active_overlay=reverse_proxy` therefore always paints the modal.
 - Pointer press no longer changes a virtualized selection before release, so a normal click cannot move its own semantic target during rerender.
 - Wheel routing advances virtualized selections and retained plain-text windows keep their requested vertical scroll across renders.
 - Modal strings are ANSI-sanitized before prompt_toolkit rendering; terminal escape sequences are not part of the retained text contract.
+
+
+### Pointer feedback
+
+Action labels in Services, Profiles and Novo serviço expose a visible hover state. The hover transformation preserves the same character count, so the interaction map keeps identical coordinates before and after repaint. Clicking the hovered action reaches the same controller path as its keyboard shortcut.
