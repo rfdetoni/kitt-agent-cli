@@ -84,6 +84,26 @@ def make_index_wheel_handler(
     return handle
 
 
+def _anchor_formatted_text_scroll(window, control) -> None:
+    """Keep plain-text modal scrolling stable across prompt_toolkit renders."""
+    if control is None or not hasattr(control, "get_cursor_position"):
+        return
+    if getattr(control, "get_cursor_position", None) is not None:
+        return
+
+    from prompt_toolkit.data_structures import Point
+
+    def cursor_position() -> Point:
+        row = max(0, int(getattr(window, "vertical_scroll", 0)))
+        render_info = getattr(window, "render_info", None)
+        if render_info is not None:
+            row = min(row, max(0, int(render_info.ui_content.line_count) - 1))
+        return Point(x=0, y=row)
+
+    control.get_cursor_position = cursor_position
+    if hasattr(control, "show_cursor"):
+        control.show_cursor = False
+
 def register_scrollable_window(
     ui,
     name: str,
@@ -100,6 +120,7 @@ def register_scrollable_window(
     if target_control is None:
         return window
 
+    _anchor_formatted_text_scroll(window, target_control)
     invalidate = lambda: ui.application.invalidate() if ui.application else None
     wheel = wheel_handler or make_wheel_scroll_handler(
         lambda: ui.scrollable_windows.get(name),
