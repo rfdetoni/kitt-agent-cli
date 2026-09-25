@@ -249,6 +249,54 @@ class KittUIApp:
             self.application.invalidate()
 
     _execute_command = _command_dispatcher._execute_command
+    # Service contract aliases. Module-level functions bind to this instance when
+    # exposed on the class, preserving the internal KITT UI contract without
+    # reintroducing orchestration logic into KittUIApp.
+    _parse_model_command = _model_service._parse_model_command
+    _role_tasks = _model_service._role_tasks
+    _model_for_role = _model_service._model_for_role
+    _profile_for_role = _model_service._profile_for_role
+    _set_model_role = _model_service._set_model_role
+    _toggle_role_local_limits = _model_service._toggle_role_local_limits
+    _models_for_provider = _model_service._models_for_provider
+    _prepare_model_setup = _model_service._prepare_model_setup
+    _model_setup_search_changed = _model_service._model_setup_search_changed
+    _open_model_setup_overlay = _model_service._open_model_setup_overlay
+
+    _model_setup_mouse_handler = _mouse.model_setup_mouse_handler
+    _provider_popup_mouse_handler = _mouse.provider_popup_mouse_handler
+
+    _select_popup_action = _provider_flow._select_popup_action
+    _open_provider_popup_overlay = _provider_flow._open_provider_popup_overlay
+    _provider_popup_text = _provider_flow._provider_popup_text
+    _persist_custom_providers = _provider_flow._persist_custom_providers
+    _open_add_provider_overlay = _provider_flow._open_add_provider_overlay
+    _open_edit_provider_overlay = _provider_flow._open_edit_provider_overlay
+    _delete_custom_provider = _provider_flow._delete_custom_provider
+    _add_provider_help_text = _provider_flow._add_provider_help_text
+    _accept_add_provider = _provider_flow._accept_add_provider
+    _finish_add_provider = _provider_flow._finish_add_provider
+    _open_provider_endpoint_overlay = _provider_flow._open_provider_endpoint_overlay
+    _submit_provider_endpoint = _provider_flow._submit_provider_endpoint
+    _auth_login_help_text = _provider_flow._auth_login_help_text
+    _start_oauth_flow = _provider_flow._start_oauth_flow
+    _accept_model_setup_search = _provider_flow._accept_model_setup_search
+    _open_auth_login_overlay = _provider_flow._open_auth_login_overlay
+    _accept_auth_login = _provider_flow._accept_auth_login
+    _apply_pending_model = _provider_flow._apply_pending_model
+    _is_local_or_no_auth_provider = _provider_flow._is_local_or_no_auth_provider
+    _apply_selected_model = _provider_flow._apply_selected_model
+
+    _show_result = _runtime_actions._show_result
+    _show_history = _runtime_actions._show_history
+    _show_active_history = _runtime_actions._show_active_history
+    _load_conversation = _runtime_actions._load_conversation
+    _execute_direct_tool = _runtime_actions._execute_direct_tool
+    _switch_workspace = _runtime_actions._switch_workspace
+    _set_reasoning_effort = _runtime_actions._set_reasoning_effort
+    _set_autonomy_profile = _runtime_actions._set_autonomy_profile
+    _clear_remembered_approvals = _runtime_actions._clear_remembered_approvals
+    resolve_approval = _runtime_actions.resolve_approval
     _export_conversation = _runtime_actions._export_conversation
     _provider_defaults = _model_service._provider_defaults
     _scroll_transcript = _mouse._scroll_transcript
@@ -338,3 +386,6 @@ class KittUIApp:
     _diff_text = _render_overlays._diff_text
     _model_setup_header_text = _render_overlays._model_setup_header_text
     _model_setup_text = _render_overlays._model_setup_text
+    _agents_text = _render_overlays._agents_text
+    _live_agents_text = _render_overlays._live_agents_text
+    _help_text = _render_overlays._help_text
