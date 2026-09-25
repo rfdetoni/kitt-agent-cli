@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from kitt.ui.theme import DEFAULT_THEME
+from kitt.ui.theme import DEFAULT_THEME, strip_ansi
 
 def _agents_text(ui) -> str:
     from kitt.ui.components.agents_dashboard import AgentsDashboardComponent
-    return AgentsDashboardComponent().render(ui.state, max(40, ui.state.width - 16))
+    return strip_ansi(
+        AgentsDashboardComponent().render(ui.state, max(40, ui.state.width - 16))
+    )
 
 
 def _live_agents_text(ui) -> str:
@@ -35,8 +37,10 @@ def _live_agents_text(ui) -> str:
 def _permission_text(ui):
     from kitt.ui.components.permission_card import PermissionCardComponent
 
-    text = PermissionCardComponent().render(
-        ui.state, max(50, ui.state.width - 10), ui.approval_menu_index
+    text = strip_ansi(
+        PermissionCardComponent().render(
+            ui.state, max(50, ui.state.width - 10), ui.approval_menu_index
+        )
     )
     ui.interactions.begin("permission")
     lines = text.splitlines()
@@ -61,15 +65,21 @@ def _autonomy_text(ui) -> str:
     )
     rules = getattr(ui.runtime.approval, "remembered_rules", [])
     rules_str = "\n".join(f"  • {r.tool_name} ({r.path_glob or '*'}) -> {r.decision.upper()} [{r.scope}]" for r in rules[-5:]) if rules else "  (Nenhuma regra salva)"
+    hovered = ui.interactions.hovered("autonomy")
+
+    def hover_marker(action: str, value=None) -> str:
+        if hovered and hovered.action == action and repr(hovered.value) == repr(value):
+            return ">"
+        return " "
 
     text = (
         t.format_primary("┌── CENTRAL DE PERMISSÕES & AUTONOMIA / AUTONOMY CONTROL ───────────────────┐\n") +
         f"│ Perfil Atual: [ {curr.level.upper()} ]  Comandos: [ {command_mode} ]\n" +
         "│\n" +
         "│ Política para comandos e alterações:\n" +
-        "│  [1] ALLOW ALL : Executar automaticamente dentro das regras críticas\n" +
-        "│  [2] ASK       : Pedir aprovação antes de comandos e alterações\n" +
-        "│  [3] DENY      : Bloquear comandos, alterações e subagentes\n" +
+        f"│ {hover_marker('autonomy.profile', 'autonomous')}[1] ALLOW ALL : Executar automaticamente dentro das regras críticas\n" +
+        f"│ {hover_marker('autonomy.profile', 'supervised')}[2] ASK       : Pedir aprovação antes de comandos e alterações\n" +
+        f"│ {hover_marker('autonomy.profile', 'read_only')}[3] DENY      : Bloquear comandos, alterações e subagentes\n" +
         "│\n" +
         "│ Regras Salvas no Workspace:\n" +
         f"{rules_str}\n" +
@@ -77,6 +87,7 @@ def _autonomy_text(ui) -> str:
         "│ Controles: [1] Allow All  [2] Ask  [3] Deny  [r] Limpar Regras  [Esc] Sair\n" +
         t.format_primary("└────────────────────────────────────────────────────────────────────────────┘")
     )
+    text = strip_ansi(text)
     ui.interactions.begin("autonomy")
     for row, line in enumerate(text.splitlines()):
         if "[1] ALLOW ALL" in line:
@@ -98,11 +109,13 @@ def _palette_text(ui):
     query = ui.palette_buffer.text
     commands = ui.commands.search(query)
     window_size = 10
-    text = CommandPaletteComponent(ui.commands, ui.keymap).render(
-        query=query,
-        selected_index=ui.palette_index,
-        width=max(40, ui.state.width - 16),
-        window_size=window_size,
+    text = strip_ansi(
+        CommandPaletteComponent(ui.commands, ui.keymap).render(
+            query=query,
+            selected_index=ui.palette_index,
+            width=max(40, ui.state.width - 16),
+            window_size=window_size,
+        )
     )
     ui.interactions.begin("palette")
     if commands:
@@ -177,7 +190,7 @@ def _timeline_text(ui):
 
 
 def _diff_text(ui):
-    diff = ui.diff_model.diff_text
+    diff = strip_ansi(ui.diff_model.diff_text)
     if not diff:
         return "Unified diff preview\n\nNo pending diff."
     lines = diff.splitlines()[ui.diff_model.scroll_offset:ui.diff_model.scroll_offset + 30]
