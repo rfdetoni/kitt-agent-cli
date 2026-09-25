@@ -38,7 +38,7 @@ The Agent keeps `kitt/native/bridge.py` and the portable fallback because runtim
 
 The full-screen TUI is a thin presentation layer around the existing runtime contracts. `KittRuntime`, `TurnEventBridge`, repository/context services and command handlers remain authoritative for execution and data. UI modules are separated by responsibility: retained controls, keybindings, scroll/mouse routing, rendering, command dispatch, model/provider flows and runtime actions. See [TUI_ARCHITECTURE.md](TUI_ARCHITECTURE.md).
 
-The UI keeps `Window`, `Control` and `Buffer` instances stable after construction. Rendering functions are stateless projections over `UIState`; `invalidate()` does not rebuild the container tree. Mouse wheel routing is local to a registered surface, which prevents cross-panel state mutations and avoids global scroll dispatch on the hot render path.
+The UI keeps `Window`, `Control` and `Buffer` instances stable after construction. `invalidate()` does not rebuild the container tree. Rendering also rebuilds only the small interaction hit map for the visible surface: semantic row/button regions are derived from the rendered cell layout, while controller actions remain outside rendering. Mouse wheel routing is local to a registered surface, which prevents cross-panel state mutations and avoids global scroll dispatch on the hot render path.
 
 ## Native code intelligence
 
@@ -164,3 +164,8 @@ references and explicit `depends_on` edges create deterministic barriers.
 The Agent treats KITT Reverse Proxy as an external control-plane boundary. `kitt/reverse_proxy/client.py` executes only argv-based machine-readable commands and maps schema-v1 responses into immutable contracts. TUI code never discovers PIDs, allocates ports or loads provider plugins itself.
 
 Role assignment remains owned by the existing task router. Binding an instance calls the same model-role service used by F12, so Context, Principal/Code and Validation can point to independent reverse-proxy endpoints without a parallel routing system.
+
+
+## TUI interaction boundary
+
+Agent CLI 0.72 introduces `kitt/ui/interaction.py` as the single owner of local-cell hit testing. The design borrows the interaction concepts that are useful from OpenTUI—rendered-cell hit targets, focus ownership and keyboard/mouse parity—without adopting its renderer or runtime. Render functions register semantic regions; `kitt/ui/mouse.py` translates pointer events to those semantic actions; existing controllers perform the mutations. This preserves SOLID ownership and keeps input mechanics independent from reverse-proxy, router and approval business rules.

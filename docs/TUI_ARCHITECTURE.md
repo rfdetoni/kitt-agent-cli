@@ -14,7 +14,7 @@ The refactor in Agent CLI 0.70.0 replaces the former monolithic UI implementatio
 | `kitt/ui/controls.py` | Stable Buffer/Control construction and completion wiring |
 | `kitt/ui/layout.py` | Retained container tree and five logical modal surfaces |
 | `kitt/ui/scroll.py` | Central scroll registry and isolated wheel routing |
-| `kitt/ui/mouse.py` | Panel-specific hover/click behavior only |
+| `kitt/ui/mouse.py` | Mouse event routing and semantic action activation |\n| `kitt/ui/interaction.py` | Local-cell hit regions, hover/press state and hit testing |
 | `kitt/ui/keymap.py` | Shortcut metadata/source of truth for discoverable actions |
 | `kitt/ui/keybindings.py` | prompt_toolkit binding installation and contextual bindings |
 | `kitt/ui/render/core.py` | Home, header, transcript, sidebar, status and toast projections |
@@ -27,7 +27,8 @@ The refactor in Agent CLI 0.70.0 replaces the former monolithic UI implementatio
 | `kitt/ui/provider_popup_state.py` | Provider-popup navigation and mouse row mapping |
 | `kitt/ui/provider_flow.py` | Provider setup/authentication workflow |
 | `kitt/ui/navigation.py` | Palette/sidebar/context navigation actions |
-| `kitt/ui/runtime_actions.py` | UI-facing runtime/tool/workspace/approval actions |\n| `kitt/ui/reverse_proxy_panel.py` | Reverse-proxy control-center projection and user actions |\n| `kitt/reverse_proxy/client.py` | Typed subprocess boundary for reverse-proxy control plane |
+| `kitt/ui/runtime_actions.py` | UI-facing runtime/tool/workspace/approval actions |
+| `kitt/ui/reverse_proxy_panel.py` | Reverse-proxy control-center projection and user actions |\n| `kitt/reverse_proxy/client.py` | Typed subprocess boundary for reverse-proxy control plane |
 
 No extracted module introduces another application owner. `ModelSetupModel` is a compatibility facade composed from small selection behaviors; each behavior has one reason to change.
 
@@ -40,6 +41,20 @@ The prompt no longer delegates wheel events to the transcript. This is enforced 
 ## Mouse policy
 
 Application mouse support is enabled by default. This makes hover-local wheel navigation work immediately. `F10` or `/mouse` disables it when native terminal text selection is desired. The status bar exposes the current mouse state permanently.
+
+### OpenTUI-inspired interaction model
+
+Agent CLI 0.72 adopts the interaction principles that fit the existing retained prompt_toolkit architecture without porting OpenTUI's renderer, Zig runtime or flexbox layer.
+
+- `InteractionMap` is a lightweight local-cell hit grid rebuilt by the render function for each interactive surface.
+- Visible rows and buttons register semantic action ids rather than embedding business logic in mouse handlers.
+- Hover updates the same selected-index state used by keyboard navigation.
+- Mouse down records the pressed target; mouse up activates only when it resolves to the same target, avoiding accidental drag-release activation.
+- Clicking a surface restores focus to that surface before activation.
+- Action activation calls the same controller methods used by keybindings, keeping keyboard and mouse behavior equivalent.
+- The interaction registry stores only visible hit regions, so memory and dispatch cost remain bounded by the rendered viewport.
+
+This design is inspired by OpenTUI's rendered-cell hit testing, one-focused-renderable model and mouse/keyboard parity, but is independently implemented in Python and adds no OpenTUI dependency.
 
 ## Modal architecture
 

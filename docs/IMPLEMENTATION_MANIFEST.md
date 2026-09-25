@@ -119,3 +119,15 @@ Agent CLI 0.70.2 completes the planned harness-evolution control plane:
 - Added multi-instance role binding through the existing RouterConfig / ModelProfile path.
 - Replaced Linux-only `/proc` lifecycle commands with the reverse-proxy cross-platform control plane.
 - Added regression coverage for Gemini Web on Context and ChatGPT Web on Principal/Code with independent local endpoints.
+
+
+## Agent CLI 0.72.0 mouse-first TUI boundary — 2026-09-25
+
+- Added a lightweight local-cell interaction map inspired by OpenTUI's hit-testing and focus model, independently implemented in Python/prompt_toolkit.
+- Command palette, approvals, conversation picker, timeline, autonomy controls and KITT Reverse Proxy controls now support mouse selection/click while retaining keyboard parity.
+- Model/provider mouse handling remains on its existing specialized selectors; all configuration surfaces now expose pointer paths.
+- Mouse press/release targets must match before activation, reducing accidental actions after drags.
+- Interactive renderers register only visible hit regions and reuse retained controls; no new runtime dependency, renderer process or Float surface was added.
+- Fixed Reverse Proxy profile-page selection so pointer/keyboard selection and profile actions reference the same index.
+- Preserved the five-Float architectural guardrail and panel-local scroll routing.
+- Regression topology remains Gemini Web for Context and ChatGPT Web for Principal/Code on independent reverse-proxy endpoints.

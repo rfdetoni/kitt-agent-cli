@@ -463,9 +463,28 @@ K.I.T.T.-generated system, developer, orchestration, recovery, retry, tool-proto
 Deterministic semantic routing treats imperative workspace conversions and migrations (for example, converting a Gradle backend to Maven) as mutation-capable implementation work, while explanatory `how to` questions remain read-only.
 
 
+
+
+### Mouse-first TUI interactions
+
+Agent CLI 0.72 reimplements the useful interaction ideas from OpenTUI in the existing Python/prompt_toolkit TUI rather than introducing a second renderer. Interactive surfaces register local-cell hit regions during rendering, so mouse input follows the content actually visible after resize and scrolling.
+
+Mouse and keyboard share the same controller actions:
+
+- command-palette rows can be hovered and clicked;
+- approval actions can be selected and confirmed with the pointer;
+- conversation rows and timeline rows are clickable;
+- autonomy policy choices are clickable;
+- model and provider lists retain their existing hover/click behavior;
+- KITT Reverse Proxy service, plugin, profile and action controls are clickable.
+
+Mouse support remains enabled by default. Use `F10` or `/mouse` when native terminal text selection/copy is preferred. Wheel routing remains isolated to the panel under the pointer.
+
+The interaction layer is inspired by OpenTUI's rendered-cell hit testing, focus ownership and keyboard/mouse parity, but is an independent KITT implementation with no OpenTUI runtime dependency.
+
 ## KITT Reverse Proxy control center
 
-Agent CLI 0.71 integrates the multi-instance control plane from KITT Reverse Proxy 4.2. Open **KITT Reverse Proxy** from `Ctrl+P` or run `/reverse-proxy`.
+Agent CLI 0.72 integrates the multi-instance control plane from KITT Reverse Proxy 4.2. Open **KITT Reverse Proxy** from `Ctrl+P` or run `/reverse-proxy`.
 
 The panel shows active instances, named browser profiles and connection plugins without exposing process-management details. Common controls:
 
