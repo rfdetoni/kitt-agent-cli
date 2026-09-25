@@ -88,9 +88,12 @@ def _focus_surface(ui, surface: str) -> None:
         "palette": getattr(ui, "palette_control", None),
         "session_picker": getattr(ui, "session_picker_control", None),
         "timeline": getattr(ui, "timeline_control", None),
+        "diff": getattr(ui, "diff_control", None),
+        "agents": getattr(ui, "agents_control", None),
         "permission": getattr(ui, "permission_control", None),
         "autonomy": getattr(ui, "autonomy_control", None),
         "reverse_proxy": getattr(ui, "reverse_proxy_control", None),
+        "help": getattr(ui, "help_control", None),
         "model_setup_header": getattr(ui, "model_setup_search_control", None),
     }
     target = controls.get(surface)
@@ -192,8 +195,9 @@ def interactive_surface_mouse_handler(ui, surface: str, mouse_event) -> Any:
 
     if event_type == MouseEventType.MOUSE_DOWN:
         _focus_surface(ui, surface)
+        # Keep the rendered geometry stable until release. Updating selection
+        # on press can virtualize the list and move the target before MOUSE_UP.
         region = ui.interactions.press(surface, position.x, position.y)
-        _preview_interaction(ui, surface, region)
         return None if region is not None else NotImplemented
 
     if event_type == MouseEventType.MOUSE_UP:
