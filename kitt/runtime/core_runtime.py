@@ -388,8 +388,20 @@ class SafeRuntime:
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
 
-        delegated_grant = None
-        delegated_approval_id = None
+        # Approval grants received by kitt_runtime are issued for the concrete
+        # resume tool (for example run_command), not for the wrapper itself.
+        # Forward the grant to that concrete boundary even when the runtime-level
+        # policy currently evaluates to ALLOW: the ToolRegistry may still raise a
+        # later sandbox/network/risk gate. The concrete registry boundary validates
+        # the exact tool+args hash before the grant can satisfy any such gate.
+        delegated_grant = (
+            approval_grant
+            if approval_grant is not None and spec.resume_tool_name
+            else None
+        )
+        delegated_approval_id = (
+            expected_approval_id if delegated_grant is not None else None
+        )
         requested_control_paths = self._requested_control_plane_paths(op, args)
         control_plane_elevation = bool(
             requested_control_paths
