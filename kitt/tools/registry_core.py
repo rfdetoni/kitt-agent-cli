@@ -953,11 +953,51 @@ class ToolRegistry:
                 f"Execution denied by PolicyEngine for tool '{tool_name}'.",
             )
 
-        # Any supplied grant is authority-bearing input. Validate and consume it
-        # against the exact effective tool action before it can influence later
-        # sandbox/risk gates or reach a handler. This also supports approvals
-        # requested by a delegated SafeRuntime operation.
-        if grant is not None:
+        # Any supplied grant is authority-bearing input. Most tools validate and
+        # consume it immediately. SafeRuntime is a broker, however: approvals for
+        # kitt_runtime operations are intentionally bound to the exact effective
+        # tool (for example process.run -> run_command), not to the wrapper hash.
+        # In that case verify the binding here without consuming the nonce, then
+        # let the nested ToolRegistry invocation perform the authoritative
+        # validate-and-consume exactly once.
+        delegated_runtime_grant = False
+        if grant is not None and tool_name == "kitt_runtime":
+            runtime_operation = str(args.get("operation") or "")
+            runtime_args = args.get("arguments")
+            if isinstance(runtime_args, dict):
+                from kitt.runtime.core_runtime import OPERATION_SPECS
+
+                runtime_spec = OPERATION_SPECS.get(runtime_operation)
+                delegated_tool = (
+                    runtime_spec.resume_tool_name
+                    if runtime_spec is not None
+                    else None
+                )
+                if delegated_tool:
+                    delegated_hash = self.policy.generate_action_hash(
+                        delegated_tool, runtime_args
+                    )
+                    delegated_runtime_grant = bool(
+                        grant.action_hash == delegated_hash
+                        and grant.turn_id == turn_id
+                        and grant.conversation_id == conversation_id
+                        and grant.workspace_id == workspace_id
+                        and time.time() <= grant.expires_at
+                        and not self.approval_manager.is_nonce_used(grant.nonce)
+                        and (
+                            expected_approval_id is None
+                            or grant.approval_id == expected_approval_id
+                        )
+                    )
+                    if not delegated_runtime_grant:
+                        return ToolResult(
+                            False,
+                            "",
+                            "Approval grant is invalid, expired, mismatched, or already consumed.",
+                            requires_approval=True,
+                        )
+
+        if grant is not None and not delegated_runtime_grant:
             expected_hash = self.policy.generate_action_hash(tool_name, args)
             approval_validated = self.approval_manager.validate_and_consume(
                 grant,
