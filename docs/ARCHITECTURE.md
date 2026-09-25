@@ -157,3 +157,10 @@ dozen very large messages.
 as a dependency graph: independent nodes may run concurrently, while data
 references and explicit `depends_on` edges create deterministic barriers.
 
+
+
+### Reverse Proxy control plane
+
+The Agent treats KITT Reverse Proxy as an external control-plane boundary. `kitt/reverse_proxy/client.py` executes only argv-based machine-readable commands and maps schema-v1 responses into immutable contracts. TUI code never discovers PIDs, allocates ports or loads provider plugins itself.
+
+Role assignment remains owned by the existing task router. Binding an instance calls the same model-role service used by F12, so Context, Principal/Code and Validation can point to independent reverse-proxy endpoints without a parallel routing system.

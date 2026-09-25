@@ -27,7 +27,7 @@ The refactor in Agent CLI 0.70.0 replaces the former monolithic UI implementatio
 | `kitt/ui/provider_popup_state.py` | Provider-popup navigation and mouse row mapping |
 | `kitt/ui/provider_flow.py` | Provider setup/authentication workflow |
 | `kitt/ui/navigation.py` | Palette/sidebar/context navigation actions |
-| `kitt/ui/runtime_actions.py` | UI-facing runtime/tool/workspace/approval actions |
+| `kitt/ui/runtime_actions.py` | UI-facing runtime/tool/workspace/approval actions |\n| `kitt/ui/reverse_proxy_panel.py` | Reverse-proxy control-center projection and user actions |\n| `kitt/reverse_proxy/client.py` | Typed subprocess boundary for reverse-proxy control plane |
 
 No extracted module introduces another application owner. `ModelSetupModel` is a compatibility facade composed from small selection behaviors; each behavior has one reason to change.
 
@@ -53,7 +53,7 @@ The physical layout uses exactly five retained `Float` surfaces rather than one 
 
 Prompt completion remains one of the five implementation Floats. Responsive sidebar and notices are inline retained containers, so they add no modal surface.
 
-The model wizard keeps model selection, provider selection/addition, endpoint setup and authentication inside one retained modal surface. The contextual panel hosts conversation picker, timeline, diff, agents, autonomy and help; Left/Right switches tabs without allocating a new overlay frame.
+The model wizard keeps model selection, provider selection/addition, endpoint setup and authentication inside one retained modal surface. The contextual panel hosts conversation picker, timeline, diff, agents, autonomy, KITT Reverse Proxy and help; Left/Right switches tabs without allocating a new overlay frame.
 
 ## Keyboard discovery
 

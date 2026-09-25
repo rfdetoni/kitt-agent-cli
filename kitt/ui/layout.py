@@ -279,6 +279,11 @@ def build_root_container(ui):
             "autonomy",
             Window(ui.autonomy_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
         ),
+        "reverse_proxy": register_scrollable_window(
+            ui,
+            "reverse_proxy",
+            Window(ui.reverse_proxy_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
+        ),
         "help": register_scrollable_window(
             ui,
             "help",

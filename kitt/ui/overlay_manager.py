@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 
-CONTEXT_TABS = ("session_picker", "timeline", "diff", "agents", "autonomy_control", "help")
+CONTEXT_TABS = ("session_picker", "timeline", "diff", "agents", "autonomy_control", "reverse_proxy", "help")
 
 
 class OverlayPriority(IntEnum):
@@ -118,6 +118,12 @@ OVERLAY_SPECS: Dict[str, OverlaySpec] = {
         modal=True,
         blocks_input_below=True,
     ),
+    "reverse_proxy": OverlaySpec(
+        name="reverse_proxy",
+        priority=OverlayPriority.NAVIGATION,
+        modal=True,
+        blocks_input_below=True,
+    ),
     "help": OverlaySpec(
         name="help",
         priority=OverlayPriority.HELP,
@@ -187,7 +193,7 @@ class OverlayManager:
             is_authorized_child = (
                 (parent_name is not None and parent_name == parent_frame.spec.name)
                 or (parent_frame.spec.name == "model_setup" and name in ("provider_popup", "add_provider", "provider_endpoint", "auth_login"))
-                or (parent_frame.spec.name == "palette" and name in ("help", "model_setup", "session_picker", "timeline", "diff", "agents"))
+                or (parent_frame.spec.name == "palette" and name in ("help", "model_setup", "session_picker", "timeline", "diff", "agents", "reverse_proxy"))
             )
 
             if is_authorized_child:

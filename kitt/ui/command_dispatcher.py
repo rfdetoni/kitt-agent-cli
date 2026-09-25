@@ -125,7 +125,7 @@ async def _execute_command(ui, raw: str) -> bool:
         await ui._open_diff_overlay()
     elif found.id == "status":
         handle_status_command(ui)
-    elif found.id in {"restart_reverse_proxy", "stop_reverse_proxy"}:
+    elif found.id == "reverse_proxy":\n        from kitt.ui.reverse_proxy_panel import handle_reverse_proxy_command\n        await handle_reverse_proxy_command(ui, arg)\n    elif found.id in {"restart_reverse_proxy", "stop_reverse_proxy"}:
         from kitt.ui.reverse_proxy_commands import manage_reverse_proxy
         try:
             message = await ui._run_blocking(

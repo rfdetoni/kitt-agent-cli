@@ -110,3 +110,12 @@ Agent CLI 0.70.2 completes the planned harness-evolution control plane:
 - the implementation remains Python control-plane code. Native acceleration
   remains an optional `kitt-toolbox` concern and no sibling protocol bump is
   required.
+
+
+## Agent CLI 0.71.0 reverse-proxy control center — 2026-09-25
+
+- Added typed control-plane client contracts for KITT Reverse Proxy 4.2.
+- Added retained TUI contextual panel for services, plugins and named browser profiles without increasing the five-Float layout.
+- Added multi-instance role binding through the existing RouterConfig / ModelProfile path.
+- Replaced Linux-only `/proc` lifecycle commands with the reverse-proxy cross-platform control plane.
+- Added regression coverage for Gemini Web on Context and ChatGPT Web on Principal/Code with independent local endpoints.

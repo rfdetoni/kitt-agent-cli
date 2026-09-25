@@ -126,7 +126,7 @@ def build_controls(ui) -> None:
     ui.auth_login_buffer = Buffer(multiline=False, accept_handler=ui._accept_auth_login)
     ui.auth_login_control = BufferControl(buffer=ui.auth_login_buffer, focusable=True)
     ui.auth_login_help_control = FormattedTextControl(ui._auth_login_help_text)
-    ui.help_control = FormattedTextControl(ui._help_text, focusable=True)
+    ui.reverse_proxy_control = FormattedTextControl(ui._reverse_proxy_text, focusable=True)\n    ui.help_control = FormattedTextControl(ui._help_text, focusable=True)
     ui.toast_control = FormattedTextControl(ui._toast_text)
     ui._remote_server = None
 

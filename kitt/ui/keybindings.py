@@ -17,9 +17,9 @@ def build_key_bindings(ui):
     provider_popup = Condition(lambda: ui.state.active_overlay == "provider_popup")
     add_provider = Condition(lambda: ui.state.active_overlay == "add_provider")
     provider_endpoint = Condition(lambda: ui.state.active_overlay == "provider_endpoint")
-    auth_login = Condition(lambda: ui.state.active_overlay == "auth_login")
+    auth_login = Condition(lambda: ui.state.active_overlay == "auth_login")\n    reverse_proxy = Condition(lambda: ui.state.active_overlay == "reverse_proxy")
     editor_focused = Condition(lambda: ui.application and ui.application.layout.current_control is ui.prompt_control)
-    context_panel = Condition(lambda: ui.state.active_overlay in {"session_picker", "timeline", "diff", "agents", "autonomy_control", "help"})
+    context_panel = Condition(lambda: ui.state.active_overlay in {"session_picker", "timeline", "diff", "agents", "autonomy_control", "reverse_proxy", "help"})
 
     @kb.add("tab", filter=auth_login)
     def _(event):
@@ -96,6 +96,76 @@ def build_key_bindings(ui):
     @kb.add("right", filter=context_panel)
     def _(event):
         ui.overlay_manager.cycle_context_tab(1)
+
+
+    @kb.add("down", filter=reverse_proxy)
+    def _(event):
+        ui._reverse_proxy_move(1)
+
+    @kb.add("up", filter=reverse_proxy)
+    def _(event):
+        ui._reverse_proxy_move(-1)
+
+    @kb.add("f5", filter=reverse_proxy)
+    def _(event):
+        asyncio.create_task(ui._refresh_reverse_proxy())
+
+    @kb.add("n", filter=reverse_proxy)
+    def _(event):
+        ui._reverse_proxy_show("plugins")
+
+    @kb.add("p", filter=reverse_proxy)
+    def _(event):
+        ui._reverse_proxy_show("profiles")
+
+    @kb.add("i", filter=reverse_proxy)
+    def _(event):
+        ui._reverse_proxy_show("instances")
+
+    @kb.add("tab", filter=reverse_proxy)
+    def _(event):
+        ui._reverse_proxy_cycle_profile(1)
+
+    @kb.add("u", filter=reverse_proxy)
+    def _(event):
+        ui._reverse_proxy_prepare_url()
+
+    @kb.add("a", filter=reverse_proxy)
+    def _(event):
+        if ui.reverse_proxy_model.page == "profiles":
+            ui._reverse_proxy_prepare_profile_create()
+
+    @kb.add("d", filter=reverse_proxy)
+    def _(event):
+        if ui.reverse_proxy_model.page == "profiles":
+            asyncio.create_task(ui._reverse_proxy_remove_profile())
+
+    @kb.add("enter", filter=reverse_proxy)
+    def _(event):
+        if ui.reverse_proxy_model.page == "plugins":
+            asyncio.create_task(ui._reverse_proxy_start_selected())
+
+    @kb.add("r", filter=reverse_proxy)
+    def _(event):
+        if ui.reverse_proxy_model.page == "instances":
+            asyncio.create_task(ui._reverse_proxy_restart_selected())
+
+    @kb.add("x", filter=reverse_proxy)
+    def _(event):
+        if ui.reverse_proxy_model.page == "instances":
+            asyncio.create_task(ui._reverse_proxy_stop_selected())
+
+    @kb.add("c", filter=reverse_proxy)
+    def _(event):
+        asyncio.create_task(ui._reverse_proxy_bind_selected("context"))
+
+    @kb.add("e", filter=reverse_proxy)
+    def _(event):
+        asyncio.create_task(ui._reverse_proxy_bind_selected("principal"))
+
+    @kb.add("v", filter=reverse_proxy)
+    def _(event):
+        asyncio.create_task(ui._reverse_proxy_bind_selected("validation"))
 
     @kb.add("down", filter=session_picker)
     @kb.add("c-n", filter=session_picker)
@@ -485,10 +555,10 @@ def build_key_bindings(ui):
     @kb.add("enter", filter=palette)
     def _(event): asyncio.create_task(ui._run_selected_palette())
 
-    @kb.add("tab", filter=Condition(lambda: ui.state.active_overlay is not None and ui.state.active_overlay != "model_setup"))
+    @kb.add("tab", filter=Condition(lambda: ui.state.active_overlay is not None and ui.state.active_overlay not in {"model_setup", "reverse_proxy"}))
     def _(event): event.app.layout.focus_next()
 
-    @kb.add("s-tab", filter=Condition(lambda: ui.state.active_overlay is not None and ui.state.active_overlay != "model_setup"))
+    @kb.add("s-tab", filter=Condition(lambda: ui.state.active_overlay is not None and ui.state.active_overlay not in {"model_setup", "reverse_proxy"}))
     def _(event): event.app.layout.focus_previous()
 
     ui.keymap.capture(kb)

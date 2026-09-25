@@ -24,7 +24,7 @@ from kitt.ui import model_service as _model_service
 from kitt.ui import provider_flow as _provider_flow
 from kitt.ui import runtime_actions as _runtime_actions
 from kitt.ui import mouse as _mouse
-from kitt.ui import navigation as _navigation
+from kitt.ui import navigation as _navigation\nfrom kitt.ui import reverse_proxy_panel as _reverse_proxy_panel\nfrom kitt.reverse_proxy.client import ReverseProxyClient
 from kitt.ui.render import core as _render_core
 from kitt.ui.render import overlays as _render_overlays
 
@@ -47,7 +47,7 @@ class KittUIApp:
         self.session_picker_model = SessionPickerModel(runtime)
         self.timeline_model = TimelineModel(runtime)
         self.diff_model = DiffViewerModel(str(root))
-        self.model_setup_model = ModelSetupModel()
+        self.model_setup_model = ModelSetupModel()\n        self.reverse_proxy_model = _reverse_proxy_panel.ReverseProxyPanelModel()\n        self.reverse_proxy_client = ReverseProxyClient()
         self.mouse_support_enabled: bool = True
         self.editing_provider_name: Optional[str] = None
         self.scrollable_windows: dict[str, Any] = {}
@@ -287,6 +287,19 @@ class KittUIApp:
     _is_local_or_no_auth_provider = _provider_flow._is_local_or_no_auth_provider
     _apply_selected_model = _provider_flow._apply_selected_model
 
+    _open_reverse_proxy_overlay = _reverse_proxy_panel._open_reverse_proxy_overlay
+    _refresh_reverse_proxy = _reverse_proxy_panel._refresh_reverse_proxy
+    _reverse_proxy_move = _reverse_proxy_panel._reverse_proxy_move
+    _reverse_proxy_cycle_profile = _reverse_proxy_panel._reverse_proxy_cycle_profile
+    _reverse_proxy_show = _reverse_proxy_panel._reverse_proxy_show
+    _reverse_proxy_prepare_url = _reverse_proxy_panel._reverse_proxy_prepare_url
+    _reverse_proxy_prepare_profile_create = _reverse_proxy_panel._reverse_proxy_prepare_profile_create
+    _reverse_proxy_start_selected = _reverse_proxy_panel._reverse_proxy_start_selected
+    _reverse_proxy_stop_selected = _reverse_proxy_panel._reverse_proxy_stop_selected
+    _reverse_proxy_restart_selected = _reverse_proxy_panel._reverse_proxy_restart_selected
+    _reverse_proxy_remove_profile = _reverse_proxy_panel._reverse_proxy_remove_profile
+    _reverse_proxy_bind_selected = _reverse_proxy_panel._reverse_proxy_bind_selected
+
     _show_result = _runtime_actions._show_result
     _show_history = _runtime_actions._show_history
     _show_active_history = _runtime_actions._show_active_history
@@ -388,4 +401,4 @@ class KittUIApp:
     _model_setup_text = _render_overlays._model_setup_text
     _agents_text = _render_overlays._agents_text
     _live_agents_text = _render_overlays._live_agents_text
-    _help_text = _render_overlays._help_text
+    _reverse_proxy_text = _reverse_proxy_panel._reverse_proxy_text\n    _help_text = _render_overlays._help_text

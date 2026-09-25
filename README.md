@@ -461,3 +461,39 @@ MIT. See [LICENSE](LICENSE).
 K.I.T.T.-generated system, developer, orchestration, recovery, retry, tool-protocol, and validation prompts sent to models are authored in English. User-authored requests are preserved verbatim in their original language. Multilingual routing and intent-detection vocabularies remain multilingual because they are classifier data, not model instructions.
 
 Deterministic semantic routing treats imperative workspace conversions and migrations (for example, converting a Gradle backend to Maven) as mutation-capable implementation work, while explanatory `how to` questions remain read-only.
+
+
+## KITT Reverse Proxy control center
+
+Agent CLI 0.71 integrates the multi-instance control plane from KITT Reverse Proxy 4.2. Open **KITT Reverse Proxy** from `Ctrl+P` or run `/reverse-proxy`.
+
+The panel shows active instances, named browser profiles and connection plugins without exposing process-management details. Common controls:
+
+- `n`: choose a provider plugin and start a new instance.
+- `p`: manage named browser profiles.
+- `u`: start from a custom WebChat URL.
+- `c`: bind the selected instance to Context.
+- `e`: bind the selected instance to Principal/Code.
+- `v`: bind the selected instance to Validation.
+- `r` / `x`: restart or stop the selected instance.
+- `F5`: refresh the control-plane snapshot.
+
+Example with independent providers:
+
+```text
+Context        -> gemini-context -> Gemini Web  -> http://127.0.0.1:3000
+Principal/Code -> chatgpt-code   -> ChatGPT Web -> http://127.0.0.1:3001
+```
+
+Equivalent commands:
+
+```text
+/reverse-proxy profile create context-google gemini
+/reverse-proxy profile create coding-openai chatgpt
+/reverse-proxy start gemini --profile context-google --id gemini-context --role context
+/reverse-proxy start chatgpt --profile coding-openai --id chatgpt-code --role code
+```
+
+Role bindings reuse the existing model router and are persisted in `.kitt-router.json`. Agent CLI does not scan OS process tables; lifecycle and provider discovery remain owned by the reverse-proxy control plane.
+
+See `docs/REVERSE_PROXY_CONTROL.md`.
