@@ -953,6 +953,27 @@ class ToolRegistry:
                 f"Execution denied by PolicyEngine for tool '{tool_name}'.",
             )
 
+        # kitt_runtime is a transparent broker: its grant belongs to the concrete
+        # resume tool embedded in the pending action. Every concrete tool validates
+        # a supplied grant immediately, before the mere presence of that grant can
+        # suppress sandbox, network, control-plane, or risk-budget approval gates.
+        if grant is not None and tool_name != "kitt_runtime":
+            expected_hash = self.policy.generate_action_hash(tool_name, args)
+            approval_validated = self.approval_manager.validate_and_consume(
+                grant,
+                expected_hash,
+                turn_id,
+                conversation_id,
+                workspace_id,
+                expected_approval_id=expected_approval_id,
+            )
+            if not approval_validated:
+                return ToolResult(
+                    False,
+                    "",
+                    "Approval grant is invalid, expired, mismatched, or already consumed.",
+                )
+
         control_plane_gate = None
         if control_paths:
             from kitt.security.capabilities import CAP_CONTROL_PLANE_WRITE
@@ -1082,7 +1103,7 @@ class ToolRegistry:
                     budget_reservation.max_actions,
                 )
 
-        if permission == "ASK":
+        if permission == "ASK" and not approval_validated:
             expected_hash = self.policy.generate_action_hash(tool_name, args)
             valid = self.approval_manager.validate_and_consume(
                 grant,
