@@ -61,6 +61,61 @@ Child worktrees isolate code edits while the original workspace remains the stat
 
 These mechanisms extend the existing runtime and EventBus/state model; KITT does not introduce a second agent/workflow framework for coordination.
 
+## Durable event, evidence and projection plane
+
+The Agent now has one durable event ledger for execution evidence. The provider
+request is recorded immediately before dispatch, so model-visible state can be
+reconstructed from durable facts instead of from ad-hoc in-memory assembly.
+Ordinary turn/tool events are stored as bounded evidence records while exact
+provider requests retain the model-visible payload needed for replay.
+
+`SessionProjectionRegistry` folds the ledger with pure reducers. Projection state
+is hot in memory and checkpointed sparsely in SQLite; cold reads seed from the
+last checkpoint and replay only the tail. Current built-in projections cover turn
+state, tool activity, Task Episode state and model-request activity.
+
+Task Episodes sit above turns. A non-goal turn gets a single-turn Episode; turns
+belonging to the same active Goal reuse that Goal-backed Episode. Deliverables and
+validation evidence are attached to the Episode so evaluation is based on the
+user objective rather than aggregate conversation length.
+
+Runtime invariants are observe-first and package-owned. The default mode records
+violations without changing execution. `KITT_RUNTIME_INVARIANTS=STRICT` promotes
+critical invariant failures to fail-fast behavior for validation environments.
+
+## Execution compression
+
+`flow.execute` remains the bounded dependency-DAG executor for deterministic
+read-only fan-out. `program.execute` is a second compression form for small
+loops and branches. It interprets a fixed data/control IR and delegates every
+host call back through SafeRuntime with the original security context and
+capabilities; it cannot execute arbitrary Python, shell or external tools.
+
+## Child providers and extension lifecycle
+
+External child CLIs are now adapters behind a capability-oriented Child Provider
+protocol. Existing Codex/Claude/OpenCode/Aider/Gemini/OpenHands/Prime behavior
+remains available through `ExternalCliChildProvider`, while continuation,
+structured output, model/reasoning overrides, filters and interrupt support are
+declared capabilities rather than backend-name conditionals.
+
+Dynamic extension registrations have an `EffectScope`. Tool/hook ownership is
+disposed in reverse registration order on plugin unload, reducing leaked
+callbacks and stale authority after reloads.
+
+## Harness evidence and controlled evolution
+
+Harness configuration can be frozen as a content-addressed snapshot. Runtime
+operations and other resolved components emit materialization receipts that
+separate requested, resolved and actually materialized capability facts.
+
+The intervention ledger stores baseline metrics, candidate causes, owner,
+validation route, guardrail metric, comparison window and stop/revert condition.
+Later comparable evidence determines `IMPROVING`, `UNCHANGED`,
+`REGRESSING` or `OUTCOME_SUPPORTED`; same-window validation alone does not
+prove longitudinal effectiveness. Heavy experiment execution remains owned by
+`kitt-ai-workers`; the Agent owns the local evidence and handoff contracts.
+
 ## Packaging
 
 `kitt-agent-cli` is a universal Python control-plane distribution. Its release CI does not build Rust. Native wheels are built and validated in `kitt-toolbox`; the Assistant Python runtime is packaged from `kitt-assistant`; Evolution/Evals are packaged from `kitt-ai-workers`.

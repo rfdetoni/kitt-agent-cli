@@ -9,7 +9,7 @@ from pathlib import Path
 
 from kitt.llm.http_security import secure_urlopen
 
-_STATE_STATUS = {"AUTHENTICATED": "PASS", "CONFIGURED": "PASS", "AVAILABLE": "PASS", "DEGRADED": "WARN", "UNAVAILABLE": "INFO"}
+_STATE_STATUS = {"AUTHENTICATED": "PASS", "CONFIGURED": "PASS", "AVAILABLE": "PASS", "DEGRADED": "WARN", "BLOCKED": "WARN", "UNOBSERVED": "INFO", "UNAVAILABLE": "INFO"}
 
 
 def _check(name: str, state: str, detail: str, *, status: str | None = None) -> dict[str, str]:
@@ -67,6 +67,46 @@ class DoctorCheck:
                     quick_check = conn.execute("PRAGMA quick_check;").fetchone()
                 ok = bool(quick_check and quick_check[0] == "ok")
                 results.append(_check("SQLite History Database", "CONFIGURED" if ok else "DEGRADED", f"{db_path.name} integrity: {quick_check[0] if quick_check else 'unknown'}", status="PASS" if ok else "WARN"))
+                with sqlite3.connect(str(db_path)) as evidence_conn:
+                    tables = {
+                        row[0]
+                        for row in evidence_conn.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        )
+                    }
+                    required = {
+                        "session_events",
+                        "session_projection_cache",
+                        "task_episodes",
+                        "evidence_records",
+                        "runtime_invariant_results",
+                    }
+                    evidence_ready = required.issubset(tables)
+                    results.append(
+                        _check(
+                            "KITT Evidence Plane",
+                            "CONFIGURED" if evidence_ready else "DEGRADED",
+                            "durable events, projections, episodes and evidence available"
+                            if evidence_ready
+                            else "schema is missing one or more evidence-plane tables",
+                            status="PASS" if evidence_ready else "WARN",
+                        )
+                    )
+                    if evidence_ready:
+                        total, failed = evidence_conn.execute(
+                            """SELECT COUNT(*),COALESCE(SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END),0)
+                               FROM runtime_invariant_results"""
+                        ).fetchone()
+                        results.append(
+                            _check(
+                                "Runtime Invariants",
+                                "UNOBSERVED" if int(total or 0) == 0 else "DEGRADED" if int(failed or 0) else "CONFIGURED",
+                                "no invariant observations recorded yet"
+                                if int(total or 0) == 0
+                                else f"{int(total)} observations; {int(failed or 0)} failure(s)",
+                                status="INFO" if int(total or 0) == 0 else "WARN" if int(failed or 0) else "PASS",
+                            )
+                        )
             except Exception as exc:
                 results.append(_check("SQLite History Database", "DEGRADED", str(exc), status="FAIL"))
         else:
@@ -128,7 +168,7 @@ class DoctorCheck:
                     path.unlink()
         db = HistoryDatabase(root_dir=str(self.root_path))
         db.close()
-        message = "SQLite database state successfully reset to Schema V1."
+        message = "SQLite database state successfully reset to the current schema."
         if backup_path:
             message += f" (Backup saved to {backup_path.name})"
         return message

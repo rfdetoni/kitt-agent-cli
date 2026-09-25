@@ -5,6 +5,7 @@ import logging
 import threading
 from typing import Dict, List, Optional
 
+from kitt.extensions.effects import EffectScope
 from kitt.extensions.errors import PluginLoadError
 from kitt.extensions.models import PluginManifest, PluginState
 from kitt.extensions.plugins.loader import (
@@ -29,6 +30,7 @@ class PluginRegistry:
         self._lock = threading.RLock()
         self._manifests: Dict[str, PluginManifest] = {}
         self._plugins: Dict[str, PluginInstance] = {}
+        self._scopes: Dict[str, EffectScope] = {}
         enabled, disabled = self.state_store.load()
         self._explicit_enabled: set[str] = set(enabled)
         self._disabled_plugins: set[str] = set(disabled)
@@ -38,6 +40,23 @@ class PluginRegistry:
         with self._lock:
             self._manifests = manifests
             return dict(self._manifests)
+
+    def _new_scope(self, plugin_id: str) -> EffectScope:
+        scope = EffectScope(f"plugin:{plugin_id}")
+        if self.loader.hook_registry:
+            scope.own(
+                lambda: self.loader.hook_registry.unregister(plugin_id=plugin_id)
+            )
+        if (
+            self.loader.tool_registry
+            and hasattr(self.loader.tool_registry, "unregister_by_owner")
+        ):
+            scope.own(
+                lambda: self.loader.tool_registry.unregister_by_owner(plugin_id)
+            )
+        with self._lock:
+            self._scopes[plugin_id] = scope
+        return scope
 
     def _manifest(self, name: str) -> PluginManifest:
         plugin_id = name.strip().lower()
@@ -65,6 +84,7 @@ class PluginRegistry:
         )
         with self._lock:
             self._plugins[plugin_id] = instance
+        self._new_scope(plugin_id)
         return instance
 
     async def load_async(
@@ -76,6 +96,7 @@ class PluginRegistry:
         )
         with self._lock:
             self._plugins[plugin_id] = instance
+        self._new_scope(plugin_id)
         return instance
 
     async def start(self, name: str) -> None:
@@ -117,20 +138,15 @@ class PluginRegistry:
                     exc,
                 )
 
-        if self.loader.hook_registry:
-            self.loader.hook_registry.unregister(
-                plugin_id=plugin_id
-            )
-        if (
-            self.loader.tool_registry
-            and hasattr(
-                self.loader.tool_registry,
-                "unregister_by_owner",
-            )
-        ):
-            self.loader.tool_registry.unregister_by_owner(
-                plugin_id
-            )
+        with self._lock:
+            scope = self._scopes.pop(plugin_id, None)
+        if scope is not None:
+            for cleanup_error in await scope.dispose():
+                logger.warning(
+                    "Plugin '%s' effect cleanup failed: %s",
+                    plugin_id,
+                    cleanup_error,
+                )
         self.loader.unload_instance(instance)
         instance.state = PluginState.STOPPED
 

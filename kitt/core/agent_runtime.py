@@ -8,12 +8,16 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import replace
+from dataclasses import fields, is_dataclass, replace
 from types import MethodType
 from typing import Any, Iterator
 
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import ApprovalRequired, TurnCompleted, TurnFailed
+from kitt.evidence.episodes import TaskEpisodeService
+from kitt.evidence.invariants import RuntimeInvariantService
+from kitt.evidence.ledger import SessionLedger
+from kitt.evidence.projections import build_default_projection_registry
 from kitt.runtime.state import RuntimeStateStore
 from kitt.validation.orchestrator import VerificationOrchestrator
 
@@ -291,13 +295,68 @@ def _affected_paths(processor, name: str, args: dict[str, Any], result: Any) -> 
     return []
 
 
+def _durable_event_payload(event: Any) -> dict[str, Any]:
+    if is_dataclass(event):
+        data = {
+            item.name: _jsonable(getattr(event, item.name))
+            for item in fields(event)
+            if item.name != "timestamp"
+        }
+    elif isinstance(event, dict):
+        data = {str(key): _jsonable(value) for key, value in event.items()}
+    else:
+        data = {"value": _jsonable(event)}
+
+    # Large user/model/tool payloads have their own durable owners. Keep event
+    # ordering and evidence without duplicating arbitrarily large text here.
+    for key in ("output", "response", "prompt"):
+        value = data.get(key)
+        if isinstance(value, str) and len(value) > 4096:
+            encoded = value.encode("utf-8")
+            data[key] = {
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+                "chars": len(value),
+                "preview": value[:1024],
+            }
+    return data
+
+
 class DurableTurnJournal:
-    """Project processor events onto KITT's existing durable turn state."""
+    """Project processor events onto canonical durable state and evidence."""
 
     def __init__(self, processor):
         self.processor = processor
         self.profiles: dict[str, str] = {}
         self.started: dict[str, float] = {}
+        self.episode_ids: dict[str, str] = {}
+        self.db = _db(processor)
+        self.ledger = None
+        self.episodes = None
+        self.invariants = None
+        if self.db is not None:
+            projections = build_default_projection_registry(self.db)
+            self.ledger = SessionLedger(self.db, projections)
+            self.episodes = TaskEpisodeService(
+                self.db,
+                self.ledger,
+                getattr(getattr(processor, "registry", None), "goal_service", None),
+            )
+            self.invariants = RuntimeInvariantService(self.db)
+
+    def _episode_for_turn(self, turn_id: str) -> str | None:
+        cached = self.episode_ids.get(turn_id)
+        if cached:
+            return cached
+        if self.episodes is None:
+            return None
+        try:
+            episode = self.episodes.for_turn(turn_id)
+        except Exception:
+            return None
+        if episode is not None:
+            self.episode_ids[turn_id] = episode.id
+            return episode.id
+        return None
 
     def begin(self, cmd: TurnCommand) -> None:
         persistent = _ensure_turn(self.processor, cmd)
@@ -312,6 +371,18 @@ class DurableTurnJournal:
                         "explicit_files": sorted(cmd.explicit_files), "dry_run": bool(cmd.dry_run),
                         "state": "RUNNING", "updated_at": time.time()}, ttl_seconds=604800)
                 except Exception:
+                    pass
+            if self.episodes is not None:
+                try:
+                    episode = self.episodes.begin_turn(
+                        cmd.conversation_id,
+                        cmd.turn_id,
+                        cmd.prompt,
+                    )
+                    self.episode_ids[cmd.turn_id] = episode.id
+                except Exception:
+                    # Evidence is fail-open. Canonical turn execution remains the
+                    # authority when optional evidence persistence is unavailable.
                     pass
         self.state(cmd, "RUNNING")
 
@@ -336,9 +407,83 @@ class DurableTurnJournal:
         except Exception:
             pass
 
+    def record_model_request(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        route: str = "",
+        profile: str = "",
+        model: str = "",
+    ) -> None:
+        if self.ledger is None or not conversation_id or not _turn(self.processor, turn_id):
+            return
+        try:
+            self.ledger.append_model_request(
+                conversation_id,
+                turn_id,
+                system_prompt=system_prompt,
+                messages=messages,
+                route=route,
+                profile=profile,
+                model=model,
+                episode_id=self._episode_for_turn(turn_id),
+            )
+        except Exception:
+            pass
+
+    def record_deliverables(
+        self,
+        turn_id: str,
+        paths: list[str],
+        *,
+        kind: str,
+    ) -> None:
+        if self.episodes is None or not paths:
+            return
+        episode_id = self._episode_for_turn(turn_id)
+        if not episode_id:
+            return
+        try:
+            self.episodes.record_deliverables(
+                episode_id,
+                turn_id,
+                paths,
+                kind=kind,
+            )
+        except Exception:
+            pass
+
     def observe(self, cmd: TurnCommand, event: Any) -> None:
         name = type(event).__name__
         state = EVENT_STATE.get(name)
+        event_record = None
+        episode_id = self._episode_for_turn(cmd.turn_id)
+        if self.ledger is not None and _turn(self.processor, cmd.turn_id):
+            try:
+                event_record = self.ledger.append(
+                    cmd.conversation_id,
+                    name,
+                    _durable_event_payload(event),
+                    turn_id=cmd.turn_id,
+                    episode_id=episode_id,
+                    force_checkpoint=state in TERMINAL,
+                )
+            except Exception:
+                event_record = None
+        if event_record is not None and self.episodes is not None and episode_id:
+            try:
+                self.episodes.observe(
+                    episode_id,
+                    name,
+                    event_record.payload,
+                    event_ref=f"event:{event_record.id}",
+                )
+            except Exception:
+                pass
+
         if name == "ModelSelected":
             self.profiles[cmd.turn_id] = str(getattr(event, "profile_name", "") or "")
         if state:
@@ -346,10 +491,30 @@ class DurableTurnJournal:
         if state in TERMINAL:
             profile = self.profiles.pop(cmd.turn_id, "")
             started = self.started.pop(cmd.turn_id, time.time())
-            # User cancellation and policy blocking are not model-quality labels.
             if state in {"COMPLETED", "FAILED"}:
-                _record_route(self.processor, cmd, profile, state == "COMPLETED",
-                              max(0.0, (time.time() - started) * 1000.0))
+                _record_route(
+                    self.processor,
+                    cmd,
+                    profile,
+                    state == "COMPLETED",
+                    max(0.0, (time.time() - started) * 1000.0),
+                )
+            if self.episodes is not None:
+                try:
+                    self.episodes.settle_for_turn(
+                        cmd.turn_id,
+                        state,
+                        outcome={"event": name},
+                    )
+                except Exception:
+                    pass
+            if self.invariants is not None:
+                try:
+                    self.invariants.check_terminal(cmd.conversation_id, cmd.turn_id)
+                except Exception:
+                    if self.invariants.mode == "STRICT":
+                        raise
+
 
 
 def _install_tool_execution(processor, registry) -> None:
@@ -386,6 +551,14 @@ def _install_tool_execution(processor, registry) -> None:
                 result.error = "Post-edit verification failed:\n" + report.failure_message()
         if getattr(result, "success", False) and paths:
             _expire_code_memory(processor, paths)
+            journal = getattr(processor, "turn_journal", None)
+            if journal is not None:
+                inner_operation = (
+                    str(arguments.get("operation") or name)
+                    if name == "kitt_runtime" and isinstance(arguments, dict)
+                    else name
+                )
+                journal.record_deliverables(turn, paths, kind=inner_operation)
         if replay_key and store and getattr(result, "success", False):
             try:
                 store.set(replay_key, {"completed": True,
@@ -406,6 +579,11 @@ def install_agent_engineering(processor, registry) -> None:
     processor._agent_engineering_installed = True
     journal = DurableTurnJournal(processor)
     processor.turn_journal = journal
+    processor._record_model_request = journal.record_model_request
+    processor.session_ledger = journal.ledger
+    processor.session_projections = journal.ledger.projections if journal.ledger else None
+    processor.task_episodes = journal.episodes
+    processor.runtime_invariants = journal.invariants
     _install_tool_execution(processor, registry)
 
     # Register native turn hooks instead of stacking MethodType wrappers for

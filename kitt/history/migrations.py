@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -728,6 +728,183 @@ SCHEMA_V4_STATEMENTS = [
 ]
 
 
+SCHEMA_V5_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS session_events (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        turn_id TEXT,
+        episode_id TEXT,
+        sequence INTEGER NOT NULL,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        model_visible INTEGER NOT NULL DEFAULT 0,
+        replayable INTEGER NOT NULL DEFAULT 1,
+        created_at REAL NOT NULL,
+        UNIQUE(conversation_id, sequence),
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_projection_cache (
+        conversation_id TEXT NOT NULL,
+        projection_key TEXT NOT NULL,
+        projection_version INTEGER NOT NULL,
+        sequence INTEGER NOT NULL,
+        state_json TEXT NOT NULL,
+        state_hash TEXT NOT NULL,
+        updated_at REAL NOT NULL,
+        PRIMARY KEY(conversation_id, projection_key, projection_version),
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS task_episodes (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        goal_id TEXT,
+        objective TEXT NOT NULL,
+        acceptance_json TEXT NOT NULL,
+        state TEXT NOT NULL,
+        started_at REAL NOT NULL,
+        completed_at REAL,
+        outcome_json TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS task_episode_turns (
+        episode_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL UNIQUE,
+        ordinal INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(episode_id, turn_id),
+        FOREIGN KEY(episode_id) REFERENCES task_episodes(id) ON DELETE CASCADE,
+        FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evidence_records (
+        id TEXT PRIMARY KEY,
+        episode_id TEXT NOT NULL,
+        dimension TEXT NOT NULL,
+        check_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN (
+            'PRESENT','WIRED','EXERCISED','OUTCOME_SUPPORTED',
+            'MISSING','UNOBSERVED','NOT_APPLICABLE'
+        )),
+        result TEXT NOT NULL DEFAULT '',
+        evidence_refs_json TEXT NOT NULL,
+        finding_refs_json TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        UNIQUE(episode_id, dimension, check_id),
+        FOREIGN KEY(episode_id) REFERENCES task_episodes(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_deliverables (
+        id TEXT PRIMARY KEY,
+        episode_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        content_hash TEXT,
+        created_at REAL NOT NULL,
+        FOREIGN KEY(episode_id) REFERENCES task_episodes(id) ON DELETE CASCADE,
+        FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runtime_invariant_results (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        invariant_name TEXT NOT NULL,
+        ok INTEGER NOT NULL,
+        critical INTEGER NOT NULL DEFAULT 0,
+        detail TEXT NOT NULL DEFAULT '',
+        created_at REAL NOT NULL,
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+        FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS harness_snapshots (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        conversation_id TEXT,
+        snapshot_hash TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS harness_materialization_receipts (
+        id TEXT PRIMARY KEY,
+        snapshot_id TEXT NOT NULL,
+        component_kind TEXT NOT NULL,
+        component_id TEXT NOT NULL,
+        requested INTEGER NOT NULL,
+        resolved INTEGER NOT NULL,
+        materialized INTEGER NOT NULL,
+        mechanism TEXT NOT NULL,
+        detail_json TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        FOREIGN KEY(snapshot_id) REFERENCES harness_snapshots(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS harness_interventions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        source_episode_id TEXT,
+        asset_type TEXT NOT NULL,
+        asset_ref TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        proposal_json TEXT NOT NULL,
+        state TEXT NOT NULL,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        created_at REAL NOT NULL,
+        applied_at REAL,
+        compared_at REAL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(source_episode_id) REFERENCES task_episodes(id) ON DELETE SET NULL
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_events_conversation_sequence
+    ON session_events(conversation_id, sequence);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_events_turn
+    ON session_events(conversation_id, turn_id, sequence);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_task_episodes_conversation_state
+    ON task_episodes(conversation_id, state, started_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_episode_deliverables_episode
+    ON episode_deliverables(episode_id, created_at);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_runtime_invariants_turn
+    ON runtime_invariant_results(conversation_id, turn_id, created_at);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_harness_snapshots_workspace
+    ON harness_snapshots(workspace_id, created_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_harness_interventions_workspace
+    ON harness_interventions(workspace_id, created_at DESC);
+    """,
+]
+
+
 class IncompatibleSchemaError(RuntimeError):
     """Raised when an incompatible database schema is detected."""
 
@@ -761,7 +938,7 @@ class MigrationRunner:
                 "Run: kitt doctor --reset-state"
             )
 
-        if current_version not in (0, 1, 2, 3):
+        if current_version not in (0, 1, 2, 3, 4):
             raise IncompatibleSchemaError(
                 f"State schema version {current_version} is incompatible with this development build. "
                 "Run: kitt doctor --reset-state"
@@ -800,6 +977,14 @@ class MigrationRunner:
                 conn.execute("UPDATE schema_info SET version = 4;")
             current_version = 4
             logger.info("Migrated KITT SQLite schema to version 4")
+
+        if current_version == 4:
+            with conn:
+                for statement in SCHEMA_V5_STATEMENTS:
+                    conn.execute(statement)
+                conn.execute("UPDATE schema_info SET version = 5;")
+            current_version = 5
+            logger.info("Migrated KITT SQLite schema to version 5")
 
         if current_version != self.target_version:
             raise IncompatibleSchemaError(

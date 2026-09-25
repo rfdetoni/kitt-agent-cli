@@ -33,6 +33,9 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - Stable prompt-prefix layout with dynamic turn context moved behind invariant execution/tool contracts.
 - Consumed tool-result receipts reclaim model context without mutating browser-backed conversation identity.
 - Token-pressure history compaction and dependency-aware parallel read-only programmatic flows.
+- Durable model-input ledger, Task Episodes, evidence states, sparse session projections and deterministic replay fingerprints.
+- Bounded read-only `program.execute` for loops/branching without arbitrary code execution or approval bypass.
+- Harness snapshots/materialization receipts plus evidence-backed intervention tracking for controlled self-improvement.
 - Quality gates, evidence-led completion, risk-aware adversarial review and self-evolution integration.
 - Portable Python fallback plus optional native Rust acceleration.
 - Daemon/remote integration through the separately packaged Assistant runtime.
@@ -116,6 +119,32 @@ The full-screen TUI uses retained `prompt_toolkit` controls and enables applicat
 - Conversation, timeline, diff, agents, autonomy and help share one contextual panel; **Left/Right** switches its active tab.
 
 See [docs/TUI_ARCHITECTURE.md](docs/TUI_ARCHITECTURE.md) for implementation boundaries and performance invariants.
+
+### Durable evidence and controlled evolution
+
+KITT persists the exact model request immediately before provider execution in a
+local append-only session ledger. Model-visible inputs can therefore be replayed
+without relying on transient prompt assembly state. Session projections fold that
+event stream into bounded current views and checkpoint sparsely to avoid turning
+SQLite into a hot-path query fan-out.
+
+A Task Episode represents one user objective plus its acceptance boundary. It may
+span multiple turns when backed by a durable Goal. Evidence is tracked separately
+from outcome labels with the states `PRESENT`, `WIRED`, `EXERCISED`,
+`OUTCOME_SUPPORTED`, `MISSING`, `UNOBSERVED`, and `NOT_APPLICABLE`.
+Missing observation is never silently converted into success or failure.
+
+Harness changes can be frozen as content-addressed snapshots, accompanied by
+materialization receipts and compared through an intervention ledger. An
+intervention records its baseline, primary metric, guardrail metric, validation
+route, comparison window and stop/revert condition. KITT only marks a later result
+as outcome-supported when the comparison is explicit and the guardrail did not
+regress.
+
+`flow.execute` remains the deterministic DAG fast path. `program.execute`
+adds bounded `call`, `set`, `for_each`, `if`, and `return` control over
+the same read-only SafeRuntime operations. It never evaluates model-supplied
+Python, JavaScript or shell code.
 
 ### Runtime resilience and operations
 

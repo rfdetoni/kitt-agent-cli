@@ -10,6 +10,7 @@ from kitt.domain.entities import FileSnapshot
 from kitt.runtime.handles import ContextHandleResolver
 from kitt.runtime.operation_registry import RuntimeOperationRegistry
 from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
+from kitt.runtime.program_runtime import BoundedProgramRuntime
 from kitt.runtime.progressive import apply_progressive_search_view
 from kitt.runtime.retrieval_guard import RetrievalGuard
 from kitt.runtime.state import RuntimeStateStore
@@ -100,6 +101,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "repo.context_map", CAP_REPO_SEARCH, "search"
     ),
     "flow.execute": RuntimeOperationSpec("flow.execute", None, sensitive=False),
+    "program.execute": RuntimeOperationSpec("program.execute", None, sensitive=False),
     "repo.edit_symbol": RuntimeOperationSpec(
         "repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=1
     ),
@@ -290,6 +292,7 @@ class SafeRuntime:
         )
         self.retrieval_guard = RetrievalGuard()
         self.programmatic_flow = ProgrammaticToolFlow(self)
+        self.program_runtime = BoundedProgramRuntime(self)
         self.context_map_builder = ContextMapBuilder(
             self.index, self.goals, self.registry
         )
@@ -716,6 +719,9 @@ class SafeRuntime:
             "flow.execute": lambda: self._op_flow_execute(
                 args, turn_id, origin, capabilities, security_context
             ),
+            "program.execute": lambda: self._op_program_execute(
+                args, turn_id, origin, capabilities, security_context
+            ),
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context, automatic_budget_reserved=automatic_budget_reserved),
@@ -964,6 +970,22 @@ class SafeRuntime:
         security_context,
     ):
         return self.programmatic_flow.execute(
+            args,
+            turn_id=turn_id,
+            origin=origin,
+            capabilities=set(capabilities),
+            security_context=security_context,
+        )
+
+    def _op_program_execute(
+        self,
+        args,
+        turn_id,
+        origin,
+        capabilities,
+        security_context,
+    ):
+        return self.program_runtime.execute(
             args,
             turn_id=turn_id,
             origin=origin,

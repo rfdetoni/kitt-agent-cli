@@ -120,6 +120,22 @@ Provider-specific optimizations belong behind capability adapters.
 MCP, A2A and future interoperability protocols are adapters around KITT's internal
 contracts. External protocol object models must not become the core domain model.
 
+### Model-visible state is durable state
+
+Anything that materially enters a provider request must be reconstructible from
+durable local facts. Exact model requests are recorded at the provider boundary;
+session projections and diagnostics must derive from the same event ledger rather
+than from a second telemetry truth.
+
+Evaluate behavior at the Task Episode boundary: one user objective with one
+acceptance boundary. A session may contain multiple Episodes, and a Goal-backed
+Episode may span multiple turns.
+
+Evidence states are not pass/fail labels. `UNOBSERVED` must remain distinct from
+`MISSING`, and static configuration proves at most that a mechanism is present
+or wired. Longitudinal improvement requires a comparable later outcome and a
+non-regressing guardrail.
+
 ### Observability is part of correctness
 
 Important decisions must be measurable: selected context, model/provider, token

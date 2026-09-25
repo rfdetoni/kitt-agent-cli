@@ -130,6 +130,21 @@ class TurnModelMixin:
                 wire_messages = self._attach_browser_images(
                     list(wire_messages), browser_images
                 )
+        recorder = getattr(self, "_record_model_request", None)
+        if recorder is not None and conversation_id and turn_id:
+            try:
+                recorder(
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    system_prompt=system_prompt,
+                    messages=list(wire_messages),
+                    route=str(route or ""),
+                    profile=str(getattr(profile, "name", "") or ""),
+                    model=str(getattr(profile, "model", "") or ""),
+                )
+            except Exception:
+                pass
+
         def _invoke_chat_stream(msgs, sys_prompt):
             kwargs = {
                 "system_prompt": sys_prompt,

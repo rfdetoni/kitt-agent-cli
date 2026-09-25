@@ -12,6 +12,8 @@ Owns the Python control plane:
 - retained children, external child backend strategy and worktree integration
 - tools, `kitt_runtime`, plugins/MCP/hooks/integrations
 - observability, metrics, history, memory orchestration and Dreaming integration
+- durable session events, exact model-request ledger, Task Episodes, evidence states, projections and replay fingerprints
+- local harness snapshots, materialization receipts and intervention ledger contracts
 - Python `kitt/native` bridge and compatibility fallback
 - retained full-screen TUI presentation layer (`kitt/ui`), including scroll routing, overlays, keyboard discovery, rendering and provider/model setup UI
 
@@ -59,3 +61,27 @@ Agent CLI 0.70.0 refactors the retained TUI behind existing runtime/protocol con
 - The layout is capped at five physical `Float` surfaces and reuses shared model/provider and contextual panels.
 - Idle/home animation no longer continuously invalidates the terminal, the UI blocking executor is bounded to two workers, and TUI construction does not probe the reverse proxy network endpoint.
 - No daemon, protocol, native, memory, toolbox, reverse-proxy or assistant-runtime interface changed. Sibling KITT repositories therefore require no compatibility version bump for this release.
+
+
+## Agent CLI 0.70.1 evidence/runtime boundary
+
+Agent CLI 0.70.1 introduces the evidence and controlled-evolution foundation
+without adding a second workflow framework:
+
+- SQLite schema v5 adds append-only session events, sparse projection
+  checkpoints, Task Episodes, evidence records, deliverables, invariant results,
+  harness snapshots/materialization receipts and interventions.
+- `DurableTurnJournal` is the integration owner for turn events, model-request
+  provenance, Episode linkage and observe-first runtime invariants.
+- `program.execute` is a bounded read-only IR interpreter; `flow.execute`
+  remains the deterministic DAG fast path.
+- external coding-agent CLIs implement a Child Provider capability seam while
+  preserving the existing explicit opt-in registry API.
+- plugin unload uses reversible `EffectScope` ownership for dynamic tool/hook
+  registrations.
+- complete tool output is retained before any model-facing spill/locator
+  substitution.
+- no Rust crate was added to Agent CLI. CPU/data-plane native acceleration
+  remains owned by `kitt-toolbox`; this release changes Python control-plane
+  contracts only.
+- no sibling KITT protocol/API change is required by this release.

@@ -597,6 +597,7 @@ class TurnProcessor(
         preferred_order = (
             "repo.read", "repo.list", "repo.search", "repo.inspect_symbol",
             "repo.read_symbol", "repo.references",
+            "flow.execute", "program.execute",
             *edits,
             "process.run", "artifacts.store", "artifacts.read",
             "children.spawn", "children.send", "children.inspect",

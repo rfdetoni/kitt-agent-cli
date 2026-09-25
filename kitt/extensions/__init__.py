@@ -1,4 +1,5 @@
 """KITT Extension subsystem package (Plugins, Hooks, MCP)."""
+from kitt.extensions.effects import EffectScope
 from kitt.extensions.errors import (
     ExtensionError,
     ExtensionStartupFailed,
@@ -41,6 +42,7 @@ from kitt.extensions.plugins.registry import PluginRegistry
 
 __all__ = [
     "ExtensionManager",
+    "EffectScope",
     "PluginManifest",
     "PluginIdentity",
     "PluginState",

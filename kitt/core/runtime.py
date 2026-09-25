@@ -363,6 +363,12 @@ class KittRuntime:
         registry.path_policy = path_policy
         registry.attach_processor(processor)
 
+        # Durable event/evidence projection is installed at the existing
+        # processor/registry seam. It adds replay and validation without a
+        # second workflow engine or model-facing API.
+        from kitt.core.agent_runtime import install_agent_engineering
+        install_agent_engineering(processor, registry)
+
         def is_idle() -> bool:
             active_conversation = history.get_active_read_only()
             conversation_id = active_conversation["id"] if active_conversation else ""
@@ -458,6 +464,40 @@ class KittRuntime:
         try:
             if self.extensions is not None:
                 await self.extensions.start()
+            try:
+                from kitt.runtime.core_runtime import OPERATION_SPECS
+                runtime_facts = {
+                    "runtime_operations": sorted(OPERATION_SPECS),
+                    "plugins": sorted(
+                        manifest.name
+                        for manifest in (
+                            self.extensions.plugins.list_manifests()
+                            if self.extensions is not None
+                            else []
+                        )
+                    ),
+                }
+                snapshot = self.harness.capture_snapshot(
+                    self.workspace_id,
+                    runtime_facts=runtime_facts,
+                )
+                self.harness.record_materializations(
+                    snapshot["id"],
+                    [
+                        {
+                            "component_kind": "runtime-operation",
+                            "component_id": operation,
+                            "requested": True,
+                            "resolved": True,
+                            "materialized": True,
+                            "mechanism": "safe-runtime",
+                        }
+                        for operation in runtime_facts["runtime_operations"]
+                    ],
+                )
+            except Exception:
+                # Runtime evidence is diagnostic and must never prevent startup.
+                pass
             if self.config.scheduler_enabled and self.goal_scheduler is not None:
                 self.goal_scheduler.start(interval_seconds=1.0)
                 started_goal_scheduler = True
