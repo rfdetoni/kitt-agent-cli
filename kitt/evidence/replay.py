@@ -65,7 +65,8 @@ class SessionReplayService:
             raise ValueError("golden replay name is required")
         requests = self.model_requests(conversation_id, turn_id=turn_id)
         fingerprint = self.fingerprint(conversation_id, turn_id=turn_id)
-        golden_key = f"{conversation_id}:{turn_id or ''}:{clean_name}"\n        golden_id = f"gold_{hashlib.sha256(golden_key.encode('utf-8')).hexdigest()[:32]}"
+        golden_key = f"{conversation_id}:{turn_id or ''}:{clean_name}"
+        golden_id = f"gold_{hashlib.sha256(golden_key.encode('utf-8')).hexdigest()[:32]}"
         payload = {
             "conversation_id": conversation_id,
             "turn_id": turn_id,
