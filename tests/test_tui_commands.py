@@ -187,7 +187,7 @@ class TestTUICommands(unittest.IsolatedAsyncioTestCase):
             "/child-inspect test_child", "/child-msg test_child hello", "/child-retain test_child", "/child-cancel test_child",
             "/goal-pause test_goal", "/goal-resume test_goal", "/attach test_session", "/detach",
             "/runtime-state", "/artifact test_art",
-            "/restart-reverse-proxy", "/stop-reverse-proxy",
+            "/reverse-proxy", "/restart-reverse-proxy", "/stop-reverse-proxy",
             "/add-provider meu-ollama ollama http://localhost:11434",
             "/edit-provider meu-ollama http://localhost:11435",
             "/delete-provider meu-ollama",
