@@ -82,8 +82,6 @@ def build_controls(ui) -> None:
         accept_handler=ui._accept_prompt,
     )
     ui.prompt_control = BufferControl(buffer=ui.prompt_buffer, focusable=True)
-    ui._prompt_default_mouse_handler = ui.prompt_control.mouse_handler
-    ui.prompt_control.mouse_handler = ui._prompt_mouse_handler
     ui.palette_buffer = Buffer(multiline=False)
     ui.palette_buffer.on_text_changed += lambda _: ui._palette_changed()
     ui.palette_search_control = BufferControl(buffer=ui.palette_buffer, focusable=True)
@@ -93,11 +91,9 @@ def build_controls(ui) -> None:
     ui.hints_control = FormattedTextControl(lambda: f"F4: Modo [{ui.state.turn_mode.upper()}]   F12: Modelos   Ctrl+P: Comandos   Alt+Enter: Nova Linha")
     ui.header_control = FormattedTextControl(ui._header_text)
     ui.transcript_control = FormattedTextControl(ui._transcript_text, get_cursor_position=ui._transcript_cursor_position, focusable=True)
-    ui.transcript_control.mouse_handler = ui._transcript_mouse_handler
     ui.sidebar_control = FormattedTextControl(ui._sidebar_text)
     ui.status_control = FormattedTextControl(ui._status_text)
     ui.permission_control = FormattedTextControl(ui._permission_text, focusable=True)
-    ui.permission_control.mouse_handler = ui._permission_mouse_handler
     from prompt_toolkit.layout import Window
     from prompt_toolkit.layout.margins import ScrollbarMargin
     ui.permission_window = Window(

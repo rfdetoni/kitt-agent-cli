@@ -44,6 +44,9 @@ from kitt.ui import command_dispatcher as _command_dispatcher
 from kitt.ui import model_service as _model_service
 from kitt.ui import provider_flow as _provider_flow
 from kitt.ui import runtime_actions as _runtime_actions
+from kitt.ui import mouse as _mouse
+from kitt.ui.render import core as _render_core
+from kitt.ui.render import overlays as _render_overlays
 
 
 def _agent_version() -> str:
@@ -373,22 +376,6 @@ class KittUIApp:
     async def _open_model_setup_overlay(self, *args, **kwargs):
         return await _model_service._open_model_setup_overlay(self, *args, **kwargs)
 
-    def _transcript_mouse_handler(self, mouse_event) -> Any:
-        from prompt_toolkit.mouse_events import MouseEventType
-        if mouse_event.event_type == MouseEventType.SCROLL_UP:
-            self._scroll_transcript(-3)
-            return None
-        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            self._scroll_transcript(3)
-            return None
-        return NotImplemented
-
-    def _prompt_mouse_handler(self, mouse_event) -> Any:
-        from prompt_toolkit.mouse_events import MouseEventType
-        if mouse_event.event_type in {MouseEventType.SCROLL_UP, MouseEventType.SCROLL_DOWN}:
-            return self._transcript_mouse_handler(mouse_event)
-        return self._prompt_default_mouse_handler(mouse_event)
-
     def _scroll_transcript(self, delta: int) -> None:
         if not hasattr(self, "transcript_window"):
             return
@@ -406,18 +393,6 @@ class KittUIApp:
                 window.vertical_scroll += delta
         if self.application:
             self.application.invalidate()
-
-    def _permission_mouse_handler(self, mouse_event) -> Any:
-        from prompt_toolkit.mouse_events import MouseEventType
-        if mouse_event.event_type == MouseEventType.SCROLL_UP:
-            self.permission_window.vertical_scroll = max(0, self.permission_window.vertical_scroll - 3)
-        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            self.permission_window.vertical_scroll += 3
-        else:
-            return NotImplemented
-        if self.application:
-            self.application.invalidate()
-        return None
 
     def toggle_mouse_support(self) -> bool:
         self.mouse_support_enabled = not getattr(self, "mouse_support_enabled", True)
@@ -455,57 +430,11 @@ class KittUIApp:
             self.application.invalidate()
         return self.state.turn_mode
 
-    def _model_setup_mouse_handler(self, mouse_event) -> Any:
-        from prompt_toolkit.mouse_events import MouseEventType
-        if mouse_event.event_type == MouseEventType.SCROLL_UP:
-            self.model_setup_model.move_model(-1)
-            if self.application:
-                self.application.invalidate()
-            return None
-        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            self.model_setup_model.move_model(1)
-            if self.application:
-                self.application.invalidate()
-            return None
-        elif mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-            self.model_setup_model.handle_mouse_hover(mouse_event.position.y)
-            if self.application:
-                self.application.invalidate()
-            return None
-        elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-            self.model_setup_model.handle_mouse_hover(mouse_event.position.y)
-            asyncio.create_task(self._apply_selected_model())
-            return None
-        return NotImplemented
+    def _model_setup_mouse_handler(self, *args, **kwargs):
+        return _mouse._model_setup_mouse_handler(self, *args, **kwargs)
 
-    def _provider_popup_mouse_handler(self, mouse_event) -> Any:
-        from prompt_toolkit.mouse_events import MouseEventType
-        if mouse_event.event_type == MouseEventType.SCROLL_UP:
-            self.model_setup_model.move_popup_selection(-1)
-            if self.application:
-                self.application.invalidate()
-            return None
-        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            self.model_setup_model.move_popup_selection(1)
-            if self.application:
-                self.application.invalidate()
-            return None
-        elif mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-            self.model_setup_model.handle_popup_mouse_hover(mouse_event.position.y)
-            if self.application:
-                self.application.invalidate()
-            return None
-        elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-            self.model_setup_model.handle_popup_mouse_hover(mouse_event.position.y)
-            entry = self.model_setup_model.get_selected_popup_entry()
-            if entry:
-                if entry["kind"] == "action":
-                    self._select_popup_action(entry)
-                elif entry["kind"] == "provider":
-                    self.close_overlay()
-                    asyncio.create_task(self._select_provider_from_popup(entry["name"]))
-            return None
-        return NotImplemented
+    def _provider_popup_mouse_handler(self, *args, **kwargs):
+        return _mouse._provider_popup_mouse_handler(self, *args, **kwargs)
 
     def _select_popup_action(self, *args, **kwargs):
         return _provider_flow._select_popup_action(self, *args, **kwargs)
@@ -565,33 +494,11 @@ class KittUIApp:
     async def _apply_pending_model(self, *args, **kwargs):
         return await _provider_flow._apply_pending_model(self, *args, **kwargs)
 
-    def _agents_text(self) -> str:
-        from kitt.ui.components.agents_dashboard import AgentsDashboardComponent
-        return AgentsDashboardComponent().render(self.state, max(40, self.state.width - 16))
+    def _agents_text(self, *args, **kwargs):
+        return _render_overlays._agents_text(self, *args, **kwargs)
 
-    def _live_agents_text(self) -> str:
-        tasks = self.state.active_tasks
-        if not tasks:
-            return ""
-        running = [tk for tk in tasks if tk.status == "running"]
-        if running:
-            items = []
-            for tk in running:
-                glyph = "●"
-                tag = "CHILD" if tk.kind == "child_agent" else "CORE"
-                step = self.state.scanner_step + tk.scanner_phase
-                scan = DEFAULT_THEME.scanner_frame(step, 8)
-                items.append(f"{glyph} [{tag}:{tk.name[:14]}] [{scan}] {tk.progress}%")
-            return " " + " | ".join(items) + "  (Ctrl+X A for dashboard)"
-        else:
-            done = [tk for tk in tasks if tk.status == "done"]
-            err = [tk for tk in tasks if tk.status == "error"]
-            if self.state.status_text.startswith("✔") or "COMPLETED" in self.state.status_text:
-                recovered = f" | {len(err)} tentativa(s) recuperada(s)" if err else ""
-                return f" ✔ [PROCESSO CONCLUÍDO] {len(done)} tarefa(s)/agente(s) finalizados com sucesso{recovered}!"
-            if err:
-                return f" ✖ [FALHA NO PROCESSO] {len(err)} tarefa(s) com erro | {len(done)} concluída(s)"
-            return f" ✔ [PROCESSO CONCLUÍDO] {len(done)} tarefa(s)/agente(s) finalizados com sucesso!"
+    def _live_agents_text(self, *args, **kwargs):
+        return _render_overlays._live_agents_text(self, *args, **kwargs)
 
     def _is_local_or_no_auth_provider(self, *args, **kwargs):
         return _provider_flow._is_local_or_no_auth_provider(self, *args, **kwargs)
@@ -756,340 +663,57 @@ class KittUIApp:
                         pass
         self._blocking_executor.shutdown(wait=True, cancel_futures=True)
 
-    def _home_text(self):
-        scanner = DEFAULT_THEME.scanner_frame(self.state.scanner_step, 36)
-        return [
-            ("class:primary.bright", "┌──────────────────────────────────────────────────────────────┐\n"),
-            ("class:primary.bright", f"│  [ {scanner} ]  │\n"),
-            ("class:primary.bright", "└──────────────────────────────────────────────────────────────┘\n"),
-            ("class:primary", "██╗  ██╗    ██╗    ████████╗   ████████╗\n"),
-            ("class:primary", "██║ ██╔╝    ██║    ╚══██╔══╝   ╚══██╔══╝\n"),
-            ("class:primary", "█████╔╝     ██║       ██║         ██║   \n"),
-            ("class:primary", "██╔═██╗     ██║       ██║         ██║   \n"),
-            ("class:primary", "██║  ██╗    ██║       ██║         ██║   \n"),
-            ("class:primary", "╚═╝  ╚═╝    ╚═╝       ╚═╝         ╚═╝   \n"),
-            ("class:primary", "K.I.T.T. "),
-            ("class:text.muted", f"— Knowledge & Inference Task Tool • v{_agent_version()}\n"),
-            ("class:accent", f"{self.state.workspace_path}\n"),
-            ("class:text.muted", f"Models: {self.state.small_model} (Context) • {self.state.large_model} (Execute)")
-        ]
+    def _home_text(self, *args, **kwargs):
+        return _render_core._home_text(self, *args, **kwargs)
 
-    def _header_text(self):
-        model_name = self.state.large_model or "execution"
-        mode_tag = ("class:warning", " [PLAN MODE] ") if self.state.planning_mode else ("class:status", f" [{model_name}] ")
-        return [
-            ("class:primary", " K.I.T.T. "),
-            ("class:text.muted", f" {self.state.workspace_path} "),
-            mode_tag,
-            ("class:primary", f" 🧠 Reasoning: {self.state.reasoning_effort}% (Ctrl+←/→) "),
-        ]
+    def _header_text(self, *args, **kwargs):
+        return _render_core._header_text(self, *args, **kwargs)
 
-    def _transcript_text(self):
-        out = []
-        labels = {"user": "YOU", "assistant": "K.I.T.T.", "tool": "TOOL", "error": "ERROR", "system": "SYSTEM", "thought": "THOUGHT"}
-        now = time.time()
-        for block in self.state.transcript:
-            if block.kind in {"tool", "thought"}:
-                text = block.text
-                if block.status == "running":
-                    if self.state.active_turn_id or self.state.is_thinking or self.state.is_executing_tool:
-                        elapsed = int(now - block.started_at) if block.started_at else 0
-                        if block.kind == "thought":
-                            text = f"▸ Pensando ({elapsed}s...)"
-                        else:
-                            text = f"{text} ({elapsed}s...)"
-                    else:
-                        block.status = "done"
+    def _transcript_text(self, *args, **kwargs):
+        return _render_core._transcript_text(self, *args, **kwargs)
 
-                if block.collapsed:
-                    first_line = text.split("\n")[0]
-                    out.append((f"class:{block.kind}", f"{first_line} (ctrl+o para expandir)\n"))
-                elif "full_output" in block.metadata:
-                    out.append((f"class:{block.kind}", f"{text}\n    {block.metadata['full_output']}\n    (ctrl+o para recolher)\n"))
-                else:
-                    out.append((f"class:{block.kind}", f"{text}\n"))
-            else:
-                label = labels.get(block.kind, block.kind.upper())
-                out += [(f"class:{block.kind}", f"\n{label}  "), ("class:text", block.text + "\n")]
-        if self.state.unseen_output:
-            out.append(("class:warning", "\n[new output below]"))
-        if not out:
-            return [
-                ("class:primary", "  ┌─────────────────────────────────────────────────────────────────────────────┐\n"),
-                ("class:error",   "  │  [ ░▒▓████████████████████████████████████████████████████████████████▓▒░ ]  │\n"),
-                ("class:primary", "  └─────────────────────────────────────────────────────────────────────────────┘\n"),
-                ("class:error",   "   ██╗  ██╗    ██╗    ████████╗   ████████╗\n"),
-                ("class:error",   "   ██║ ██╔╝    ██║    ╚══██╔══╝   ╚══██╔══╝\n"),
-                ("class:error",   "   █████╔╝     ██║       ██║         ██║   \n"),
-                ("class:error",   "   ██╔═██╗     ██║       ██║         ██║   \n"),
-                ("class:error",   "   ██║  ██╗    ██║       ██║         ██║   \n"),
-                ("class:error",   "   ╚═╝  ╚═╝    ╚═╝       ╚═╝         ╚═╝   \n"),
-                ("class:primary", "  K.I.T.T. "),
-                ("class:text.muted", "— Knowledge & Inference Task Tool • Autonomous AI Coding Agent\n"),
-                ("class:text.muted", "  Digite sua instrução abaixo ou /help para ver a lista de comandos.\n\n"),
-            ]
-        return out
+    def _transcript_cursor_position(self, *args, **kwargs):
+        return _render_core._transcript_cursor_position(self, *args, **kwargs)
 
-    def _transcript_cursor_position(self):
-        from prompt_toolkit.data_structures import Point
-        if not self.state.follow_tail:
-            return None
-        if not self.state.transcript:
-            return Point(x=0, y=0)
-        text_content = self._transcript_text()
-        total_lines = 0
-        for style, txt in text_content:
-            total_lines += txt.count("\n")
-        return Point(x=0, y=max(0, total_lines - 1))
+    def _sidebar_text(self, *args, **kwargs):
+        return _render_core._sidebar_text(self, *args, **kwargs)
 
-    def _sidebar_text(self):
-        pct = min(100, self.state.tokens_used * 100 // max(1, self.state.context_window))
-        files_section = ""
-        if self.explicit_files:
-            files_lines = "\n".join(f"  • {f}" for f in sorted(self.explicit_files))
-            files_section = f"\n\n ATTACHED FILES ({len(self.explicit_files)})\n{files_lines}"
-        else:
-            files_section = "\n\n ATTACHED FILES\n  (none - use @file or /add)"
-        return (
-            f" WORKSPACE\n {self.state.workspace_name}\n\n"
-            f" CONVERSATION\n {(self.state.active_conversation_id or 'new')[:12]}\n\n"
-            f" MODELS\n {self.state.small_model}\n {self.state.large_model}\n"
-            f" 🧠 Reasoning: {self.state.reasoning_effort}%\n\n"
-            f" CONTEXT\n {self.state.tokens_used}/{self.state.context_window} ({pct}%)\n"
-            f" SAVED {self.state.net_saved_tokens}"
-            f"{files_section}"
-        )
+    def _status_text(self, *args, **kwargs):
+        return _render_core._status_text(self, *args, **kwargs)
 
-    def _status_text(self):
-        pct = min(100, self.state.tokens_used * 100 // max(1, self.state.context_window))
-        plan_badge = "[PLAN] " if self.state.planning_mode else ""
-        if self.state.is_thinking:
-            elapsed = max(0, int(time.time() - self.state.turn_started_at))
-            active = next((t for t in self.state.active_tasks if t.status == "running"), None)
-            detail = active.summary if active else "processando solicitação"
-            return f" {plan_badge}{self.state.status_text} {elapsed}s | {detail[:48]} | context {pct}% "
-        if self.state.width < 80:
-            branch_part = (
-                f" | branch:{self.state.current_branch[:12]}"
-                if self.state.current_branch
-                else ""
-            )
-            return f" {plan_badge}{self.state.status_text}{branch_part} | {self.state.large_model[:16]} | {pct}% "
-        branch_part = (
-            f" | branch:{self.state.current_branch}"
-            if self.state.current_branch
-            else ""
-        )
-        return (
-            f" {self.state.workspace_name}{branch_part} | "
-            f"{plan_badge}{self.state.status_text} | "
-            f"{self.state.large_model} | context {pct}% "
-        )
+    def _context_details_text(self, *args, **kwargs):
+        return _render_core._context_details_text(self, *args, **kwargs)
 
-    def _context_details_text(self) -> str:
-        cs = self.state.context_stats
-        total = cs.selected_count + cs.rejected_count
-        lines = [
-            "◈ DETALHES DO MOTOR DE CONTEXTO / CONTEXT ENGINE ◈",
-            f"• Estado do Índice: {cs.index_state or 'READY'} (Geração: {cs.index_generation})",
-            f"• Candidatos: {cs.selected_count} selecionados / {cs.rejected_count} rejeitados (Total: {total})",
-            f"• Cobertura: {cs.coverage:.0%}{' [DEGRADADO]' if cs.degraded else ''}",
-            f"• Tokens no Pacote: {cs.context_tokens} tokens",
-            f"• Filtro Semântico: {cs.filter_source or 'N/A'}{f' ({cs.filter_fallback_reason})' if cs.filter_fallback_reason else ''} - Latência: {int(cs.filter_latency_ms)}ms",
-        ]
-        if cs.partial_reason:
-            lines.append(f"• Motivo parcial: {cs.partial_reason}")
-        if cs.index_scanned or cs.index_updated or cs.index_deleted:
-            lines.append(f"• Índice: {cs.index_scanned} escaneados, {cs.index_updated} atualizados, {cs.index_deleted} removidos")
-        return "\n".join(lines)
+    def _toast_text(self, *args, **kwargs):
+        return _render_core._toast_text(self, *args, **kwargs)
 
-    def _toast_text(self) -> str:
-        toasts = self.state.active_toasts()
-        if not toasts:
-            return ""
-        t = toasts[-1]
-        if self.state.active_overlay is None and not self.prompt_buffer.text.strip():
-            return f" {t.text}\n  [Esc/Enter: Fechar Aviso]"
-        return f" {t.text}"
+    def _permission_text(self, *args, **kwargs):
+        return _render_overlays._permission_text(self, *args, **kwargs)
 
-    def _permission_text(self):
-        from kitt.ui.components.permission_card import PermissionCardComponent
-        return PermissionCardComponent().render(
-            self.state, max(50, self.state.width - 10), self.approval_menu_index
-        )
+    def _autonomy_text(self, *args, **kwargs):
+        return _render_overlays._autonomy_text(self, *args, **kwargs)
 
-    def _autonomy_text(self) -> str:
-        t = DEFAULT_THEME
-        curr = self.runtime.autonomy_store.get()
-        command_mode = (
-            "DENY" if curr.level == "read_only"
-            else "ALLOW ALL" if curr.allow_run_command_auto
-            else "ASK"
-        )
-        rules = getattr(self.runtime.approval, "remembered_rules", [])
-        rules_str = "\n".join(f"  • {r.tool_name} ({r.path_glob or '*'}) -> {r.decision.upper()} [{r.scope}]" for r in rules[-5:]) if rules else "  (Nenhuma regra salva)"
+    def _palette_text(self, *args, **kwargs):
+        return _render_overlays._palette_text(self, *args, **kwargs)
 
-        return (
-            t.format_primary("┌── CENTRAL DE PERMISSÕES & AUTONOMIA / AUTONOMY CONTROL ───────────────────┐\n") +
-            f"│ Perfil Atual: [ {curr.level.upper()} ]  Comandos: [ {command_mode} ]\n" +
-            "│\n" +
-            "│ Política para comandos e alterações:\n" +
-            "│  [1] ALLOW ALL : Executar automaticamente dentro das regras críticas\n" +
-            "│  [2] ASK       : Pedir aprovação antes de comandos e alterações\n" +
-            "│  [3] DENY      : Bloquear comandos, alterações e subagentes\n" +
-            "│\n" +
-            "│ Regras Salvas no Workspace:\n" +
-            f"{rules_str}\n" +
-            "│\n" +
-            "│ Controles: [1] Allow All  [2] Ask  [3] Deny  [r] Limpar Regras  [Esc] Sair\n" +
-            t.format_primary("└────────────────────────────────────────────────────────────────────────────┘")
-        )
+    def _session_picker_text(self, *args, **kwargs):
+        return _render_overlays._session_picker_text(self, *args, **kwargs)
 
-    def _palette_text(self):
-        from kitt.ui.components.command_palette import CommandPaletteComponent
-        return CommandPaletteComponent(self.commands, self.keymap).render(
-            query=self.palette_buffer.text,
-            selected_index=self.palette_index,
-            width=max(40, self.state.width - 16),
-            window_size=10,
-        )
+    def _timeline_text(self, *args, **kwargs):
+        return _render_overlays._timeline_text(self, *args, **kwargs)
 
-    def _session_picker_text(self):
-        sessions = self.session_picker_model.sessions
-        if not sessions:
-            q = self.session_picker_model.query.strip()
-            if q:
-                return f"  Nenhuma conversa encontrada para '{q}'.\n  Limpe a busca ou tente outro termo."
-            return "  Nenhuma conversa anterior encontrada.\n  Inicie uma nova conversa para salvar o histórico."
-        total = len(sessions)
-        lines = [f"Buscar Conversas ({total} salvas)  (Enter: Retomar  |  Esc: Voltar)\n"]
-        window_size = 12
-        start = min(max(0, self.session_picker_model.selected_index - (window_size // 2)), max(0, total - window_size))
-        end = min(total, start + window_size)
+    def _diff_text(self, *args, **kwargs):
+        return _render_overlays._diff_text(self, *args, **kwargs)
 
-        if start > 0:
-            lines.append(f"  ▲ ... ({start} conversas anteriores)")
+    def _model_setup_header_text(self, *args, **kwargs):
+        return _render_overlays._model_setup_header_text(self, *args, **kwargs)
 
-        for idx in range(start, end):
-            s = sessions[idx]
-            prefix = "> " if idx == self.session_picker_model.selected_index else "  "
-            lines.append(f"{prefix}[{idx+1}/{total}] {s.get('id', '')[:8]}  {s.get('title', 'Sem título')}")
-
-        if end < total:
-            lines.append(f"  ▼ ... ({total - end} conversas mais antigas)")
-        return "\n".join(lines)
-
-    def _timeline_text(self):
-        turns = self.timeline_model.turns
-        if not turns:
-            return "  Nenhum turno registrado na conversa ativa."
-        total = len(turns)
-        lines = [f"Linha do Tempo ({total} turnos)  (Esc: Voltar)\n"]
-        window_size = 12
-        start = min(max(0, self.timeline_model.selected_index - (window_size // 2)), max(0, total - window_size))
-        end = min(total, start + window_size)
-
-        if start > 0:
-            lines.append(f"  ▲ ... ({start} turnos anteriores)")
-
-        for idx in range(start, end):
-            t = turns[idx]
-            prefix = "> " if idx == self.timeline_model.selected_index else "  "
-            lines.append(f"{prefix}[{idx+1}/{total}] Turno {t.get('ordinal', idx+1)} ({t.get('id', '')[:8]})")
-
-        if end < total:
-            lines.append(f"  ▼ ... ({total - end} turnos seguintes)")
-        return "\n".join(lines)
-
-    def _diff_text(self):
-        diff = self.diff_model.diff_text
-        if not diff:
-            return "Unified diff preview\n\nNo pending diff."
-        lines = diff.splitlines()[self.diff_model.scroll_offset:self.diff_model.scroll_offset + 30]
-        return "Unified diff preview (Use Up/Down to scroll)\n\n" + "\n".join(lines)
-
-    def _model_setup_header_text(self) -> str:
-        setup = self.model_setup_model
-        lines = [
-            " [Tab] Alternar Cargo  |  [T] Limites Locais  |  [P / Espaço] Menu Provedores (★)  |  [L] Login/Auth  |  [Enter] Selecionar  |  [Esc] Fechar",
-            " Atribuições de Modelos por Cargo:"
-        ]
-        for role in setup.roles:
-            marker = ">" if role == setup.selected_role else " "
-            profile = self._profile_for_role(role)
-            endpoint = profile.base_url if profile else "?"
-            enforced = getattr(profile, "enforce_local_limits", True) if profile else True
-            lim_badge = "[Lim: On]" if enforced else "[Lim: Off]"
-            lines.append(f" {marker} {role.title():10} {(profile.backend if profile else '?')}/{self._model_for_role(role)} @ {endpoint} {lim_badge}")
-        
-        profile = self._profile_for_role(setup.selected_role)
-        endpoint = setup.base_url_override or (profile.base_url if (profile and profile.backend == setup.selected_provider) else self._provider_defaults(setup.selected_provider)[0])
-        star = "★" if setup.selected_provider in setup.favorite_providers else "☆"
-
-        from kitt.llm.auth import ProviderAuthService
-        auth_service = ProviderAuthService()
-        is_auth = bool(auth_service.resolve(None, setup.selected_provider))
-        if self._is_local_or_no_auth_provider(setup.selected_provider, endpoint):
-            auth_badge = "[◌ Local / Sem Token Necessário]"
-        elif is_auth:
-            auth_badge = "[● Conectado / Autenticado]"
-        else:
-            auth_badge = "[○ Não autenticado — L: Conectar]"
-
-        src_badge = f"(Origem: {setup.source})" if hasattr(setup, "source") and setup.source else ""
-        lines.append(f" Provedor Selecionado: {star} {setup.selected_provider} @ {endpoint} {auth_badge} {src_badge}")
-        return "\n".join(lines)
-
-    def _model_setup_text(self):
-        setup = self.model_setup_model
-        if getattr(setup, "loading", False):
-            return "  ◌ Carregando lista de modelos do provedor..."
-
-        if getattr(setup, "error_message", None):
-            return (
-                f"  ⚠ Não foi possível consultar modelos do provedor '{setup.selected_provider}'.\n"
-                f"  Motivo: {setup.error_message}\n\n"
-                "  [Enter] Tentar novamente  |  [E] Editar endpoint  |  [Esc] Voltar"
-            )
-
-        filtered = setup.get_filtered_models()
-        total_models = len(filtered)
-        all_models = len(setup.models)
-        
-        filter_tag = f" (Filtrando {total_models}/{all_models})" if setup.search_query.strip() else f" ({all_models} modelos)"
-        lines = [f"Modelos Disponíveis{filter_tag}:"]
-        
-        if not filtered:
-            if setup.search_query.strip():
-                lines.append(f"\n  Nenhum modelo encontrado para o filtro '{setup.search_query}'.\n  Limpe o filtro de busca.")
-            else:
-                lines.append(f"\n  Nenhum modelo reportado pelo provedor '{setup.selected_provider}'.\n  [E] Configurar endpoint  |  [Esc] Voltar")
-            return "\n".join(lines)
-
-        window_size = 14
-        start = min(max(0, setup.model_index - (window_size // 2)), max(0, total_models - window_size))
-        end = min(total_models, start + window_size)
-
-        if start > 0:
-            lines.append(f"  ▲ ... ({start} modelos acima)")
-
-        for index in range(start, end):
-            model = filtered[index]
-            marker = ">" if index == setup.model_index else " "
-            badge = setup.format_model_badge(setup.selected_provider, model)
-            lines.append(f"{marker} [{index+1}/{total_models}] {model:<34}{badge}")
-
-        if end < total_models:
-            lines.append(f"  ▼ ... ({total_models - end} modelos abaixo)")
-        return "\n".join(lines)
+    def _model_setup_text(self, *args, **kwargs):
+        return _render_overlays._model_setup_text(self, *args, **kwargs)
 
     @staticmethod
     def _provider_endpoint_text():
         return "Informe a URL do endpoint remoto (ex: http://192.168.1.50:11434):\n[Enter] Descobrir Modelos  |  [Esc] Cancelar\n"
 
-    def _help_text(self):
-        shortcuts = ["ATALHOS — Ctrl+P descobre todas as ações", "Mouse ativo por padrão: role sobre o painel desejado; /mouse alterna para seleção nativa.", ""]
-        shortcuts.extend(f"{keys:22} {description}" for _, keys, description in self.keymap.get_help_list())
-        shortcuts.extend(["", "COMANDOS", ""])
-        shortcuts.extend(f"{c.aliases[0]:22} {c.description}" for c in self.commands.commands.values())
-        return "\n".join(shortcuts)
+    def _help_text(self, *args, **kwargs):
+        return _render_overlays._help_text(self, *args, **kwargs)
