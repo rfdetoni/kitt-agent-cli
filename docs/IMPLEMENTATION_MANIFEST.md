@@ -131,3 +131,11 @@ Agent CLI 0.70.2 completes the planned harness-evolution control plane:
 - Fixed Reverse Proxy profile-page selection so pointer/keyboard selection and profile actions reference the same index.
 - Preserved the five-Float architectural guardrail and panel-local scroll routing.
 - Regression topology remains Gemini Web for Context and ChatGPT Web for Principal/Code on independent reverse-proxy endpoints.
+
+
+## Agent CLI 0.72.1 ecosystem compatibility — 2026-09-25
+
+- Align Agent CI, PR, Prime Architecture and release workflows with `kitt-assistant-runtime 0.2.15`.
+- Preserve the 0.72 mouse-first TUI and multi-instance Reverse Proxy implementation unchanged.
+- Keep package metadata, runtime fallback and `uv.lock` synchronized at 0.72.1.
+- This patch closes the internal ecosystem pin boundary discovered by the frozen lock validation.
