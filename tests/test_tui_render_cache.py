@@ -34,3 +34,20 @@ def test_transcript_render_does_not_mutate_running_status():
     _transcript_text(ui)
 
     assert block.status == "running"
+
+
+def test_transcript_virtualizes_old_blocks_until_expanded():
+    blocks = [TranscriptBlock(f"block-{i}", "assistant", f"message {i}") for i in range(500)]
+    ui = _ui(blocks)
+    ui.state.transcript_window_blocks = 120
+    ui.state.transcript_window_step = 120
+
+    rendered = "".join(text for _style, text in _transcript_text(ui))
+    assert "380 blocos anteriores virtualizados" in rendered
+    assert "message 0" not in rendered
+    assert "message 499" in rendered
+
+    ui.state.expand_transcript_window(500)
+    rendered_full = "".join(text for _style, text in _transcript_text(ui))
+    assert "virtualizados" not in rendered_full
+    assert "message 0" in rendered_full
