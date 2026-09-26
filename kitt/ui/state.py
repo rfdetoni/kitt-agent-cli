@@ -100,6 +100,7 @@ class UIState:
     active_overlay: str | None = None
     overlay_stack: list[str] = field(default_factory=list)
     transcript: list[TranscriptBlock] = field(default_factory=list)
+    transcript_sequence: int = 0
     # Render only a moving tail window during normal operation. Scrolling upward
     # expands the window in bounded chunks until the complete retained transcript
     # is available.
@@ -181,7 +182,10 @@ class UIState:
 
     def append_message(self, role: str, content: str) -> None:
         kind = role if role in {"user", "assistant", "tool", "system", "error", "context"} else "system"
-        self.transcript.append(TranscriptBlock(f"block-{len(self.transcript)+1}", kind, safe_text(content)))
+        self.transcript_sequence += 1
+        self.transcript.append(
+            TranscriptBlock(f"block-{self.transcript_sequence}", kind, safe_text(content))
+        )
         del self.transcript[:-500]
         if self.follow_tail:
             self.reset_transcript_window()
