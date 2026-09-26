@@ -148,3 +148,13 @@ sessions because rewriting historical user messages can invalidate provider
 conversation identity. Large outputs continue to use artifacts independently
 of receipts.
 
+## Performance diagnostics
+
+Agent CLI 0.73.0 includes a deterministic TUI hot-path microbenchmark:
+
+```bash
+python scripts/benchmark_tui.py
+```
+
+It reports cold render time plus warm p50/p95/p99 for a retained 500-block transcript. Use it as a regression signal alongside normal tests; it is intentionally dependency-free and does not contact a model or mutate a workspace.
+
