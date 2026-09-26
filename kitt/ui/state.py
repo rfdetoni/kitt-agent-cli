@@ -100,6 +100,12 @@ class UIState:
     active_overlay: str | None = None
     overlay_stack: list[str] = field(default_factory=list)
     transcript: list[TranscriptBlock] = field(default_factory=list)
+    transcript_sequence: int = 0
+    # Render only a moving tail window during normal operation. Scrolling upward
+    # expands the window in bounded chunks until the complete retained transcript
+    # is available.
+    transcript_window_blocks: int = 120
+    transcript_window_step: int = 120
     pending_approvals: list[dict[str, Any]] = field(default_factory=list)
     toasts: list[Toast] = field(default_factory=list)
     input_draft: str = ""
@@ -176,8 +182,29 @@ class UIState:
 
     def append_message(self, role: str, content: str) -> None:
         kind = role if role in {"user", "assistant", "tool", "system", "error", "context"} else "system"
-        self.transcript.append(TranscriptBlock(f"block-{len(self.transcript)+1}", kind, safe_text(content)))
+        self.transcript_sequence += 1
+        self.transcript.append(
+            TranscriptBlock(f"block-{self.transcript_sequence}", kind, safe_text(content))
+        )
         del self.transcript[:-500]
+        if self.follow_tail:
+            self.reset_transcript_window()
+
+    def expand_transcript_window(self, blocks: int | None = None) -> None:
+        step = max(1, int(blocks or self.transcript_window_step))
+        self.transcript_window_blocks = min(
+            max(len(self.transcript), 1),
+            max(self.transcript_window_blocks, 1) + step,
+        )
+
+    def show_full_transcript(self) -> None:
+        self.transcript_window_blocks = max(len(self.transcript), 1)
+
+    def reset_transcript_window(self) -> None:
+        self.transcript_window_blocks = min(
+            max(len(self.transcript), 1),
+            max(120, int(self.transcript_window_step)),
+        )
 
     def push_overlay(self, name: str) -> None:
         if name in self.overlay_stack:

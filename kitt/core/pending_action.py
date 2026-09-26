@@ -57,6 +57,8 @@ class PendingAction:
     affected_paths: list[str]
     before_hashes: dict[str, Optional[str]]
     created_at: float
+    # Zero means the user-facing pending action has no automatic timeout.
+    # Expiration is only meaningful for issued ApprovalGrant objects.
     expires_at: float
     state: str
     security_context: dict[str, Any] = field(default_factory=dict)

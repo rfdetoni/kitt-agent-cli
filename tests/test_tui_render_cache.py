@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from kitt.ui.render.core import _transcript_text
-from kitt.ui.state import TranscriptBlock
+from kitt.ui.state import TranscriptBlock, UIState
 
 
 def _ui(blocks):
@@ -34,3 +34,31 @@ def test_transcript_render_does_not_mutate_running_status():
     _transcript_text(ui)
 
     assert block.status == "running"
+
+
+def test_transcript_virtualizes_old_blocks_until_expanded():
+    blocks = [TranscriptBlock(f"block-{i}", "assistant", f"message {i}") for i in range(500)]
+    ui = _ui(blocks)
+    ui.state.transcript_window_blocks = 120
+    ui.state.transcript_window_step = 120
+
+    rendered = "".join(text for _style, text in _transcript_text(ui))
+    assert "380 blocos anteriores virtualizados" in rendered
+    assert "message 0" not in rendered
+    assert "message 499" in rendered
+
+    ui.state.transcript_window_blocks = 500
+    rendered_full = "".join(text for _style, text in _transcript_text(ui))
+    assert "virtualizados" not in rendered_full
+    assert "message 0" in rendered_full
+
+
+def test_transcript_block_ids_remain_unique_after_retention_rollover():
+    state = UIState()
+    for index in range(650):
+        state.append_message("assistant", f"message {index}")
+
+    ids = [block.id for block in state.transcript]
+    assert len(state.transcript) == 500
+    assert len(ids) == len(set(ids))
+    assert ids[-1] == "block-650"

@@ -97,7 +97,10 @@ class TurnFinalizationMixin:
                     affected_paths=affected_paths,
                     before_hashes=before_hashes,
                     created_at=now,
-                    expires_at=now + self.config.approval_ttl_seconds,
+                    # Pending human decisions are durable/actionable until the
+                    # user decides, cancels the turn, or the action is invalidated.
+                    # The short TTL applies only to an already-issued grant.
+                    expires_at=0.0,
                     state="pending",
                     security_context=sec_dict,
                 )
@@ -173,7 +176,9 @@ class TurnFinalizationMixin:
             )
         )
         saved = max(0, naive_tokens - allocated["total_input_tokens"])
-        actual_input_tokens = TokenCounter.count_tokens(request.system_prompt) + TokenCounter.count_messages(execution_messages).count
+        actual_input_tokens = self._token_ledger.total_input_tokens(
+            request.system_prompt, execution_messages
+        )
         metrics = TurnMetrics(
             turn_id=cmd.turn_id, conversation_id=cmd.conversation_id,
             context_model=ctx_profile.model, execution_model=exe_profile.model,

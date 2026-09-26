@@ -125,3 +125,9 @@ The retained renderer remains capped at the existing redraw cadence, but stable 
 
 The local `TurnEventBridge` remains backed by a bounded thread-safe queue, but its async consumer is event-driven. Producer threads wake the owning asyncio loop with `call_soon_threadsafe`; there is no 10 ms empty-queue polling loop. This keeps cancellation, backpressure and generation guards intact while reducing idle CPU during long provider waits.
 
+## Transcript virtualization — Agent CLI 0.74.0
+
+The transcript keeps its existing retained state and 500-block production retention cap, but rendering no longer requires projecting the entire retained list. Normal follow-tail operation renders a bounded recent block window. Scrolling upward expands that window in bounded chunks; Ctrl+Home requests the complete retained view and End returns to the compact tail window.
+
+Stable formatted fragments remain cached per monotonic block id. Cache pruning is amortized instead of scanning every retained block on every frame. The renderer therefore scales with the visible/expanded window rather than historical session length during normal operation.
+

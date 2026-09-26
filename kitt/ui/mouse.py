@@ -49,12 +49,14 @@ def _scroll_transcript(ui, delta: int) -> None:
     window = ui.transcript_window
     if delta < 0:
         ui.state.follow_tail = False
+        ui.state.expand_transcript_window()
         window.vertical_scroll = max(0, window.vertical_scroll + delta)
     else:
         info = getattr(window, "render_info", None)
         if info is not None and info.bottom_visible:
             ui.state.follow_tail = True
             ui.state.unseen_output = False
+            ui.state.reset_transcript_window()
             window.vertical_scroll = 10**9
         else:
             window.vertical_scroll += delta

@@ -389,6 +389,7 @@ def build_key_bindings(ui):
     @kb.add("c-home")
     def _(event):
         ui.state.follow_tail = False
+        ui.state.show_full_transcript()
         if hasattr(ui, "transcript_window"):
             ui.transcript_window.vertical_scroll = 0
         if ui.application: ui.application.invalidate()
@@ -398,6 +399,7 @@ def build_key_bindings(ui):
     def _(event):
         ui.state.follow_tail = True
         ui.state.unseen_output = False
+        ui.state.reset_transcript_window()
         if hasattr(ui, "transcript_window"):
             ui.transcript_window.vertical_scroll = 10**9
         if ui.application: ui.application.invalidate()

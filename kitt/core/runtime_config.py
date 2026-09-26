@@ -69,6 +69,9 @@ class RuntimeConfig:
     context_retrieval_token_ratio: float = 0.25
     max_context_retrieval_tokens: int = 8192
 
+    # Backward-compatible setting name. This TTL applies only after the user
+    # has decided and a single-use grant has been issued; PENDING approvals and
+    # PendingAction records never expire automatically.
     approval_ttl_seconds: float = 300.0
     max_correction_cycles: int = 2
     max_followup_generation: int = 3
@@ -105,6 +108,10 @@ class RuntimeConfig:
             verify_full_enabled=verification_full_enabled(bool(values.get("verify_full_enabled", False))),
         )
         return cls(**values)
+
+    @property
+    def approval_grant_ttl_seconds(self) -> float:
+        return self.approval_ttl_seconds
 
     @property
     def ephemeral(self) -> bool:

@@ -96,11 +96,13 @@ def build_root_container(ui):
         from prompt_toolkit.mouse_events import MouseEventType
         if event_type == MouseEventType.SCROLL_UP:
             ui.state.follow_tail = False
+            ui.state.expand_transcript_window()
         elif event_type == MouseEventType.SCROLL_DOWN:
             info = getattr(window, "render_info", None)
             if info is not None and info.bottom_visible:
                 ui.state.follow_tail = True
                 ui.state.unseen_output = False
+                ui.state.reset_transcript_window()
 
     transcript = register_scrollable_window(
         ui,

@@ -536,3 +536,14 @@ Agent CLI 0.73.0 reduces steady-state overhead without changing the tool or TUI 
 - Turn finalization avoids building large temporary concatenated history strings purely for token accounting.
 - `python scripts/benchmark_tui.py` measures cold and warm rendering for a 500-block transcript.
 
+## Agent CLI 0.74.0 — long-session efficiency and approval durability
+
+Agent CLI 0.74.0 completes the performance hardening started in 0.73:
+
+- Pending human approvals and persisted PendingAction records no longer carry an automatic timeout. The existing TTL applies only to an already-issued single-use ApprovalGrant.
+- The execution loop uses an incremental TokenLedger so unchanged messages are not re-estimated on every tool/rebudget pass.
+- Prompt truncation starts from the calibrated character/token ratio and uses a small bounded correction loop instead of binary-searching large payloads.
+- The retained transcript is virtualized during normal operation. The most recent block window is rendered first, scrolling upward expands it, and Ctrl+Home materializes the full retained transcript.
+- Transcript block ids are monotonic across the 500-block retention rollover, preventing cache-key collisions in long sessions.
+- `python scripts/benchmark_tui.py` now covers 100, 1,000 and 10,000-block scenarios; `python scripts/benchmark_context_budget.py` measures 32 KiB, 256 KiB and 1 MiB token-budget workloads.
+
