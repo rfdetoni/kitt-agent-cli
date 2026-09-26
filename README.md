@@ -525,3 +525,14 @@ See `docs/REVERSE_PROXY_CONTROL.md`.
 - Reverse Proxy action buttons now expose visible hover feedback while preserving identical cell geometry between normal and hovered states.
 - Click activation continues to use the same semantic controller actions as keyboard shortcuts, with press/release target matching.
 - This patch completes the mouse/scroll/modal cleanup introduced in 0.72.2 without adding a new renderer or UI dependency.
+
+## Agent CLI 0.73.0 — performance hardening
+
+Agent CLI 0.73.0 reduces steady-state overhead without changing the tool or TUI contracts:
+
+- Reverse Proxy lifecycle operations prefer the resident loopback control plane and retain CLI subprocess fallback for older proxy versions or recovery.
+- The local TUI event bridge wakes on producer notifications instead of polling an empty queue every 10 ms.
+- Transcript rendering caches stable prompt_toolkit fragments per block; streaming/running blocks invalidate only their own cached projection.
+- Turn finalization avoids building large temporary concatenated history strings purely for token accounting.
+- `python scripts/benchmark_tui.py` measures cold and warm rendering for a 500-block transcript.
+
