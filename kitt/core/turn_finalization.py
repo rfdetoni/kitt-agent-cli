@@ -162,9 +162,15 @@ class TurnFinalizationMixin:
                 )
 
         output_tokens = TokenCounter.count_tokens(full_response)
-        naive_tokens = TokenCounter.count_tokens(
-            base_sys + cmd.prompt + context_map_str + explicit_str
-            + self._history_context(cmd.conversation_id, 100, cmd.prompt)
+        naive_tokens = sum(
+            TokenCounter.count_tokens(part)
+            for part in (
+                base_sys,
+                cmd.prompt,
+                context_map_str,
+                explicit_str,
+                self._history_context(cmd.conversation_id, 100, cmd.prompt),
+            )
         )
         saved = max(0, naive_tokens - allocated["total_input_tokens"])
         actual_input_tokens = TokenCounter.count_tokens(request.system_prompt) + TokenCounter.count_messages(execution_messages).count
@@ -193,15 +199,16 @@ class TurnFinalizationMixin:
                     if entry.include_in_context
                 ]
                 if len(path) > self.config.compaction_keep_recent:
-                    history_text = "\n".join(
-                        str(
-                            entry.payload.get("content")
-                            or entry.payload.get("summary")
-                            or entry.payload
+                    history_tokens = sum(
+                        TokenCounter.count_tokens(
+                            str(
+                                entry.payload.get("content")
+                                or entry.payload.get("summary")
+                                or entry.payload
+                            )
                         )
                         for entry in path
                     )
-                    history_tokens = TokenCounter.count_tokens(history_text)
                     max_input_tokens = max(
                         1,
                         int(exe_profile.context_window) - int(exe_profile.max_output_tokens),

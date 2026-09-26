@@ -45,31 +45,88 @@ def _header_text(ui):
 
 def _transcript_text(ui):
     out = []
-    labels = {"user": "YOU", "assistant": "K.I.T.T.", "tool": "TOOL", "error": "ERROR", "system": "SYSTEM", "thought": "THOUGHT"}
+    labels = {
+        "user": "YOU",
+        "assistant": "K.I.T.T.",
+        "tool": "TOOL",
+        "error": "ERROR",
+        "system": "SYSTEM",
+        "thought": "THOUGHT",
+    }
     now = time.time()
+    cache = getattr(ui, "_transcript_render_cache", None)
+    if cache is None:
+        cache = {}
+        ui._transcript_render_cache = cache
+    live_ids = set()
+
     for block in ui.state.transcript:
+        live_ids.add(block.id)
+        running = (
+            block.kind in {"tool", "thought"}
+            and block.status == "running"
+            and bool(
+                ui.state.active_turn_id
+                or ui.state.is_thinking
+                or ui.state.is_executing_tool
+            )
+        )
+        elapsed = int(now - block.started_at) if running and block.started_at else None
+        full_output = block.metadata.get("full_output")
+        signature = (
+            block.kind,
+            block.text,
+            block.status,
+            block.collapsed,
+            str(full_output) if full_output is not None else None,
+            elapsed,
+        )
+        cached = cache.get(block.id)
+        if cached and cached[0] == signature:
+            out.extend(cached[1])
+            continue
+
+        fragment = []
         if block.kind in {"tool", "thought"}:
             text = block.text
-            if block.status == "running":
-                if ui.state.active_turn_id or ui.state.is_thinking or ui.state.is_executing_tool:
-                    elapsed = int(now - block.started_at) if block.started_at else 0
-                    if block.kind == "thought":
-                        text = f"▸ Pensando ({elapsed}s...)"
-                    else:
-                        text = f"{text} ({elapsed}s...)"
+            if running:
+                if block.kind == "thought":
+                    text = f"▸ Pensando ({elapsed or 0}s...)"
                 else:
-                    block.status = "done"
+                    text = f"{text} ({elapsed or 0}s...)"
 
             if block.collapsed:
                 first_line = text.split("\n")[0]
-                out.append((f"class:{block.kind}", f"{first_line} (ctrl+o para expandir)\n"))
-            elif "full_output" in block.metadata:
-                out.append((f"class:{block.kind}", f"{text}\n    {block.metadata['full_output']}\n    (ctrl+o para recolher)\n"))
+                fragment.append(
+                    (f"class:{block.kind}", f"{first_line} (ctrl+o para expandir)\n")
+                )
+            elif full_output is not None:
+                fragment.append(
+                    (
+                        f"class:{block.kind}",
+                        f"{text}\n    {full_output}\n    (ctrl+o para recolher)\n",
+                    )
+                )
             else:
-                out.append((f"class:{block.kind}", f"{text}\n"))
+                fragment.append((f"class:{block.kind}", f"{text}\n"))
         else:
             label = labels.get(block.kind, block.kind.upper())
-            out += [(f"class:{block.kind}", f"\n{label}  "), ("class:text", block.text + "\n")]
+            fragment.extend(
+                [
+                    (f"class:{block.kind}", f"\n{label}  "),
+                    ("class:text", block.text + "\n"),
+                ]
+            )
+
+        cached_fragment = tuple(fragment)
+        cache[block.id] = (signature, cached_fragment)
+        out.extend(cached_fragment)
+
+    if len(cache) > len(live_ids):
+        for block_id in tuple(cache):
+            if block_id not in live_ids:
+                cache.pop(block_id, None)
+
     if ui.state.unseen_output:
         out.append(("class:warning", "\n[new output below]"))
     if not out:
@@ -88,7 +145,6 @@ def _transcript_text(ui):
             ("class:text.muted", "  Digite sua instrução abaixo ou /help para ver a lista de comandos.\n\n"),
         ]
     return out
-
 
 def _transcript_cursor_position(ui):
     from prompt_toolkit.data_structures import Point

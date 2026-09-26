@@ -47,6 +47,8 @@ class TurnEventBridge:
         self._pending_invalidate = None
         self._daemon_bridge = None
         self._daemon_terminal = None
+        self._event_loop = None
+        self._queue_signal = None
 
     @property
     def active_turn_id(self):
@@ -215,6 +217,8 @@ class TurnEventBridge:
         self._turn_generation += 1
         gen = self._turn_generation
         loop = asyncio.get_running_loop()
+        self._event_loop = loop
+        self._queue_signal = asyncio.Event()
         self._consumer = loop.create_task(self._consume(gen))
         self._producer_future = loop.run_in_executor(
             self._executor, self._produce, gen, self.runtime.processor.run_turn(cmd)
@@ -234,6 +238,8 @@ class TurnEventBridge:
         gen = self._turn_generation
         self._active_turn_id = turn_id
         loop = asyncio.get_running_loop()
+        self._event_loop = loop
+        self._queue_signal = asyncio.Event()
         self._consumer = loop.create_task(self._consume(gen))
         self._producer_future = loop.run_in_executor(
             self._executor, self._produce, gen,
@@ -339,6 +345,16 @@ class TurnEventBridge:
         except Exception:
             pass
 
+    def _signal_consumer(self) -> None:
+        loop = self._event_loop
+        signal = self._queue_signal
+        if loop is None or signal is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(signal.set)
+        except RuntimeError:
+            pass
+
     def _produce(self, gen: int, events: Iterable[TurnEvent]):
         try:
             for event in events:
@@ -346,35 +362,45 @@ class TurnEventBridge:
                     break
                 try:
                     self._queue.put((gen, event), timeout=5)
+                    self._signal_consumer()
                 except queue.Full:
                     self._drop_oldest_non_critical()
                     self._queue.put((gen, event), timeout=1)
+                    self._signal_consumer()
         except BaseException as exc:
             try:
                 self._queue.put((gen, TurnFailed(error=str(exc))), timeout=1)
+                self._signal_consumer()
             except Exception:
                 pass
         finally:
             try:
                 self._queue.put((gen, _END), timeout=1)
+                self._signal_consumer()
             except Exception:
                 pass
 
     async def _consume(self, gen: int):
+        signal = self._queue_signal
+        if signal is None:
+            signal = asyncio.Event()
+            self._queue_signal = signal
         try:
             while True:
-                try:
-                    item_gen, item = self._queue.get_nowait()
-                except queue.Empty:
-                    await asyncio.sleep(0.01)
-                    continue
-                if item_gen != self._turn_generation:
-                    continue
-                if item is _END:
-                    break
-                if isinstance(item, TextDelta):
-                    self._accumulated_assistant_text += item.delta
-                self._deliver(item)
+                await signal.wait()
+                signal.clear()
+                while True:
+                    try:
+                        item_gen, item = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if item_gen != self._turn_generation:
+                        continue
+                    if item is _END:
+                        return
+                    if isinstance(item, TextDelta):
+                        self._accumulated_assistant_text += item.delta
+                    self._deliver(item)
         finally:
             self._active_turn_id = None
 

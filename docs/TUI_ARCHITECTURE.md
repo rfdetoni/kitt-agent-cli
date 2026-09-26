@@ -118,3 +118,10 @@ The Reverse Proxy context tab is part of the same retained contextual Float. `/r
 ## Hover geometry invariant — Agent CLI 0.72.3
 
 Hover feedback must never change the start column or visible width of a registered hit region. Reverse Proxy text actions therefore use same-length label transformations for hover state. This keeps the semantic target stable across repaint and preserves the press/release invariant.
+
+## Performance lifecycle — Agent CLI 0.73.0
+
+The retained renderer remains capped at the existing redraw cadence, but stable transcript blocks now keep cached formatted fragments. Cache keys include the fields that affect projection and are replaced in place as streaming blocks change, so long transcripts no longer redo formatting work for every unchanged block.
+
+The local `TurnEventBridge` remains backed by a bounded thread-safe queue, but its async consumer is event-driven. Producer threads wake the owning asyncio loop with `call_soon_threadsafe`; there is no 10 ms empty-queue polling loop. This keeps cancellation, backpressure and generation guards intact while reducing idle CPU during long provider waits.
+
