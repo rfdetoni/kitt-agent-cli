@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,16 +28,25 @@ class ReverseProxyCommandResult:
 class ReverseProxyClient:
     """Thin client for the reverse-proxy machine-readable control plane."""
 
-    def __init__(self, executable: str | None = None, *, timeout_seconds: float = 15.0):
+    def __init__(
+        self,
+        executable: str | None = None,
+        *,
+        timeout_seconds: float = 15.0,
+        control_url: str | None = None,
+    ):
         self.executable = executable or shutil.which("kitt-reverse-proxy") or "kitt-reverse-proxy"
         self.timeout_seconds = timeout_seconds
+        port = int(os.environ.get("KITT_REVERSE_PROXY_CONTROL_PORT", "2999"))
+        self.control_url = (control_url or f"http://127.0.0.1:{port}").rstrip("/")
+        self._control_bootstrapped = False
 
     @property
     def available(self) -> bool:
         return bool(shutil.which(self.executable) or shutil.which("kitt-reverse-proxy"))
 
     def list_instances(self) -> list[ReverseProxyInstance]:
-        payload = self._call("service", "list")
+        payload = self._request("service.list", {}, "service", "list")
         return [
             ReverseProxyInstance.from_dict(item)
             for item in payload.get("instances", [])
@@ -42,7 +54,7 @@ class ReverseProxyClient:
         ]
 
     def list_profiles(self) -> list[ReverseProxyProfile]:
-        payload = self._call("profiles", "list")
+        payload = self._request("profiles.list", {}, "profiles", "list")
         return [
             ReverseProxyProfile.from_dict(item)
             for item in payload.get("profiles", [])
@@ -50,7 +62,7 @@ class ReverseProxyClient:
         ]
 
     def list_plugins(self) -> list[ReverseProxyPlugin]:
-        payload = self._call("plugins", "list")
+        payload = self._request("plugins.list", {}, "plugins", "list")
         return [
             ReverseProxyPlugin.from_dict(item)
             for item in payload.get("plugins", [])
@@ -72,20 +84,51 @@ class ReverseProxyClient:
             args.extend(["--id", instance_id])
         if port is not None:
             args.extend(["--port", str(port)])
-        payload = self._call(*args)
+        payload = self._request(
+            "service.start",
+            {
+                "target": target,
+                **({"profile": profile} if profile else {}),
+                **({"id": instance_id} if instance_id else {}),
+                **({"port": port} if port is not None else {}),
+            },
+            *args,
+        )
         instance = payload.get("instance")
         if not isinstance(instance, dict):
             raise ReverseProxyControlError("Reverse proxy did not return a service instance.")
         return ReverseProxyInstance.from_dict(instance)
 
     def stop_instance(self, instance_id: str) -> bool:
-        return bool(self._call("service", "stop", instance_id).get("stopped"))
+        return bool(
+            self._request(
+                "service.stop",
+                {"id": instance_id},
+                "service",
+                "stop",
+                instance_id,
+            ).get("stopped")
+        )
 
     def stop_all(self) -> int:
-        return int(self._call("service", "stop", "--all").get("stopped") or 0)
+        return int(
+            self._request(
+                "service.stopAll",
+                {},
+                "service",
+                "stop",
+                "--all",
+            ).get("stopped") or 0
+        )
 
     def restart_instance(self, instance_id: str) -> ReverseProxyInstance:
-        payload = self._call("service", "restart", instance_id)
+        payload = self._request(
+            "service.restart",
+            {"id": instance_id},
+            "service",
+            "restart",
+            instance_id,
+        )
         instance = payload.get("instance")
         if not isinstance(instance, dict):
             raise ReverseProxyControlError("Reverse proxy did not return the restarted instance.")
@@ -95,14 +138,79 @@ class ReverseProxyClient:
         args = ["profiles", "create", name]
         if provider:
             args.extend(["--provider", provider])
-        payload = self._call(*args)
+        payload = self._request(
+            "profiles.create",
+            {
+                "name": name,
+                **({"provider": provider} if provider else {}),
+            },
+            *args,
+        )
         profile = payload.get("profile")
         if not isinstance(profile, dict):
             raise ReverseProxyControlError("Reverse proxy did not return the created profile.")
         return ReverseProxyProfile.from_dict(profile)
 
     def remove_profile(self, profile_id: str) -> bool:
-        return bool(self._call("profiles", "remove", profile_id).get("removed"))
+        return bool(
+            self._request(
+                "profiles.remove",
+                {"id": profile_id},
+                "profiles",
+                "remove",
+                profile_id,
+            ).get("removed")
+        )
+
+    def _request(
+        self,
+        action: str,
+        params: dict[str, Any],
+        *fallback_args: str,
+    ) -> dict[str, Any]:
+        try:
+            return self._http_call(action, params)
+        except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError):
+            if not self._control_bootstrapped:
+                self._bootstrap_control_plane()
+                try:
+                    return self._http_call(action, params)
+                except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError):
+                    pass
+        return self._call(*fallback_args)
+
+    def _bootstrap_control_plane(self) -> None:
+        self._control_bootstrapped = True
+        try:
+            subprocess.run(
+                [self.executable, "control", "ensure", "--json"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=min(self.timeout_seconds, 5.0),
+                shell=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return
+
+    def _http_call(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        body = json.dumps({"action": action, "params": params}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.control_url}/v1/control",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(
+            request,
+            timeout=min(self.timeout_seconds, 5.0),
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+            raise ValueError("Unsupported reverse proxy control-plane schema.")
+        if payload.get("error"):
+            raise ReverseProxyControlError(str(payload["error"]))
+        return payload
 
     def _call(self, *args: str) -> dict[str, Any]:
         command = [self.executable, *args, "--json"]
