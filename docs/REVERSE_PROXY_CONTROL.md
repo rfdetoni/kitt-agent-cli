@@ -84,3 +84,7 @@ Agent CLI first sends control operations to the reverse-proxy loopback control s
 
 The channel is only a lifecycle/control optimization. Model traffic continues to use the selected reverse-proxy service endpoint, and provider/profile/process ownership remains in `kitt-reverse-proxy`.
 
+## 0.74 control-path note
+
+The resident reverse-proxy control channel introduced in 0.73 remains the management fast path. Agent 0.74 does not alter that wire contract; the new performance work is inside token accounting, approval persistence and transcript rendering.
+
