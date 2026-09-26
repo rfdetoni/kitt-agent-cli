@@ -126,25 +126,47 @@ class PromptBudget:
         if TokenCounter.count_tokens(suffix) > target_tokens:
             return ""
 
-        low, high = 0, len(text)
-        while low < high:
-            mid = (low + high + 1) // 2
-            cand = text[:mid]
-            # Legacy fence safety. V2 context packs do not use fences.
-            if cand.count("```") % 2 == 1:
-                cand += "\n```"
-            if TokenCounter.count_tokens(cand + suffix) <= target_tokens:
-                low = mid
-            else:
-                high = mid - 1
+        # The calibrated estimator is character-ratio based. Start from a
+        # conservative direct character budget instead of repeatedly slicing the
+        # entire string in a binary-search loop. A bounded correction loop keeps
+        # fence safety and the strict token invariant.
+        suffix_tokens = TokenCounter.count_tokens(suffix)
+        content_budget = max(0, target_tokens - suffix_tokens)
+        ratio = TokenCounter.estimator.char_ratios.get("default", 3.9)
+        cut = min(len(text), max(0, int(content_budget * ratio * 0.94)))
 
-        if low < len(text):
-            cand = text[:low]
+        def candidate(end: int) -> str:
+            value = text[:end]
+            if value.count("```") % 2 == 1:
+                value += "\n```"
+            return value
+
+        cand = candidate(cut)
+        measured = TokenCounter.count_tokens(cand)
+        while cut > 0 and measured > content_budget:
+            cut = max(0, int(cut * 0.90))
+            cand = candidate(cut)
+            measured = TokenCounter.count_tokens(cand)
+
+        # Recover some conservative headroom with at most four bounded probes.
+        if cut < len(text):
+            step = max(1, int((len(text) - cut) / 2))
+            for _ in range(4):
+                probe = min(len(text), cut + step)
+                probe_text = candidate(probe)
+                if TokenCounter.count_tokens(probe_text) <= content_budget:
+                    cut = probe
+                    cand = probe_text
+                step //= 2
+                if step <= 0:
+                    break
+
+        if cut < len(text):
             nl = cand.rfind("\n")
-            if nl > low // 2:
+            if nl > max(0, cut // 2):
                 cand = cand[:nl]
-            if cand.count("```") % 2 == 1:
-                cand += "\n```"
+                if cand.count("```") % 2 == 1:
+                    cand += "\n```"
             return cand + suffix
         return text
 
