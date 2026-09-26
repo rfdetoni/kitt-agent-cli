@@ -29,6 +29,7 @@ from kitt.context_filter.fallback import is_container_runtime_request
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context.tool_receipts import compact_consumed_tool_results as compact_tool_results
+from kitt.context.token_ledger import TokenLedger
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.edit_format.parser import PatchParser
 from kitt.edit_format.strategy import (
@@ -189,6 +190,7 @@ class TurnProcessor(
         self._routing_feedback_snapshot_fn: Optional[Callable[[Any], Dict[str, Dict[str, Any]]]] = None
         self._attachment_paths_by_turn: Dict[str, tuple[str, ...]] = {}
         self._attachment_wire_sent: set[str] = set()
+        self._token_ledger = TokenLedger()
 
     def set_proxy_session_scope(self, scope: str) -> None:
         """Override the reverse-proxy session namespace for a dedicated runtime.
@@ -380,9 +382,8 @@ class TurnProcessor(
         prompt_budget = PromptBudget(profile.context_window, profile.max_output_tokens)
         max_allowed = prompt_budget.max_input_tokens
         used = (
-            TokenCounter.count_tokens(system_prompt)
-            + sum(TokenCounter.count_tokens(m.get("content", "")) for m in messages)
-            + TokenCounter.count_tokens(wrapper_prefix + wrapper_suffix)
+            self._token_ledger.total_input_tokens(system_prompt, messages)
+            + self._token_ledger.count_text(wrapper_prefix + wrapper_suffix)
         )
         remaining = max(0, max_allowed - used - 80)
         if remaining <= 0:
@@ -398,7 +399,7 @@ class TurnProcessor(
         available = PromptBudget(
             profile.context_window, profile.max_output_tokens
         ).max_input_tokens
-        used = TokenCounter.count_tokens(system_prompt) + TokenCounter.count_messages(messages).count
+        used = self._token_ledger.total_input_tokens(system_prompt, messages)
         if used <= available:
             return
         excess = used - available
@@ -424,6 +425,9 @@ class TurnProcessor(
             trimmed = PromptBudget(profile.context_window, profile.max_output_tokens)._truncate_to_tokens(current, target)
             message["content"] = trimmed
             excess -= max(0, current_tokens - TokenCounter.count_tokens(trimmed))
+        # Synchronize once after in-place mutations so subsequent tool-loop passes
+        # reuse estimates for every unchanged message.
+        self._token_ledger.total_input_tokens(system_prompt, messages)
 
     def _routing_capabilities(self) -> Dict[str, ModelCapabilities]:
         local_backends = {"ollama", "lmstudio", "antigravity", "local", "kitt-reverse-proxy", "kitt-proxy"}
