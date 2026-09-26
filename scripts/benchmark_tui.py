@@ -11,7 +11,7 @@ from kitt.ui.state import TranscriptBlock
 
 
 def measure_ms(fn, iterations: int) -> list[float]:
-    samples = []
+    samples: list[float] = []
     for _ in range(iterations):
         started = time.perf_counter()
         fn()
@@ -25,37 +25,52 @@ def percentile(samples: list[float], ratio: float) -> float:
     return ordered[index]
 
 
-blocks = [
-    TranscriptBlock(
-        id=f"block-{index}",
-        kind="assistant" if index % 3 else "tool",
-        text=("result " + str(index) + " ") * 20,
-        status="done",
+def scenario(block_count: int, window_blocks: int, iterations: int = 250) -> dict[str, object]:
+    blocks = [
+        TranscriptBlock(
+            id=f"block-{index}",
+            kind="assistant" if index % 3 else "tool",
+            text=("result " + str(index) + " ") * 20,
+            status="done",
+        )
+        for index in range(block_count)
+    ]
+    state = SimpleNamespace(
+        transcript=blocks,
+        transcript_window_blocks=window_blocks,
+        active_turn_id=None,
+        is_thinking=False,
+        is_executing_tool=False,
+        unseen_output=False,
     )
-    for index in range(500)
-]
-state = SimpleNamespace(
-    transcript=blocks,
-    active_turn_id=None,
-    is_thinking=False,
-    is_executing_tool=False,
-    unseen_output=False,
-)
-ui = SimpleNamespace(state=state)
+    ui = SimpleNamespace(state=state)
 
-cold_started = time.perf_counter()
-_transcript_text(ui)
-cold_ms = (time.perf_counter() - cold_started) * 1000
-warm = measure_ms(lambda: _transcript_text(ui), 500)
+    cold_started = time.perf_counter()
+    _transcript_text(ui)
+    cold_ms = (time.perf_counter() - cold_started) * 1000
+    warm = measure_ms(lambda: _transcript_text(ui), iterations)
+    return {
+        "blocks": block_count,
+        "window_blocks": window_blocks,
+        "cold_ms": round(cold_ms, 3),
+        "warm_mean_ms": round(statistics.fmean(warm), 3),
+        "warm_p50_ms": round(percentile(warm, 0.50), 3),
+        "warm_p95_ms": round(percentile(warm, 0.95), 3),
+        "warm_p99_ms": round(percentile(warm, 0.99), 3),
+        "cache_entries": len(getattr(ui, "_transcript_render_cache", {})),
+    }
+
+
+results = [
+    scenario(100, 100),
+    scenario(1_000, 120),
+    scenario(10_000, 120),
+    # Worst-case explicit full-history render for regression visibility.
+    scenario(1_000, 1_000, iterations=100),
+]
 
 print(json.dumps({
     "service": "kitt-agent-cli",
-    "benchmark_version": 1,
-    "scenario": "transcript_500_blocks",
-    "cold_ms": round(cold_ms, 3),
-    "warm_mean_ms": round(statistics.fmean(warm), 3),
-    "warm_p50_ms": round(percentile(warm, 0.50), 3),
-    "warm_p95_ms": round(percentile(warm, 0.95), 3),
-    "warm_p99_ms": round(percentile(warm, 0.99), 3),
-    "cache_entries": len(getattr(ui, "_transcript_render_cache", {})),
+    "benchmark_version": 2,
+    "scenarios": results,
 }, indent=2))
