@@ -46,7 +46,11 @@ class ApprovalGrant:
 
 
 class ApprovalManager:
-    """Single-use approval broker with nonce-bound CAS consumption."""
+    """Durable human approvals with single-use, short-lived grants.
+
+    PENDING requests never expire automatically. ttl_seconds applies only
+    after a user decision has issued a nonce-bound grant.
+    """
 
     def __init__(self, ttl_seconds: float = 300.0, db=None):
         self.ttl_seconds = max(1.0, float(ttl_seconds))
