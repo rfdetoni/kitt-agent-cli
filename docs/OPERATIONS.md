@@ -158,3 +158,16 @@ python scripts/benchmark_tui.py
 
 It reports cold render time plus warm p50/p95/p99 for a retained 500-block transcript. Use it as a regression signal alongside normal tests; it is intentionally dependency-free and does not contact a model or mutate a workspace.
 
+## Approval lifetime
+
+A user-facing approval that is still PENDING has no automatic timeout. It remains actionable until the user decides, the turn is explicitly cancelled, or mutation preconditions invalidate the action. The legacy `approval_ttl_seconds` setting is retained for configuration compatibility but applies only to the short-lived, nonce-bound grant issued after a user decision.
+
+## Context performance benchmarks
+
+```bash
+python scripts/benchmark_tui.py
+python scripts/benchmark_context_budget.py
+```
+
+The TUI benchmark includes virtualized 1k/10k transcript scenarios and an explicit full-history worst case. The context benchmark records truncation plus cold/warm TokenLedger timings for 32 KiB, 256 KiB and 1 MiB payloads.
+
