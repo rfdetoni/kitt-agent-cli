@@ -77,3 +77,10 @@ The Agent test validates that both roles persist through the existing model rout
 ### Pointer feedback
 
 Action labels in Services, Profiles and Novo serviço expose a visible hover state. The hover transformation preserves the same character count, so the interaction map keeps identical coordinates before and after repaint. Clicking the hovered action reaches the same controller path as its keyboard shortcut.
+
+## Resident control channel — Agent CLI 0.73.0 / Reverse Proxy 4.3
+
+Agent CLI first sends control operations to the reverse-proxy loopback control server. When the server is not running, the client performs one bounded `kitt-reverse-proxy control ensure --json` bootstrap and retries the HTTP operation. If the installed proxy predates the resident channel or bootstrap fails, the existing machine-readable subprocess command remains the compatibility fallback.
+
+The channel is only a lifecycle/control optimization. Model traffic continues to use the selected reverse-proxy service endpoint, and provider/profile/process ownership remains in `kitt-reverse-proxy`.
+
