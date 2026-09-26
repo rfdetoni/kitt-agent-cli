@@ -47,7 +47,7 @@ def test_transcript_virtualizes_old_blocks_until_expanded():
     assert "message 0" not in rendered
     assert "message 499" in rendered
 
-    ui.state.expand_transcript_window(500)
+    ui.state.transcript_window_blocks = 500
     rendered_full = "".join(text for _style, text in _transcript_text(ui))
     assert "virtualizados" not in rendered_full
     assert "message 0" in rendered_full
