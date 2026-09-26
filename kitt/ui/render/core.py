@@ -58,9 +58,19 @@ def _transcript_text(ui):
     if cache is None:
         cache = {}
         ui._transcript_render_cache = cache
+    transcript = ui.state.transcript
+    limit = max(1, int(getattr(ui.state, "transcript_window_blocks", 120)))
+    hidden_count = max(0, len(transcript) - limit)
+    visible_blocks = transcript[hidden_count:]
     live_ids = set()
 
-    for block in ui.state.transcript:
+    if hidden_count:
+        out.append((
+            "class:text.muted",
+            f"\n… {hidden_count} blocos anteriores virtualizados — role para cima para carregar mais …\n",
+        ))
+
+    for block in visible_blocks:
         live_ids.add(block.id)
         running = (
             block.kind in {"tool", "thought"}
@@ -122,9 +132,13 @@ def _transcript_text(ui):
         cache[block.id] = (signature, cached_fragment)
         out.extend(cached_fragment)
 
-    if len(cache) > len(live_ids):
+    # Avoid an O(total transcript) cleanup on every frame. The retained
+    # transcript itself is capped at 500 blocks, so prune only when stale cache
+    # entries prove that the rolling window has crossed that bound.
+    if len(cache) > 600:
+        retained_ids = {block.id for block in transcript}
         for block_id in tuple(cache):
-            if block_id not in live_ids:
+            if block_id not in retained_ids:
                 cache.pop(block_id, None)
 
     if ui.state.unseen_output:
