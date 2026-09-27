@@ -328,6 +328,21 @@ class MemoryManager:
 
     def get_memory_context(self, prompt: str = "", max_tokens: int = 400) -> str:
         items = self.get_relevant_memories(prompt) if prompt else self.get_items()
+
+        if not prompt:
+            # Keep the human /memory surface stable without manufacturing
+            # preference content. Empty sections are descriptive UI, not memory.
+            grouped = {
+                "GLOBAL": [item.text for item in items if item.scope == "GLOBAL"],
+                "PROJECT": [item.text for item in items if item.scope == "PROJECT"],
+            }
+            sections = []
+            for scope, title in (("GLOBAL", "Global Memory"), ("PROJECT", "Project Memory")):
+                values = grouped[scope]
+                body = "\n".join(f"- {value}" for value in values) if values else "(empty)"
+                sections.append(f"--- {title} ---\n{body}")
+            return "\n\n".join(sections)
+
         lines: list[str] = []
         used = 0
         for item in items:
