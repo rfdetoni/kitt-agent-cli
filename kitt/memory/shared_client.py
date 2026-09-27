@@ -143,7 +143,16 @@ class SharedMemoryClient:
         content: str,
         kind: str = "PROJECT_RULE",
         pinned: bool = True,
+        *,
+        scope: str = "workspace",
+        scope_key: str | None = None,
     ) -> str:
+        normalized_scope = scope.strip().lower()
+        if normalized_scope not in {"global", "workspace", "conversation"}:
+            raise ValueError(f"unsupported memory scope: {scope!r}")
+        normalized_scope_key = scope_key.strip() if isinstance(scope_key, str) else None
+        if normalized_scope == "conversation" and not normalized_scope_key:
+            raise ValueError("conversation memory requires scope_key")
         result = self._call(
             MEMORY_REMEMBER_REQUEST,
             {
@@ -152,7 +161,8 @@ class SharedMemoryClient:
                 "content": content,
                 "kind": kind.strip().lower(),
                 "sensitivity": "private",
-                "scope": "workspace",
+                "scope": normalized_scope,
+                "scope_key": normalized_scope_key,
                 "importance": 0.8,
                 "confidence": 1.0,
                 "pinned": pinned,
@@ -169,14 +179,21 @@ class SharedMemoryClient:
         workspace_id: str,
         query: str,
         limit: int = 8,
+        *,
+        scope_key: str | None = None,
+        as_of: int | None = None,
     ) -> list[dict[str, Any]]:
+        normalized_scope_key = scope_key.strip() if isinstance(scope_key, str) else None
+        normalized_as_of = int(as_of) if as_of is not None else None
         result = self._call(
             MEMORY_RECALL_REQUEST,
             {
                 "namespace": "agent-cli",
                 "workspace_id": workspace_id,
+                "scope_key": normalized_scope_key,
                 "query": query,
-                "limit": max(1, min(int(limit), 50)),
+                "limit": max(0, min(int(limit), 50)),
+                "as_of": normalized_as_of,
                 "allow_private": True,
                 "allow_secret": False,
             },

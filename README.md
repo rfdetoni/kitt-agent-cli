@@ -225,7 +225,7 @@ immutable revisions as part of the same supply-chain boundary.
 - An issued grant remains short-lived, action-bound and single-use; removing the waiting timeout does not make grants reusable.
 - If autonomous `process.run` cannot use a strong OS sandbox, KITT degrades to a durable user approval instead of returning a terminal ASK-policy error to the model.
 - Pending tool conversations stay pinned in `kitt-reverse-proxy`, so session idle/LRU eviction cannot discard a conversation while KITT is waiting for the human decision.
-- Daemon-backed approvals require `kitt-assistant-runtime >= 0.2.15`; that runtime treats `PENDING` decisions as durable state with no wall-clock expiry and never evicts an active approval to make room for a newer one.
+- Daemon-backed approvals require `kitt-assistant-runtime >= 0.2.16`; that runtime treats `PENDING` decisions as durable state with no wall-clock expiry and never evicts an active approval to make room for a newer one.
 - Standalone install/update scripts stop resident KITT services, including the daemon and known proxy/gateway services, before replacing the runtime.
 
 Inside the TUI, `/reasoning 0-100` and reasoning shortcuts update providers that support API-side reasoning control. `/verify-full` is available from the command palette/menu and toggles the persistent `KITT_AGENT_VERIFY_FULL` runtime flag. When enabled, KITT adds bounded project compile/typecheck/lint/test gates after edits; when disabled, fast structural validation and targeted checks remain active. With `kitt-reverse-proxy`, the Agent keeps a stable conversation/session ID without creating a new browser conversation every turn. For browser-backed WebChat providers, reasoning/thinking remains configured in the authenticated WebChat UI; the legacy `X-Kitt-Reasoning-Effort` header is compatibility-only and is ignored by the reverse proxy.
@@ -555,3 +555,8 @@ This patch completes the 0.74 performance work with two compatibility safeguards
 - persisted PendingAction records explicitly retain the zero-expiry sentinel across repository round trips, keeping user-facing approvals actionable until a decision/cancel while issued grants remain short-lived and single-use.
 
 The Reverse Proxy control guide is also aligned with the profile-scoped BrowserHost introduced in Reverse Proxy 4.4.
+
+
+### Shared memory contract 0.2
+
+Agent 0.74.2 pins kitt-protocol 0.2.0. The shared-memory client can pass an optional conversation `scope_key` and point-in-time `as_of` to kittd while keeping workspace calls source-compatible. Conversation-scoped writes require an explicit key, and an explicit recall limit of `0` remains empty rather than being coerced to one result.
