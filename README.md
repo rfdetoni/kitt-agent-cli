@@ -559,4 +559,9 @@ The Reverse Proxy control guide is also aligned with the profile-scoped BrowserH
 
 ### Shared memory contract 0.2
 
-Agent 0.74.2 pins kitt-protocol 0.2.0. The shared-memory client can pass an optional conversation `scope_key` and point-in-time `as_of` to kittd while keeping workspace calls source-compatible. Conversation-scoped writes require an explicit key, and an explicit recall limit of `0` remains empty rather than being coerced to one result.
+Agent 0.74.3 pins kitt-protocol 0.2.0. The shared-memory client can pass an optional conversation `scope_key` and point-in-time `as_of` to kittd while keeping workspace calls source-compatible. Conversation-scoped writes require an explicit key, and an explicit recall limit of `0` remains empty rather than being coerced to one result.
+
+
+### Assistant/runtime alignment
+
+Agent 0.74.3 pins the validated kitt-assistant 0.1.4 / runtime 0.2.16 snapshot in CI, PR checks, architecture validation and release composition. This freezes the schema-v4 shared-memory integration at the same Assistant revision used by the ecosystem lock.
