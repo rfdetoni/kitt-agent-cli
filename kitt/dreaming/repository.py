@@ -260,6 +260,14 @@ class MemoryRepository:
             updated_at=now,
             pinned=pinned,
         )
+        existing = self.get_memory_by_content_hash(workspace_id, mem.content_hash)
+        if existing and existing.status == "ACTIVE":
+            if pinned and not existing.pinned:
+                self.pin_memory(existing.id, True)
+                refreshed = self.get_memory(existing.id)
+                return refreshed or existing
+            return existing
+
         ev = MemoryEvidence(
             id=f"ev_{uuid.uuid4().hex[:12]}",
             memory_id=mem_id,
