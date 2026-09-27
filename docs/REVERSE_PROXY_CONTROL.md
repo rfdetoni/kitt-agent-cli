@@ -51,7 +51,9 @@ Equivalent commands:
 
 ## Profile concurrency
 
-A named profile can accumulate login state for multiple providers, but Reverse Proxy 4.2 locks a Chromium user-data directory to one active proxy instance at a time. Use distinct profiles for concurrently active Gemini and ChatGPT instances. A later BrowserHost/CDP layer can safely share one live Chromium owner without changing Agent role bindings.
+A named profile can accumulate login state for multiple providers. Reverse Proxy 4.4 keeps the credential boundary at the profile directory while allowing compatible managed services to attach to one profile-scoped BrowserHost through loopback CDP. Different profile directories are never merged, and service processes never open the same user-data directory independently.
+
+Gemini remains outside BrowserHost pooling because its Google-account bootstrap intentionally stays human-driven before automation attaches. For the recommended Context=Gemini / Code=ChatGPT topology, separate profiles remain the correct configuration.
 
 
 ## Tested dual-instance topology
