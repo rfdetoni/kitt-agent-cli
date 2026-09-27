@@ -382,8 +382,8 @@ class TurnProcessor(
         prompt_budget = PromptBudget(profile.context_window, profile.max_output_tokens)
         max_allowed = prompt_budget.max_input_tokens
         used = (
-            self._token_ledger.total_input_tokens(system_prompt, messages)
-            + self._token_ledger.count_text(wrapper_prefix + wrapper_suffix)
+            self._token_ledger_instance().total_input_tokens(system_prompt, messages)
+            + self._token_ledger_instance().count_text(wrapper_prefix + wrapper_suffix)
         )
         remaining = max(0, max_allowed - used - 80)
         if remaining <= 0:
@@ -399,7 +399,7 @@ class TurnProcessor(
         available = PromptBudget(
             profile.context_window, profile.max_output_tokens
         ).max_input_tokens
-        used = self._token_ledger.total_input_tokens(system_prompt, messages)
+        used = self._token_ledger_instance().total_input_tokens(system_prompt, messages)
         if used <= available:
             return
         excess = used - available
@@ -427,7 +427,14 @@ class TurnProcessor(
             excess -= max(0, current_tokens - TokenCounter.count_tokens(trimmed))
         # Synchronize once after in-place mutations so subsequent tool-loop passes
         # reuse estimates for every unchanged message.
-        self._token_ledger.total_input_tokens(system_prompt, messages)
+        self._token_ledger_instance().total_input_tokens(system_prompt, messages)
+
+    def _token_ledger_instance(self) -> TokenLedger:
+        ledger = getattr(self, "_token_ledger", None)
+        if ledger is None:
+            ledger = TokenLedger()
+            self._token_ledger = ledger
+        return ledger
 
     def _routing_capabilities(self) -> Dict[str, ModelCapabilities]:
         local_backends = {"ollama", "lmstudio", "antigravity", "local", "kitt-reverse-proxy", "kitt-proxy"}
