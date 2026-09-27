@@ -565,3 +565,14 @@ Agent 0.74.3 pins kitt-protocol 0.2.0. The shared-memory client can pass an opti
 ### Assistant/runtime alignment
 
 Agent 0.74.3 pins the validated kitt-assistant 0.1.4 / runtime 0.2.16 snapshot in CI, PR checks, architecture validation and release composition. This freezes the schema-v4 shared-memory integration at the same Assistant revision used by the ecosystem lock.
+
+
+## Agent CLI 0.74.4 — memory and approval consistency
+
+Agent CLI 0.74.4 removes two remaining split-brain state paths:
+
+- Agent-created project memory is persisted first in the Agent structured store and mirrored to shared `kitt-memory` when available. Shared recall is merged with local records instead of replacing them, so restarting or losing `kittd` cannot make locally durable memories disappear.
+- Markdown memory is now recovery-only, uses cross-process lock + atomic replace, and no longer seeds invented user preferences or project rules.
+- Clearing project memory archives the Agent's structured records and removes exact shared mirrors when the daemon is reachable.
+- Approval denial now persists the durable state before updating the in-memory broker, matching grant/consume fail-closed semantics.
+- Package compatibility remains Python 3.12+, while CI intentionally exercises only the current ecosystem interpreter (Python 3.14) across supported desktop operating systems.
