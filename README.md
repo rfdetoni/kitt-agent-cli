@@ -547,3 +547,11 @@ Agent CLI 0.74.0 completes the performance hardening started in 0.73:
 - Transcript block ids are monotonic across the 500-block retention rollover, preventing cache-key collisions in long sessions.
 - `python scripts/benchmark_tui.py` now covers 100, 1,000 and 10,000-block scenarios; `python scripts/benchmark_context_budget.py` measures 32 KiB, 256 KiB and 1 MiB token-budget workloads.
 
+## Agent CLI 0.74.1 — compatibility hardening
+
+This patch completes the 0.74 performance work with two compatibility safeguards:
+
+- token accounting is lazily initialized for partial test/harness TurnProcessor construction while normal runtime behavior remains incremental;
+- persisted PendingAction records explicitly retain the zero-expiry sentinel across repository round trips, keeping user-facing approvals actionable until a decision/cancel while issued grants remain short-lived and single-use.
+
+The Reverse Proxy control guide is also aligned with the profile-scoped BrowserHost introduced in Reverse Proxy 4.4.
