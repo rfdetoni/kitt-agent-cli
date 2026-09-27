@@ -213,6 +213,28 @@ class MemoryRepository:
             )
             return cursor.rowcount > 0
 
+    def archive_active_memories(self, workspace_id: str) -> List[MemoryRecord]:
+        """Archive all active Agent-owned memories for one workspace atomically."""
+        active = self.get_active_memories(workspace_id)
+        if not active:
+            return []
+        now = time.time()
+        with self.db.get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE memories
+                SET status = 'ARCHIVED',
+                    updated_at = ?,
+                    valid_until = CASE
+                        WHEN valid_until IS NULL OR valid_until > ? THEN ?
+                        ELSE valid_until
+                    END
+                WHERE workspace_id = ? AND status = 'ACTIVE'
+                """,
+                (now, now, now, workspace_id),
+            )
+        return active
+
     def add_direct_memory(
         self,
         workspace_id: str,
