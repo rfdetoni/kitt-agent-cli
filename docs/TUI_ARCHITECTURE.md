@@ -14,7 +14,8 @@ The refactor in Agent CLI 0.70.0 replaces the former monolithic UI implementatio
 | `kitt/ui/controls.py` | Stable Buffer/Control construction and completion wiring |
 | `kitt/ui/layout.py` | Retained container tree and five logical modal surfaces |
 | `kitt/ui/scroll.py` | Central scroll registry and isolated wheel routing |
-| `kitt/ui/mouse.py` | Mouse event routing and semantic action activation |\n| `kitt/ui/interaction.py` | Local-cell hit regions, hover/press state and hit testing |
+| `kitt/ui/mouse.py` | Mouse event routing and semantic action activation |
+| `kitt/ui/interaction.py` | Local-cell hit regions, hover/press state and hit testing |
 | `kitt/ui/keymap.py` | Shortcut metadata/source of truth for discoverable actions |
 | `kitt/ui/keybindings.py` | prompt_toolkit binding installation and contextual bindings |
 | `kitt/ui/render/core.py` | Home, header, transcript, sidebar, status and toast projections |
@@ -28,7 +29,8 @@ The refactor in Agent CLI 0.70.0 replaces the former monolithic UI implementatio
 | `kitt/ui/provider_flow.py` | Provider setup/authentication workflow |
 | `kitt/ui/navigation.py` | Palette/sidebar/context navigation actions |
 | `kitt/ui/runtime_actions.py` | UI-facing runtime/tool/workspace/approval actions |
-| `kitt/ui/reverse_proxy_panel.py` | Reverse-proxy control-center projection and user actions |\n| `kitt/reverse_proxy/client.py` | Typed subprocess boundary for reverse-proxy control plane |
+| `kitt/ui/reverse_proxy_panel.py` | Reverse-proxy control-center projection and user actions |
+| `kitt/reverse_proxy/client.py` | Typed resident HTTP control client with bounded CLI bootstrap/fallback |
 
 No extracted module introduces another application owner. `ModelSetupModel` is a compatibility facade composed from small selection behaviors; each behavior has one reason to change.
 

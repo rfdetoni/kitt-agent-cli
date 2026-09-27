@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 from kitt.tools.approval import ApprovalManager
 from kitt.history.database import HistoryDatabase
+from kitt.history.repository import HistoryRepository
+from kitt.core.pending_action import PendingAction
 from kitt.ui.state import UIState
 from kitt.ui.components.permission_card import PermissionCardComponent
 
@@ -85,6 +87,47 @@ class TestApprovalCenter(unittest.TestCase):
 
             self.assertIsNotNone(grant)
             self.assertGreater(grant.expires_at, grant.granted_at)
+
+    def test_pending_action_zero_expiry_survives_repository_round_trip(self):
+        db = HistoryDatabase(in_memory=True)
+        try:
+            repo = HistoryRepository(db)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                workspace = repo.get_or_create_workspace(tmp_dir)
+                conversation = repo.create_conversation(workspace["id"])
+                repo.save_message(
+                    conversation["id"],
+                    "turn_durable",
+                    "user",
+                    "seed turn for pending-action foreign keys",
+                )
+                pending = PendingAction(
+                    id="pa_turn_durable",
+                    approval_request_id="req_durable",
+                    turn_id="turn_durable",
+                    conversation_id=conversation["id"],
+                    workspace_id=workspace["id"],
+                    tool_name="process.run",
+                    normalized_args={"argv": ["echo", "ok"]},
+                    action_hash="hash_durable",
+                    source_response_sha256="digest",
+                    affected_paths=[],
+                    before_hashes={},
+                    created_at=1.0,
+                    expires_at=0.0,
+                    state="pending",
+                    security_context={"principal_type": "USER"},
+                )
+                repo.save_pending_action(pending)
+                restored = repo.get_valid_pending_action(
+                    "pa_turn_durable", workspace["id"]
+                )
+
+                self.assertIsNotNone(restored)
+                self.assertEqual(restored.expires_at, 0.0)
+                self.assertEqual(restored.state, "pending")
+        finally:
+            db.close()
 
     def test_remembered_approval_rules_and_persistence(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:

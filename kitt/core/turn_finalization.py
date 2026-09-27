@@ -176,7 +176,7 @@ class TurnFinalizationMixin:
             )
         )
         saved = max(0, naive_tokens - allocated["total_input_tokens"])
-        actual_input_tokens = self._token_ledger.total_input_tokens(
+        actual_input_tokens = self._token_ledger_instance().total_input_tokens(
             request.system_prompt, execution_messages
         )
         metrics = TurnMetrics(

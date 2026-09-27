@@ -1,3 +1,4 @@
+from kitt.core.turn_processor import TurnProcessor
 from kitt.context.token_ledger import TokenLedger
 
 
@@ -33,3 +34,12 @@ def test_token_ledger_recomputes_only_mutated_message():
 
     assert after["recomputed_entries"] == before + 1
     assert after["reused_entries"] >= 1
+
+
+def test_turn_processor_lazily_provisions_ledger_for_partial_harness():
+    processor = object.__new__(TurnProcessor)
+
+    ledger = processor._token_ledger_instance()
+
+    assert ledger is processor._token_ledger
+    assert ledger.total_input_tokens("system", [{"role": "user", "content": "hello"}]) > 0
