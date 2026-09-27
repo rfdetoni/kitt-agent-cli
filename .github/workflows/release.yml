@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  ASSISTANT_RUNTIME_REF: ce4812856a125efbd8526e19feab1957d9707cf7
+  ASSISTANT_RUNTIME_REF: fdc0c9aa2c37b412fbfe7254c6cb7281ce0f672b
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
