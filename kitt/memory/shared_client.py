@@ -16,6 +16,8 @@ from kitt_protocol import (
     MEMORY_RECALL_RESPONSE,
     MEMORY_REMEMBER_REQUEST,
     MEMORY_REMEMBER_RESPONSE,
+    MEMORY_FORGET_REQUEST,
+    MEMORY_FORGET_RESPONSE,
     SYSTEM_ERROR,
 )
 
@@ -202,3 +204,16 @@ class SharedMemoryClient:
         if not isinstance(result, dict) or not isinstance(result.get("records"), list):
             raise SharedMemoryUnavailable("memory.recall response missing records")
         return [record for record in result["records"] if isinstance(record, dict)]
+
+    def forget(self, memory_id: str) -> bool:
+        normalized = str(memory_id or "").strip()
+        if not normalized:
+            return False
+        result = self._call(
+            MEMORY_FORGET_REQUEST,
+            {"id": normalized},
+            MEMORY_FORGET_RESPONSE,
+        )
+        if not isinstance(result, dict) or not isinstance(result.get("deleted"), bool):
+            raise SharedMemoryUnavailable("memory.forget response missing deleted flag")
+        return bool(result["deleted"])
