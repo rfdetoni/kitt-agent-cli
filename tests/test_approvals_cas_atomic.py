@@ -30,6 +30,23 @@ class TestApprovalsCASAtomic(unittest.TestCase):
         replay = self.mgr.validate_and_consume(grant, "hash1", "t1", "c1", "w1", "app_1")
         self.assertFalse(replay)
 
+    def test_deny_does_not_mutate_memory_when_durable_write_fails(self):
+        manager = ApprovalManager()
+        manager.register_request(
+            "t-deny", "c-deny", "w-deny", "hash-deny", "app-deny", "write_file"
+        )
+
+        class FailingDb:
+            def get_connection(self):
+                raise RuntimeError("database unavailable")
+
+        manager.db = FailingDb()
+        self.assertFalse(manager.deny("app-deny"))
+        self.assertEqual(
+            [item.approval_id for item in manager.list_pending("w-deny")],
+            ["app-deny"],
+        )
+
     def test_mismatched_bindings_rejected(self):
         self.mgr.register_request("t1", "c1", "w1", "hash1", "app_1", "write_file", "Write test")
         grant = self.mgr.issue_grant("t1", "c1", "w1", "hash1", "app_1")
