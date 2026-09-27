@@ -7,7 +7,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from kitt_protocol import Envelope, MEMORY_RECALL_RESPONSE
+from kitt_protocol import Envelope, MEMORY_RECALL_RESPONSE, MEMORY_REMEMBER_RESPONSE
 from kitt.memory.shared_client import SharedMemoryClient, SharedMemoryUnavailable
 
 
@@ -48,6 +48,72 @@ class SharedClientTest(unittest.TestCase):
             token.write_text("a" * 64)
             client = SharedMemoryClient(f"{host}:{port}", token, 1.0)
             self.assertEqual("rule", client.recall("ws", "rule")[0]["content"])
+
+    def test_scoped_recall_forwards_scope_key_and_as_of(self):
+        def response(frame):
+            request = frame["envelope"]
+            payload = request["payload"]
+            self.assertEqual("conversation-7", payload["scope_key"])
+            self.assertEqual(1_700_000_000, payload["as_of"])
+            self.assertEqual(4, payload["limit"])
+            return Envelope(
+                kind=MEMORY_RECALL_RESPONSE,
+                correlation_id=request["id"],
+                payload={"records": []},
+            )
+
+        host, port = self._server(response)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            token = Path(tmp) / "token"
+            token.write_text("a" * 64)
+            client = SharedMemoryClient(f"{host}:{port}", token, 1.0)
+            self.assertEqual(
+                [],
+                client.recall(
+                    "ws",
+                    "rule",
+                    limit=4,
+                    scope_key="conversation-7",
+                    as_of=1_700_000_000,
+                ),
+            )
+
+    def test_conversation_remember_forwards_scope_key(self):
+        def response(frame):
+            request = frame["envelope"]
+            payload = request["payload"]
+            self.assertEqual("memory.remember.request", request["kind"])
+            self.assertEqual("conversation", payload["scope"])
+            self.assertEqual("conversation-7", payload["scope_key"])
+            return Envelope(
+                kind=MEMORY_REMEMBER_RESPONSE,
+                correlation_id=request["id"],
+                payload={"id": "mem-1"},
+            )
+
+        host, port = self._server(response)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            token = Path(tmp) / "token"
+            token.write_text("a" * 64)
+            client = SharedMemoryClient(f"{host}:{port}", token, 1.0)
+            self.assertEqual(
+                "mem-1",
+                client.remember(
+                    "ws",
+                    "conversation rule",
+                    scope="conversation",
+                    scope_key="conversation-7",
+                ),
+            )
+
+    def test_zero_limit_recall_short_circuits_without_ipc(self):
+        client = SharedMemoryClient("192.0.2.10:41827", "/definitely/missing/token", 1.0)
+        self.assertEqual([], client.recall("ws", "rule", limit=0))
+
+    def test_conversation_remember_requires_scope_key(self):
+        client = SharedMemoryClient()
+        with self.assertRaisesRegex(ValueError, "scope_key"):
+            client.remember("ws", "rule", scope="conversation")
 
     def test_correlation_mismatch_is_rejected(self):
         def response(_frame):
