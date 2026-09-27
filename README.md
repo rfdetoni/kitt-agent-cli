@@ -555,3 +555,8 @@ This patch completes the 0.74 performance work with two compatibility safeguards
 - persisted PendingAction records explicitly retain the zero-expiry sentinel across repository round trips, keeping user-facing approvals actionable until a decision/cancel while issued grants remain short-lived and single-use.
 
 The Reverse Proxy control guide is also aligned with the profile-scoped BrowserHost introduced in Reverse Proxy 4.4.
+
+
+## Agent CLI 0.74.2 — shared memory 0.2 integration
+
+Agent CLI 0.74.2 pins `kitt-protocol 0.2.0` while retaining protocol envelope v1. The shared-memory client now supports optional conversation `scope_key` and point-in-time `as_of` recall, validates conversation-scoped writes before IPC, and preserves `limit=0` as an empty local result instead of forcing a daemon query. Existing workspace memory calls remain unchanged.
