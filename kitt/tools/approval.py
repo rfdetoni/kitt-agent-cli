@@ -470,6 +470,28 @@ class ApprovalManager:
 
     def deny(self, approval_id: str, reason: str = "Denied by user") -> bool:
         now = time.time()
+
+        # Durable approval state is authority. Persist the denial first so a
+        # failed SQLite write can never leave RAM saying DENIED while a restart
+        # rehydrates PENDING/GRANTED authority from disk.
+        persisted = False
+        if self.db:
+            try:
+                with self.db.get_connection() as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    cur = conn.execute(
+                        "UPDATE approval_requests SET state='DENIED',decided_at=?,"
+                        "failure_reason=? WHERE approval_id=? AND state IN ('PENDING','GRANTED')",
+                        (str(now), reason, approval_id),
+                    )
+                    if cur.rowcount <= 0:
+                        conn.rollback()
+                        return False
+                    conn.commit()
+                    persisted = True
+            except Exception:
+                return False
+
         updated = False
         with self._lock:
             req = self._requests_by_id.get(approval_id)
@@ -482,18 +504,7 @@ class ApprovalManager:
                 self._issued_nonce_hashes.pop(approval_id, None)
                 updated = True
 
-        if self.db:
-            try:
-                with self.db.get_connection() as conn:
-                    cur = conn.execute(
-                        "UPDATE approval_requests SET state='DENIED',decided_at=?,"
-                        "failure_reason=? WHERE approval_id=? AND state IN ('PENDING','GRANTED')",
-                        (str(now), reason, approval_id),
-                    )
-                    updated = updated or cur.rowcount > 0
-            except Exception:
-                pass
-        return updated
+        return persisted or updated
 
     def expire_pending(self) -> int:
         now = time.time()
