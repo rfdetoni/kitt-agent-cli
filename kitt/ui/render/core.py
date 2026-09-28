@@ -72,6 +72,7 @@ def _transcript_text(ui):
 
     for block in visible_blocks:
         live_ids.add(block.id)
+        surface = block.metadata.get("surface") if isinstance(block.metadata, dict) else None
         running = (
             block.kind in {"tool", "thought"}
             and block.status == "running"
@@ -97,7 +98,13 @@ def _transcript_text(ui):
             continue
 
         fragment = []
-        if block.kind in {"tool", "thought"}:
+        if isinstance(surface, dict):
+            from kitt.ui.surface_renderer import surface_fragments
+            fragment = [
+                ("class:context", "\nSURFACE  "),
+                *surface_fragments(surface),
+            ]
+        elif block.kind in {"tool", "thought"}:
             text = block.text
             if running:
                 if block.kind == "thought":

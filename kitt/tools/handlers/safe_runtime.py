@@ -171,6 +171,14 @@ class SafeRuntimeHandler(ToolHandler):
             changed_path = str(result.data.get("path") or "").strip()
             if changed_path:
                 metadata["changed_paths"] = [changed_path]
+        if result.success and operation.startswith("surface.") and isinstance(result.data, dict):
+            if operation in {"surface.publish", "surface.patch", "surface.get"}:
+                metadata["surface"] = result.data
+            elif operation == "surface.action":
+                metadata["surface_action"] = result.data
+            elif operation == "surface.delete":
+                metadata["surface_delete"] = result.data
+
         edit_result = metadata.get("edit_result")
         if result.success and edit_result is not None:
             ctx.registry.record_edit_result(

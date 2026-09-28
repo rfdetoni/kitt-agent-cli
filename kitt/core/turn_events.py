@@ -94,6 +94,7 @@ class ToolCompleted(TurnEvent):
     error: Optional[str] = None
     call_id: str = ""
     tokens: int = 0
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class EditPreviewReady(TurnEvent):

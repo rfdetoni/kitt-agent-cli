@@ -665,6 +665,7 @@ class TurnToolLoopMixin:
                 error=tool_result.error,
                 call_id=call_id,
                 tokens=tool_tokens,
+                metadata=dict(getattr(tool_result, "metadata", {}) or {}),
             ), None, None
             execution_messages.append({"role": "assistant", "content": full_response})
 

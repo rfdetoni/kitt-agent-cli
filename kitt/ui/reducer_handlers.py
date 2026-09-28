@@ -10,6 +10,7 @@ from kitt.core.turn_events import (
     ThinkingStarted, ThinkingCompleted, FilterCompleted, ContextResolved, ContextBuildCompleted
 )
 from kitt.ui.state import AgentTaskStep, TranscriptBlock, UIState, safe_text
+from kitt.ui.surface_renderer import surface_fragments
 
 if TYPE_CHECKING:
     pass
@@ -129,6 +130,22 @@ def handle_tool_started(state: UIState, event: ToolStarted, format_bullet) -> No
             call_id=call_id, started_at=time.time(),
         ))
     
+    metadata = dict(getattr(event, "metadata", {}) or {})
+    surface = metadata.get("surface")
+    if event.success and isinstance(surface, dict):
+        fragments = surface_fragments(surface)
+        text = "".join(fragment for _, fragment in fragments).rstrip()
+        state.transcript_sequence += 1
+        state.transcript.append(
+            TranscriptBlock(
+                id=f"surface-{state.transcript_sequence}",
+                kind="context",
+                text=text,
+                status="done",
+                metadata={"surface": surface},
+            )
+        )
+
     tool_task_id = f"tool-{call_id if call_id else event.tool_name}"
     tool_task = next((t for t in state.active_tasks if t.id == tool_task_id or t.id == "compute"), None)
     if not tool_task:
