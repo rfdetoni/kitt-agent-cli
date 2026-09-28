@@ -1,7 +1,7 @@
 import unittest
 from kitt.ui.state import UIState
 from kitt.ui.reducer import reduce_ui_event, format_tool_bullet
-from kitt.core.turn_events import ToolCallProposed, ToolStarted, ToolCompleted
+from kitt.core.turn_events import ToolCallProposed, ToolStarted, ToolCompleted, TurnStarted
 
 class TestBulletToolVisualFeedback(unittest.TestCase):
     def test_format_tool_bullet_outputs(self):
@@ -12,6 +12,14 @@ class TestBulletToolVisualFeedback(unittest.TestCase):
 
     def test_reasoning_summary_explains_tool_before_technical_bullet(self):
         state = UIState()
+        reduce_ui_event(
+            state,
+            TurnStarted(
+                turn_id="turn-summary",
+                conversation_id="conv-summary",
+                prompt="valide as alterações",
+            ),
+        )
         reduce_ui_event(
             state,
             ToolCallProposed(
