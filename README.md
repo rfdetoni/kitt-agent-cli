@@ -646,3 +646,10 @@ Agent memory is now exclusively owned by `kitt-memory 0.4+` through the standalo
 - `.kitt/memory/MEMORY.md` is a regenerable projection only; it is not a fallback database.
 - If kitt-memoryd is unavailable, memory operations fail explicitly instead of silently creating a second local authority.
 - The native subsystem no longer maintains a separate memory vector/knowledge/correction store. Semantic retrieval belongs to kitt-memory.
+
+
+## Agent CLI 0.77.2 — Assistant 0.1.11 compatibility pin
+
+- CI now composes the Agent against the promoted Assistant 0.1.11 snapshot, which fixes the Linux voice-disabled native build used by the root ecosystem installer when ALSA development headers are unavailable.
+- Agent runtime behavior and public tool/protocol contracts are unchanged from 0.77.1.
+- Package metadata, source-tree fallback version and `uv.lock` are aligned at 0.77.2.
