@@ -152,3 +152,18 @@ Agent CLI 0.70.2 completes the planned harness-evolution control plane:
 - Sanitized ANSI/CSI sequences from retained modal strings so escape bytes such as `^[` and `^[[0m` cannot leak into visible content.
 - Added regressions for click lifecycle, modal scroll anchoring, Reverse Proxy open-before-load/start action and ANSI sanitization.
 - Bumped package metadata and `uv.lock` to 0.72.2.
+
+
+## 0.75.0 semantic IR integration
+
+| Capability | Owner | Status |
+| --- | --- | --- |
+| Surface catalog/store/service | `kitt.surfaces` | integrated with SafeRuntime |
+| Surface semantic actions | SurfaceService + EventBus | host-owned; no direct tool execution |
+| Backend IR validation/impact planning | `kitt.backend_ir` | implemented |
+| Backend deterministic compiler | `kitt.backend_ir.compilers` | Python/TypeScript/Rust |
+| Applying compiled files | existing repo mutation operations | policy/approval remains authoritative |
+| Structured WorkingState | `kitt.compaction` | stored with compaction entries |
+| Tool-result externalization | ArtifactStore + receipts | implemented |
+| Artifact search/hydration | SafeRuntime `artifacts.*` | bounded and scoped |
+| Shared semantic contracts | `kitt-protocol 0.3.0` | pinned |

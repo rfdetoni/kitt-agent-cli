@@ -49,3 +49,13 @@ ser batch de indexação/parser incremental, guiada por profiling.
 - Resolução de referências é por nome; overloads e tipos exigem adapter opcional.
 - `ContextCompiler` mantém chunks bounded; slices por símbolo podem ser refinados
   quando parser estrutural fornecer ranges mais precisos.
+
+
+## 0.75 long-context lifecycle
+
+- Large consumed tool outputs are persisted as `TOOL_RESULT` artifacts before active-context compaction.
+- Receipts keep digest, original token count, bounded excerpt and artifact id.
+- `artifacts.search` performs scoped retrieval against one artifact without hydrating it wholesale.
+- `artifacts.hydrate` returns bounded pages with integrity metadata.
+- Compaction stores structured WorkingState beside the rendered summary so decisions, files, errors, pending work and validation evidence remain separately addressable.
+- Browser-backed reverse-proxy histories remain byte-stable.

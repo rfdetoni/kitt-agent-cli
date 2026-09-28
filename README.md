@@ -586,3 +586,16 @@ Agent CLI 0.74.6 requires Python 3.14+, matching the interpreter validated acros
 ### 0.74.6 container alignment
 
 The official Agent container now uses Python 3.14, matching the package's declared and CI-validated interpreter floor. This fixes the 0.74.5 release-container failure where the Docker image still used Python 3.12.
+
+
+## Agent CLI 0.75.0 — semantic UI, Backend IR and long-session state
+
+Agent 0.75.0 adopts KITT Protocol 0.3.0 and completes the clean-room semantic UI/backend architecture.
+
+- `surface.*` SafeRuntime operations publish, patch, query and route semantic actions through the host-owned allowlisted Surface catalog. Surface payloads are declarative data, never executable UI code; semantic actions return to the host runtime rather than invoking arbitrary tools.
+- `backend.validate`, `backend.plan` and `backend.compile` provide a Backend IR for schemas, entities, queries, commands, endpoints, events, workflows, policies, jobs and observability. The model describes intent; deterministic host code validates dependencies, emits impact-oriented ChangeSets and compiles bounded Python/TypeScript/Rust contract files. Actual repository mutation still uses `repo.write_file` / `patch.apply` and the normal policy/approval path.
+- Context compaction now stores a structured WorkingState containing objective, current state, constraints/decisions, affected artifacts, errors/corrections, pending work and validation evidence.
+- Large consumed host-tool results are externalized to ArtifactStore before their active-context message is replaced by a deterministic receipt. `artifacts.search` and paged `artifacts.hydrate` recover only the relevant evidence later.
+- Browser-backed reverse-proxy histories remain byte-stable and skip receipt mutation.
+
+The implementation is independent KITT code and does not copy OpenUI/OpenViking source, APIs or naming.

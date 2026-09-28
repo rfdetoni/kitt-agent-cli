@@ -171,3 +171,18 @@ Role assignment remains owned by the existing task router. Binding an instance c
 ## TUI interaction boundary
 
 Agent CLI 0.72 introduces `kitt/ui/interaction.py` as the single owner of local-cell hit testing. The design borrows the interaction concepts that are useful from OpenTUI—rendered-cell hit targets, focus ownership and keyboard/mouse parity—without adopting its renderer or runtime. Render functions register semantic regions; `kitt/ui/mouse.py` translates pointer events to those semantic actions; existing controllers perform the mutations. This preserves SOLID ownership and keeps input mechanics independent from reverse-proxy, router and approval business rules.
+
+
+## Semantic presentation and backend intent plane
+
+```text
+LLM
+ ├─ Surface IR -> SurfaceService -> TUI/Web/Desktop renderers
+ │                  └─ semantic action -> host policy/runtime
+ └─ Backend IR -> validate -> impact plan -> deterministic compiler
+                    └─ generated files -> repo.write_file / patch.apply
+```
+
+Neither intermediate representation is executable code. The Surface catalog allowlists components and bounds graph size/depth/revisions. Backend IR validates resource identity and dependencies and only emits deterministic generated artifacts. Repository writes remain behind SafeRuntime security, policy and approval.
+
+Large tool outputs use ArtifactStore as an external context tier: active context keeps a digest/excerpt/artifact receipt, while bounded search and hydration restore evidence when needed. Structured WorkingState remains part of the existing session tree and therefore does not create a competing conversation authority.
