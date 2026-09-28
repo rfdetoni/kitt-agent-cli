@@ -33,7 +33,8 @@ External plugins continue to use API version 1 and require explicit content trus
 | `kitt-database` | `database_inspect` | disabled | Detect database technologies and migration posture without connecting. |
 | `kitt-browser` | `browser_inspect` | disabled | Detect browser automation configuration without launching a browser. |
 | `kitt-cloud` | `cloud_inspect` | disabled | Detect Terraform/cloud/Kubernetes signals without credentials or network. |
-| `kitt-observability` | `observability_inspect` | disabled | Detect local observability libraries/configuration. |\n| `kitt-figma` | `figma_inspect` + `mcp.figma-desktop.*` | disabled | Parse Figma design targets and bridge the official Figma desktop MCP server through KITT policy. |
+| `kitt-observability` | `observability_inspect` | disabled | Detect local observability libraries/configuration. |
+| `kitt-figma` | `figma_inspect` + `mcp.figma-desktop.*` | disabled | Parse Figma design targets and bridge the official Figma desktop MCP server through KITT policy. |
 
 All bundled handlers are lazy and read-only. They do not open database connections, contact cloud/GitHub services, launch browsers, start LSP processes, modify Git state, or read credentials.
 
