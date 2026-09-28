@@ -48,8 +48,13 @@ def _permission_text(ui):
         marker = f"[{shortcut}] {label}"
         for row, line in enumerate(lines):
             if marker in line:
-                ui.interactions.add_row(
-                    "permission", row, "permission.action", (index, action)
+                ui.interactions.add_text(
+                    "permission",
+                    row,
+                    line,
+                    marker,
+                    "permission.action",
+                    (index, action),
                 )
                 break
     return text
