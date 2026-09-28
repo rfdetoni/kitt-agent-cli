@@ -48,6 +48,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Checkout kitt-memory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rfdetoni/kitt-memory
+          ref: 73105776fc38cd92ebcffe65b38bd03059c92c11
+          path: memory-source
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build memory authority
+        shell: bash
+        run: |
+          cargo build --manifest-path memory-source/Cargo.toml --release --locked -p kitt-memoryd
+          suffix=""
+          if [[ "$RUNNER_OS" == "Windows" ]]; then suffix=".exe"; fi
+          echo "KITT_MEMORYD_BIN=$GITHUB_WORKSPACE/memory-source/target/release/kitt-memoryd$suffix" >> "$GITHUB_ENV"
+          echo "KITT_MEMORY_CONFIG_DIR=$RUNNER_TEMP/kitt-memory-config" >> "$GITHUB_ENV"
+          echo "KITT_MEMORY_DATA_DIR=$RUNNER_TEMP/kitt-memory-data" >> "$GITHUB_ENV"
+          echo "KITT_MEMORY_TOKEN_PATH=$RUNNER_TEMP/kitt-memory-config/auth.token" >> "$GITHUB_ENV"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
