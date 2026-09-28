@@ -108,8 +108,7 @@ class MemoryRepository:
             "failure_reason": run.failure_reason, "dry_run": run.dry_run,
         }
 
-    @staticmethod
-    def _wire_memory(mem: MemoryRecord) -> dict[str, Any]:
+    def _wire_memory(self, mem: MemoryRecord) -> dict[str, Any]:
         return {
             "id": mem.id, "namespace": self.namespace, "workspace_id": mem.workspace_id, "kind": mem.kind,
             "content": mem.content, "normalized_content": mem.normalized_content, "status": mem.status,
