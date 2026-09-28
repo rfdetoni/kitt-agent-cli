@@ -36,6 +36,7 @@ from kitt.edit_format.strategy import (
 )
 from kitt.llm.attachments import AttachmentError
 from kitt.llm.client import LLMClient
+from kitt.llm.domain import ProviderOutputLimitError
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.protocol import parse_tool_call
 from kitt.tools.safe_python import parse_python_compute_call
@@ -162,6 +163,7 @@ class TurnToolLoopMixin:
         tool_calls = 0
         malformed_calls = 0
         policy_denials = 0
+        output_limit_recoveries = 0
         edit_repairs_pending: set[str] = set()
 
         thinking_started_at = time.time()
@@ -198,20 +200,47 @@ class TurnToolLoopMixin:
                     }
             except (TypeError, ValueError):
                 pass
-            for streamed_response, event in self._stream_execution_response(
-                exe_client,
-                execution_messages,
-                request.system_prompt,
-                **stream_kwargs,
-            ):
-                if cmd.turn_id in self.cancelled_turns:
-                    self.cancelled_turns.discard(cmd.turn_id)
+            try:
+                for streamed_response, event in self._stream_execution_response(
+                    exe_client,
+                    execution_messages,
+                    request.system_prompt,
+                    **stream_kwargs,
+                ):
+                    if cmd.turn_id in self.cancelled_turns:
+                        self.cancelled_turns.discard(cmd.turn_id)
+                        return
+                    full_response = streamed_response
+                    if event is not None:
+                        if isinstance(event, ThinkingCompleted):
+                            thinking_completed = True
+                        yield event, None, None
+            except ProviderOutputLimitError as exc:
+                output_limit_recoveries += 1
+                trace_event(
+                    logger,
+                    "tool_loop.output_limit_recovery",
+                    turn_id=cmd.turn_id,
+                    attempt=output_limit_recoveries,
+                    partial_chars=len(full_response),
+                    error=str(exc),
+                )
+                if output_limit_recoveries > 2:
+                    yield TurnFailed(error="Provider output limit reached repeatedly."), None, None
                     return
-                full_response = streamed_response
-                if event is not None:
-                    if isinstance(event, ThinkingCompleted):
-                        thinking_completed = True
-                    yield event, None, None
+                execution_messages.append({
+                    "role": "user",
+                    "content": (
+                        "[KITT OUTPUT LIMIT RECOVERY]\n"
+                        "The previous response exceeded the provider output budget. "
+                        "Produce one smaller complete next action from the current evidence. "
+                        "Do not assume the incomplete action was executed."
+                    ),
+                })
+                full_response = ""
+                thinking_started_at = time.time()
+                thinking_completed = False
+                continue
 
             trace_event(
                 logger,
