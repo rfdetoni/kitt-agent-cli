@@ -1,0 +1,10 @@
+name = "kitt-figma"
+version = "1.0.0"
+api_version = "1"
+entrypoint = "__init__:setup"
+description = "Figma design-context integration through the official MCP boundary"
+author = "KITT"
+requires_kitt = ">=0.78.1"
+permissions = ["tools.register", "filesystem.read", "mcp.manage"]
+trusted_in_process = true
+enabled_by_default = false
