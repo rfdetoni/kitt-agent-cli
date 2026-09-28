@@ -1,5 +1,7 @@
 # K.I.T.T. Agent CLI
 
+[Português (Brasil)](README.pt-BR.md)
+
 <p align="center">
   <strong>Local-first autonomous coding-agent control plane.</strong><br>
   Python orchestration · SQLite/FTS5 workspace intelligence · optional Rust acceleration · MCP · plugins · multi-agent execution
@@ -52,6 +54,12 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - **AI workers & evolution:** https://github.com/rfdetoni/kitt-ai-workers
 - **Protocol contracts:** https://github.com/rfdetoni/kitt-protocol
 - **Persistent memory:** https://github.com/rfdetoni/kitt-memory
+- **Quick start:** [QUICKSTART.md](QUICKSTART.md)
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Runtime reference:** [docs/RUNTIME_REFERENCE.md](docs/RUNTIME_REFERENCE.md)
+- **Accessibility:** [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md)
+- **Performance:** [docs/PERFORMANCE.md](docs/PERFORMANCE.md)
+- **Domain architecture:** [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md)
 
 ---
 
@@ -433,7 +441,7 @@ The root `rfdetoni/kitt` integration workflow freezes every component to immutab
 
 ## Contributing
 
-Keep the hot path small, observable and deterministic. Prefer KISS/DRY/YAGNI over framework accumulation, preserve repository ownership boundaries and add dependencies only when they provide measurable value to execution quality, latency or maintainability.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, ownership boundaries, validation gates, clean-room rules and pull-request expectations. Keep the hot path small, observable and deterministic; prefer KISS/DRY/YAGNI over framework accumulation.
 
 ---
 
@@ -575,7 +583,7 @@ Agent CLI 0.74.4 removes two remaining split-brain state paths:
 - Markdown memory is now recovery-only, uses cross-process lock + atomic replace, and no longer seeds invented user preferences or project rules.
 - Clearing project memory archives the Agent's structured records and removes exact shared mirrors when the daemon is reachable.
 - Approval denial now persists the durable state before updating the in-memory broker, matching grant/consume fail-closed semantics.
-- Package compatibility remains Python 3.12+, while CI intentionally exercises only the current ecosystem interpreter (Python 3.14) across supported desktop operating systems.
+- That historical 0.74.4 release still supported Python 3.12+, but the current package and CI policy has since advanced to Python 3.14+ across supported desktop operating systems. See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 
 ## Agent CLI 0.74.6 — current-interpreter and protocol alignment
