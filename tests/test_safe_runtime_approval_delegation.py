@@ -52,6 +52,7 @@ class TestSafeRuntimeApprovalDelegation(unittest.TestCase):
     def test_process_run_delegates_exact_approved_grant_to_run_command(self):
         args = {
             "argv": [sys.executable, "-c", "print('delegated-approved')"],
+            "network": True,
         }
         turn_id = "turn-runtime-approval"
 
@@ -95,6 +96,7 @@ class TestSafeRuntimeApprovalDelegation(unittest.TestCase):
     def test_registry_wrapper_defers_effective_grant_consumption_to_nested_tool(self):
         args = {
             "argv": [sys.executable, "-c", "print('wrapper-approved')"],
+            "network": True,
         }
         wrapper_args = {
             "operation": "process.run",
