@@ -41,6 +41,8 @@ from kitt.security.network_policy import NetworkPolicy
 from kitt.security.path_policy import PathPolicy
 from kitt.security.sensitive_data import SensitiveDataScanner
 from kitt.skills.skill_manager import SkillManager
+from kitt.surfaces.service import SurfaceService
+from kitt.backend_ir.service import BackendService
 from kitt.tools.approval import ApprovalManager
 from kitt.tools.policy_engine import PolicyEngine
 from kitt.tools.registry import ToolRegistry
@@ -168,6 +170,8 @@ class KittRuntime:
     goal_scheduler: Optional[GoalScheduler] = None
     extensions: Optional[ExtensionManager] = None
     native: Optional[Any] = None
+    surface_service: Optional[Any] = None
+    backend_service: Optional[Any] = None
 
     def __post_init__(self):
         self._closed = False
@@ -261,6 +265,10 @@ class KittRuntime:
             keep_recent=config.compaction_keep_recent,
         )
         events = EventBus()
+        surface_service = SurfaceService(
+            event_callback=lambda name, payload: events.publish(name, payload)
+        )
+        backend_service = BackendService()
 
         from kitt.metrics.prime import PrimeMetrics
 
@@ -317,6 +325,8 @@ class KittRuntime:
             harness_service=harness,
             memory_service=memory,
             skill_manager=skills,
+            surface_service=surface_service,
+            backend_service=backend_service,
             db=database,
         )
 
@@ -356,6 +366,7 @@ class KittRuntime:
             enable_context_summary=True,
         )
         processor.repository_index = repository_index
+        processor.artifact_store = artifacts
         processor.egress_policy = egress_policy
         processor.sensitive_scanner = sensitive_scanner
         processor.path_policy = path_policy
@@ -438,6 +449,8 @@ class KittRuntime:
             goal_scheduler=goal_scheduler,
             extensions=extensions,
             native=native,
+            surface_service=surface_service,
+            backend_service=backend_service,
         )
         runtime_holder["runtime"] = runtime
         runtime.prime_metrics = prime_metrics

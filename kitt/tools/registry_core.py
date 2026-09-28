@@ -93,6 +93,8 @@ class ToolRegistry:
         self.harness_service = None
         self.memory_service = None
         self.skill_manager = None
+        self.surface_service = None
+        self.backend_service = None
         self.db = None
         self.event_bus = None
         self.metrics_collector = None
@@ -309,6 +311,8 @@ class ToolRegistry:
         harness_service=None,
         memory_service=None,
         skill_manager=None,
+        surface_service=None,
+        backend_service=None,
         db=None,
     ) -> None:
         self.artifacts = artifacts
@@ -321,6 +325,8 @@ class ToolRegistry:
         self.harness_service = harness_service
         self.memory_service = memory_service
         self.skill_manager = skill_manager
+        self.surface_service = surface_service
+        self.backend_service = backend_service
         self.db = db
         self.applier.tracker.attach_db(db)
 

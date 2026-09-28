@@ -116,6 +116,17 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "artifacts.read": RuntimeOperationSpec(
         "artifacts.read", CAP_ARTIFACT_READ, "artifact_read"
     ),
+    "artifacts.search": RuntimeOperationSpec("artifacts.search", CAP_ARTIFACT_READ),
+    "artifacts.hydrate": RuntimeOperationSpec("artifacts.hydrate", CAP_ARTIFACT_READ),
+    "surface.capabilities": RuntimeOperationSpec("surface.capabilities", None),
+    "surface.publish": RuntimeOperationSpec("surface.publish", None),
+    "surface.patch": RuntimeOperationSpec("surface.patch", None),
+    "surface.get": RuntimeOperationSpec("surface.get", None),
+    "surface.delete": RuntimeOperationSpec("surface.delete", None),
+    "surface.action": RuntimeOperationSpec("surface.action", None),
+    "backend.validate": RuntimeOperationSpec("backend.validate", CAP_REPO_READ),
+    "backend.plan": RuntimeOperationSpec("backend.plan", CAP_REPO_READ),
+    "backend.compile": RuntimeOperationSpec("backend.compile", CAP_REPO_READ),
     "repo.create_directory": RuntimeOperationSpec(
         "repo.create_directory",
         CAP_REPO_WRITE,
@@ -264,6 +275,8 @@ class SafeRuntime:
         goal_service=None,
         memory_service=None,
         skill_manager=None,
+        surface_service=None,
+        backend_service=None,
         state_store: Optional[RuntimeStateStore] = None,
         db=None,
     ):
@@ -277,6 +290,8 @@ class SafeRuntime:
         self.goals = goal_service
         self.memory = memory_service
         self.skills = skill_manager
+        self.surfaces = surface_service
+        self.backend = backend_service
         self.db = db
         self.state = state_store or (
             RuntimeStateStore(db, workspace_id, conversation_id) if db else None
@@ -725,6 +740,17 @@ class SafeRuntime:
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context, automatic_budget_reserved=automatic_budget_reserved),
+            "artifacts.search": lambda: self._op_artifacts_search(args),
+            "artifacts.hydrate": lambda: self._op_artifacts_hydrate(args),
+            "surface.capabilities": lambda: self._op_surface_capabilities(),
+            "surface.publish": lambda: self._op_surface_publish(args),
+            "surface.patch": lambda: self._op_surface_patch(args),
+            "surface.get": lambda: self._op_surface_get(args),
+            "surface.delete": lambda: self._op_surface_delete(args),
+            "surface.action": lambda: self._op_surface_action(args),
+            "backend.validate": lambda: self._op_backend_validate(args),
+            "backend.plan": lambda: self._op_backend_plan(args),
+            "backend.compile": lambda: self._op_backend_compile(args),
             "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
@@ -1434,6 +1460,150 @@ class SafeRuntime:
             "goal.update",
             data={"goal_id": goal_id, "state": state},
             context_handles=[f"goal:{goal_id}"],
+        )
+
+    def _scoped_artifact(self, artifact_id: str):
+        if not self.artifacts:
+            raise RuntimeError("Artifact store not attached")
+        artifact = self.artifacts.get(artifact_id)
+        if artifact is None:
+            raise KeyError(artifact_id)
+        if artifact.workspace_id != self.workspace_id:
+            raise PermissionError("Cross-workspace artifact access blocked")
+        if artifact.conversation_id not in (None, self.conversation_id):
+            raise PermissionError("Cross-conversation artifact access blocked")
+        return artifact
+
+    def _op_artifacts_search(self, args):
+        artifact_id = str(args.get("artifact_id") or "").strip()
+        query = str(args.get("query") or "").strip()
+        if not artifact_id or not query:
+            return SafeRuntimeResult(False, "artifacts.search", error="artifact_id and query are required")
+        try:
+            self._scoped_artifact(artifact_id)
+            hits = self.artifacts.search_text(
+                artifact_id,
+                query,
+                limit=_runtime_int(args.get("limit", 20), 20, 1, 100),
+                context_chars=_runtime_int(args.get("context_chars", 160), 160, 40, 2000),
+            )
+        except Exception as exc:
+            return SafeRuntimeResult(False, "artifacts.search", error=str(exc))
+        return SafeRuntimeResult(True, "artifacts.search", data=hits, context_handles=[f"artifact:{artifact_id}"])
+
+    def _op_artifacts_hydrate(self, args):
+        artifact_id = str(args.get("artifact_id") or "").strip()
+        if not artifact_id:
+            return SafeRuntimeResult(False, "artifacts.hydrate", error="artifact_id is required")
+        try:
+            self._scoped_artifact(artifact_id)
+            page = self.artifacts.read_text_page(
+                artifact_id,
+                offset=_runtime_int(args.get("offset", 0), 0, 0, 2_147_483_647),
+                max_bytes=_runtime_int(args.get("max_bytes", 32768), 32768, 1024, 32768),
+            )
+        except Exception as exc:
+            return SafeRuntimeResult(False, "artifacts.hydrate", error=str(exc))
+        return SafeRuntimeResult(True, "artifacts.hydrate", data=page, context_handles=[f"artifact:{artifact_id}"])
+
+    def _op_surface_capabilities(self):
+        if not self.surfaces:
+            return SafeRuntimeResult(False, "surface.capabilities", error="Surface service not attached")
+        return SafeRuntimeResult(True, "surface.capabilities", data=self.surfaces.capabilities())
+
+    def _op_surface_publish(self, args):
+        if not self.surfaces:
+            return SafeRuntimeResult(False, "surface.publish", error="Surface service not attached")
+        spec = args.get("surface") if isinstance(args.get("surface"), dict) else args
+        return SafeRuntimeResult(True, "surface.publish", data=self.surfaces.publish(dict(spec)))
+
+    def _op_surface_patch(self, args):
+        if not self.surfaces:
+            return SafeRuntimeResult(False, "surface.patch", error="Surface service not attached")
+        return SafeRuntimeResult(
+            True,
+            "surface.patch",
+            data=self.surfaces.patch(
+                str(args.get("surface_id") or ""),
+                int(args.get("base_revision", -1)),
+                list(args.get("operations") or []),
+            ),
+        )
+
+    def _op_surface_get(self, args):
+        if not self.surfaces:
+            return SafeRuntimeResult(False, "surface.get", error="Surface service not attached")
+        surface_id = str(args.get("surface_id") or "").strip()
+        data = self.surfaces.get(surface_id)
+        return SafeRuntimeResult(
+            data is not None,
+            "surface.get",
+            data=data,
+            error=None if data is not None else "surface not found",
+        )
+
+    def _op_surface_delete(self, args):
+        if not self.surfaces:
+            return SafeRuntimeResult(False, "surface.delete", error="Surface service not attached")
+        surface_id = str(args.get("surface_id") or "").strip()
+        return SafeRuntimeResult(True, "surface.delete", data={"deleted": self.surfaces.delete(surface_id)})
+
+    def _op_surface_action(self, args):
+        if not self.surfaces:
+            return SafeRuntimeResult(False, "surface.action", error="Surface service not attached")
+        data = self.surfaces.action(
+            str(args.get("surface_id") or ""),
+            str(args.get("component_id") or ""),
+            str(args.get("action") or ""),
+            dict(args.get("context") or {}),
+        )
+        return SafeRuntimeResult(True, "surface.action", data=data)
+
+    @staticmethod
+    def _backend_module(args):
+        module = args.get("backend") if isinstance(args.get("backend"), dict) else args.get("module")
+        if not isinstance(module, dict):
+            raise ValueError("backend/module must be an object")
+        return module
+
+    def _op_backend_validate(self, args):
+        if not self.backend:
+            return SafeRuntimeResult(False, "backend.validate", error="Backend IR service not attached")
+        try:
+            module = self._backend_module(args)
+        except ValueError as exc:
+            return SafeRuntimeResult(False, "backend.validate", error=str(exc))
+        issues = [issue.to_dict() for issue in self.backend.validate(module)]
+        return SafeRuntimeResult(
+            True,
+            "backend.validate",
+            data={"valid": not any(item["severity"] == "error" for item in issues), "issues": issues},
+        )
+
+    def _op_backend_plan(self, args):
+        if not self.backend:
+            return SafeRuntimeResult(False, "backend.plan", error="Backend IR service not attached")
+        try:
+            plan = self.backend.plan(self._backend_module(args))
+        except (TypeError, ValueError) as exc:
+            return SafeRuntimeResult(False, "backend.plan", error=str(exc))
+        return SafeRuntimeResult(True, "backend.plan", data=plan.to_dict())
+
+    def _op_backend_compile(self, args):
+        if not self.backend:
+            return SafeRuntimeResult(False, "backend.compile", error="Backend IR service not attached")
+        try:
+            data = self.backend.compile(
+                self._backend_module(args),
+                str(args.get("target") or "python"),
+            )
+        except (TypeError, ValueError) as exc:
+            return SafeRuntimeResult(False, "backend.compile", error=str(exc))
+        return SafeRuntimeResult(
+            bool(data.get("ok")),
+            "backend.compile",
+            data=data,
+            error=None if data.get("ok") else "backend validation failed",
         )
 
     def _op_memory_query(self, args):

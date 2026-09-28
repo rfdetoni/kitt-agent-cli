@@ -83,6 +83,8 @@ class SafeRuntimeHandler(ToolHandler):
                 goal_service=ctx.registry.goal_service,
                 memory_service=getattr(ctx.registry, "memory_service", None),
                 skill_manager=getattr(ctx.registry, "skill_manager", None),
+                surface_service=getattr(ctx.registry, "surface_service", None),
+                backend_service=getattr(ctx.registry, "backend_service", None),
                 db=getattr(ctx.registry, "db", None),
             )
             ctx.registry._safe_runtime_instance = safe_runtime
