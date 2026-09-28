@@ -81,14 +81,11 @@ class TestToolRegistry(unittest.TestCase):
             enabled_tools=["run_command"],
         )
 
-        if self.registry.process_runner.sandbox.is_strong_available():
-            self.assertTrue(res.success, res.error)
-            self.assertEqual(res.output.strip(), "frontend")
-            self.assertTrue(res.metadata["sandbox"]["strong"])
+        self.assertTrue(res.success, res.error)
+        self.assertEqual(res.output.strip(), "frontend")
+        self.assertFalse(res.requires_approval)
+        if res.metadata["sandbox"]["strong"]:
             self.assertTrue(res.metadata["sandbox"]["network_isolated"])
-        else:
-            self.assertFalse(res.success)
-            self.assertTrue(res.requires_approval)
 
     def test_autonomous_run_command_does_not_reopen_approval_without_strong_sandbox(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("allow-all")
