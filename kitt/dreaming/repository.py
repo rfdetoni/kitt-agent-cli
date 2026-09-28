@@ -15,7 +15,7 @@ def _enum(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
         return raw
-    if "_" in raw:
+    if "_" in raw or raw == raw.upper():
         return raw.upper()
     out = []
     for index, ch in enumerate(raw):
