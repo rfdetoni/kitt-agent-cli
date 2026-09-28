@@ -26,7 +26,7 @@ class PluginContext:
     hooks: HookAPI
     tools: ToolAPI
     commands: CommandAPI
-    mcp: MCPAPI
     config: PluginConfigAPI
     logger: PluginLogger
     workspace_root: Optional[Path] = None
+    mcp: Optional[MCPAPI] = None
