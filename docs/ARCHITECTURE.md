@@ -186,3 +186,22 @@ LLM
 Neither intermediate representation is executable code. The Surface catalog allowlists components and bounds graph size/depth/revisions. Backend IR validates resource identity and dependencies and only emits deterministic generated artifacts. Repository writes remain behind SafeRuntime security, policy and approval.
 
 Large tool outputs use ArtifactStore as an external context tier: active context keeps a digest/excerpt/artifact receipt, while bounded search and hydration restore evidence when needed. Structured WorkingState remains part of the existing session tree and therefore does not create a competing conversation authority.
+
+
+## Single durable memory authority
+
+```text
+Conversation/history (Agent)
+        │
+        ├── Dream orchestration / proposals
+        │
+        └── Memory facade
+                │
+                ▼
+          kitt-memoryd
+                │
+                ▼
+      kitt-memory SQLite / semantic store
+```
+
+The Agent owns conversation execution history, not durable semantic memory. kitt-memory owns memory records, provenance, lifecycle status, dream-run persistence, semantic retrieval and maintenance. Any project Markdown memory file is a view generated from kitt-memory.

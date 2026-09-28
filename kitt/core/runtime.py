@@ -31,6 +31,7 @@ from kitt.index.repository import RepositoryIndex
 from kitt.llm.client import LLMClient
 from kitt.llm.retry import RetryConfig, RetryPolicy
 from kitt.memory.memory_manager import MemoryManager
+from kitt.memory.shared_client import KittMemoryClient
 from kitt.prompts import COMPACTION_SUMMARY_SYSTEM, COMPACTION_SUMMARY_USER_TEMPLATE
 from kitt.metrics.collector import MetricsCollector
 from kitt.queueing.repository import InputQueueRepository
@@ -290,12 +291,14 @@ class KittRuntime:
             enabled=config.retained_agents_enabled,
         )
 
-        memory_repo = MemoryRepository(database)
+        memory_client = KittMemoryClient()
+        memory_repo = MemoryRepository(client=memory_client)
         memory = MemoryManager(
             state_root,
             persistence_enabled=persistence_enabled,
             memory_repo=memory_repo,
             workspace_id=identity.id,
+            shared_client=memory_client,
         )
 
         # KITT-owned clean-room native subsystem. Native Rust is optional at runtime;

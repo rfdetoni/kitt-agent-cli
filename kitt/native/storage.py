@@ -10,62 +10,6 @@ from typing import Any, Iterable
 
 
 NATIVE_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS native_memory_vectors (
-    memory_id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    vector_json TEXT NOT NULL,
-    dimensions INTEGER NOT NULL,
-    encoder TEXT NOT NULL,
-    updated_at REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_native_memory_vectors_workspace ON native_memory_vectors(workspace_id);
-
-CREATE TABLE IF NOT EXISTS knowledge_concepts (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    definition TEXT NOT NULL,
-    confidence REAL NOT NULL DEFAULT 0.5,
-    revision INTEGER NOT NULL DEFAULT 1,
-    labels_json TEXT NOT NULL DEFAULT '[]',
-    source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL,
-    UNIQUE(workspace_id, name)
-);
-CREATE INDEX IF NOT EXISTS idx_knowledge_concepts_workspace ON knowledge_concepts(workspace_id);
-
-CREATE TABLE IF NOT EXISTS knowledge_links (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    source_id TEXT NOT NULL,
-    target_id TEXT NOT NULL,
-    relation TEXT NOT NULL,
-    weight REAL NOT NULL DEFAULT 1.0,
-    created_at REAL NOT NULL,
-    UNIQUE(workspace_id, source_id, target_id, relation),
-    CHECK(source_id <> target_id),
-    FOREIGN KEY(source_id) REFERENCES knowledge_concepts(id) ON DELETE CASCADE,
-    FOREIGN KEY(target_id) REFERENCES knowledge_concepts(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_knowledge_links_source ON knowledge_links(workspace_id, source_id);
-CREATE INDEX IF NOT EXISTS idx_knowledge_links_target ON knowledge_links(workspace_id, target_id);
-
-CREATE TABLE IF NOT EXISTS correction_memories (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    context TEXT NOT NULL,
-    predicted TEXT NOT NULL,
-    corrected TEXT NOT NULL,
-    reason TEXT,
-    source TEXT NOT NULL DEFAULT 'user',
-    applied_count INTEGER NOT NULL DEFAULT 0,
-    vector_json TEXT,
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_correction_memories_workspace ON correction_memories(workspace_id);
-
 CREATE TABLE IF NOT EXISTS coordination_leases (
     workspace_id TEXT NOT NULL,
     resource_id TEXT NOT NULL,

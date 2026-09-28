@@ -1,4 +1,4 @@
-"""Protocol-v1 client for shared KITT memory owned by kittd."""
+"""Authenticated client for the dedicated kitt-memory service."""
 from __future__ import annotations
 
 import ipaddress
@@ -12,208 +12,167 @@ from kitt_protocol import (
     AuthenticatedFrame,
     Envelope,
     MAX_FRAME_BYTES,
+    MEMORY_FORGET_REQUEST,
+    MEMORY_FORGET_RESPONSE,
+    MEMORY_MANAGE_REQUEST,
+    MEMORY_MANAGE_RESPONSE,
     MEMORY_RECALL_REQUEST,
     MEMORY_RECALL_RESPONSE,
     MEMORY_REMEMBER_REQUEST,
     MEMORY_REMEMBER_RESPONSE,
-    MEMORY_FORGET_REQUEST,
-    MEMORY_FORGET_RESPONSE,
     SYSTEM_ERROR,
+    SYSTEM_PING_REQUEST,
+    SYSTEM_PING_RESPONSE,
 )
 
 
-class SharedMemoryUnavailable(RuntimeError):
-    """Raised when the optional shared-memory daemon cannot serve a valid v1 response."""
+class KittMemoryUnavailable(RuntimeError):
+    pass
 
 
-class SharedMemoryClient:
-    def __init__(
-        self,
-        address: str | None = None,
-        token_path: str | Path | None = None,
-        timeout: float = 0.5,
-    ):
-        self.address = address or os.getenv("KITT_DAEMON_ADDR", "127.0.0.1:41827")
+class KittMemoryClient:
+    def __init__(self, address: str | None = None, token_path: str | Path | None = None, timeout: float = 0.75):
+        self.address = address or os.getenv("KITT_MEMORY_ADDR", "127.0.0.1:41829")
         if os.name == "nt":
-            config_root = Path(os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+            root = Path(os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming"))
         elif sys.platform == "darwin":
-            config_root = Path.home() / "Library" / "Application Support"
+            root = Path.home() / "Library" / "Application Support"
         else:
-            config_root = Path(os.getenv("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-        default = config_root / "kitt" / "assistant" / "auth.token"
-        self.token_path = Path(token_path) if token_path else default
+            root = Path(os.getenv("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+        self.token_path = Path(token_path or os.getenv("KITT_MEMORY_TOKEN_PATH") or (root / "kitt" / "memory" / "auth.token"))
         self.timeout = max(0.05, min(float(timeout), 10.0))
-
-    def _call(self, kind: str, payload: dict[str, Any], expected_kind: str) -> Any:
-        token = self._read_token()
-        request = Envelope(kind=kind, payload=payload)
-        frame = AuthenticatedFrame(token=token, envelope=request)
-        host, port = self._split_address()
-
-        try:
-            with socket.create_connection((host, port), timeout=self.timeout) as sock:
-                sock.settimeout(self.timeout)
-                wire = frame.dumps().encode("utf-8") + b"\n"
-                if len(wire) > MAX_FRAME_BYTES:
-                    raise SharedMemoryUnavailable("request exceeds KITT protocol frame limit")
-                sock.sendall(wire)
-                raw = self._read_line(sock)
-        except (OSError, TimeoutError) as exc:
-            raise SharedMemoryUnavailable(str(exc)) from exc
-
-        try:
-            response = Envelope.loads(raw)
-        except Exception as exc:
-            raise SharedMemoryUnavailable(f"invalid kittd response: {exc}") from exc
-
-        if response.correlation_id != request.id:
-            raise SharedMemoryUnavailable("kittd response correlation mismatch")
-        if response.kind == SYSTEM_ERROR:
-            payload_obj = response.payload if isinstance(response.payload, dict) else {}
-            code = str(payload_obj.get("code", "unknown"))
-            message = str(payload_obj.get("message", ""))
-            raise SharedMemoryUnavailable(f"{code}: {message}".strip())
-        if response.kind != expected_kind:
-            raise SharedMemoryUnavailable(
-                f"unexpected kittd response kind {response.kind!r}; expected {expected_kind!r}"
-            )
-        return response.payload
-
-    def _read_token(self) -> str:
-        try:
-            token = self.token_path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise SharedMemoryUnavailable(f"cannot read kittd token: {exc}") from exc
-        if len(token) < 48 or not all(ch in "0123456789abcdefABCDEF" for ch in token):
-            raise SharedMemoryUnavailable("kittd token is missing or invalid")
-        return token
 
     def _split_address(self) -> tuple[str, int]:
         raw = self.address.strip()
         try:
             if raw.startswith("["):
-                closing = raw.find("]")
-                if closing <= 1 or closing + 1 >= len(raw) or raw[closing + 1] != ":":
-                    raise ValueError("invalid bracketed IPv6 address")
-                host = raw[1:closing]
-                port_text = raw[closing + 2 :]
+                end = raw.index("]")
+                host, port_text = raw[1:end], raw[end + 2 :]
             else:
                 host, port_text = raw.rsplit(":", 1)
             port = int(port_text)
         except (ValueError, TypeError) as exc:
-            raise SharedMemoryUnavailable(f"invalid KITT_DAEMON_ADDR: {self.address!r}") from exc
-        if not host or not 1 <= port <= 65535:
-            raise SharedMemoryUnavailable(f"invalid KITT_DAEMON_ADDR: {self.address!r}")
-
-        # The daemon auth token is equivalent to a local capability. Never send
-        # it to an address that is not loopback, even if KITT_DAEMON_ADDR was
-        # supplied by a poisoned environment or wrapper script.
+            raise KittMemoryUnavailable(f"invalid KITT_MEMORY_ADDR: {self.address!r}") from exc
         if host.lower() != "localhost":
             try:
                 ip = ipaddress.ip_address(host.split("%", 1)[0])
             except ValueError as exc:
-                raise SharedMemoryUnavailable(
-                    "KITT_DAEMON_ADDR must use localhost or a loopback IP"
-                ) from exc
+                raise KittMemoryUnavailable("KITT_MEMORY_ADDR must be loopback") from exc
             if not ip.is_loopback:
-                raise SharedMemoryUnavailable(
-                    "KITT_DAEMON_ADDR must use localhost or a loopback IP"
-                )
+                raise KittMemoryUnavailable("KITT_MEMORY_ADDR must be loopback")
+        if not 1 <= port <= 65535:
+            raise KittMemoryUnavailable("invalid KITT_MEMORY_ADDR port")
         return host, port
+
+    def _read_token(self) -> str:
+        try:
+            token = self.token_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise KittMemoryUnavailable(f"kitt-memoryd token unavailable at {self.token_path}") from exc
+        if len(token) < 48 or not all(ch in "0123456789abcdefABCDEF" for ch in token):
+            raise KittMemoryUnavailable("invalid kitt-memoryd token")
+        return token
 
     @staticmethod
     def _read_line(sock: socket.socket) -> bytes:
         data = bytearray()
         while True:
             if len(data) > MAX_FRAME_BYTES:
-                raise SharedMemoryUnavailable("kittd response exceeds frame limit")
-            remaining = MAX_FRAME_BYTES + 1 - len(data)
-            chunk = sock.recv(min(65536, remaining))
+                raise KittMemoryUnavailable("kitt-memoryd response exceeds frame limit")
+            chunk = sock.recv(min(65536, MAX_FRAME_BYTES + 1 - len(data)))
             if not chunk:
-                raise SharedMemoryUnavailable("kittd closed connection before response")
+                raise KittMemoryUnavailable("kitt-memoryd closed connection")
             data.extend(chunk)
-            newline = data.find(b"\n")
-            if newline >= 0:
-                line = bytes(data[:newline]).rstrip(b"\r")
-                if len(line) > MAX_FRAME_BYTES:
-                    raise SharedMemoryUnavailable("kittd response exceeds frame limit")
-                return line
+            pos = data.find(b"\n")
+            if pos >= 0:
+                return bytes(data[:pos]).rstrip(b"\r")
 
-    def remember(
-        self,
-        workspace_id: str,
-        content: str,
-        kind: str = "PROJECT_RULE",
-        pinned: bool = True,
-        *,
-        scope: str = "workspace",
-        scope_key: str | None = None,
-    ) -> str:
-        normalized_scope = scope.strip().lower()
-        if normalized_scope not in {"global", "workspace", "conversation"}:
-            raise ValueError(f"unsupported memory scope: {scope!r}")
-        normalized_scope_key = scope_key.strip() if isinstance(scope_key, str) else None
-        if normalized_scope == "conversation" and not normalized_scope_key:
-            raise ValueError("conversation memory requires scope_key")
-        result = self._call(
+    def _call(self, kind: str, payload: dict[str, Any], expected_kind: str) -> Any:
+        request = Envelope(kind=kind, payload=payload)
+        frame = AuthenticatedFrame(token=self._read_token(), envelope=request)
+        host, port = self._split_address()
+        try:
+            with socket.create_connection((host, port), timeout=self.timeout) as sock:
+                sock.settimeout(self.timeout)
+                wire = frame.dumps().encode("utf-8") + b"\n"
+                if len(wire) > MAX_FRAME_BYTES:
+                    raise KittMemoryUnavailable("request exceeds frame limit")
+                sock.sendall(wire)
+                raw = self._read_line(sock)
+        except (OSError, TimeoutError) as exc:
+            raise KittMemoryUnavailable(str(exc)) from exc
+        try:
+            response = Envelope.loads(raw)
+        except Exception as exc:
+            raise KittMemoryUnavailable(f"invalid kitt-memoryd response: {exc}") from exc
+        if response.correlation_id != request.id:
+            raise KittMemoryUnavailable("kitt-memoryd correlation mismatch")
+        if response.kind == SYSTEM_ERROR:
+            body = response.payload if isinstance(response.payload, dict) else {}
+            raise KittMemoryUnavailable(f"{body.get('code', 'memory_error')}: {body.get('message', '')}".strip())
+        if response.kind != expected_kind:
+            raise KittMemoryUnavailable(f"unexpected response kind {response.kind!r}")
+        return response.payload
+
+    def ping(self) -> dict[str, Any]:
+        body = self._call(SYSTEM_PING_REQUEST, {}, SYSTEM_PING_RESPONSE)
+        if not isinstance(body, dict) or not body.get("ok"):
+            raise KittMemoryUnavailable("kitt-memoryd ping failed")
+        return body
+
+    def manage(self, operation: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = self._call(MEMORY_MANAGE_REQUEST, {"operation": operation, "arguments": dict(arguments or {})}, MEMORY_MANAGE_RESPONSE)
+        if not isinstance(body, dict):
+            raise KittMemoryUnavailable("invalid memory.manage response")
+        return body
+
+    def remember(self, workspace_id: str, content: str, kind: str = "PROJECT_RULE", pinned: bool = True) -> str:
+        body = self._call(
             MEMORY_REMEMBER_REQUEST,
             {
                 "namespace": "agent-cli",
                 "workspace_id": workspace_id,
                 "content": content,
-                "kind": kind.strip().lower(),
+                "kind": kind,
                 "sensitivity": "private",
-                "scope": normalized_scope,
-                "scope_key": normalized_scope_key,
-                "importance": 0.8,
+                "scope": "workspace",
+                "scope_key": None,
+                "importance": 0.9 if pinned else 0.6,
                 "confidence": 1.0,
-                "pinned": pinned,
+                "pinned": bool(pinned),
                 "ttl_seconds": None,
             },
             MEMORY_REMEMBER_RESPONSE,
         )
-        if not isinstance(result, dict) or not isinstance(result.get("id"), str):
-            raise SharedMemoryUnavailable("memory.remember response missing id")
-        return result["id"]
+        memory_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(memory_id, str):
+            raise KittMemoryUnavailable("memory.remember response missing id")
+        return memory_id
 
-    def recall(
-        self,
-        workspace_id: str,
-        query: str,
-        limit: int = 8,
-        *,
-        scope_key: str | None = None,
-        as_of: int | None = None,
-    ) -> list[dict[str, Any]]:
-        normalized_scope_key = scope_key.strip() if isinstance(scope_key, str) else None
-        normalized_as_of = int(as_of) if as_of is not None else None
-        result = self._call(
+    def recall(self, workspace_id: str, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        body = self._call(
             MEMORY_RECALL_REQUEST,
             {
                 "namespace": "agent-cli",
                 "workspace_id": workspace_id,
-                "scope_key": normalized_scope_key,
+                "scope_key": None,
                 "query": query,
-                "limit": max(0, min(int(limit), 50)),
-                "as_of": normalized_as_of,
+                "limit": max(1, min(int(limit), 50)),
+                "as_of": None,
                 "allow_private": True,
                 "allow_secret": False,
             },
             MEMORY_RECALL_RESPONSE,
         )
-        if not isinstance(result, dict) or not isinstance(result.get("records"), list):
-            raise SharedMemoryUnavailable("memory.recall response missing records")
-        return [record for record in result["records"] if isinstance(record, dict)]
+        rows = body.get("records") if isinstance(body, dict) else None
+        if not isinstance(rows, list):
+            raise KittMemoryUnavailable("memory.recall response missing records")
+        return [row for row in rows if isinstance(row, dict)]
 
     def forget(self, memory_id: str) -> bool:
-        normalized = str(memory_id or "").strip()
-        if not normalized:
-            return False
-        result = self._call(
-            MEMORY_FORGET_REQUEST,
-            {"id": normalized},
-            MEMORY_FORGET_RESPONSE,
-        )
-        if not isinstance(result, dict) or not isinstance(result.get("deleted"), bool):
-            raise SharedMemoryUnavailable("memory.forget response missing deleted flag")
-        return bool(result["deleted"])
+        body = self._call(MEMORY_FORGET_REQUEST, {"id": memory_id}, MEMORY_FORGET_RESPONSE)
+        return bool(body.get("deleted")) if isinstance(body, dict) else False
+
+
+SharedMemoryClient = KittMemoryClient
+SharedMemoryUnavailable = KittMemoryUnavailable

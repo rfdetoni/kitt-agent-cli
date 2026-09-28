@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -1002,6 +1002,17 @@ SCHEMA_V6_STATEMENTS = [
 ]
 
 
+SCHEMA_V7_STATEMENTS = [
+    "DROP TABLE IF EXISTS memory_evidence;",
+    "DROP TABLE IF EXISTS dream_runs;",
+    "DROP TABLE IF EXISTS native_memory_vectors;",
+    "DROP TABLE IF EXISTS knowledge_links;",
+    "DROP TABLE IF EXISTS knowledge_concepts;",
+    "DROP TABLE IF EXISTS correction_memories;",
+    "DROP TABLE IF EXISTS memories;",
+]
+
+
 class IncompatibleSchemaError(RuntimeError):
     """Raised when an incompatible database schema is detected."""
 
@@ -1035,7 +1046,7 @@ class MigrationRunner:
                 "Run: kitt doctor --reset-state"
             )
 
-        if current_version not in (0, 1, 2, 3, 4, 5):
+        if current_version not in (0, 1, 2, 3, 4, 5, 6):
             raise IncompatibleSchemaError(
                 f"State schema version {current_version} is incompatible with this development build. "
                 "Run: kitt doctor --reset-state"
@@ -1090,6 +1101,14 @@ class MigrationRunner:
                 conn.execute("UPDATE schema_info SET version = 6;")
             current_version = 6
             logger.info("Migrated KITT SQLite schema to version 6")
+
+        if current_version == 6:
+            with conn:
+                for statement in SCHEMA_V7_STATEMENTS:
+                    conn.execute(statement)
+                conn.execute("UPDATE schema_info SET version = 7;")
+            current_version = 7
+            logger.info("Migrated KITT SQLite schema to version 7 (external memory authority)")
 
         if current_version != self.target_version:
             raise IncompatibleSchemaError(

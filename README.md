@@ -604,3 +604,15 @@ The implementation is independent KITT code and does not copy OpenUI/OpenViking 
 ### Agent CLI 0.75.1 release alignment
 
 0.75.1 is the promoted semantic-IR snapshot after cross-platform validation. It keeps the 0.75 Surface/Backend IR feature set, fixes Surface projection to occur on completed tool events, and aligns runtime fallback/package/lock version metadata for deterministic release automation.
+
+
+## Agent CLI 0.76.0 — single memory authority
+
+Agent memory is now exclusively owned by `kitt-memory 0.4+` through the standalone loopback service `kitt-memoryd`.
+
+- The Agent no longer persists `memories`, `memory_evidence`, `dream_runs`, memory vectors, knowledge concepts/links or correction memories in its HistoryDatabase.
+- Schema migration v7 removes those obsolete local tables.
+- Dreaming still performs ORIENT/GATHER/CONSOLIDATE/VALIDATE in the Agent because it uses conversation history and model routing, but all durable dream commits, status transitions, evidence/provenance and maintenance are sent to kitt-memoryd.
+- `.kitt/memory/MEMORY.md` is a regenerable projection only; it is not a fallback database.
+- If kitt-memoryd is unavailable, memory operations fail explicitly instead of silently creating a second local authority.
+- The native subsystem no longer maintains a separate memory vector/knowledge/correction store. Semantic retrieval belongs to kitt-memory.

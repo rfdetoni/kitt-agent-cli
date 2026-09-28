@@ -1,426 +1,199 @@
-"""SQLite repository for durable memories, evidence, and dream execution logs."""
+"""Dreaming repository adapter for the single kitt-memory authority."""
 from __future__ import annotations
 
-import json
-import sqlite3
+import os
 import time
+import uuid
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any, List, Optional
 
-from kitt.dreaming.models import (
-    MemoryRecord,
-    MemoryEvidence,
-    MemoryKind,
-    MemoryStatus,
-    DreamRun,
-    DreamPlan,
-    DreamSnapshot,
-)
-from kitt.history.database import HistoryDatabase
+from kitt.dreaming.models import DreamRun, MemoryEvidence, MemoryRecord
+from kitt.memory.shared_client import KittMemoryClient
+
+
+def _enum(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return raw
+    if "_" in raw:
+        return raw.upper()
+    out = []
+    for index, ch in enumerate(raw):
+        if ch.isupper() and index:
+            out.append("_")
+        out.append(ch.upper())
+    return "".join(out)
 
 
 class MemoryRepository:
-    """Manages SQLite persistence for canonical memories, evidence provenance, and dream runs."""
+    """Compatibility facade; all durable state lives in kitt-memoryd."""
 
-    def __init__(self, db: HistoryDatabase):
-        self.db = db
+    def __init__(self, db=None, client: KittMemoryClient | None = None):
+        del db
+        self.client = client or KittMemoryClient()
 
-    def get_active_memories(self, workspace_id: str) -> List[MemoryRecord]:
-        return self.get_all_memories(workspace_id, status="ACTIVE")
+    @staticmethod
+    def _memory(row: dict[str, Any]) -> MemoryRecord:
+        return MemoryRecord(
+            id=str(row["id"]),
+            workspace_id=str(row.get("workspace_id") or ""),
+            kind=_enum(row.get("kind")),
+            content=str(row.get("content") or ""),
+            normalized_content=str(row.get("normalized_content") or row.get("content") or ""),
+            status=_enum(row.get("status")),
+            importance=float(row.get("importance", 0.5)),
+            confidence=float(row.get("confidence", 1.0)),
+            created_at=float(row.get("created_at", 0)),
+            updated_at=float(row.get("updated_at", 0)),
+            last_accessed_at=float(row["last_accessed_at"]) if row.get("last_accessed_at") is not None else None,
+            access_count=int(row.get("access_count", 0)),
+            valid_from=float(row["valid_from"]) if row.get("valid_from") is not None else None,
+            valid_until=float(row["valid_until"]) if row.get("valid_until") is not None else None,
+            supersedes_id=row.get("supersedes_id"),
+            content_hash=str(row.get("content_hash") or ""),
+            pinned=bool(row.get("pinned")),
+            metadata_json=str(row.get("metadata_json") or "{}"),
+        )
+
+    @staticmethod
+    def _dream(row: dict[str, Any] | None) -> DreamRun | None:
+        if not isinstance(row, dict):
+            return None
+        return DreamRun(
+            id=str(row["id"]), workspace_id=str(row["workspace_id"]),
+            started_at=float(row.get("started_at", 0)),
+            finished_at=float(row["finished_at"]) if row.get("finished_at") is not None else None,
+            status=str(row.get("status") or ""), sessions_scanned=int(row.get("sessions_scanned", 0)),
+            entries_scanned=int(row.get("entries_scanned", 0)), signals_found=int(row.get("signals_found", 0)),
+            memories_added=int(row.get("memories_added", 0)), memories_merged=int(row.get("memories_merged", 0)),
+            memories_superseded=int(row.get("memories_superseded", 0)), memories_archived=int(row.get("memories_archived", 0)),
+            model=str(row.get("model") or ""), input_tokens=int(row.get("input_tokens", 0)),
+            output_tokens=int(row.get("output_tokens", 0)), failure_reason=row.get("failure_reason"),
+            dry_run=bool(row.get("dry_run")),
+        )
 
     def get_all_memories(self, workspace_id: str, status: Optional[str] = None) -> List[MemoryRecord]:
-        query = "SELECT * FROM memories WHERE workspace_id = ?"
-        params: List[Any] = [workspace_id]
+        args: dict[str, Any] = {"namespace": "agent-cli", "workspace_id": workspace_id, "limit": 2048}
         if status:
-            query += " AND status = ?"
-            params.append(status)
-        query += " ORDER BY pinned DESC, importance DESC, created_at DESC"
+            args["status"] = status
+        body = self.client.manage("list", args)
+        return [self._memory(row) for row in body.get("records", []) if isinstance(row, dict)]
 
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, tuple(params))
-            rows = cursor.fetchall()
-            return [self._row_to_memory(r) for r in rows]
+    def get_active_memories(self, workspace_id: str) -> List[MemoryRecord]:
+        return self.get_all_memories(workspace_id, "ACTIVE")
 
     def get_memory(self, memory_id: str) -> Optional[MemoryRecord]:
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM memories WHERE id = ?", (memory_id,))
-            row = cursor.fetchone()
-            return self._row_to_memory(row) if row else None
+        row = self.client.manage("get", {"id": memory_id}).get("record")
+        return self._memory(row) if isinstance(row, dict) else None
 
     def get_memory_by_content_hash(self, workspace_id: str, content_hash: str) -> Optional[MemoryRecord]:
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT * FROM memories WHERE workspace_id = ? AND content_hash = ? AND status != 'ARCHIVED'",
-                (workspace_id, content_hash)
-            )
-            row = cursor.fetchone()
-            return self._row_to_memory(row) if row else None
+        return next((row for row in self.get_all_memories(workspace_id) if row.content_hash == content_hash), None)
 
-    def get_evidence_for_memory(self, memory_id: str) -> List[MemoryEvidence]:
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM memory_evidence WHERE memory_id = ? ORDER BY created_at ASC", (memory_id,))
-            rows = cursor.fetchall()
-            return [self._row_to_evidence(r) for r in rows]
+    def get_evidence_for_memory(self, memory_id: str) -> list[MemoryEvidence]:
+        del memory_id
+        return []
 
     def get_last_dream_run(self, workspace_id: str) -> Optional[DreamRun]:
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT * FROM dream_runs WHERE workspace_id = ? AND status = 'COMPLETED' AND dry_run = 0 ORDER BY finished_at DESC LIMIT 1",
-                (workspace_id,)
-            )
-            row = cursor.fetchone()
-            return self._row_to_dream_run(row) if row else None
+        return self._dream(self.client.manage("dream.last", {"workspace_id": workspace_id}).get("run"))
+
+    @staticmethod
+    def _wire_run(run: DreamRun) -> dict[str, Any]:
+        return {
+            "id": run.id, "workspace_id": run.workspace_id, "started_at": int(run.started_at),
+            "finished_at": int(run.finished_at) if run.finished_at is not None else None,
+            "status": run.status, "sessions_scanned": run.sessions_scanned, "entries_scanned": run.entries_scanned,
+            "signals_found": run.signals_found, "memories_added": run.memories_added, "memories_merged": run.memories_merged,
+            "memories_superseded": run.memories_superseded, "memories_archived": run.memories_archived,
+            "model": run.model, "input_tokens": run.input_tokens, "output_tokens": run.output_tokens,
+            "failure_reason": run.failure_reason, "dry_run": run.dry_run,
+        }
+
+    @staticmethod
+    def _wire_memory(mem: MemoryRecord) -> dict[str, Any]:
+        return {
+            "id": mem.id, "namespace": "agent-cli", "workspace_id": mem.workspace_id, "kind": mem.kind,
+            "content": mem.content, "normalized_content": mem.normalized_content, "status": mem.status,
+            "sensitivity": "private", "scope": "workspace", "scope_key": None,
+            "importance": mem.importance, "confidence": mem.confidence,
+            "created_at": int(mem.created_at), "updated_at": int(mem.updated_at),
+            "last_accessed_at": int(mem.last_accessed_at) if mem.last_accessed_at is not None else None,
+            "access_count": mem.access_count, "valid_from": int(mem.valid_from) if mem.valid_from is not None else None,
+            "valid_until": int(mem.valid_until) if mem.valid_until is not None else None,
+            "supersedes_id": mem.supersedes_id, "content_hash": mem.content_hash, "pinned": mem.pinned,
+            "metadata_json": mem.metadata_json,
+        }
+
+    @staticmethod
+    def _wire_source(ev: MemoryEvidence) -> dict[str, Any]:
+        source_id = ev.session_entry_id or ev.conversation_id or ev.id
+        uri = f"kitt://session/{ev.conversation_id}" if ev.conversation_id else None
+        return {
+            "id": ev.id or f"src_{uuid.uuid4().hex}", "memory_id": ev.memory_id,
+            "source_kind": ev.source_kind, "source_id": source_id, "source_uri": uri,
+            "source_digest": None, "relationship": "evidence", "source_revision": None,
+            "observed_at": int(ev.created_at), "valid_from": None, "valid_until": None,
+        }
 
     def record_dream_run(self, run: DreamRun) -> None:
-        with self.db.get_connection() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO dream_runs (
-                    id, workspace_id, started_at, finished_at, status,
-                    sessions_scanned, entries_scanned, signals_found,
-                    memories_added, memories_merged, memories_superseded, memories_archived,
-                    model, input_tokens, output_tokens, failure_reason, dry_run
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    run.id, run.workspace_id, run.started_at, run.finished_at, run.status,
-                    run.sessions_scanned, run.entries_scanned, run.signals_found,
-                    run.memories_added, run.memories_merged, run.memories_superseded, run.memories_archived,
-                    run.model, run.input_tokens, run.output_tokens, run.failure_reason, 1 if run.dry_run else 0
-                )
-            )
+        self.client.manage("dream.record", {"run": self._wire_run(run)})
 
-    def commit_dream(
-        self,
-        workspace_id: str,
-        dream_run: DreamRun,
-        new_memories: List[MemoryRecord],
-        updated_memories: List[MemoryRecord],
-        new_evidence: List[MemoryEvidence],
-    ) -> None:
-        """Atomic transactional commit for Dreaming Mode plan execution."""
-        with self.db.get_connection() as conn:
-            # 1. Update existing/superseded memories
-            for mem in updated_memories:
-                conn.execute(
-                    """
-                    UPDATE memories SET
-                        kind = ?, content = ?, normalized_content = ?, status = ?,
-                        importance = ?, confidence = ?, updated_at = ?,
-                        last_accessed_at = ?, access_count = ?, valid_from = ?,
-                        valid_until = ?, supersedes_id = ?, content_hash = ?,
-                        pinned = ?, metadata_json = ?
-                    WHERE id = ? AND workspace_id = ?
-                    """,
-                    (
-                        mem.kind, mem.content, mem.normalized_content, mem.status,
-                        mem.importance, mem.confidence, mem.updated_at,
-                        mem.last_accessed_at, mem.access_count, mem.valid_from,
-                        mem.valid_until, mem.supersedes_id, mem.content_hash,
-                        1 if mem.pinned else 0, mem.metadata_json,
-                        mem.id, workspace_id
-                    )
-                )
-
-            # 2. Insert new memories
-            for mem in new_memories:
-                conn.execute(
-                    """
-                    INSERT INTO memories (
-                        id, workspace_id, kind, content, normalized_content, status,
-                        importance, confidence, created_at, updated_at,
-                        last_accessed_at, access_count, valid_from, valid_until,
-                        supersedes_id, content_hash, pinned, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        mem.id, workspace_id, mem.kind, mem.content, mem.normalized_content, mem.status,
-                        mem.importance, mem.confidence, mem.created_at, mem.updated_at,
-                        mem.last_accessed_at, mem.access_count, mem.valid_from, mem.valid_until,
-                        mem.supersedes_id, mem.content_hash, 1 if mem.pinned else 0, mem.metadata_json
-                    )
-                )
-
-            # 3. Insert evidence records
-            for ev in new_evidence:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO memory_evidence (
-                        id, memory_id, workspace_id, session_entry_id,
-                        conversation_id, source_kind, evidence_text, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        ev.id, ev.memory_id, workspace_id, ev.session_entry_id,
-                        ev.conversation_id, ev.source_kind, ev.evidence_text, ev.created_at
-                    )
-                )
-
-            # 4. Record the completed dream run
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO dream_runs (
-                    id, workspace_id, started_at, finished_at, status,
-                    sessions_scanned, entries_scanned, signals_found,
-                    memories_added, memories_merged, memories_superseded, memories_archived,
-                    model, input_tokens, output_tokens, failure_reason, dry_run
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    dream_run.id, workspace_id, dream_run.started_at, dream_run.finished_at, dream_run.status,
-                    dream_run.sessions_scanned, dream_run.entries_scanned, dream_run.signals_found,
-                    dream_run.memories_added, dream_run.memories_merged, dream_run.memories_superseded, dream_run.memories_archived,
-                    dream_run.model, dream_run.input_tokens, dream_run.output_tokens, dream_run.failure_reason, 1 if dream_run.dry_run else 0
-                )
-            )
-
-    def touch_memory_access(self, memory_ids: List[str]) -> None:
-        if not memory_ids:
-            return
-        now = time.time()
-        with self.db.get_connection() as conn:
-            placeholders = ",".join("?" for _ in memory_ids)
-            conn.execute(
-                f"""
-                UPDATE memories SET
-                    last_accessed_at = ?,
-                    access_count = access_count + 1
-                WHERE id IN ({placeholders})
-                """,
-                (now, *memory_ids)
-            )
+    def commit_dream(self, workspace_id: str, dream_run: DreamRun, new_memories: List[MemoryRecord],
+                     updated_memories: List[MemoryRecord], new_evidence: List[MemoryEvidence]) -> None:
+        del workspace_id
+        self.client.manage("dream.commit", {
+            "run": self._wire_run(dream_run),
+            "new_memories": [self._wire_memory(mem) for mem in new_memories],
+            "updated_memories": [self._wire_memory(mem) for mem in updated_memories],
+            "sources": [self._wire_source(ev) for ev in new_evidence],
+        })
 
     def pin_memory(self, memory_id: str, pinned: bool = True) -> bool:
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE memories SET pinned = ?, updated_at = ? WHERE id = ?",
-                (1 if pinned else 0, time.time(), memory_id)
-            )
-            return cursor.rowcount > 0
+        return bool(self.client.manage("pin", {"id": memory_id, "pinned": pinned}).get("changed"))
 
-    def set_memory_status(self, memory_id: str, status: MemoryStatus) -> bool:
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE memories SET status = ?, updated_at = ? WHERE id = ?",
-                (status, time.time(), memory_id)
-            )
-            return cursor.rowcount > 0
+    def set_memory_status(self, memory_id: str, status: str) -> bool:
+        return bool(self.client.manage("set_status", {"id": memory_id, "status": status}).get("changed"))
+
+    def touch_memory_access(self, memory_ids: list[str]) -> None:
+        self.client.manage("touch", {"ids": list(memory_ids)})
 
     def archive_active_memories(self, workspace_id: str) -> List[MemoryRecord]:
-        """Archive all active Agent-owned memories for one workspace atomically."""
-        active = self.get_active_memories(workspace_id)
-        if not active:
-            return []
-        now = time.time()
-        with self.db.get_connection() as conn:
-            conn.execute(
-                """
-                UPDATE memories
-                SET status = 'ARCHIVED',
-                    updated_at = ?,
-                    valid_until = CASE
-                        WHEN valid_until IS NULL OR valid_until > ? THEN ?
-                        ELSE valid_until
-                    END
-                WHERE workspace_id = ? AND status = 'ACTIVE'
-                """,
-                (now, now, now, workspace_id),
-            )
-        return active
+        body = self.client.manage("archive_workspace", {"namespace": "agent-cli", "workspace_id": workspace_id})
+        return [self._memory(row) for row in body.get("records", []) if isinstance(row, dict)]
 
-    def add_direct_memory(
-        self,
-        workspace_id: str,
-        content: str,
-        kind: MemoryKind = "PROJECT_RULE",
-        pinned: bool = True,
-        source_kind: str = "command_remember"
-    ) -> MemoryRecord:
-        import uuid
-        now = time.time()
-        mem_id = f"mem_{uuid.uuid4().hex[:12]}"
-        normalized = content.strip()
-        mem = MemoryRecord(
-            id=mem_id,
-            workspace_id=workspace_id,
-            kind=kind,
-            content=content,
-            normalized_content=normalized,
-            status="ACTIVE",
-            importance=0.9 if pinned else 0.5,
-            confidence=1.0,
-            created_at=now,
-            updated_at=now,
-            pinned=pinned,
-        )
-        existing = self.get_memory_by_content_hash(workspace_id, mem.content_hash)
-        if existing and existing.status == "ACTIVE":
-            if pinned and not existing.pinned:
-                self.pin_memory(existing.id, True)
-                refreshed = self.get_memory(existing.id)
-                return refreshed or existing
-            return existing
-
-        ev = MemoryEvidence(
-            id=f"ev_{uuid.uuid4().hex[:12]}",
-            memory_id=mem_id,
-            workspace_id=workspace_id,
-            session_entry_id=None,
-            conversation_id=None,
-            source_kind=source_kind,
-            evidence_text=content,
-            created_at=now,
-        )
-        with self.db.get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO memories (
-                    id, workspace_id, kind, content, normalized_content, status,
-                    importance, confidence, created_at, updated_at,
-                    last_accessed_at, access_count, valid_from, valid_until,
-                    supersedes_id, content_hash, pinned, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    mem.id, mem.workspace_id, mem.kind, mem.content, mem.normalized_content, mem.status,
-                    mem.importance, mem.confidence, mem.created_at, mem.updated_at,
-                    mem.last_accessed_at, mem.access_count, mem.valid_from, mem.valid_until,
-                    mem.supersedes_id, mem.content_hash, 1 if mem.pinned else 0, mem.metadata_json
-                )
-            )
-            conn.execute(
-                """
-                INSERT INTO memory_evidence (
-                    id, memory_id, workspace_id, session_entry_id,
-                    conversation_id, source_kind, evidence_text, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    ev.id, ev.memory_id, ev.workspace_id, ev.session_entry_id,
-                    ev.conversation_id, ev.source_kind, ev.evidence_text, ev.created_at
-                )
-            )
-        return mem
+    def add_direct_memory(self, workspace_id: str, content: str, kind: str = "PROJECT_RULE",
+                          pinned: bool = True, source_kind: str = "command_remember") -> MemoryRecord:
+        del source_kind
+        memory_id = self.client.remember(workspace_id, content, kind=kind, pinned=pinned)
+        record = self.get_memory(memory_id)
+        if record is None:
+            raise RuntimeError("kitt-memoryd remembered a record that cannot be read back")
+        return record
 
     def rebuild_materialized_view(self, workspace_id: str, root_dir: Optional[Path] = None) -> str:
-        """Reconstructs the human-readable .kitt/memory/MEMORY.md projection from SQLite."""
         active = self.get_active_memories(workspace_id)
-        sections: Dict[str, List[str]] = {
-            "PROJECT_RULE": [],
-            "ARCHITECTURE_DECISION": [],
-            "USER_PREFERENCE": [],
-            "WORKING_PATTERN": [],
-            "TECHNICAL_FACT": [],
-            "FAILED_APPROACH": [],
-            "OPEN_ISSUE": [],
-            "PROJECT_STATE": [],
-        }
-
         titles = {
-            "PROJECT_RULE": "Project Rules",
-            "ARCHITECTURE_DECISION": "Architecture Decisions",
-            "USER_PREFERENCE": "User Preferences",
-            "WORKING_PATTERN": "Working Patterns",
-            "TECHNICAL_FACT": "Technical Facts",
-            "FAILED_APPROACH": "Known Failures",
-            "OPEN_ISSUE": "Open Issues",
-            "PROJECT_STATE": "Project State",
+            "PROJECT_RULE": "Project Rules", "ARCHITECTURE_DECISION": "Architecture Decisions",
+            "USER_PREFERENCE": "User Preferences", "WORKING_PATTERN": "Working Patterns",
+            "TECHNICAL_FACT": "Technical Facts", "FAILED_APPROACH": "Known Failures",
+            "OPEN_ISSUE": "Open Issues", "PROJECT_STATE": "Project State",
         }
-
+        grouped: dict[str, list[str]] = {key: [] for key in titles}
         for mem in active:
-            if mem.kind in sections:
-                pin_mark = " 📌" if mem.pinned else ""
-                sections[mem.kind].append(f"- {mem.content}{pin_mark}")
-
-        lines = ["# K.I.T.T. Memory (Materialized Projection)\n"]
-        for kind, items in sections.items():
-            if items:
-                lines.append(f"## {titles[kind]}")
-                lines.extend(items)
-                lines.append("")
-
-        content = "\n".join(lines).strip() + "\n"
-
+            if mem.kind in grouped:
+                grouped[mem.kind].append(f"- {mem.content}{' 📌' if mem.pinned else ''}")
+        lines = ["# K.I.T.T. Memory (Materialized Projection)", ""]
+        for kind, title in titles.items():
+            if grouped[kind]:
+                lines.extend([f"## {title}", *grouped[kind], ""])
+        content = "\n".join(lines).rstrip() + "\n"
         if root_dir:
-            import os
-            import uuid
             target = Path(root_dir) / ".kitt" / "memory" / "MEMORY.md"
             target.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = target.parent / f".MEMORY.md.{uuid.uuid4().hex[:8]}.tmp"
+            tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
             try:
-                tmp_path.write_text(content, encoding="utf-8")
-                os.replace(tmp_path, target)
-            except Exception:
-                if tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except Exception:
-                        pass
-                raise
-
+                tmp.write_text(content, encoding="utf-8")
+                os.replace(tmp, target)
+            finally:
+                if tmp.exists():
+                    tmp.unlink(missing_ok=True)
         return content
-
-    def _row_to_memory(self, row: Any) -> MemoryRecord:
-        d = dict(row)
-        return MemoryRecord(
-            id=d["id"],
-            workspace_id=d["workspace_id"],
-            kind=d["kind"],
-            content=d["content"],
-            normalized_content=d["normalized_content"],
-            status=d["status"],
-            importance=float(d["importance"]),
-            confidence=float(d["confidence"]),
-            created_at=float(d["created_at"]),
-            updated_at=float(d["updated_at"]),
-            last_accessed_at=float(d["last_accessed_at"]) if d.get("last_accessed_at") is not None else None,
-            access_count=int(d.get("access_count", 0)),
-            valid_from=float(d["valid_from"]) if d.get("valid_from") is not None else None,
-            valid_until=float(d["valid_until"]) if d.get("valid_until") is not None else None,
-            supersedes_id=d.get("supersedes_id"),
-            content_hash=d.get("content_hash", ""),
-            pinned=bool(d.get("pinned", 0)),
-            metadata_json=d.get("metadata_json", "{}"),
-        )
-
-    def _row_to_evidence(self, row: Any) -> MemoryEvidence:
-        d = dict(row)
-        return MemoryEvidence(
-            id=d["id"],
-            memory_id=d["memory_id"],
-            workspace_id=d["workspace_id"],
-            session_entry_id=d.get("session_entry_id"),
-            conversation_id=d.get("conversation_id"),
-            source_kind=d["source_kind"],
-            evidence_text=d["evidence_text"],
-            created_at=float(d["created_at"]),
-        )
-
-    def _row_to_dream_run(self, row: Any) -> DreamRun:
-        d = dict(row)
-        return DreamRun(
-            id=d["id"],
-            workspace_id=d["workspace_id"],
-            started_at=float(d["started_at"]),
-            finished_at=float(d["finished_at"]) if d.get("finished_at") is not None else None,
-            status=d["status"],
-            sessions_scanned=int(d.get("sessions_scanned", 0)),
-            entries_scanned=int(d.get("entries_scanned", 0)),
-            signals_found=int(d.get("signals_found", 0)),
-            memories_added=int(d.get("memories_added", 0)),
-            memories_merged=int(d.get("memories_merged", 0)),
-            memories_superseded=int(d.get("memories_superseded", 0)),
-            memories_archived=int(d.get("memories_archived", 0)),
-            model=d.get("model", ""),
-            input_tokens=int(d.get("input_tokens", 0)),
-            output_tokens=int(d.get("output_tokens", 0)),
-            failure_reason=d.get("failure_reason"),
-            dry_run=bool(d.get("dry_run", 0)),
-        )
