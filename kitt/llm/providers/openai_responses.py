@@ -16,6 +16,7 @@ from kitt.llm.domain import (
     ProviderTimeoutError,
     ProviderConnectionError,
     ProviderProtocolError,
+    ProviderOutputLimitError,
 )
 from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
@@ -60,6 +61,7 @@ class OpenAIResponsesAdapter:
         )
 
         stream_complete = False
+        output_limited = False
         try:
             with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
@@ -77,6 +79,20 @@ class OpenAIResponsesAdapter:
                     event_type = str(chunk.get("type") or "")
                     if event_type in {"response.completed", "response.done"}:
                         stream_complete = True
+                        response = chunk.get("response")
+                        if isinstance(response, dict):
+                            details = response.get("incomplete_details")
+                            reason = details.get("reason") if isinstance(details, dict) else None
+                            output_limited = (
+                                str(response.get("status") or "").lower() == "incomplete"
+                                and str(reason or "").lower() in {"max_output_tokens", "max_tokens"}
+                            )
+                    elif event_type == "response.incomplete":
+                        stream_complete = True
+                        response = chunk.get("response")
+                        details = response.get("incomplete_details") if isinstance(response, dict) else None
+                        reason = details.get("reason") if isinstance(details, dict) else None
+                        output_limited = str(reason or "").lower() in {"max_output_tokens", "max_tokens"}
                     elif event_type in {"response.failed", "error"}:
                         raise ProviderProtocolError(
                             f"OpenAI Responses stream reported {event_type}"
@@ -90,6 +106,10 @@ class OpenAIResponsesAdapter:
                             delta = raw_delta.get("text", "")
                     if isinstance(delta, str) and delta:
                         yield delta
+            if output_limited:
+                raise ProviderOutputLimitError(
+                    "OpenAI Responses output stopped because the configured token limit was reached"
+                )
             if not stream_complete:
                 raise ProviderProtocolError(
                     "OpenAI Responses stream ended before a completion marker"
