@@ -130,24 +130,23 @@ def test_atomic_write_lease_allows_only_one_owner(tmp_path: Path):
     assert sorted(results) == ["conflict", "ok"]
 
 
-def test_knowledge_links_cannot_cross_workspace(tmp_path: Path):
+def test_native_state_does_not_create_memory_authority(tmp_path: Path):
     from kitt.history.database import HistoryDatabase
     from kitt.native.storage import NativeStateRepository
 
     db = HistoryDatabase(str(tmp_path))
-    one = NativeStateRepository(db, "workspace-one")
-    two = NativeStateRepository(db, "workspace-two")
-    a = one.upsert_concept("A", "A definition")
-    b = two.upsert_concept("B", "B definition")
-    with pytest.raises(PermissionError):
-        one.add_link(a.id, b.id, "RELATED_TO")
+    NativeStateRepository(db, "workspace-one")
+    with db.get_connection() as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
     db.close()
+    assert "native_memory_vectors" not in tables
+    assert "knowledge_concepts" not in tables
+    assert "knowledge_links" not in tables
+    assert "correction_memories" not in tables
 
-
-def test_memory_query_does_not_mark_correction_as_applied(tmp_path: Path):
-    from kitt.history.database import HistoryDatabase
-    from kitt.native.memory import HybridMemoryService
-    from kitt.native.storage import NativeStateRepository
 
     db = HistoryDatabase(str(tmp_path))
     state = NativeStateRepository(db, "ws")
