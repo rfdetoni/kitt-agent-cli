@@ -28,6 +28,7 @@ EXPECTED = {
     "kitt-browser",
     "kitt-cloud",
     "kitt-observability",
+    "kitt-figma",
 }
 
 OPT_IN = {
@@ -37,6 +38,7 @@ OPT_IN = {
     "kitt-browser",
     "kitt-cloud",
     "kitt-observability",
+    "kitt-figma",
 }
 
 
@@ -163,6 +165,50 @@ class TestBuiltinPlugins(unittest.TestCase):
                 self.assertEqual(container_data["risk"], "state-changing")
             finally:
                 await self.manager.plugins.stop_all()
+
+        asyncio.run(run())
+
+    def test_figma_plugin_registers_official_desktop_mcp_and_parses_url(self):
+        async def run():
+            self.manager.plugins.discover()
+            self.manager.plugins.enable("kitt-figma")
+            await self.manager.plugins.start("kitt-figma")
+            try:
+                config = self.manager.mcp.get_config("figma-desktop")
+                self.assertEqual(config.transport, "http")
+                self.assertEqual(
+                    config.url,
+                    "http://127.0.0.1:3845/mcp",
+                )
+                self.assertEqual(config.source, "plugin:kitt-figma")
+
+                result = self.tools.execute_tool(
+                    "figma_inspect",
+                    {
+                        "url": (
+                            "https://www.figma.com/design/AbCd1234/My-App"
+                            "?node-id=12-34&t=do-not-leak"
+                        )
+                    },
+                )
+                self.assertTrue(result.success, msg=result.error)
+                payload = json.loads(result.output)
+                self.assertEqual(payload["target"]["file_key"], "AbCd1234")
+                self.assertEqual(payload["target"]["node_id"], "12:34")
+                self.assertNotIn("do-not-leak", result.output)
+                self.assertEqual(
+                    payload["preferred_mcp_server"],
+                    "figma-desktop",
+                )
+                self.assertEqual(
+                    payload["mcp_tool_prefix"],
+                    "mcp.figma-desktop.",
+                )
+            finally:
+                await self.manager.plugins.unload("kitt-figma")
+
+            with self.assertRaises(Exception):
+                self.manager.mcp.get_config("figma-desktop")
 
         asyncio.run(run())
 
