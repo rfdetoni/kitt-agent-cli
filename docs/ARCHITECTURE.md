@@ -1,5 +1,7 @@
 # KITT Agent / Native Architecture
 
+For ecosystem-level bounded contexts and DDD guidance, see [DOMAIN_ARCHITECTURE.md](DOMAIN_ARCHITECTURE.md).
+
 ## Goal
 
 Keep the Agent repository focused on orchestration while moving deterministic CPU/data-plane work to independently testable components without changing the model-facing API.
