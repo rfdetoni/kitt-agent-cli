@@ -652,6 +652,23 @@ class MCPManager:
         await self.disconnect(server_id)
         return await self.connect(server_id)
 
+    async def unregister_server(self, server_id: str) -> bool:
+        """Disconnect and remove a runtime/plugin-registered MCP server."""
+        server_id = self._server_id(server_id)
+        if not server_id:
+            return False
+        with self._lock:
+            existed = server_id in self._configs
+        if not existed:
+            return False
+        await self.disconnect(server_id)
+        with self._lock:
+            self._configs.pop(server_id, None)
+            self._custom_transports.pop(server_id, None)
+            self._server_tools.pop(server_id, None)
+            self._async_locks.pop(server_id, None)
+        return True
+
     def list_servers(self) -> List[MCPServerConfig]:
         with self._lock:
             return list(self._configs.values())
