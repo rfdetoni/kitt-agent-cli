@@ -92,7 +92,7 @@ class MemoryManager:
                         pass
                     continue
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("Timed out acquiring project memory lock")
+                    raise TimeoutError("Timed out acquiring project memory lock") from None
                 time.sleep(0.025)
         try:
             yield
