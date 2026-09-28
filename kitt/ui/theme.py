@@ -27,12 +27,39 @@ class Theme:
     warning: str = "#FFB000"
     error: str = "#FF4D57"
 
+    @staticmethod
+    def _env_enabled(name: str) -> bool:
+        return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
     def style_dict(self) -> dict[str, str]:
         if os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
             return {name: "" for name in (
                 "background surface surface.raised primary primary.bright secondary accent text text.muted border "
                 "success warning error user assistant tool status status.busy selection scrollbar"
             ).split()}
+        if self._env_enabled("KITT_HIGH_CONTRAST"):
+            return {
+                "background": "bg:#000000 #FFFFFF",
+                "surface": "bg:#000000 #FFFFFF",
+                "surface.raised": "bg:#111111 #FFFFFF",
+                "primary": "#FF6B6B",
+                "primary.bright": "#FFFFFF bold",
+                "secondary": "#FFE066",
+                "accent": "#66E3FF",
+                "text": "#FFFFFF",
+                "text.muted": "#D9D9D9",
+                "border": "#FFFFFF",
+                "success": "#7CFF9B",
+                "warning": "#FFE066",
+                "error": "#FF8080",
+                "user": "#FFE066",
+                "assistant": "#FFFFFF",
+                "tool": "#66E3FF",
+                "status": "bg:#111111 #FFFFFF",
+                "status.busy": "bg:#111111 #FFFFFF bold",
+                "selection": "bg:#FFFFFF #000000 bold",
+                "scrollbar": "bg:#FFFFFF #000000",
+            }
         return {
             "background": f"bg:{self.background} {self.text}", "surface": f"bg:{self.surface} {self.text}",
             "surface.raised": f"bg:{self.surface_raised} {self.text}", "primary": self.primary,
