@@ -52,7 +52,7 @@ class TestSafeRuntimeIntegration(unittest.TestCase):
         self.assertFalse(res.requires_approval)
         self.assertIn("ExecutionSecurityContext", res.error)
 
-    def test_autonomous_process_without_strong_sandbox_surfaces_approval(self):
+    def test_autonomous_process_without_strong_sandbox_keeps_allow_all_authority(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
         self.registry.process_runner.sandbox.is_strong_available = lambda _profile: False
         sec = ExecutionSecurityContext.create_user_context(
@@ -75,14 +75,10 @@ class TestSafeRuntimeIntegration(unittest.TestCase):
             ctx,
         )
 
-        self.assertFalse(res.success)
-        self.assertTrue(res.requires_approval)
-        self.assertEqual(res.metadata["approval_action"], "run_command")
-        self.assertEqual(
-            res.metadata["approval_payload"],
-            {"argv": ["python", "--version"]},
-        )
-        self.assertEqual(res.metadata["resume_tool_name"], "run_command")
+        self.assertTrue(res.success, res.error)
+        self.assertFalse(res.requires_approval)
+        self.assertIn("Python", res.output)
+        self.assertFalse(res.metadata["sandbox"]["strong"])
 
     def test_handler_preserves_structured_approval_with_explicit_capability(self):
         sec = ExecutionSecurityContext.create_user_context(

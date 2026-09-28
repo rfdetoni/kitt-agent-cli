@@ -9,6 +9,8 @@ from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 
 from kitt.ui.interaction import InteractionMap
 from kitt.ui.mouse import interactive_surface_mouse_handler
+from kitt.ui.render.overlays import _permission_text
+from kitt.ui.state import UIState
 from kitt.ui.reverse_proxy_panel import ReverseProxyPanelModel
 from kitt.reverse_proxy.contracts import ReverseProxyProfile
 
@@ -150,5 +152,86 @@ def test_model_header_click_uses_existing_role_controller():
         )
         await asyncio.sleep(0)
         ui._move_model_role.assert_awaited_once_with(1)
+
+    asyncio.run(scenario())
+
+
+def test_permission_renderer_only_marks_visible_action_text_clickable():
+    state = UIState()
+    state.pending_approvals = [{
+        "tool_name": "run_command",
+        "args": {"argv": ["python", "-V"]},
+        "approval_id": "approval-1",
+    }]
+    ui = SimpleNamespace(
+        state=state,
+        interactions=InteractionMap(),
+        approval_menu_index=0,
+    )
+
+    text = _permission_text(ui)
+    lines = text.splitlines()
+    row = next(i for i, line in enumerate(lines) if "[y] Permitir uma vez" in line)
+    marker_start = lines[row].index("[y] Permitir uma vez")
+
+    assert ui.interactions.resolve("permission", marker_start + 1, row) is not None
+    assert ui.interactions.resolve("permission", 0, row) is None
+
+
+def test_permission_blank_click_is_consumed_without_resolving_or_closing():
+    async def scenario():
+        ui = SimpleNamespace(
+            interactions=InteractionMap(),
+            approval_menu_index=0,
+            application=MagicMock(),
+            permission_control=object(),
+            resolve_approval=AsyncMock(),
+        )
+        ui.application.layout.focus = MagicMock()
+        ui.interactions.begin("permission")
+        ui.interactions.add(
+            "permission", 5, 10, 30, "permission.action", (0, "once")
+        )
+
+        down = interactive_surface_mouse_handler(
+            ui, "permission", _mouse(MouseEventType.MOUSE_DOWN, 1, 5)
+        )
+        up = interactive_surface_mouse_handler(
+            ui, "permission", _mouse(MouseEventType.MOUSE_UP, 1, 5)
+        )
+        await asyncio.sleep(0)
+
+        assert down is None
+        assert up is None
+        ui.application.layout.focus.assert_called()
+        ui.resolve_approval.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+def test_permission_action_requires_press_and_release_inside_exact_label():
+    async def scenario():
+        ui = SimpleNamespace(
+            interactions=InteractionMap(),
+            approval_menu_index=0,
+            application=MagicMock(),
+            permission_control=object(),
+            resolve_approval=AsyncMock(),
+        )
+        ui.application.layout.focus = MagicMock()
+        ui.interactions.begin("permission")
+        ui.interactions.add(
+            "permission", 5, 10, 30, "permission.action", (0, "once")
+        )
+
+        interactive_surface_mouse_handler(
+            ui, "permission", _mouse(MouseEventType.MOUSE_DOWN, 12, 5)
+        )
+        interactive_surface_mouse_handler(
+            ui, "permission", _mouse(MouseEventType.MOUSE_UP, 12, 5)
+        )
+        await asyncio.sleep(0)
+
+        ui.resolve_approval.assert_awaited_once_with("once")
 
     asyncio.run(scenario())

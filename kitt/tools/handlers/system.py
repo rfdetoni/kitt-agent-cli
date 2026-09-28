@@ -232,6 +232,10 @@ class RunCommandHandler:
             automatic = (
                 ctx.approval_grant is None and is_automatic_origin(ctx.origin)
             )
+            autonomy = getattr(getattr(ctx.registry, "policy", None), "autonomy", None)
+            autonomous_command = bool(
+                getattr(autonomy, "allow_run_command_auto", False)
+            )
             sandbox_profile = (
                 "workspace-write+network"
                 if network_requested
@@ -242,7 +246,7 @@ class RunCommandHandler:
                 timeout_seconds=timeout_seconds,
                 cwd=cwd,
                 sandbox_profile=sandbox_profile,
-                require_strong_sandbox=automatic,
+                require_strong_sandbox=automatic and not autonomous_command,
             )
         except FileNotFoundError:
             return ToolResult(False, "", f"Executable or cwd not found for process.run: {argv[0]}")

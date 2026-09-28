@@ -1,7 +1,7 @@
 import unittest
 from kitt.ui.state import UIState
 from kitt.ui.reducer import reduce_ui_event, format_tool_bullet
-from kitt.core.turn_events import ToolStarted, ToolCompleted
+from kitt.core.turn_events import ToolCallProposed, ToolStarted, ToolCompleted, TurnStarted
 
 class TestBulletToolVisualFeedback(unittest.TestCase):
     def test_format_tool_bullet_outputs(self):
@@ -9,6 +9,57 @@ class TestBulletToolVisualFeedback(unittest.TestCase):
         self.assertEqual(format_tool_bullet("read_file", {"path": "kitt/core/turn_processor.py"}), "● Read(kitt/core/turn_processor.py)")
         self.assertEqual(format_tool_bullet("write_file", {"path": "teste.py"}), "● Write(teste.py)")
         self.assertEqual(format_tool_bullet("run_command", {"command": "python3 -m unittest"}), "● Bash(python3 -m unittest)")
+
+    def test_reasoning_summary_explains_tool_before_technical_bullet(self):
+        state = UIState()
+        reduce_ui_event(
+            state,
+            TurnStarted(
+                turn_id="turn-summary",
+                conversation_id="conv-summary",
+                prompt="valide as alterações",
+            ),
+        )
+        reduce_ui_event(
+            state,
+            ToolCallProposed(
+                tool_name="kitt_runtime",
+                args={
+                    "operation": "process.run",
+                    "arguments": {"argv": ["npm", "test"]},
+                    "__reasoning_summary": (
+                        "Vou executar os testes para validar as alterações antes de continuar."
+                    ),
+                },
+            ),
+        )
+        reduce_ui_event(
+            state,
+            ToolStarted(
+                tool_name="kitt_runtime",
+                args={
+                    "operation": "process.run",
+                    "arguments": {"argv": ["npm", "test"]},
+                },
+                call_id="call-summary",
+            ),
+        )
+
+        block = state.transcript[-1]
+        self.assertIn(
+            "▸ Vou executar os testes para validar as alterações antes de continuar.",
+            block.text,
+        )
+        self.assertIn("● Executar: npm test", block.text)
+        self.assertEqual(
+            block.metadata["reasoning_summary"],
+            "Vou executar os testes para validar as alterações antes de continuar.",
+        )
+        core = next(task for task in state.active_tasks if task.id == "core")
+        self.assertEqual(
+            core.summary,
+            "Vou executar os testes para validar as alterações antes de continuar.",
+        )
 
     def test_reducer_appends_bullet_lines(self):
         state = UIState()

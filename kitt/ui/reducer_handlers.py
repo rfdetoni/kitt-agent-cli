@@ -16,6 +16,24 @@ if TYPE_CHECKING:
     pass
 
 
+_REASONING_SUMMARY_KEY = "__reasoning_summary"
+
+
+def _tool_reasoning_summary(args: object) -> str:
+    if not isinstance(args, dict):
+        return ""
+    raw = args.get(_REASONING_SUMMARY_KEY)
+    if not isinstance(raw, str):
+        return ""
+    return safe_text(" ".join(raw.split()))[:400].strip()
+
+
+def _tool_display_text(bullet_text: str, reasoning_summary: str) -> str:
+    if not reasoning_summary:
+        return bullet_text
+    return f"▸ {reasoning_summary}\n  {bullet_text}"
+
+
 def handle_turn_started(state: UIState, event: TurnStarted) -> None:
     now = time.time()
     for block in state.transcript:
@@ -73,25 +91,52 @@ def handle_thinking_completed(state: UIState, event: ThinkingCompleted) -> None:
 
 def handle_tool_proposed(state: UIState, event: ToolCallProposed, format_bullet) -> None:
     tool_name = event.tool_name or "tool"
-    bullet_text = format_bullet(tool_name, event.args if isinstance(event.args, dict) else {})
-    state.status_text = f"DEVELOPING: {tool_name}"
-    
-    running_block = next((b for b in reversed(state.transcript) if b.kind == "tool" and b.status == "running" and not b.call_id), None)
+    raw_args = event.args if isinstance(event.args, dict) else {}
+    reasoning_summary = _tool_reasoning_summary(raw_args)
+    display_args = {
+        key: value for key, value in raw_args.items()
+        if key != _REASONING_SUMMARY_KEY
+    }
+    bullet_text = format_bullet(tool_name, display_args)
+    display_text = _tool_display_text(bullet_text, reasoning_summary)
+    state.status_text = (
+        f"DEVELOPING: {reasoning_summary[:80]}"
+        if reasoning_summary
+        else f"DEVELOPING: {tool_name}"
+    )
+
+    running_block = next(
+        (
+            b for b in reversed(state.transcript)
+            if b.kind == "tool" and b.status == "running" and not b.call_id
+        ),
+        None,
+    )
     if not running_block:
+        metadata = {"reasoning_summary": reasoning_summary} if reasoning_summary else {}
         state.transcript.append(TranscriptBlock(
-            f"tool-{len(state.transcript)+1}", "tool", bullet_text, "running",
+            f"tool-{len(state.transcript)+1}",
+            "tool",
+            display_text,
+            "running",
             started_at=time.time(),
+            metadata=metadata,
         ))
     else:
-        running_block.text = bullet_text
+        running_block.text = display_text
+        if reasoning_summary:
+            running_block.metadata["reasoning_summary"] = reasoning_summary
 
     core_task = next((t for t in state.active_tasks if t.id == "core" or t.kind == "core_agent"), None)
     if core_task:
-        bytes_gen = event.args.get("bytes", 0) if isinstance(event.args, dict) else 0
-        target = event.args.get("path", "") if isinstance(event.args, dict) else ""
+        bytes_gen = display_args.get("bytes", 0)
+        target = display_args.get("path", "")
         target_str = f" ({target})" if target else ""
         core_task.status = "running"
-        core_task.summary = f"Gerando payload para {tool_name}{target_str} ({bytes_gen} bytes)..."
+        core_task.summary = (
+            reasoning_summary
+            or f"Gerando payload para {tool_name}{target_str} ({bytes_gen} bytes)..."
+        )
         core_task.progress = min(80, 40 + int(bytes_gen / 100))
 
 
@@ -116,13 +161,22 @@ def handle_text_delta(state: UIState, event: TextDelta) -> None:
 def handle_tool_started(state: UIState, event: ToolStarted, format_bullet) -> None:
     state.is_executing_tool = True
     state.active_tool_name = event.tool_name
-    state.status_text = f"TOOL: {event.tool_name}"
     bullet_text = format_bullet(event.tool_name, getattr(event, "args", {}))
     call_id = getattr(event, "call_id", "")
-    
-    running_block = next((b for b in reversed(state.transcript) if b.kind == "tool" and b.status == "running" and not b.call_id), None)
+
+    running_block = next(
+        (
+            b for b in reversed(state.transcript)
+            if b.kind == "tool" and b.status == "running" and not b.call_id
+        ),
+        None,
+    )
+    reasoning_summary = ""
     if running_block:
-        running_block.text = bullet_text
+        reasoning_summary = safe_text(
+            running_block.metadata.get("reasoning_summary", "")
+        ).strip()[:400]
+        running_block.text = _tool_display_text(bullet_text, reasoning_summary)
         running_block.call_id = call_id
     else:
         state.transcript.append(TranscriptBlock(
@@ -130,15 +184,28 @@ def handle_tool_started(state: UIState, event: ToolStarted, format_bullet) -> No
             call_id=call_id, started_at=time.time(),
         ))
 
+    state.status_text = (
+        f"TOOL: {reasoning_summary[:80]}"
+        if reasoning_summary
+        else f"TOOL: {event.tool_name}"
+    )
 
+    task_summary = reasoning_summary or bullet_text
     tool_task_id = f"tool-{call_id if call_id else event.tool_name}"
     tool_task = next((t for t in state.active_tasks if t.id == tool_task_id or t.id == "compute"), None)
     if not tool_task:
-        tool_task = AgentTaskStep(tool_task_id, bullet_text, event.tool_name, "running", bullet_text, 50)
+        tool_task = AgentTaskStep(
+            tool_task_id,
+            bullet_text,
+            event.tool_name,
+            "running",
+            task_summary,
+            50,
+        )
         state.active_tasks.append(tool_task)
     else:
         tool_task.status = "running"
-        tool_task.summary = bullet_text
+        tool_task.summary = task_summary
         tool_task.progress = 50
 
 

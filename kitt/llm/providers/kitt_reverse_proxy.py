@@ -210,7 +210,7 @@ def prepare_reverse_proxy_system_prompt(
     return native_prompt, tools
 
 
-def _decode_bridge_call(content: Any) -> Optional[Tuple[str, str, Dict[str, Any]]]:
+def _decode_bridge_call(content: Any) -> Optional[Tuple[str, str, Dict[str, Any], str]]:
     if not isinstance(content, str):
         return None
     match = _BRIDGE_RE.search(content.strip())
@@ -232,7 +232,13 @@ def _decode_bridge_call(content: Any) -> Optional[Tuple[str, str, Dict[str, Any]
         or not isinstance(arguments, dict)
     ):
         return None
-    return call_id, name, arguments
+    summary = value.get("reasoning_summary")
+    reasoning_summary = (
+        " ".join(summary.split())[:400]
+        if isinstance(summary, str)
+        else ""
+    )
+    return call_id, name, arguments, reasoning_summary
 
 
 def _is_tool_feedback_message(content: Any) -> bool:
@@ -273,10 +279,10 @@ def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[
         if role == "assistant":
             bridged = _decode_bridge_call(content)
             if bridged:
-                call_id, name, arguments = bridged
+                call_id, name, arguments, reasoning_summary = bridged
                 normalized.append({
                     "role": "assistant",
-                    "content": None,
+                    "content": reasoning_summary or None,
                     "tool_calls": [{
                         "id": call_id,
                         "type": "function",
@@ -538,7 +544,10 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                 raise ProviderProtocolError(
                     "KITT reverse proxy returned non-object tool arguments"
                 )
+            reasoning_summary = " ".join("".join(content_parts).split())[:400]
             bridge = {"id": call_id, "name": name, "arguments": arguments}
+            if reasoning_summary:
+                bridge["reasoning_summary"] = reasoning_summary
             yield (
                 "<kitt-tool>"
                 + json.dumps(bridge, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c").replace(">", "\\u003e")

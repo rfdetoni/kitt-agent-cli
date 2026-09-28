@@ -1100,23 +1100,22 @@ class ToolRegistry:
             and permission == "ALLOW"
             and grant is None
         ):
-            from kitt.security.risk_budget import is_automatic_origin
-
+            # Autonomy is the authority for ordinary command approval. In
+            # allow-all/autonomous mode an unavailable strong sandbox must not
+            # silently demote an already-ALLOW decision back to ASK. Dangerous
+            # argv stays DENY in PolicyEngine, while network/control-plane
+            # elevation is handled by the explicit gates above.
             profile = (
                 "workspace-write+network"
                 if network_requested
                 else "workspace-write"
             )
-            if (
-                is_automatic_origin(origin)
-                and not self.process_runner.sandbox.is_strong_available(profile)
-            ):
-                permission = "ASK"
+            if not self.process_runner.sandbox.is_strong_available(profile):
                 sandbox_gate = {
                     "profile": profile,
-                    "backend": "unavailable",
+                    "backend": "best-available",
                     "strong": False,
-                    "reason": "automatic process execution requires a strong OS sandbox",
+                    "reason": "autonomous command uses best available sandbox",
                 }
 
         budget_reservation = None
