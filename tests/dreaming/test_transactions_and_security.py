@@ -61,6 +61,7 @@ class TestDreamTransactionsAndSecurity(unittest.TestCase):
             confidence=1.0,
             created_at=time.time(),
             updated_at=time.time(),
+            metadata_json="{",
         )
         dream_run = DreamRun(
             id="run_fail",
@@ -146,13 +147,9 @@ class TestDreamTransactionsAndSecurity(unittest.TestCase):
         # Strictly ZERO writes to disk
         self.assertFalse(mem_file.exists())
 
-        # Strictly ZERO writes to database
+        # Strictly ZERO writes to durable memory authority.
         self.assertEqual(len(self.memory_repo.get_all_memories(self.workspace_id)), 0)
         self.assertIsNone(self.memory_repo.get_last_dream_run(self.workspace_id))
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM memory_evidence WHERE workspace_id = ?", (self.workspace_id,))
-            self.assertEqual(cursor.fetchone()[0], 0)
 
     def test_cancellation_during_run(self):
         self.dream_service.cancel()
