@@ -94,6 +94,12 @@ Reverse Proxy 4.4.2 uses the same 330-second readiness budget before declaring a
 
 The retained transcript also anchors its cursor to the manual scroll row while follow-tail is disabled, restoring downward mouse-wheel scrolling after the user has scrolled upward. The K.I.T.T. scanner animation advances whenever animations are enabled rather than only during active model work.
 
+## Agentic response reliability — Agent CLI 0.77.0 / Reverse Proxy 4.5.0
+
+Broad mutation requests now enter discovery-first execution: the Agent preserves the complete goal but constrains the first model action to one repository inspection before optional architecture planning or mutation. The reverse proxy mirrors that state in its agent contract and rejects non-exploration actions until the read-only round trip is observed.
+
+WebChat response liveness is activity-aware. Streaming indicators, response-text changes and DOM mutations refresh the inactivity budget, while a separate bounded absolute ceiling prevents an infinite browser wait. Official provider APIs continue to use their native token streams and are preferred when configured.
+
 ## 0.74 control-path note
 
 The resident reverse-proxy control channel introduced in 0.73 remains the management fast path. Agent 0.74 does not alter that wire contract; the new performance work is inside token accounting, approval persistence and transcript rendering.
