@@ -169,21 +169,37 @@ class KittMemoryClient:
             raise KittMemoryUnavailable("invalid memory.manage response")
         return body
 
-    def remember(self, workspace_id: str, content: str, kind: str = "PROJECT_RULE", pinned: bool = True) -> str:
+    def remember(
+        self,
+        workspace_id: str,
+        content: str,
+        kind: str = "PROJECT_RULE",
+        pinned: bool = True,
+        *,
+        namespace: str = "agent-cli",
+        sensitivity: str = "private",
+        scope: str = "workspace",
+        scope_key: str | None = None,
+        importance: float | None = None,
+        confidence: float = 1.0,
+        ttl_seconds: int | None = None,
+    ) -> str:
+        if scope == "conversation" and not scope_key:
+            raise ValueError("conversation scope requires scope_key")
         body = self._call(
             MEMORY_REMEMBER_REQUEST,
             {
-                "namespace": "agent-cli",
+                "namespace": namespace,
                 "workspace_id": workspace_id,
                 "content": content,
                 "kind": kind,
-                "sensitivity": "private",
-                "scope": "workspace",
-                "scope_key": None,
-                "importance": 0.9 if pinned else 0.6,
-                "confidence": 1.0,
+                "sensitivity": sensitivity,
+                "scope": scope,
+                "scope_key": scope_key,
+                "importance": (0.9 if pinned else 0.6) if importance is None else float(importance),
+                "confidence": float(confidence),
                 "pinned": bool(pinned),
-                "ttl_seconds": None,
+                "ttl_seconds": ttl_seconds,
             },
             MEMORY_REMEMBER_RESPONSE,
         )
@@ -192,18 +208,29 @@ class KittMemoryClient:
             raise KittMemoryUnavailable("memory.remember response missing id")
         return memory_id
 
-    def recall(self, workspace_id: str, query: str, limit: int = 8) -> list[dict[str, Any]]:
+    def recall(
+        self,
+        workspace_id: str,
+        query: str,
+        limit: int = 8,
+        *,
+        namespace: str = "agent-cli",
+        scope_key: str | None = None,
+        as_of: int | None = None,
+        allow_private: bool = True,
+        allow_secret: bool = False,
+    ) -> list[dict[str, Any]]:
         body = self._call(
             MEMORY_RECALL_REQUEST,
             {
-                "namespace": "agent-cli",
+                "namespace": namespace,
                 "workspace_id": workspace_id,
-                "scope_key": None,
+                "scope_key": scope_key,
                 "query": query,
-                "limit": max(1, min(int(limit), 50)),
-                "as_of": None,
-                "allow_private": True,
-                "allow_secret": False,
+                "limit": max(0, min(int(limit), 50)),
+                "as_of": as_of,
+                "allow_private": bool(allow_private),
+                "allow_secret": bool(allow_secret),
             },
             MEMORY_RECALL_RESPONSE,
         )
