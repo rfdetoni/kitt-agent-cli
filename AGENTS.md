@@ -47,11 +47,11 @@ Before merging broader behavior:
 
 ```bash
 pytest -q
-cargo test --workspace --all-features
+python3 -m compileall -q kitt tests
 python3 packaging/verify_cleanroom.py
 ```
 
-Use KITT-owned tooling and the Python/Rust commands shipped by this repository; do not require external command-proxy binaries for validation.
+Rust formatting, Clippy, tests and native-wheel validation belong to `rfdetoni/kitt-toolbox`; do not reintroduce a local Cargo workspace into Agent CLI. Use KITT-owned tooling and do not require external command-proxy binaries for validation.
 
 ## Mandatory Ruthless Security & Performance Review
 
@@ -75,3 +75,8 @@ After every code implementation/edit:
 - Silent fallback that hides degraded search/index behavior.
 - Duplicated metrics writers for the same event.
 - Prompt changes that expose chain-of-thought or trust workspace content as policy.
+
+
+## Domain Boundaries
+
+Use [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md) as the strategic architecture contract. Apply DDD only where a domain consistency boundary exists; do not wrap UI, provider or persistence helpers in ceremonial domain abstractions. Cross-repository contracts belong in `kitt-protocol`, and the root `rfdetoni/kitt` lock is the compatibility composition boundary.
