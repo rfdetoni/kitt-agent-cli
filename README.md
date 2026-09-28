@@ -578,6 +578,11 @@ Agent CLI 0.74.4 removes two remaining split-brain state paths:
 - Package compatibility remains Python 3.12+, while CI intentionally exercises only the current ecosystem interpreter (Python 3.14) across supported desktop operating systems.
 
 
-## Agent CLI 0.74.5 — current-interpreter and protocol alignment
+## Agent CLI 0.74.6 — current-interpreter and protocol alignment
 
-Agent CLI 0.74.5 requires Python 3.14+, matching the interpreter validated across the ecosystem. It pins KITT Protocol 0.2.1 and the Assistant 0.1.6/runtime 0.2.18 snapshot, while preserving the memory-authority, approval-durability and daemon-protocol fixes introduced in 0.74.4.
+Agent CLI 0.74.6 requires Python 3.14+, matching the interpreter validated across the ecosystem. It pins KITT Protocol 0.2.1 and the Assistant 0.1.6/runtime 0.2.18 snapshot, while preserving the memory-authority, approval-durability and daemon-protocol fixes introduced in 0.74.4.
+
+
+### 0.74.6 container alignment
+
+The official Agent container now uses Python 3.14, matching the package's declared and CI-validated interpreter floor. This fixes the 0.74.5 release-container failure where the Docker image still used Python 3.12.
