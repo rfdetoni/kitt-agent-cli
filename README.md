@@ -223,7 +223,7 @@ immutable revisions as part of the same supply-chain boundary.
 
 - Tool/command approval prompts remain active **without an automatic timeout** until the user explicitly allows, denies, or cancels them.
 - An issued grant remains short-lived, action-bound and single-use; removing the waiting timeout does not make grants reusable.
-- If autonomous `process.run` cannot use a strong OS sandbox, KITT degrades to a durable user approval instead of returning a terminal ASK-policy error to the model.
+- In `allow-all` / autonomous mode, ordinary commands keep the user's explicit ALLOW decision and use the best available process isolation when a strong OS sandbox is unavailable. Explicitly denied argv, network elevation, control-plane mutation and other critical authority boundaries remain fail-closed.
 - Pending tool conversations stay pinned in `kitt-reverse-proxy`, so session idle/LRU eviction cannot discard a conversation while KITT is waiting for the human decision.
 - Daemon-backed approvals require `kitt-assistant-runtime >= 0.2.16`; that runtime treats `PENDING` decisions as durable state with no wall-clock expiry and never evicts an active approval to make room for a newer one.
 - Standalone install/update scripts stop resident KITT services, including the daemon and known proxy/gateway services, before replacing the runtime.
@@ -605,6 +605,14 @@ The implementation is independent KITT code and does not copy OpenUI/OpenViking 
 
 0.75.1 is the promoted semantic-IR snapshot after cross-platform validation. It keeps the 0.75 Surface/Backend IR feature set, fixes Surface projection to occur on completed tool events, and aligns runtime fallback/package/lock version metadata for deterministic release automation.
 
+
+## Agent CLI 0.77.2 — autonomy, modal and action-summary reliability
+
+Agent CLI 0.77.2 fixes three user-facing execution issues:
+
+- `/autonomy allow-all` is now authoritative for ordinary model-initiated commands. A missing strong OS sandbox no longer silently converts an ALLOW decision into a second ASK modal; dangerous commands remain DENY and explicit network/control-plane elevation still requires dedicated authority.
+- The approval surface is a true pointer modal. Blank clicks are consumed by the permission surface and only the visible approval labels are clickable, preventing focus clicks or modal-body clicks from falling through and dismissing/activating underlying UI.
+- Reverse-proxy `reasoning_summary` metadata is preserved through the native tool bridge and projected into the TUI as the primary description of the action, with the concrete tool/command shown underneath as technical detail. The summary remains bounded public progress metadata, not chain-of-thought.
 
 ## Agent CLI 0.77.1 — Assistant 0.1.10 composition alignment
 
