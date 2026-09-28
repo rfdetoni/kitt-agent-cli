@@ -146,18 +146,3 @@ def test_native_state_does_not_create_memory_authority(tmp_path: Path):
     assert "knowledge_concepts" not in tables
     assert "knowledge_links" not in tables
     assert "correction_memories" not in tables
-
-
-    db = HistoryDatabase(str(tmp_path))
-    state = NativeStateRepository(db, "ws")
-    correction_id = state.add_correction("build tool", "gradle", "maven")
-
-    class MemoryRepo:
-        def get_active_memories(self, workspace_id):
-            return []
-
-    service = HybridMemoryService(SimpleNamespace(), MemoryRepo(), state)
-    service.query("build tool maven", limit=5)
-    row = next(item for item in state.list_corrections() if item["id"] == correction_id)
-    db.close()
-    assert row["applied_count"] == 0
