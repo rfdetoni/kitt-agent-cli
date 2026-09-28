@@ -186,6 +186,124 @@ class ToolAPI:
             self.registered_tool_names.append(tool_name)
 
 
+
+
+class MCPAPI:
+    """Scoped MCP capability for trusted plugin-managed server adapters."""
+
+    def __init__(
+        self,
+        plugin_name: str,
+        permissions: Set[str],
+        mcp_manager=None,
+    ):
+        self.plugin_name = plugin_name
+        self.permissions = permissions
+        self.mcp_manager = mcp_manager
+        self._owned_server_ids: Set[str] = set()
+
+    def _require_manage(self) -> None:
+        if "mcp.manage" not in self.permissions:
+            raise PluginPermissionError(
+                f"Plugin '{self.plugin_name}' denied MCP management. "
+                "Missing 'mcp.manage' permission."
+            )
+        if self.mcp_manager is None:
+            raise RuntimeError("MCP manager is unavailable in this runtime")
+
+    @staticmethod
+    def _safe_config(config, status: str | None = None) -> Dict[str, Any]:
+        return {
+            "server_id": config.server_id,
+            "transport": config.transport,
+            "url": config.url,
+            "enabled": bool(config.enabled),
+            "trust": config.trust,
+            "source": config.source,
+            "status": status,
+        }
+
+    def list_servers(self) -> List[Dict[str, Any]]:
+        self._require_manage()
+        rows: List[Dict[str, Any]] = []
+        for config in self.mcp_manager.list_servers():
+            state = self.mcp_manager.get_server_status(config.server_id)
+            rows.append(self._safe_config(config, state.value))
+        return rows
+
+    def register_http(
+        self,
+        server_id: str,
+        url: str,
+        *,
+        enabled: bool = True,
+        trust: str = "restricted",
+        allow_tools: Optional[List[str]] = None,
+        deny_tools: Optional[List[str]] = None,
+        timeout_seconds: float = 30.0,
+        max_output_bytes: int = 2 * 1024 * 1024,
+    ) -> Dict[str, Any]:
+        self._require_manage()
+        normalized = str(server_id or "").strip().lower()
+        if not normalized:
+            raise ValueError("MCP server_id is required")
+        trust = str(trust or "restricted").strip().lower()
+        if trust not in {"trusted", "restricted", "isolated"}:
+            raise ValueError("MCP trust must be trusted, restricted, or isolated")
+
+        for existing in self.mcp_manager.list_servers():
+            if existing.server_id == normalized:
+                return {
+                    **self._safe_config(
+                        existing,
+                        self.mcp_manager.get_server_status(normalized).value,
+                    ),
+                    "registered": False,
+                    "owned": False,
+                }
+
+        from kitt.extensions.mcp.models import MCPServerConfig
+
+        config = MCPServerConfig(
+            server_id=normalized,
+            transport="http",
+            url=str(url or "").strip(),
+            enabled=bool(enabled),
+            trust=trust,
+            allow_tools=list(allow_tools) if allow_tools is not None else None,
+            deny_tools=list(deny_tools or []),
+            timeout_seconds=float(timeout_seconds),
+            max_output_bytes=int(max_output_bytes),
+            source=f"plugin:{self.plugin_name}",
+        )
+        self.mcp_manager.register_server(config)
+        self._owned_server_ids.add(normalized)
+        return {
+            **self._safe_config(config, "DISCONNECTED"),
+            "registered": True,
+            "owned": True,
+        }
+
+    async def connect(self, server_id: str):
+        self._require_manage()
+        return await self.mcp_manager.connect(server_id)
+
+    async def unregister(self, server_id: str) -> bool:
+        self._require_manage()
+        normalized = str(server_id or "").strip().lower()
+        if normalized not in self._owned_server_ids:
+            return False
+        await self.mcp_manager.unregister_server(normalized)
+        self._owned_server_ids.discard(normalized)
+        return True
+
+    async def unregister_owned(self) -> None:
+        self._require_manage()
+        for server_id in tuple(sorted(self._owned_server_ids, reverse=True)):
+            await self.mcp_manager.unregister_server(server_id)
+            self._owned_server_ids.discard(server_id)
+
+
 class CommandAPI:
     """Slash command registration API requiring 'commands.register' permission."""
 

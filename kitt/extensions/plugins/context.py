@@ -13,6 +13,7 @@ from kitt.extensions.plugins.api import (
     PluginConfigAPI,
     PluginLogger,
     ToolAPI,
+    MCPAPI,
 )
 
 
@@ -28,3 +29,4 @@ class PluginContext:
     config: PluginConfigAPI
     logger: PluginLogger
     workspace_root: Optional[Path] = None
+    mcp: Optional[MCPAPI] = None

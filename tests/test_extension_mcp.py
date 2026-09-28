@@ -6,7 +6,9 @@ import unittest
 from kitt.extensions.mcp.client import MCPClient
 from kitt.extensions.mcp.manager import MCPManager
 from kitt.extensions.mcp.models import MCPServerConfig
+from kitt.extensions.errors import PluginPermissionError
 from kitt.extensions.mcp.transport import InProcessTransport
+from kitt.extensions.plugins.api import MCPAPI
 from kitt.tools.registry import ToolRegistry
 
 
@@ -91,6 +93,40 @@ class TestExtensionMCP(unittest.TestCase):
 
             # 5. Disconnect
             await client.disconnect()
+
+        asyncio.run(_test())
+
+    def test_plugin_mcp_api_requires_explicit_manage_permission(self):
+        manager = MCPManager()
+        api = MCPAPI("example", {"tools.register"}, manager)
+        with self.assertRaises(PluginPermissionError):
+            api.register_http(
+                "example",
+                "http://127.0.0.1:9000/mcp",
+            )
+
+    def test_plugin_mcp_api_does_not_take_ownership_of_existing_server(self):
+        async def _test():
+            manager = MCPManager()
+            manager.register_server(
+                MCPServerConfig(
+                    server_id="figma-desktop",
+                    transport="http",
+                    url="http://127.0.0.1:3845/mcp",
+                    source="global",
+                )
+            )
+            api = MCPAPI("kitt-figma", {"mcp.manage"}, manager)
+            row = api.register_http(
+                "figma-desktop",
+                "http://127.0.0.1:3845/mcp",
+            )
+            self.assertFalse(row["owned"])
+            await api.unregister_owned()
+            self.assertEqual(
+                manager.get_config("figma-desktop").source,
+                "global",
+            )
 
         asyncio.run(_test())
 

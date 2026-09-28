@@ -26,6 +26,7 @@ from kitt.extensions.plugins.api import (
     PluginConfigAPI,
     PluginLogger,
     ToolAPI,
+    MCPAPI,
 )
 from kitt.extensions.plugins.context import PluginContext
 from kitt.extensions.plugins.security import (
@@ -107,6 +108,7 @@ class PluginLoader:
         hook_registry=None,
         tool_registry=None,
         command_registry=None,
+        mcp_manager=None,
         trust_store: Optional[PluginTrustStore] = None,
     ):
         self.workspace_root = Path(workspace_root).resolve()
@@ -122,6 +124,7 @@ class PluginLoader:
         self.hook_registry = hook_registry
         self.tool_registry = tool_registry
         self.command_registry = command_registry
+        self.mcp_manager = mcp_manager
         self.trust_store = trust_store or PluginTrustStore(
             self.workspace_root
         )
@@ -345,6 +348,11 @@ class PluginLoader:
                 manifest.name,
                 manifest.permissions,
                 self.command_registry,
+            ),
+            mcp=MCPAPI(
+                manifest.name,
+                manifest.permissions,
+                self.mcp_manager,
             ),
             config=PluginConfigAPI(manifest.name),
             logger=PluginLogger(manifest.name),

@@ -17,6 +17,7 @@ A implementação principal permanece em Python. Trabalho determinístico e pesa
 - [docs/RUNTIME_REFERENCE.md](docs/RUNTIME_REFERENCE.md) — referência do runtime
 - [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) — teclado, cores e alto contraste
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — benchmarks reproduzíveis
+- [docs/FIGMA.md](docs/FIGMA.md) — integração Figma via MCP oficial
 
 ## Requisitos
 

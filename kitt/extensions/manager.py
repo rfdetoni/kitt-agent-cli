@@ -46,6 +46,10 @@ class ExtensionManager:
         self.plugin_state = PluginStateStore(
             self.workspace_root, path=plugin_state_path
         )
+        self.mcp = MCPManager(
+            workspace_root=str(self.workspace_root),
+            tool_registry=tool_registry,
+        )
         self.loader = PluginLoader(
             workspace_root=str(self.workspace_root),
             builtin_plugins_dir=str(
@@ -55,15 +59,12 @@ class ExtensionManager:
             hook_registry=self.hooks,
             tool_registry=tool_registry,
             command_registry=command_registry,
+            mcp_manager=self.mcp,
             trust_store=self.plugin_trust,
         )
         self.plugins = PluginRegistry(
             loader=self.loader,
             state_store=self.plugin_state,
-        )
-        self.mcp = MCPManager(
-            workspace_root=str(self.workspace_root),
-            tool_registry=tool_registry,
         )
         self._started = False
         self.state = self.STATE_STOPPED
