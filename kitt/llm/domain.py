@@ -101,6 +101,10 @@ class ProviderProtocolError(ProviderError):
     """Raised when API returns malformed JSON or unexpected schema."""
 
 
+class ProviderOutputLimitError(ProviderProtocolError):
+    """Raised when a provider explicitly reports max-output truncation."""
+
+
 class ProviderModelNotFoundError(ProviderError):
     """Raised when requested model is not found in provider (404)."""
 
