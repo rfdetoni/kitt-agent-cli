@@ -127,6 +127,33 @@ def _parse_directory_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     return "create_directory", {"path": path}
 
 
+def extract_tool_reasoning_summary(text: str) -> str:
+    """Extract a bounded public action summary from a KITT tool bridge.
+
+    This is not chain-of-thought. It is the explicit <=400 character
+    reasoning_summary produced by the agent contract for user-visible progress.
+    """
+    if not isinstance(text, str) or not text:
+        return ""
+    match = re.search(
+        r"<kitt-tool>\s*(\{[\s\S]*?\})\s*</kitt-tool>",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    try:
+        value = json.loads(match.group(1), strict=False)
+    except (json.JSONDecodeError, RecursionError):
+        return ""
+    if not isinstance(value, dict):
+        return ""
+    summary = value.get("reasoning_summary")
+    if not isinstance(summary, str):
+        return ""
+    return " ".join(summary.split())[:400]
+
+
 def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     if not text:
         return None
