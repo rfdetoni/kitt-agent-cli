@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/rfdetoni/kitt-agent-cli/blob/main/LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <img alt="Python 3.12+" src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Python 3.14+" src="https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white">
   <img alt="Local first" src="https://img.shields.io/badge/design-local--first-6f42c1">
   <img alt="SQLite" src="https://img.shields.io/badge/SQLite-FTS5-003B57?logo=sqlite&logoColor=white">
 </p>
@@ -57,7 +57,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 
 ## Requirements & compatibility
 
-- Python **3.12+**.
+- Python **3.14+**.
 - Git for repository workflows.
 - Rust/Cargo is optional for standalone Agent execution; the pure-Python backend remains available.
 - The complete K.I.T.T. ecosystem installer resolves the native/runtime dependencies automatically.
@@ -576,3 +576,8 @@ Agent CLI 0.74.4 removes two remaining split-brain state paths:
 - Clearing project memory archives the Agent's structured records and removes exact shared mirrors when the daemon is reachable.
 - Approval denial now persists the durable state before updating the in-memory broker, matching grant/consume fail-closed semantics.
 - Package compatibility remains Python 3.12+, while CI intentionally exercises only the current ecosystem interpreter (Python 3.14) across supported desktop operating systems.
+
+
+## Agent CLI 0.74.5 — current-interpreter and protocol alignment
+
+Agent CLI 0.74.5 requires Python 3.14+, matching the interpreter validated across the ecosystem. It pins KITT Protocol 0.2.1 and the Assistant 0.1.6/runtime 0.2.18 snapshot, while preserving the memory-authority, approval-durability and daemon-protocol fixes introduced in 0.74.4.
