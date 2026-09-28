@@ -6,19 +6,23 @@ from unittest.mock import MagicMock
 from kitt.history.context_builder import HistoryContextBuilder
 from kitt.context.working_set import ConversationWorkingSetStore
 from kitt.memory.memory_manager import MemoryManager
-from kitt.memory.shared_client import SharedMemoryUnavailable
 
 
 class TestContextSources(unittest.TestCase):
     def test_memory_context_uses_relevant_items_only(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             shared = MagicMock()
-            shared.remember.side_effect = SharedMemoryUnavailable("offline")
-            shared.recall.side_effect = SharedMemoryUnavailable("offline")
-            memory = MemoryManager(tmpdir, persistence_enabled=True, shared_client=shared)
-            memory.add_project_memory("Prefer pytest for payment service tests.")
-            memory.add_project_memory("Unrelated deployment note.")
-
+            shared.recall.return_value = [{
+                "content": "Prefer pytest for payment service tests.",
+                "scope": "workspace",
+                "pinned": True,
+            }]
+            memory = MemoryManager(
+                tmpdir,
+                persistence_enabled=True,
+                shared_client=shared,
+                workspace_id="ws",
+            )
             context = memory.get_memory_context("payment tests", max_tokens=80)
 
             self.assertIn("payment service tests", context)
