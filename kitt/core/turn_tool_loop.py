@@ -20,6 +20,7 @@ from kitt.core.turn_events import (
     ApprovalRequired,
     ThinkingCompleted,
     ThinkingStarted,
+    ToolCallProposed,
     ToolCompleted,
     ToolStarted,
     TurnBlocked,
@@ -38,7 +39,7 @@ from kitt.llm.attachments import AttachmentError
 from kitt.llm.client import LLMClient
 from kitt.llm.domain import ProviderOutputLimitError
 from kitt.security.context import ExecutionSecurityContext
-from kitt.tools.protocol import parse_tool_call
+from kitt.tools.protocol import extract_tool_reasoning_summary, parse_tool_call
 from kitt.tools.safe_python import parse_python_compute_call
 
 
@@ -337,6 +338,14 @@ class TurnToolLoopMixin:
                     return
             tool_calls += 1
             tool_name, tool_args = ("python_compute", python_args) if python_args is not None else general_call
+            reasoning_summary = extract_tool_reasoning_summary(full_response)
+            if reasoning_summary:
+                display_args = dict(tool_args) if isinstance(tool_args, dict) else {}
+                display_args["__reasoning_summary"] = reasoning_summary
+                yield ToolCallProposed(
+                    tool_name=tool_name,
+                    args=display_args,
+                ), None, None
 
             compacted_receipts = self._compact_consumed_tool_results(
                 execution_messages,
