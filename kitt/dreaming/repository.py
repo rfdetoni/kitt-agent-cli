@@ -28,9 +28,9 @@ def _enum(value: Any) -> str:
 class MemoryRepository:
     """Compatibility facade; all durable state lives in kitt-memoryd."""
 
-    def __init__(self, db=None, client: KittMemoryClient | None = None):
-        del db
+    def __init__(self, db=None, client: KittMemoryClient | None = None, namespace: str | None = None):
         self.client = client or KittMemoryClient()
+        self.namespace = namespace or ("agent-cli" if db is None else f"agent-cli-test-{id(db)}")
 
     @staticmethod
     def _memory(row: dict[str, Any]) -> MemoryRecord:
@@ -73,7 +73,7 @@ class MemoryRepository:
         )
 
     def get_all_memories(self, workspace_id: str, status: Optional[str] = None) -> List[MemoryRecord]:
-        args: dict[str, Any] = {"namespace": "agent-cli", "workspace_id": workspace_id, "limit": 2048}
+        args: dict[str, Any] = {"namespace": self.namespace, "workspace_id": workspace_id, "limit": 2048}
         if status:
             args["status"] = status
         body = self.client.manage("list", args)
@@ -111,7 +111,7 @@ class MemoryRepository:
     @staticmethod
     def _wire_memory(mem: MemoryRecord) -> dict[str, Any]:
         return {
-            "id": mem.id, "namespace": "agent-cli", "workspace_id": mem.workspace_id, "kind": mem.kind,
+            "id": mem.id, "namespace": self.namespace, "workspace_id": mem.workspace_id, "kind": mem.kind,
             "content": mem.content, "normalized_content": mem.normalized_content, "status": mem.status,
             "sensitivity": "private", "scope": "workspace", "scope_key": None,
             "importance": mem.importance, "confidence": mem.confidence,
@@ -157,13 +157,19 @@ class MemoryRepository:
         self.client.manage("touch", {"ids": list(memory_ids)})
 
     def archive_active_memories(self, workspace_id: str) -> List[MemoryRecord]:
-        body = self.client.manage("archive_workspace", {"namespace": "agent-cli", "workspace_id": workspace_id})
+        body = self.client.manage("archive_workspace", {"namespace": self.namespace, "workspace_id": workspace_id})
         return [self._memory(row) for row in body.get("records", []) if isinstance(row, dict)]
 
     def add_direct_memory(self, workspace_id: str, content: str, kind: str = "PROJECT_RULE",
                           pinned: bool = True, source_kind: str = "command_remember") -> MemoryRecord:
         del source_kind
-        memory_id = self.client.remember(workspace_id, content, kind=kind, pinned=pinned)
+        memory_id = self.client.remember(
+            workspace_id,
+            content,
+            kind=kind,
+            pinned=pinned,
+            namespace=self.namespace,
+        )
         record = self.get_memory(memory_id)
         if record is None:
             raise RuntimeError("kitt-memoryd remembered a record that cannot be read back")
