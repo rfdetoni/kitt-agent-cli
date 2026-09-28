@@ -606,6 +606,15 @@ The implementation is independent KITT code and does not copy OpenUI/OpenViking 
 0.75.1 is the promoted semantic-IR snapshot after cross-platform validation. It keeps the 0.75 Surface/Backend IR feature set, fixes Surface projection to occur on completed tool events, and aligns runtime fallback/package/lock version metadata for deterministic release automation.
 
 
+## Agent CLI 0.76.1 — TUI and reverse-proxy reliability
+
+Agent CLI 0.76.1 fixes retained-TUI interaction and managed reverse-proxy startup regressions:
+
+- transcript mouse-wheel scrolling is bidirectional: when follow-tail is disabled, the retained cursor is anchored to the requested vertical scroll row instead of snapping the window back toward the top;
+- the red K.I.T.T. scanner advances whenever animations are enabled, including idle/home states where the HUD remains visible;
+- Reverse Proxy `service start` and `service restart` use a dedicated 330-second startup budget over both the resident control channel and CLI compatibility fallback, while ordinary management calls keep their short timeout;
+- regression coverage now exercises downward scrolling, idle scanner movement, and startup-timeout selection.
+
 ## Agent CLI 0.76.0 — single memory authority
 
 Agent memory is now exclusively owned by `kitt-memory 0.4+` through the standalone loopback service `kitt-memoryd`.
