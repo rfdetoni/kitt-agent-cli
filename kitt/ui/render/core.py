@@ -169,15 +169,22 @@ def _transcript_text(ui):
 
 def _transcript_cursor_position(ui):
     from prompt_toolkit.data_structures import Point
-    if not ui.state.follow_tail:
-        return None
+
     if not ui.state.transcript:
         return Point(x=0, y=0)
+
     text_content = ui._transcript_text()
     total_lines = 0
-    for style, txt in text_content:
+    for _style, txt in text_content:
         total_lines += txt.count("\n")
-    return Point(x=0, y=max(0, total_lines - 1))
+    last_line = max(0, total_lines - 1)
+
+    if not ui.state.follow_tail:
+        window = getattr(ui, "transcript_window", None)
+        scroll_row = max(0, int(getattr(window, "vertical_scroll", 0))) if window else 0
+        return Point(x=0, y=min(scroll_row, last_line))
+
+    return Point(x=0, y=last_line)
 
 
 def _sidebar_text(ui):
