@@ -200,12 +200,18 @@ def interactive_surface_mouse_handler(ui, surface: str, mouse_event) -> Any:
         # Keep the rendered geometry stable until release. Updating selection
         # on press can virtualize the list and move the target before MOUSE_UP.
         region = ui.interactions.press(surface, position.x, position.y)
+        # Permission is a security modal: even a blank click belongs to the
+        # modal and must never fall through to the transcript/composer below.
+        if surface == "permission":
+            return None
         return None if region is not None else NotImplemented
 
     if event_type == MouseEventType.MOUSE_UP:
         region = ui.interactions.release(surface, position.x, position.y)
         _preview_interaction(ui, surface, region)
         _activate_interaction(ui, region)
+        if surface == "permission":
+            return None
         return None if region is not None else NotImplemented
 
     return NotImplemented
