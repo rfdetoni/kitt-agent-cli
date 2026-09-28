@@ -6,7 +6,7 @@ K.I.T.T. Agent CLI is in active local-first pre-1.0 development (`0.x.y`).
 
 ### Interpreter policy
 
-Package metadata keeps the documented compatibility floor (`Python >=3.12`), while continuous integration intentionally validates only the current ecosystem interpreter (Python 3.14). The floor means the package is expected to remain syntax/runtime compatible; the current interpreter is the only configuration continuously regression-tested on every change. Cross-platform PR checks run that current interpreter on Linux, Windows and macOS.
+Package metadata and continuous integration both target the current ecosystem interpreter, **Python 3.14+**. Older Python minors are not advertised as supported. Cross-platform PR checks run Python 3.14 on Linux, Windows and macOS.
 
 ### Guarantees during Pre-1.0:
 - **Internal APIs**: Subject to breaking changes without deprecation cycles.
