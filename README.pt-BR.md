@@ -16,7 +16,8 @@ A implementação principal permanece em Python. Trabalho determinístico e pesa
 - [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md) — bounded contexts do ecossistema
 - [docs/RUNTIME_REFERENCE.md](docs/RUNTIME_REFERENCE.md) — referência do runtime
 - [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) — teclado, cores e alto contraste
-- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — benchmarks reproduzíveis\n- [docs/FIGMA.md](docs/FIGMA.md) — integração Figma via MCP oficial
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — benchmarks reproduzíveis
+- [docs/FIGMA.md](docs/FIGMA.md) — integração Figma via MCP oficial
 
 ## Requisitos
 
