@@ -599,3 +599,8 @@ Agent 0.75.0 adopts KITT Protocol 0.3.0 and completes the clean-room semantic UI
 - Browser-backed reverse-proxy histories remain byte-stable and skip receipt mutation.
 
 The implementation is independent KITT code and does not copy OpenUI/OpenViking source, APIs or naming.
+
+
+### Agent CLI 0.75.1 release alignment
+
+0.75.1 is the promoted semantic-IR snapshot after cross-platform validation. It keeps the 0.75 Surface/Backend IR feature set, fixes Surface projection to occur on completed tool events, and aligns runtime fallback/package/lock version metadata for deterministic release automation.

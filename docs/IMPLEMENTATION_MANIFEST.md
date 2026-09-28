@@ -167,3 +167,8 @@ Agent CLI 0.70.2 completes the planned harness-evolution control plane:
 | Tool-result externalization | ArtifactStore + receipts | implemented |
 | Artifact search/hydration | SafeRuntime `artifacts.*` | bounded and scoped |
 | Shared semantic contracts | `kitt-protocol 0.3.0` | pinned |
+
+
+### 0.75.1 release correction
+
+The runtime fallback version, Python package metadata and uv lock are aligned at 0.75.1. Surface snapshots are projected only from completed tool events, preserving the pre-existing ToolStarted reducer contract.
