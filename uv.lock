@@ -1,6 +1,6 @@
 version = 1
 revision = 3
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 
 [[package]]
 name = "backports-asyncio-runner"
@@ -52,12 +52,12 @@ wheels = [
 
 [[package]]
 name = "kitt-protocol"
-version = "0.2.0"
-source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=de66291bc05f9b83a6a2cfaf5b179428d4e7d79f#de66291bc05f9b83a6a2cfaf5b179428d4e7d79f" }
+version = "0.2.1"
+source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=c624b094437d33fb3c6f1c9827f395ac8b6cb213#c624b094437d33fb3c6f1c9827f395ac8b6cb213" }
 
 [[package]]
 name = "kitt-agent-cli"
-version = "0.74.4"
+version = "0.74.5"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },
@@ -77,7 +77,7 @@ tui = [
 [package.metadata]
 requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1,<1" },
-    { name = "kitt-protocol", git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=de66291bc05f9b83a6a2cfaf5b179428d4e7d79f" },
+    { name = "kitt-protocol", git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=c624b094437d33fb3c6f1c9827f395ac8b6cb213" },
     { name = "prompt-toolkit", specifier = ">=3.0.52,<4" },
     { name = "prompt-toolkit", marker = "extra == 'tui'", specifier = ">=3.0.52,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
