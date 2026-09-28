@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from kitt.extensions.errors import MCPError
 from kitt.extensions.manager import ExtensionManager
 from kitt.tools.registry import ToolRegistry
 
@@ -207,7 +208,7 @@ class TestBuiltinPlugins(unittest.TestCase):
             finally:
                 await self.manager.plugins.unload("kitt-figma")
 
-            with self.assertRaises(Exception):
+            with self.assertRaises(MCPError):
                 self.manager.mcp.get_config("figma-desktop")
 
         asyncio.run(run())
