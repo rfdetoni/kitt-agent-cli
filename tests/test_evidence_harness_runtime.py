@@ -26,7 +26,7 @@ def _conversation(db: HistoryDatabase, root: str):
     return identity, repo.create_conversation(identity.id, "evidence")
 
 
-def test_schema_v6_installs_evidence_and_harness_tables(tmp_path: Path):
+def test_schema_v7_keeps_evidence_and_removes_local_memory_tables(tmp_path: Path):
     db = HistoryDatabase(str(tmp_path))
     try:
         with db.get_connection() as conn:
@@ -37,7 +37,7 @@ def test_schema_v6_installs_evidence_and_harness_tables(tmp_path: Path):
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
-        assert version == CURRENT_SCHEMA_VERSION == 6
+        assert version == CURRENT_SCHEMA_VERSION == 7
         assert {
             "session_events",
             "session_projection_cache",
@@ -55,6 +55,15 @@ def test_schema_v6_installs_evidence_and_harness_tables(tmp_path: Path):
             "harness_experiment_arms",
             "session_replay_goldens",
         }.issubset(tables)
+        assert {
+            "memories",
+            "memory_evidence",
+            "dream_runs",
+            "native_memory_vectors",
+            "knowledge_concepts",
+            "knowledge_links",
+            "correction_memories",
+        }.isdisjoint(tables)
     finally:
         db.close()
 
