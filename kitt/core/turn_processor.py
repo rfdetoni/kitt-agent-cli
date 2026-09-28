@@ -28,7 +28,7 @@ from kitt.context_filter.semantic_filter import SemanticFilter
 from kitt.context_filter.fallback import is_container_runtime_request
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
-from kitt.context.tool_receipts import compact_consumed_tool_results as compact_tool_results
+from kitt.context.tool_receipts import (\n    compact_consumed_tool_results as compact_tool_results,\n    externalize_large_tool_results,\n)
 from kitt.context.token_ledger import TokenLedger
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.edit_format.parser import PatchParser
@@ -354,6 +354,8 @@ class TurnProcessor(
         self,
         messages: List[Dict[str, str]],
         profile,
+        conversation_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ) -> int:
         """Replace already-consumed host payloads with compact receipts.
 
@@ -364,6 +366,16 @@ class TurnProcessor(
         """
         if _reverse_proxy_identity(profile) is not None:
             return 0
+        artifact_store = getattr(self, "artifact_store", None)
+        if artifact_store is not None and conversation_id:
+            externalize_large_tool_results(
+                messages,
+                store=artifact_store,
+                workspace_id=self.workspace_id,
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                min_tokens=max(32, int(self.config.tool_receipt_min_tokens)),
+            )
         return compact_tool_results(
             messages,
             min_tokens=max(32, int(self.config.tool_receipt_min_tokens)),

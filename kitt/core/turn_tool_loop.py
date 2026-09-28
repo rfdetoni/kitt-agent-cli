@@ -310,7 +310,10 @@ class TurnToolLoopMixin:
             tool_name, tool_args = ("python_compute", python_args) if python_args is not None else general_call
 
             compacted_receipts = self._compact_consumed_tool_results(
-                execution_messages, exe_profile
+                execution_messages,
+                exe_profile,
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
             )
             if compacted_receipts:
                 trace_event(

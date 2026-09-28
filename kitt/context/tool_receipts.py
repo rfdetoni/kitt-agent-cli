@@ -20,6 +20,62 @@ def _excerpt(value: str, max_chars: int) -> str:
     return compact[: max(0, max_chars - 3)].rstrip() + "..."
 
 
+def externalize_large_tool_results(
+    messages: list[dict[str, Any]],
+    *,
+    store: Any,
+    workspace_id: str,
+    conversation_id: str,
+    turn_id: str | None = None,
+    min_tokens: int = 160,
+) -> int:
+    """Persist consumed host outputs before replacing them with receipts."""
+    if store is None or not workspace_id or not conversation_id:
+        return 0
+    threshold = max(1, int(min_tokens))
+    externalized = 0
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = str(message.get("content") or "")
+        if (
+            content.startswith("[KITT TOOL RECEIPT]")
+            or _ARTIFACT_RE.search(content)
+            or TokenCounter.count_tokens(content) < threshold
+        ):
+            continue
+        first_line, separator, remainder = content.partition("\n")
+        marker_at = first_line.casefold().find(_HOST_RESULT_MARKER)
+        if marker_at <= 0:
+            continue
+        tool_name = first_line[:marker_at].strip() or "host_tool"
+        try:
+            artifact = store.put(
+                workspace_id,
+                content,
+                "TOOL_RESULT",
+                f"Consumed output from {tool_name}",
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                sensitivity="NORMAL",
+                metadata={
+                    "tool": tool_name,
+                    "sha256": hashlib.sha256(
+                        content.encode("utf-8", errors="replace")
+                    ).hexdigest(),
+                    "rehydratable": True,
+                },
+            )
+        except Exception:
+            continue
+        suffix = f"Artifact ID {artifact.id}"
+        message["content"] = (
+            first_line + "\n" + suffix + ("\n" + remainder if separator else "")
+        )
+        externalized += 1
+    return externalized
+
+
 def compact_consumed_tool_results(
     messages: list[dict[str, Any]],
     *,

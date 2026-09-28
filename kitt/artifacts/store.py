@@ -177,6 +177,37 @@ class ArtifactStore:
             "content_hash": self.get(artifact_id).content_hash,
         }
 
+    def search_text(
+        self,
+        artifact_id: str,
+        query: str,
+        *,
+        limit: int = 20,
+        context_chars: int = 160,
+    ) -> list[dict]:
+        """Search one text artifact without hydrating the entire blob."""
+        needle = str(query or "").strip().casefold()
+        if not needle:
+            return []
+        text = self.read_text(artifact_id)
+        folded = text.casefold()
+        limit = max(1, min(int(limit), 100))
+        context_chars = max(40, min(int(context_chars), 2000))
+        hits: list[dict] = []
+        start = 0
+        content_hash = self.get(artifact_id).content_hash
+        while len(hits) < limit:
+            index = folded.find(needle, start)
+            if index < 0:
+                break
+            left = max(0, index - context_chars)
+            right = min(len(text), index + len(needle) + context_chars)
+            hits.append(
+                {"offset": index, "excerpt": text[left:right], "content_hash": content_hash}
+            )
+            start = index + max(1, len(needle))
+        return hits
+
     def list(self, conversation_id: Optional[str] = None, limit: int = 20,
              offset: int = 0, workspace_id: Optional[str] = None) -> List[Artifact]:
         conditions = []
