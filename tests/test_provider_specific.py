@@ -10,6 +10,7 @@ from kitt.llm.providers.ollama import OllamaAdapter
 from kitt.llm.providers.openai_chat import OpenAIChatAdapter
 from kitt.llm.providers.openai_compatible import OpenAICompatibleAdapter
 from kitt.llm.providers.openai_responses import OpenAIResponsesAdapter
+from kitt.llm.domain import ProviderOutputLimitError
 from kitt.llm.registry import ProviderRegistry
 
 
@@ -103,7 +104,7 @@ class TestProviderSpecificBehaviors(unittest.TestCase):
         )
 
         mock_lines = [
-            b'data: {"candidates": [{"content": {"parts": [{"text": "Pong"}]}}]}\n',
+            b'data: {"candidates": [{"content": {"parts": [{"text": "Pong"}]}, "finishReason": "STOP"}]}\n',
         ]
         mock_resp = MagicMock()
         mock_resp.__iter__.return_value = iter(mock_lines)
@@ -118,6 +119,50 @@ class TestProviderSpecificBehaviors(unittest.TestCase):
             self.assertIn("/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse", called_req.full_url)
             self.assertEqual(called_req.headers.get("X-goog-api-key"), "gemini-secret-key")
             self.assertNotIn("/v1/chat/completions", called_req.full_url)
+
+    def test_openai_chat_reports_output_limit_after_partial_text(self):
+        adapter = OpenAIChatAdapter()
+        req = LLMRequest(
+            model="gpt-test",
+            messages=[{"role": "user", "content": "Generate a bounded action"}],
+            base_url="https://api.openai.com",
+        )
+        mock_lines = [
+            b'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n',
+            b'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n',
+            b'data: [DONE]\n',
+        ]
+        mock_resp = MagicMock()
+        mock_resp.__iter__.return_value = iter(mock_lines)
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = None
+
+        with patch("kitt.llm.providers.openai_chat.secure_urlopen", return_value=mock_resp):
+            iterator = adapter.stream(req)
+            self.assertEqual(next(iterator), "partial")
+            with self.assertRaises(ProviderOutputLimitError):
+                list(iterator)
+
+    def test_gemini_reports_max_tokens_as_output_limit(self):
+        adapter = GeminiAdapter()
+        req = LLMRequest(
+            model="gemini-test",
+            messages=[{"role": "user", "content": "Generate a bounded action"}],
+            base_url="https://generativelanguage.googleapis.com",
+        )
+        mock_lines = [
+            b'data: {"candidates":[{"content":{"parts":[{"text":"partial"}]},"finishReason":"MAX_TOKENS"}]}\n',
+        ]
+        mock_resp = MagicMock()
+        mock_resp.__iter__.return_value = iter(mock_lines)
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = None
+
+        with patch("kitt.llm.providers.gemini.secure_urlopen", return_value=mock_resp):
+            iterator = adapter.stream(req)
+            self.assertEqual(next(iterator), "partial")
+            with self.assertRaises(ProviderOutputLimitError):
+                list(iterator)
 
     def test_openai_responses_api_format(self):
         adapter = OpenAIResponsesAdapter()
