@@ -65,7 +65,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rfdetoni/kitt-assistant
-          ref: 26fa9eac196d005a39c381b800f358cf3290a55e
+          ref: 58ebdbaf6bc2c9135d645cd782d639e226e24d03
           path: assistant-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
