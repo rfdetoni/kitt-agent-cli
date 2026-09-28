@@ -606,6 +606,10 @@ The implementation is independent KITT code and does not copy OpenUI/OpenViking 
 0.75.1 is the promoted semantic-IR snapshot after cross-platform validation. It keeps the 0.75 Surface/Backend IR feature set, fixes Surface projection to occur on completed tool events, and aligns runtime fallback/package/lock version metadata for deterministic release automation.
 
 
+## Agent CLI 0.77.1 — Assistant 0.1.10 composition alignment
+
+Agent CLI 0.77.1 keeps the 0.77 evidence-first runtime behavior unchanged and updates the frozen Assistant companion revision used by CI, PR validation, architecture checks and release composition to Assistant 0.1.10 / runtime 0.2.21. Package and uv-lock metadata are aligned to the patch release.
+
 ## Agent CLI 0.77.0 — evidence-first agentic execution
 
 Agent CLI 0.77.0 hardens application-sized coding requests without requiring the user to split prompts manually:
