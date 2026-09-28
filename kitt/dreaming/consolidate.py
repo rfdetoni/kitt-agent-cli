@@ -165,7 +165,28 @@ class DreamConsolidatePhase:
         signals: Tuple[CandidateSignal, ...],
     ) -> DreamPlan:
         ops: List[DreamOperation] = []
-        existing_hashes = {m.content_hash: m for m in snapshot.memories if m.status == "ACTIVE"}
+        active_memories = tuple(m for m in snapshot.memories if m.status == "ACTIVE")
+        existing_hashes = {m.content_hash: m for m in active_memories}
+
+        def lexical_terms(value: str) -> set[str]:
+            return set(re.findall(r"\b[a-zA-Z0-9_.-]{3,}\b", value.lower()))
+
+        def semantic_duplicate(sig: CandidateSignal) -> MemoryRecord | None:
+            signal_terms = lexical_terms(sig.normalized_content)
+            if len(signal_terms) < 4:
+                return None
+            for memory in active_memories:
+                if memory.kind != sig.kind_hint:
+                    continue
+                memory_terms = lexical_terms(memory.normalized_content or memory.content)
+                if len(memory_terms) < 4:
+                    continue
+                common = len(signal_terms & memory_terms)
+                smaller = min(len(signal_terms), len(memory_terms))
+                larger = max(len(signal_terms), len(memory_terms))
+                if common / smaller >= 0.90 and common / larger >= 0.55:
+                    return memory
+            return None
 
         for sig in signals:
             # 1. Exact duplicate check
@@ -184,7 +205,24 @@ class DreamConsolidatePhase:
                 )
                 continue
 
-            # 2. Check for contradiction / temporal supersession
+            # 2. Near-duplicate containment check. A repeated concise statement may
+            # already be represented by a more complete durable memory.
+            existing = semantic_duplicate(sig)
+            if existing is not None:
+                ops.append(
+                    DreamOperation(
+                        operation="KEEP",
+                        source_memory_ids=(existing.id,),
+                        source_entry_ids=sig.source_entry_ids,
+                        proposed_kind=existing.kind,
+                        proposed_content=existing.content,
+                        confidence=1.0,
+                        reason_code="DUPLICATE",
+                    )
+                )
+                continue
+
+            # 3. Check for contradiction / temporal supersession
             # E.g. if an existing memory has the same kind and high semantic overlap
             superseded_mem = None
             for m in snapshot.memories:
