@@ -60,6 +60,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - **Accessibility:** [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md)
 - **Performance:** [docs/PERFORMANCE.md](docs/PERFORMANCE.md)
 - **Domain architecture:** [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md)
+- **Naming/license notes:** [docs/NAMING_AND_TRADEMARK.md](docs/NAMING_AND_TRADEMARK.md)
 
 ---
 
