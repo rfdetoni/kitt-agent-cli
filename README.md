@@ -608,6 +608,12 @@ The implementation is independent KITT code and does not copy OpenUI/OpenViking 
 
 ## Agent CLI 0.77.0 — evidence-first agentic execution
 
+### Assistant compatibility for 0.77.0
+
+Agent CLI 0.77.0 CI, PR checks, architecture validation and release composition are pinned to **K.I.T.T. Assistant 0.1.10 / kitt-assistant-runtime 0.2.21**. The companion runtime accepts Agent 0.76.x and 0.77.x; daemon/remote ownership, durable approvals and standalone kitt-memory authority remain unchanged.
+
+
+
 Agent CLI 0.77.0 hardens application-sized coding requests without requiring the user to split prompts manually:
 
 - broad IMPLEMENT/DEBUG/REFACTOR turns begin with exactly one read-only repository inspection;
