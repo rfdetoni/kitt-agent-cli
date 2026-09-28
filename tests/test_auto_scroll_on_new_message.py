@@ -9,6 +9,7 @@ class TestAutoScrollOnNewMessage(unittest.TestCase):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
                 app = KittUIApp(runtime=runtime)
+                app.build_application()
 
             # Initially empty transcript
             pos1 = app._transcript_cursor_position()
