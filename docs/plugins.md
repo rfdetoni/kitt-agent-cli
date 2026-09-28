@@ -33,7 +33,7 @@ External plugins continue to use API version 1 and require explicit content trus
 | `kitt-database` | `database_inspect` | disabled | Detect database technologies and migration posture without connecting. |
 | `kitt-browser` | `browser_inspect` | disabled | Detect browser automation configuration without launching a browser. |
 | `kitt-cloud` | `cloud_inspect` | disabled | Detect Terraform/cloud/Kubernetes signals without credentials or network. |
-| `kitt-observability` | `observability_inspect` | disabled | Detect local observability libraries/configuration. |
+| `kitt-observability` | `observability_inspect` | disabled | Detect local observability libraries/configuration. |\n| `kitt-figma` | `figma_inspect` + `mcp.figma-desktop.*` | disabled | Parse Figma design targets and bridge the official Figma desktop MCP server through KITT policy. |
 
 All bundled handlers are lazy and read-only. They do not open database connections, contact cloud/GitHub services, launch browsers, start LSP processes, modify Git state, or read credentials.
 
@@ -48,6 +48,12 @@ The plugin API can register model-facing tools. Direct filesystem/process mutati
 For example, `git_worktree` returns the proposed `git worktree add ...` argv but does not execute it. `release_plan` computes version changes but does not edit version or lock files.
 
 Network-backed workflows use MCP or another authorized KITT integration instead of embedding credentials in plugin code.
+
+## Figma plugin
+
+`kitt-figma` is an opt-in first-party integration. It registers Figma's official desktop MCP endpoint (`http://127.0.0.1:3845/mcp`) as a plugin-owned runtime MCP server and exposes the resulting MCP tools through the normal KITT ToolRegistry. The helper `figma_inspect` normalizes Figma file/node URLs and can perform a bounded workspace scan for design links.
+
+The plugin makes no direct Figma API calls and does not read Figma credentials. Existing user-configured MCP servers are never overwritten or removed. See [FIGMA.md](FIGMA.md) for setup, hosted-MCP limitations, and security details.
 
 ## Managing plugins
 
