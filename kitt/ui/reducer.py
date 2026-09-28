@@ -51,6 +51,10 @@ def format_tool_bullet(tool_name: str, args: dict | None) -> str:
             return f"● Editar: {path}" if path else "● Editar arquivo"
         elif op in {"process.run", "run_command", "bash"}:
             cmd = inner_args.get("command", inner_args.get("cmd", ""))
+            if not cmd:
+                argv = inner_args.get("argv")
+                if isinstance(argv, list):
+                    cmd = " ".join(str(part) for part in argv if str(part))
             return f"● Executar: {cmd}" if cmd else "● Executar comando"
         elif op == "artifacts.read":
             art_id = inner_args.get("artifact_id", "")
@@ -109,6 +113,10 @@ def format_tool_bullet(tool_name: str, args: dict | None) -> str:
         return f"● Edit({target or 'patch'})"
     elif tool_name in {"run_command", "bash"}:
         cmd = args.get("command", args.get("cmd", ""))
+        if not cmd:
+            argv = args.get("argv")
+            if isinstance(argv, list):
+                cmd = " ".join(str(part) for part in argv if str(part))
         return f"● Bash({cmd})"
     elif tool_name == "list_files":
         path = args.get("path", ".")
