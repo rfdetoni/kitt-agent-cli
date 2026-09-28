@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import replace
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context_filter.semantic_filter import SemanticFilter
@@ -277,7 +277,8 @@ class TurnContextMixin:
                              exe_profile: ModelProfile, context_map_str: str, explicit_str: str,
                              agents_str: str, skills_str: str, agent_addressed: bool,
                              workspace_id: str, budget: PromptBudget,
-                             exposed_tools: Optional[List[str]] = None) -> tuple:
+                             exposed_tools: Optional[List[str]] = None,
+                             execution_slice: Any = None) -> tuple:
         mandatory_constraints = [c.text for c in task.constraints if c.mandatory]
         use_agent_prompt = bool(plan.enabled_tools) or agent_addressed
         tools_for_contract = exposed_tools if exposed_tools is not None else plan.enabled_tools
@@ -292,9 +293,12 @@ class TurnContextMixin:
             ).prompt_summary(
                 paths=[*(cmd.explicit_files or ()), *task.paths]
             )
+            slice_instruction = (
+                f"\n\n{execution_slice.render()}" if execution_slice is not None else ""
+            )
             base_sys = (
                 f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
-                f"Tool Contract:\n{tool_contract}"
+                f"Tool Contract:\n{tool_contract}{slice_instruction}"
             ).strip()
             turn_context = (
                 f"Memory:\n{self.memory.get_memory_context(cmd.prompt)}\n\n"

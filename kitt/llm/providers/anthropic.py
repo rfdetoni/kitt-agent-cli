@@ -16,6 +16,7 @@ from kitt.llm.domain import (
     ProviderTimeoutError,
     ProviderConnectionError,
     ProviderProtocolError,
+    ProviderOutputLimitError,
 )
 from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
@@ -61,6 +62,7 @@ class AnthropicAdapter:
         )
 
         stream_complete = False
+        output_limited = False
         try:
             with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
@@ -79,6 +81,14 @@ class AnthropicAdapter:
                     if event_type == "message_stop":
                         stream_complete = True
                         continue
+                    if event_type == "message_delta":
+                        delta_meta = chunk.get("delta")
+                        if isinstance(delta_meta, dict):
+                            stop_reason = str(delta_meta.get("stop_reason") or "").lower()
+                            if stop_reason:
+                                stream_complete = True
+                                output_limited = stop_reason in {"max_tokens", "max_output_tokens"}
+                        continue
                     if event_type == "error":
                         raise ProviderProtocolError(
                             "Anthropic stream reported an error event"
@@ -87,6 +97,10 @@ class AnthropicAdapter:
                         delta = chunk.get("delta", {}).get("text", "")
                         if isinstance(delta, str) and delta:
                             yield delta
+            if output_limited:
+                raise ProviderOutputLimitError(
+                    "Anthropic output stopped because the configured token limit was reached"
+                )
             if not stream_complete:
                 raise ProviderProtocolError(
                     "Anthropic stream ended before a completion marker"

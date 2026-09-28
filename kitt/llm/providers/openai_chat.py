@@ -16,6 +16,7 @@ from kitt.llm.domain import (
     ProviderTimeoutError,
     ProviderConnectionError,
     ProviderProtocolError,
+    ProviderOutputLimitError,
 )
 from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
@@ -62,6 +63,7 @@ class OpenAIChatAdapter:
         )
 
         stream_complete = False
+        output_limited = False
         try:
             with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
@@ -84,13 +86,19 @@ class OpenAIChatAdapter:
                     ):
                         continue
                     choice = choices[0]
-                    if choice.get("finish_reason") is not None:
+                    finish_reason = choice.get("finish_reason")
+                    if finish_reason is not None:
                         stream_complete = True
+                        output_limited = str(finish_reason).lower() in {"length", "max_tokens"}
                     delta = choice.get("delta", {})
                     if isinstance(delta, dict):
                         content = delta.get("content", "")
                         if isinstance(content, str) and content:
                             yield content
+            if output_limited:
+                raise ProviderOutputLimitError(
+                    "OpenAI output stopped because the configured token limit was reached"
+                )
             if not stream_complete:
                 raise ProviderProtocolError(
                     "OpenAI stream ended before a completion marker"

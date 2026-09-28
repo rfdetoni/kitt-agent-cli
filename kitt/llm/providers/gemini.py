@@ -15,6 +15,8 @@ from kitt.llm.domain import (
     ProviderHealth,
     ProviderTimeoutError,
     ProviderConnectionError,
+    ProviderProtocolError,
+    ProviderOutputLimitError,
 )
 from kitt.llm.http_security import secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
@@ -68,6 +70,8 @@ class GeminiAdapter:
             headers=headers,
         )
 
+        stream_complete = False
+        output_limited = False
         try:
             with secure_urlopen(req, timeout=request.timeout_seconds) as resp:
                 for line in resp:
@@ -78,13 +82,26 @@ class GeminiAdapter:
                             chunk = json.loads(data_content)
                             candidates = chunk.get("candidates", [])
                             if candidates:
-                                parts = candidates[0].get("content", {}).get("parts", [])
+                                candidate = candidates[0]
+                                finish_reason = str(candidate.get("finishReason") or "").upper()
+                                if finish_reason and finish_reason != "FINISH_REASON_UNSPECIFIED":
+                                    stream_complete = True
+                                    output_limited = finish_reason in {"MAX_TOKENS", "MAX_OUTPUT_TOKENS"}
+                                parts = candidate.get("content", {}).get("parts", [])
                                 for p in parts:
                                     txt = p.get("text", "")
                                     if txt:
                                         yield txt
                         except json.JSONDecodeError:
                             pass
+            if output_limited:
+                raise ProviderOutputLimitError(
+                    "Gemini output stopped because the configured token limit was reached"
+                )
+            if not stream_complete:
+                raise ProviderProtocolError(
+                    "Gemini stream ended before an explicit finish reason"
+                )
         except socket.timeout as exc:
             raise ProviderTimeoutError(f"Gemini request timed out after {request.timeout_seconds}s") from exc
         except urllib.error.HTTPError as e:

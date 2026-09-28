@@ -81,6 +81,7 @@ from kitt.core.turn_tool_loop import TurnToolLoopMixin
 from kitt.core.turn_finalization import TurnFinalizationMixin
 from kitt.core.turn_context import TurnContextMixin
 from kitt.core.turn_architect import TurnArchitectMixin
+from kitt.core.turn_execution_slice import build_execution_slice
 from kitt.core.turn_model import TurnModelMixin
 from kitt.security.context import ExecutionSecurityContext
 from kitt.security.capabilities import (
@@ -1044,16 +1045,27 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 )
             yield ContextResolved(resolved_count=len(context_blocks) + len(explicit_items))
 
-            architect_handoff = self._maybe_architect_handoff(
-                cmd,
-                task,
-                context_map_str,
-                explicit_str,
-            )
-            if architect_handoff is not None:
-                context_map_str = (
-                    f"{architect_handoff.render()}\n\n{context_map_str}"
-                ).strip()
+            execution_slice = build_execution_slice(cmd, task, plan)
+            architect_handoff = None
+            if execution_slice is None:
+                architect_handoff = self._maybe_architect_handoff(
+                    cmd,
+                    task,
+                    context_map_str,
+                    explicit_str,
+                )
+                if architect_handoff is not None:
+                    context_map_str = (
+                        f"{architect_handoff.render()}\n\n{context_map_str}"
+                    ).strip()
+            else:
+                trace_event(
+                    logger,
+                    "architect.skipped",
+                    turn_id=cmd.turn_id,
+                    reason="discovery_first_execution_slice",
+                    slice_reason=execution_slice.reason,
+                )
 
             # 4. System Prompt and Budgeting
             if cmd.turn_id in self.cancelled_turns:
@@ -1117,7 +1129,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
             sys_prompt, base_sys, allocated, request = self._build_system_prompt(
                 cmd, task, prompt_plan, exe_profile, context_map_str, explicit_str, agents_str,
-                skills_str, agent_addressed, workspace_id, budget, exposed_tools=exposed_tools
+                skills_str, agent_addressed, workspace_id, budget, exposed_tools=exposed_tools,
+                execution_slice=execution_slice,
             )
             self._emit("BudgetApplied", {"allocated": allocated})
             yield BudgetApplied(

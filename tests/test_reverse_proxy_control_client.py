@@ -58,3 +58,58 @@ def test_control_client_falls_back_to_cli(monkeypatch):
     )
 
     assert client.list_plugins() == []
+
+
+def test_control_client_uses_startup_timeout_for_service_start(monkeypatch):
+    client = ReverseProxyClient(
+        executable="kitt-reverse-proxy",
+        timeout_seconds=15.0,
+        startup_timeout_seconds=42.0,
+    )
+    observed = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"schema_version":1,"instance":{"id":"gemini-3000","provider":"gemini","model":"gemini-web","endpoint":"http://127.0.0.1:3000","profile_id":"default","status":"ready"}}'
+
+    def urlopen(_request, timeout):
+        observed["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+    client._http_call("service.start", {"target": "gemini"})
+    assert observed["timeout"] == 42.0
+
+
+def test_control_cli_fallback_uses_startup_timeout(monkeypatch):
+    client = ReverseProxyClient(
+        executable="kitt-reverse-proxy",
+        timeout_seconds=15.0,
+        startup_timeout_seconds=42.0,
+    )
+    observed = {}
+
+    def run(command, **kwargs):
+        observed["command"] = command
+        observed["timeout"] = kwargs["timeout"]
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"schema_version":1,"instance":{"id":"gemini-3000"}}\n',
+                "stderr": "",
+            },
+        )()
+
+    monkeypatch.setattr("subprocess.run", run)
+
+    client._call("service", "start", "gemini")
+    assert observed["timeout"] == 42.0

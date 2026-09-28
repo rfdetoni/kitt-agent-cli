@@ -33,10 +33,12 @@ class ReverseProxyClient:
         executable: str | None = None,
         *,
         timeout_seconds: float = 15.0,
+        startup_timeout_seconds: float = 330.0,
         control_url: str | None = None,
     ):
         self.executable = executable or shutil.which("kitt-reverse-proxy") or "kitt-reverse-proxy"
         self.timeout_seconds = timeout_seconds
+        self.startup_timeout_seconds = max(timeout_seconds, startup_timeout_seconds)
         port = int(os.environ.get("KITT_REVERSE_PROXY_CONTROL_PORT", "2999"))
         self.control_url = (control_url or f"http://127.0.0.1:{port}").rstrip("/")
         self._control_bootstrapped = False
@@ -201,9 +203,14 @@ class ReverseProxyClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        timeout = (
+            self.startup_timeout_seconds
+            if action in {"service.start", "service.restart"}
+            else min(self.timeout_seconds, 5.0)
+        )
         with urllib.request.urlopen(
             request,
-            timeout=min(self.timeout_seconds, 5.0),
+            timeout=timeout,
         ) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if not isinstance(payload, dict) or payload.get("schema_version") != 1:
@@ -214,13 +221,15 @@ class ReverseProxyClient:
 
     def _call(self, *args: str) -> dict[str, Any]:
         command = [self.executable, *args, "--json"]
+        startup_command = len(args) >= 2 and args[0] == "service" and args[1] in {"start", "restart"}
+        command_timeout = self.startup_timeout_seconds if startup_command else self.timeout_seconds
         try:
             completed = subprocess.run(
                 command,
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout_seconds,
+                timeout=command_timeout,
                 shell=False,
             )
         except FileNotFoundError as exc:
@@ -229,7 +238,7 @@ class ReverseProxyClient:
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise ReverseProxyControlError(
-                f"Reverse proxy control command timed out after {self.timeout_seconds:g}s."
+                f"Reverse proxy control command timed out after {command_timeout:g}s."
             ) from exc
 
         if completed.returncode != 0:

@@ -85,6 +85,14 @@ Runtime invariants are observe-first and package-owned. The default mode records
 violations without changing execution. `KITT_RUNTIME_INVARIANTS=STRICT` promotes
 critical invariant failures to fail-fast behavior for validation environments.
 
+## Goal objective vs. bounded turn action
+
+KITT keeps the complete user objective in the existing SemanticTask/Goal execution state, while broad mutation turns bound only the next model action. The execution slicer is deterministic and LLM-free, so it does not create a second planner or workflow authority.
+
+For broad IMPLEMENT, DEBUG and REFACTOR requests, the first action is one read-only repository inspection. That discovery action runs before the optional Architect phase; the returned host evidence is then injected into the normal agentic loop, which advances one evidence-backed milestone at a time. Small targeted edits bypass this path.
+
+Official streaming adapters treat max-output termination as truncation rather than success. The tool loop discards the incomplete action as executable state and requests one smaller complete action with a bounded recovery count. Partial JSON, diffs, and source code are never blindly concatenated.
+
 ## Execution compression
 
 `flow.execute` remains the bounded dependency-DAG executor for deterministic

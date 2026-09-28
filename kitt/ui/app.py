@@ -355,7 +355,7 @@ class KittUIApp:
     _run_selected_palette = _navigation._run_selected_palette
     async def _animate(self):
         while not self._shutdown:
-            if (self.state.is_thinking or self.state.active_agent_count() > 0) and not self.no_animation:
+            if not self.no_animation:
                 self.state.scanner_step += 1
                 if self.application:
                     self.application.invalidate()

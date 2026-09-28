@@ -606,6 +606,26 @@ The implementation is independent KITT code and does not copy OpenUI/OpenViking 
 0.75.1 is the promoted semantic-IR snapshot after cross-platform validation. It keeps the 0.75 Surface/Backend IR feature set, fixes Surface projection to occur on completed tool events, and aligns runtime fallback/package/lock version metadata for deterministic release automation.
 
 
+## Agent CLI 0.77.0 — evidence-first agentic execution
+
+Agent CLI 0.77.0 hardens application-sized coding requests without requiring the user to split prompts manually:
+
+- broad IMPLEMENT/DEBUG/REFACTOR turns begin with exactly one read-only repository inspection;
+- discovery runs before the optional Architect, reducing time-to-first-tool and avoiding planning against incomplete evidence;
+- the complete user objective remains authoritative while the execution loop advances through bounded milestones and host observations;
+- existing files continue to use the adaptive edit-strategy selector, with symbol edits and compact patches preferred over unnecessary whole-file rewrites;
+- official OpenAI Chat, OpenAI Responses, Anthropic and Gemini streaming adapters report explicit max-output truncation as a typed recoverable condition;
+- truncation recovery discards the incomplete action and requests one smaller complete action, bounded to two recoveries rather than concatenating partial JSON, diffs or source text.
+
+## Agent CLI 0.76.1 — TUI and reverse-proxy reliability
+
+Agent CLI 0.76.1 fixes retained-TUI interaction and managed reverse-proxy startup regressions:
+
+- transcript mouse-wheel scrolling is bidirectional: when follow-tail is disabled, the retained cursor is anchored to the requested vertical scroll row instead of snapping the window back toward the top;
+- the red K.I.T.T. scanner advances whenever animations are enabled, including idle/home states where the HUD remains visible;
+- Reverse Proxy `service start` and `service restart` use a dedicated 330-second startup budget over both the resident control channel and CLI compatibility fallback, while ordinary management calls keep their short timeout;
+- regression coverage now exercises downward scrolling, idle scanner movement, and startup-timeout selection.
+
 ## Agent CLI 0.76.0 — single memory authority
 
 Agent memory is now exclusively owned by `kitt-memory 0.4+` through the standalone loopback service `kitt-memoryd`.

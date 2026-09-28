@@ -86,6 +86,20 @@ Agent CLI first sends control operations to the reverse-proxy loopback control s
 
 The channel is only a lifecycle/control optimization. Model traffic continues to use the selected reverse-proxy service endpoint, and provider/profile/process ownership remains in `kitt-reverse-proxy`.
 
+## Startup and TUI reliability — Agent CLI 0.76.1 / Reverse Proxy 4.4.2
+
+Starting a browser-backed service is intentionally a long-running control operation. Agent CLI therefore uses a dedicated 330-second timeout for `service.start` and `service.restart`; listing, profile management and other control requests keep the short management timeout. The operation still runs through the UI blocking executor, so the retained TUI can repaint while Chromium starts or waits for a human login.
+
+Reverse Proxy 4.4.2 uses the same 330-second readiness budget before declaring a managed service unhealthy. For model traffic, the first useful WebChat delta now honors the configured UI response timeout instead of failing at an unrelated 90-second ceiling.
+
+The retained transcript also anchors its cursor to the manual scroll row while follow-tail is disabled, restoring downward mouse-wheel scrolling after the user has scrolled upward. The K.I.T.T. scanner animation advances whenever animations are enabled rather than only during active model work.
+
+## Agentic response reliability — Agent CLI 0.77.0 / Reverse Proxy 4.5.0
+
+Broad mutation requests now enter discovery-first execution: the Agent preserves the complete goal but constrains the first model action to one repository inspection before optional architecture planning or mutation. The reverse proxy mirrors that state in its agent contract and rejects non-exploration actions until the read-only round trip is observed.
+
+WebChat response liveness is activity-aware. Streaming indicators, response-text changes and DOM mutations refresh the inactivity budget, while a separate bounded absolute ceiling prevents an infinite browser wait. Official provider APIs continue to use their native token streams and are preferred when configured.
+
 ## 0.74 control-path note
 
 The resident reverse-proxy control channel introduced in 0.73 remains the management fast path. Agent 0.74 does not alter that wire contract; the new performance work is inside token accounting, approval persistence and transcript rendering.

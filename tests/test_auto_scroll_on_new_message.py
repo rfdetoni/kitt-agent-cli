@@ -25,9 +25,13 @@ class TestAutoScrollOnNewMessage(unittest.TestCase):
             pos3 = app._transcript_cursor_position()
             self.assertGreater(pos3.y, pos2.y)
 
-            # When follow_tail is False (user scrolled up), cursor position should be None
+            # When follow_tail is False, retain a concrete cursor at the manual
+            # scroll row so prompt_toolkit can move both up and down reliably.
             app.state.follow_tail = False
-            self.assertIsNone(app._transcript_cursor_position())
+            app.transcript_window.vertical_scroll = 1
+            manual = app._transcript_cursor_position()
+            self.assertIsInstance(manual, Point)
+            self.assertEqual(manual.y, 1)
 
 if __name__ == "__main__":
     unittest.main()
