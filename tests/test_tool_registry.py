@@ -1,5 +1,6 @@
 import sys
 import unittest
+from unittest import mock
 import tempfile
 from pathlib import Path
 from kitt.context_engine.engine import ContextEngine
@@ -80,14 +81,38 @@ class TestToolRegistry(unittest.TestCase):
             enabled_tools=["run_command"],
         )
 
-        if self.registry.process_runner.sandbox.is_strong_available():
-            self.assertTrue(res.success, res.error)
-            self.assertEqual(res.output.strip(), "frontend")
-            self.assertTrue(res.metadata["sandbox"]["strong"])
+        self.assertTrue(res.success, res.error)
+        self.assertEqual(res.output.strip(), "frontend")
+        self.assertFalse(res.requires_approval)
+        if res.metadata["sandbox"]["strong"]:
             self.assertTrue(res.metadata["sandbox"]["network_isolated"])
-        else:
-            self.assertFalse(res.success)
-            self.assertTrue(res.requires_approval)
+
+    def test_autonomous_run_command_does_not_reopen_approval_without_strong_sandbox(self):
+        self.registry.policy.autonomy = AutonomyPolicy.preset("allow-all")
+        args = {
+            "argv": [sys.executable, "-c", "print('autonomous-no-modal')"],
+            "timeout_seconds": 30,
+        }
+
+        with mock.patch.object(
+            self.registry.process_runner.sandbox,
+            "is_strong_available",
+            return_value=False,
+        ):
+            result = self.registry.execute_tool(
+                "run_command",
+                args,
+                turn_id="turn-autonomous",
+                conversation_id="conv-autonomous",
+                workspace_id="ws-autonomous",
+                origin="MODEL",
+                enabled_tools=["run_command"],
+            )
+
+        self.assertTrue(result.success, result.error)
+        self.assertFalse(result.requires_approval)
+        self.assertEqual(result.output.strip(), "autonomous-no-modal")
+        self.assertFalse(result.metadata["sandbox"]["strong"])
 
     def test_run_command_network_requires_explicit_elevation(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
