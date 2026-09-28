@@ -9,7 +9,7 @@ from kitt.domain.entities import ModelProfile
 from kitt.llm.client import LLMClient
 from kitt.llm.kitt_proxy_capabilities import KittProxyCapabilities
 from kitt.llm.domain import ProviderProtocolError
-from kitt.tools.protocol import parse_tool_call
+from kitt.tools.protocol import extract_tool_reasoning_summary, parse_tool_call
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.providers.kitt_reverse_proxy import (
     KittReverseProxyAdapter,
@@ -122,6 +122,28 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertEqual(normalized[2]["role"], "tool")
         self.assertEqual(normalized[2]["tool_call_id"], "call_abc123")
         self.assertEqual(normalized[2]["name"], "read_file")
+    
+    def test_native_tool_round_trip_preserves_reasoning_summary(self):
+        envelope = (
+            '<kitt-tool>{"id":"call_summary","name":"read_file",'
+            '"arguments":{"path":"README.md"},'
+            '"reasoning_summary":"Vou inspecionar o README antes de alterar o projeto."}'
+            '</kitt-tool>'
+        )
+        normalized = normalize_native_tool_messages([
+            {"role": "assistant", "content": envelope},
+            {"role": "user", "content": "read_file result from the host:\nok"},
+        ])
+
+        self.assertEqual(
+            normalized[0]["content"],
+            "Vou inspecionar o README antes de alterar o projeto.",
+        )
+        self.assertEqual(
+            extract_tool_reasoning_summary(envelope),
+            "Vou inspecionar o README antes de alterar o projeto.",
+        )
+
 
     def test_ordinary_messages_are_not_reinterpreted(self):
         source = [{"role": "user", "content": "hello"}]
@@ -159,6 +181,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                     {
                         "choices": [{
                             "delta": {
+                                "content": "Vou inspecionar o README antes de continuar.",
                                 "tool_calls": [{
                                     "index": 0,
                                     "id": "call_abc123",
@@ -223,6 +246,10 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertIn('"id":"call_abc123"', output)
         self.assertIn('"name":"read_file"', output)
         self.assertIn('"path":"README.md"', output)
+        self.assertIn(
+            '"reasoning_summary":"Vou inspecionar o README antes de continuar."',
+            output,
+        )
 
         sent = json.loads(captured["request"].data.decode("utf-8"))
         self.assertEqual(sent["tool_choice"], "auto")
