@@ -28,7 +28,10 @@ from kitt.context_filter.semantic_filter import SemanticFilter
 from kitt.context_filter.fallback import is_container_runtime_request
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
-from kitt.context.tool_receipts import (\n    compact_consumed_tool_results as compact_tool_results,\n    externalize_large_tool_results,\n)
+from kitt.context.tool_receipts import (
+    compact_consumed_tool_results as compact_tool_results,
+    externalize_large_tool_results,
+)
 from kitt.context.token_ledger import TokenLedger
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.edit_format.parser import PatchParser
