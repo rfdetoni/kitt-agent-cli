@@ -54,6 +54,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Checkout kitt-memory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rfdetoni/kitt-memory
+          ref: 73105776fc38cd92ebcffe65b38bd03059c92c11
+          path: memory-source
+          persist-credentials: false
       - name: Checkout Assistant runtime companion
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
