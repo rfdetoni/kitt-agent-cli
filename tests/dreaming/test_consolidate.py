@@ -58,6 +58,48 @@ class TestDreamConsolidate(unittest.TestCase):
         self.assertEqual(op.source_memory_ids, ("mem_mvnw",))
         self.assertEqual(op.reason_code, "DUPLICATE")
 
+
+    def test_deterministic_contained_duplicate_keeps_richer_memory(self):
+        now = time.time()
+        existing = MemoryRecord(
+            id="mem_stdlib",
+            workspace_id="ws_1",
+            kind="PROJECT_RULE",
+            content="Always use standard library first without adding external dependencies.",
+            normalized_content="Always use standard library first without adding external dependencies.",
+            status="ACTIVE",
+            importance=0.9,
+            confidence=1.0,
+            created_at=now - 1000,
+            updated_at=now - 1000,
+        )
+        snapshot = DreamSnapshot(
+            workspace_id="ws_1",
+            memories=(existing,),
+            recent_sessions=(),
+            recent_entries=(),
+            last_dream_at=None,
+            completed_sessions_since_last_dream=1,
+            generated_at=now,
+        )
+        sig = CandidateSignal(
+            id="sig_stdlib",
+            source_entry_ids=("entry_2",),
+            conversation_id="conv_2",
+            kind_hint="PROJECT_RULE",
+            raw_content="Always use standard library first.",
+            normalized_content="Always use standard library first.",
+            occurred_at=now,
+            deterministic_score=0.95,
+        )
+
+        plan = self.consolidator.consolidate(snapshot, (sig,))
+        self.assertEqual(len(plan.operations), 1)
+        op = plan.operations[0]
+        self.assertEqual(op.operation, "KEEP")
+        self.assertEqual(op.source_memory_ids, ("mem_stdlib",))
+        self.assertEqual(op.proposed_content, existing.content)
+
     def test_deterministic_new_signal_creates_add_operation(self):
         now = time.time()
         snapshot = DreamSnapshot(
