@@ -4,7 +4,10 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
+import subprocess
 import sys
+import time
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +90,31 @@ class KittMemoryClient:
             if pos >= 0:
                 return bytes(data[:pos]).rstrip(b"\r")
 
-    def _call(self, kind: str, payload: dict[str, Any], expected_kind: str) -> Any:
+    def _start_local_service(self) -> None:
+        if os.getenv("KITT_MEMORY_AUTOSTART", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return
+        binary = os.getenv("KITT_MEMORYD_BIN") or shutil.which("kitt-memoryd")
+        if not binary:
+            return
+        kwargs: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = (
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+            )
+        else:
+            kwargs["start_new_session"] = True
+        try:
+            subprocess.Popen([binary], **kwargs)
+        except OSError:
+            return
+
+    def _call_once(self, kind: str, payload: dict[str, Any], expected_kind: str) -> Any:
         request = Envelope(kind=kind, payload=payload)
         frame = AuthenticatedFrame(token=self._read_token(), envelope=request)
         host, port = self._split_address()
@@ -113,6 +140,22 @@ class KittMemoryClient:
         if response.kind != expected_kind:
             raise KittMemoryUnavailable(f"unexpected response kind {response.kind!r}")
         return response.payload
+
+    def _call(self, kind: str, payload: dict[str, Any], expected_kind: str) -> Any:
+        first_error: Exception | None = None
+        try:
+            return self._call_once(kind, payload, expected_kind)
+        except KittMemoryUnavailable as exc:
+            first_error = exc
+        self._start_local_service()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            try:
+                return self._call_once(kind, payload, expected_kind)
+            except KittMemoryUnavailable:
+                continue
+        raise KittMemoryUnavailable(str(first_error or "kitt-memoryd unavailable"))
 
     def ping(self) -> dict[str, Any]:
         body = self._call(SYSTEM_PING_REQUEST, {}, SYSTEM_PING_RESPONSE)
