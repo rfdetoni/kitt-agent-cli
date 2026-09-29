@@ -4,6 +4,12 @@
 
 **Control plane local-first para agentes autônomos de programação.**
 
+## Agent CLI 0.78.8 — recuperação de respostas inválidas do modelo
+
+Falhas em que o modelo/chat responde fora do contrato não encerram mais a conversa automaticamente. Quando o Reverse Proxy sinaliza uma falha recuperável, a sessão é preservada e o TUI apresenta **Continuar** e **Tentar novamente**, também clicáveis por mouse.
+
+A retomada usa a mesma conversa e orienta o modelo a não repetir tools ou mutações já concluídas. Erros reais de rede/protocolo que não forem marcados como recuperáveis continuam seguindo o fluxo normal de falha.
+
 O K.I.T.T. Agent CLI reúne inteligência de repositório, roteamento de providers/modelos, goals, subagentes, memória, políticas, aprovações, plugins, MCP e execução segura por meio do `kitt_runtime`.
 
 A implementação principal permanece em Python. Trabalho determinístico e pesado pode usar a aceleração opcional `kitt_native`, mantida pelo `kitt-toolbox`, sem alterar a API apresentada ao modelo.
