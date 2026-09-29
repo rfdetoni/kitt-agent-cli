@@ -1,5 +1,5 @@
 import time
-from typing import Tuple, Optional, Literal
+from typing import Optional, Literal
 from dataclasses import dataclass
 from kitt.domain.entities import SemanticTask, ContextPlan, ModelProfile
 from kitt.llm.client import LLMClient, LLMError
