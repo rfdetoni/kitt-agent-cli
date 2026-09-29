@@ -41,6 +41,10 @@ from kitt.tools.log_reducer import LogReducer
 from kitt.tools.registry import ToolRegistry
 from kitt.tools.surface_selector import ToolSurfaceSelector
 from kitt.llm.client import LLMClient
+from kitt.llm.agent_contract import (
+    compact_reverse_proxy_orchestration,
+    split_workspace_context,
+)
 from kitt.llm.domain import ProviderRecoverableError
 from kitt.core.session_state import SessionState
 from kitt.core.turn_command import TurnCommand
@@ -372,6 +376,20 @@ class TurnProcessor(
             max_excerpt_chars=max(80, int(self.config.tool_receipt_excerpt_chars)),
         )
 
+    @staticmethod
+    def _budget_system_prompt(system_prompt: str, profile) -> str:
+        """Mirror reverse-proxy prompt compaction for local token accounting.
+
+        Tool results are appended only after the browser-backed session has already
+        consumed the bootstrap workspace. Counting the uncompressed repo map here
+        can therefore report zero remaining tokens even though the proxy will send
+        only compact orchestration plus a delta marker.
+        """
+        if _reverse_proxy_identity(profile) is None:
+            return system_prompt
+        orchestration, _ = split_workspace_context(system_prompt)
+        return compact_reverse_proxy_orchestration(orchestration) or ""
+
     def _fit_tool_output(
         self,
         system_prompt: str,
@@ -383,25 +401,47 @@ class TurnProcessor(
     ) -> str:
         prompt_budget = PromptBudget(profile.context_window, profile.max_output_tokens)
         max_allowed = prompt_budget.max_input_tokens
+        budget_system_prompt = self._budget_system_prompt(system_prompt, profile)
+        output_tokens = TokenCounter.count_tokens(output)
+        reserve_tokens = min(
+            max(128, output_tokens),
+            max(128, int(max_allowed * 0.20)),
+        ) if output else 0
+        if reserve_tokens:
+            self._rebudget_execution_messages(
+                messages,
+                system_prompt,
+                profile,
+                reserve_tokens=reserve_tokens,
+            )
         used = (
-            self._token_ledger_instance().total_input_tokens(system_prompt, messages)
+            self._token_ledger_instance().total_input_tokens(budget_system_prompt, messages)
             + self._token_ledger_instance().count_text(wrapper_prefix + wrapper_suffix)
         )
         remaining = max(0, max_allowed - used - 80)
         if remaining <= 0:
             return ""
-        if TokenCounter.count_tokens(output) <= remaining:
+        if output_tokens <= remaining:
             return output
         return prompt_budget._truncate_to_tokens(output, remaining)
 
     def _rebudget_execution_messages(
-        self, messages: List[Dict[str, str]], system_prompt: str, profile
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: str,
+        profile,
+        *,
+        reserve_tokens: int = 0,
     ) -> None:
-        """Keep each follow-up request inside provider input budget."""
-        available = PromptBudget(
-            profile.context_window, profile.max_output_tokens
-        ).max_input_tokens
-        used = self._token_ledger_instance().total_input_tokens(system_prompt, messages)
+        """Keep follow-ups inside budget while reserving room for fresh tool evidence."""
+        available = max(
+            0,
+            PromptBudget(
+                profile.context_window, profile.max_output_tokens
+            ).max_input_tokens - max(0, int(reserve_tokens)),
+        )
+        budget_system_prompt = self._budget_system_prompt(system_prompt, profile)
+        used = self._token_ledger_instance().total_input_tokens(budget_system_prompt, messages)
         if used <= available:
             return
         excess = used - available
@@ -429,7 +469,7 @@ class TurnProcessor(
             excess -= max(0, current_tokens - TokenCounter.count_tokens(trimmed))
         # Synchronize once after in-place mutations so subsequent tool-loop passes
         # reuse estimates for every unchanged message.
-        self._token_ledger_instance().total_input_tokens(system_prompt, messages)
+        self._token_ledger_instance().total_input_tokens(budget_system_prompt, messages)
 
     def _token_ledger_instance(self) -> TokenLedger:
         ledger = getattr(self, "_token_ledger", None)

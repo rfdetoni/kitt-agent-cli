@@ -1,10 +1,13 @@
 import io
 import unittest
 import urllib.error
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from kitt.llm.agent_contract import TURN_CONTEXT_MARKER, inject_agent_turn_context
 from kitt.llm.domain import ProviderProtocolError
+from kitt.core.turn_processor import TurnProcessor
+from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.providers.kitt_reverse_proxy import (
     KittReverseProxyAdapter,
@@ -121,6 +124,44 @@ class ReverseProxyToolFeedbackRegressionTests(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("invalid_tool_request", message)
         self.assertIn("tool_call_id desconhecido", message)
+
+
+    def test_tool_output_budget_reserves_room_for_latest_diagnostics(self):
+        processor = TurnProcessor.__new__(TurnProcessor)
+        processor._token_ledger = None
+        profile = SimpleNamespace(
+            context_window=2048,
+            max_output_tokens=256,
+            backend="kitt-reverse-proxy",
+            protocol="kitt-reverse-proxy",
+            base_url="http://127.0.0.1:3000",
+            credential_ref=None,
+            api_key=None,
+        )
+        messages = [
+            {"role": "user", "content": "fix the Angular project"},
+            {"role": "assistant", "content": "x" * 1800},
+        ]
+        huge_workspace_prompt = (
+            "You are K.I.T.T., an autonomous coding agent.\n\n"
+            "Tool Contract:\nuse host tools\n\n"
+            "Files Context:\n" + ("export const stale = true;\n" * 3000) + "\n\n"
+            "Repo Map:\n" + ("src/app/legacy.ts\n" * 3000)
+        )
+        fitted = processor._fit_tool_output(
+            huge_workspace_prompt,
+            messages,
+            "TS2551: Property getCurrentUser does not exist\n" * 8,
+            profile,
+            wrapper_prefix="HOST_STATUS: error\nHOST_OUTPUT:\n",
+            wrapper_suffix="\nrepair and retry",
+        )
+        self.assertIn("TS2551", fitted)
+        self.assertTrue(fitted.strip())
+        self.assertLess(
+            TokenCounter.count_tokens(processor._budget_system_prompt(huge_workspace_prompt, profile)),
+            TokenCounter.count_tokens(huge_workspace_prompt),
+        )
 
 
 if __name__ == "__main__":

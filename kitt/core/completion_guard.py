@@ -95,15 +95,23 @@ _VALIDATION_COMMAND_RE = re.compile(
     r"(?:^|\s)(?:"
     r"(?:\./)?mvnw?\s+(?:test|verify|package)|"
     r"(?:\./)?gradlew?\s+(?:test|check|build)|"
-    r"npm\s+(?:test|run\s+(?:test|build|check|lint))|"
-    r"pnpm\s+(?:test|run\s+(?:test|build|check|lint)|build)|"
-    r"yarn\s+(?:test|build|lint)|"
+    r"npm\s+(?:start|test|run\s+(?:start|test|build|check|lint))|"
+    r"pnpm\s+(?:start|test|run\s+(?:start|test|build|check|lint)|build)|"
+    r"yarn\s+(?:start|test|build|lint)|"
     r"(?:npx\s+)?ng\s+(?:test|build)|"
     r"pytest(?:\s|$)|python(?:3)?\s+-m\s+pytest|"
     r"go\s+test(?:\s|$)|cargo\s+(?:test|check|build)|dotnet\s+(?:test|build)"
     r")",
     re.IGNORECASE,
 )
+_EXPLICIT_VALIDATION_RE = re.compile(
+    r"(?:\b(?:testar|teste|testes|tests?|testing|validar|valide|validate|validation|"
+    r"build|compilar|compile|lint|check)\b|"
+    r"\b(?:npm|pnpm|yarn)\s+(?:start|test|run\s+(?:start|test|build|check|lint))\b|"
+    r"\b(?:pytest|mvn|mvnw|gradle|gradlew|cargo|go|dotnet)\b.{0,24}\b(?:test|verify|check|build)\b)",
+    re.IGNORECASE,
+)
+
 _VALIDATION_CD_SCOPE_RE = re.compile(
     r"(?:^|(?:&&|;|\|\|)\s*)cd\s+(?:\./)?(?P<scope>[A-Za-z0-9_.@-]+)(?:/[^\s;&|]*)?\s*(?:&&|;)",
     re.IGNORECASE,
@@ -281,6 +289,7 @@ class _ProgressAwareExecutionLedger:
         self.successful_mutations: set[str] = set()
         self.successful_validations: set[str] = set()
         self.successful_validation_scopes: set[str] = set()
+        self.failed_validation_scopes: dict[str, str] = {}
         self.pending_mutations: dict[str, str] = {}
         self.pending_validations: dict[str, tuple[str, str]] = {}
         self.pending_explorations: dict[str, tuple[str, str, bool]] = {}
@@ -293,7 +302,7 @@ class _ProgressAwareExecutionLedger:
 
     @property
     def validation_succeeded(self) -> bool:
-        return bool(self.successful_validations)
+        return bool(self.successful_validations) and not self.failed_validation_scopes
 
     @property
     def validated_scopes(self) -> frozenset[str]:
@@ -351,19 +360,31 @@ class _ProgressAwareExecutionLedger:
         if mutation is None and event.tool_name in _MUTATION_TOOLS:
             mutation = f"completed:{event.tool_name}:{event.call_id or 'legacy'}"
 
+        mutation_succeeded = bool(event.success and mutation)
         new_mutation = bool(
-            event.success and mutation and mutation not in self.successful_mutations
+            mutation_succeeded and mutation not in self.successful_mutations
         )
         new_validation = bool(
             event.success and validation and validation not in self.successful_validations
         )
 
+        if mutation_succeeded:
+            # Validation is evidence for one workspace revision only.
+            self.successful_validations.clear()
+            self.successful_validation_scopes.clear()
         if new_mutation and mutation:
             self.successful_mutations.add(mutation)
-        if new_validation and validation:
-            self.successful_validations.add(validation)
-            if validation_scope:
-                self.successful_validation_scopes.add(validation_scope)
+        if validation:
+            scope = validation_scope or "workspace"
+            if event.success:
+                self.successful_validations.add(validation)
+                self.successful_validation_scopes.add(scope)
+                self.failed_validation_scopes.pop(scope, None)
+            else:
+                detail = str(event.output or event.error or "validation command failed").strip()
+                if event.error and str(event.error) not in detail:
+                    detail = f"{event.error}: {detail}" if detail else str(event.error)
+                self.failed_validation_scopes[scope] = detail[:2000]
 
         if exploration_entry is not None:
             exploration_signature, _, counts_toward_stall = exploration_entry
@@ -452,11 +473,17 @@ def build_completion_contract(prompt: str, task: Any = None) -> CompletionContra
         "crie", "criar", "create", "build", "implemente", "implementar",
         "implementação", "implementacao", "implementation", "gere", "gerar", "construa",
     ))
-    if not creation:
+    validation_requested = bool(_EXPLICIT_VALIDATION_RE.search(effective_prompt))
+    if not creation and not validation_requested:
         return CompletionContract()
 
     intent = str(getattr(task, "intent", "") or "").upper()
-    if intent and intent not in {"IMPLEMENT", "REFACTOR", "DOCUMENT", "DEBUG"} and not explicit_creation:
+    if (
+        intent
+        and intent not in {"IMPLEMENT", "REFACTOR", "DOCUMENT", "DEBUG", "TEST"}
+        and not explicit_creation
+        and not validation_requested
+    ):
         return CompletionContract()
 
     scopes: list[_ScopeRequirement] = []
@@ -484,8 +511,10 @@ def build_completion_contract(prompt: str, task: Any = None) -> CompletionContra
     full_project = any(word in text for word in (
         "projeto", "project", "site", "aplicação", "aplicacao", "application",
     ))
-    require_validation = bool(scopes) and full_project and (len(scopes) > 1 or angular)
-    validation_scopes = tuple(scope.root for scope in scopes) if require_validation else ()
+    require_validation = validation_requested or (
+        full_project and (len(scopes) > 1 or angular)
+    )
+    validation_scopes = tuple(scope.root for scope in scopes) if require_validation and scopes else ()
     return CompletionContract(
         tuple(scopes),
         require_validation=require_validation,
@@ -551,9 +580,14 @@ def requires_workspace_mutation(processor: Any, cmd: Any) -> bool:
     if is_workspace_creation_request(effective_prompt):
         return True
 
+    lowered = effective_prompt.lower().strip()
+    explicit_fix = any(term in lowered for term in _EXPLICIT_FIX_TERMS)
+
     if task is not None:
         intent = str(getattr(task, "intent", "") or "").upper()
         actions = {str(action).lower() for action in (getattr(task, "actions", None) or ())}
+        if explicit_fix and (intent in {"DEBUG", "TEST"} or "edit" in actions):
+            return True
         if intent in _READ_ONLY_INTENTS:
             return False
         if "edit" in actions:
@@ -563,7 +597,6 @@ def requires_workspace_mutation(processor: Any, cmd: Any) -> bool:
                 lowered = effective_prompt.lower()
                 return any(term in lowered for term in _EXPLICIT_FIX_TERMS)
 
-    lowered = effective_prompt.lower().strip()
     if lowered.endswith("?") or lowered.startswith(("como ", "how ", "explique ", "explain ")):
         return False
     return is_workspace_creation_request(effective_prompt)
@@ -698,6 +731,19 @@ def _contract_retry_message(issues: list[str]) -> str:
         "host-verifiable requirements are satisfied. If validation is missing, run the "
         "appropriate build/test/check command with process.run for every requested project scope "
         "after creating the required files."
+    )
+
+
+def _failed_validation_retry_message(failures: dict[str, str]) -> str:
+    rendered = "\n".join(
+        f"- {scope}: {detail}" for scope, detail in sorted(failures.items())
+    )
+    return (
+        "[KITT VALIDATION FAILED]\n"
+        "The latest host build/test/check failed. Do not report success. "
+        "Use the compiler/test diagnostics below to repair the workspace, then rerun an "
+        "appropriate validation command and wait for a successful host result:\n"
+        f"{rendered}"
     )
 
 
@@ -841,7 +887,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                     validation_succeeded=ledger.validation_succeeded,
                     validated_scopes=ledger.validated_scopes,
                 )
-                if mutation_required and contract.enabled
+                if contract.enabled
                 else []
             )
 
@@ -880,6 +926,14 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                         "claimed files are still missing after recovery: "
                         + ", ".join(missing)
                     )
+                if ledger.failed_validation_scopes:
+                    reasons.append(
+                        "validation failures remain: "
+                        + "; ".join(
+                            f"{scope}: {detail}"
+                            for scope, detail in ledger.failed_validation_scopes.items()
+                        )
+                    )
                 if failed_mutations:
                     reasons.append(
                         "mutation tool failures remain: "
@@ -903,6 +957,10 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 recovery_parts.append(_contract_retry_message(contract_issues))
             if missing:
                 recovery_parts.append(_claimed_files_retry_message(missing))
+            if ledger.failed_validation_scopes:
+                recovery_parts.append(
+                    _failed_validation_retry_message(ledger.failed_validation_scopes)
+                )
             if failed_mutations:
                 recovery_parts.append(
                     _failed_mutation_retry_message(failed_mutations)
