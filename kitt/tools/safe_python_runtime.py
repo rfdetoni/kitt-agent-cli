@@ -11,7 +11,6 @@ import ast
 import json
 import math
 import statistics
-import sys
 import time
 from dataclasses import dataclass
 from decimal import Decimal
