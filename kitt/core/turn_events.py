@@ -125,6 +125,10 @@ class TurnCompleted(TurnEvent):
 @dataclass
 class TurnFailed(TurnEvent):
     error: str = ""
+    turn_id: str = ""
+    conversation_id: str = ""
+    recoverable: bool = False
+    recovery_action: str = ""
 
 @dataclass
 class TurnCancelled(TurnEvent):
