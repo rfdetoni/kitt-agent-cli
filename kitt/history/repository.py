@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Dict, Any, Optional
 
+from kitt.history.database import HistoryDatabase
+
 if TYPE_CHECKING:
     from kitt.core.pending_action import PendingAction
 
