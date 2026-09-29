@@ -697,3 +697,11 @@ Agent CLI 0.77.3 fixes three user-facing execution issues:
 - The first model action is one evidence-gathering repository operation; execution then advances one host tool/result round trip at a time instead of asking the model to produce a project-sized action bundle.
 - Equivalent semantic IR and raw user requests are deduplicated before provider execution when the extracted Goal is nearly identical to the original request; non-equivalent requirements keep the original text.
 - This release is designed for Reverse Proxy 4.6.3, whose session bootstrap/delta contract prevents full workspace/tool context from being replayed on every tool continuation.
+
+
+## Agent CLI 0.78.5 — staged reverse-proxy prompts
+
+- Reverse-proxy execution no longer forwards the generated Agent persona or textual Tool Contract after route/tool extraction; the proxy receives tools structurally.
+- The turn envelope carries a deterministic three-stage plan: `discovery -> mutation -> validation`, with only the current phase exposed to the model.
+- Trusted incremental orchestration sent to the reverse proxy is bounded to 4 KiB; workspace evidence remains a structured untrusted turn payload.
+- Direct/local providers keep their existing prompt behavior; the compaction applies specifically to the KITT reverse-proxy boundary.
