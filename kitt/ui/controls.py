@@ -140,6 +140,7 @@ def build_controls(ui) -> None:
     ui.reverse_proxy_control.mouse_handler = lambda event: ui._interactive_mouse_handler("reverse_proxy", event)
     ui.help_control = FormattedTextControl(ui._help_text, focusable=True)
     ui.help_control.mouse_handler = lambda event: ui._interactive_mouse_handler("help", event)
-    ui.toast_control = FormattedTextControl(ui._toast_text)
+    ui.toast_control = FormattedTextControl(ui._toast_text, focusable=True)
+    ui.toast_control.mouse_handler = lambda event: ui._interactive_mouse_handler("recovery", event)
     ui._remote_server = None
 
