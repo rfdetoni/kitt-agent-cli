@@ -689,3 +689,11 @@ Agent CLI 0.77.3 fixes three user-facing execution issues:
 - restores the history timestamp dependency required by workspace persistence;
 - keeps the standalone `kitt-memoryd` authority and current-schema-only Agent state policy introduced in 0.78.2;
 - validates the cleanup across Docker, Prime Architecture, full CI and multi-OS PR checks before ecosystem promotion.
+
+
+## Agent CLI 0.78.4 — staged reverse-proxy execution
+
+- Broad implementation turns now preserve the deterministic `DISCOVERY` phase in the structured reverse-proxy turn envelope even after the textual tool contract is converted to native tools.
+- The first model action is one evidence-gathering repository operation; execution then advances one host tool/result round trip at a time instead of asking the model to produce a project-sized action bundle.
+- Equivalent semantic IR and raw user requests are deduplicated before provider execution when the extracted Goal is nearly identical to the original request; non-equivalent requirements keep the original text.
+- This release is designed for Reverse Proxy 4.6.3, whose session bootstrap/delta contract prevents full workspace/tool context from being replayed on every tool continuation.
