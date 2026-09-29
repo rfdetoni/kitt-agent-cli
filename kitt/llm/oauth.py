@@ -1,27 +1,23 @@
 """Complete OAuth 2.0 subsystem with PKCE loopback, Device Code flow, and token refresh."""
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
-import os
 import secrets
 import threading
 import time
 import urllib.parse
 import urllib.request
-import webbrowser
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 
 def open_browser_url(url: str) -> bool:
     """Robust URL opener for Linux/macOS/Windows desktop sessions."""
     import shutil
     import subprocess
-    import webbrowser
     if shutil.which("xdg-open"):
         try:
             subprocess.Popen(
