@@ -62,7 +62,10 @@ class LoggingLevelTests(unittest.TestCase):
             extra = payload.get("extra_data", {})
             self.assertEqual(extra.get("event"), "agent.startup")
             self.assertTrue(extra.get("version"))
-            self.assertTrue(str(extra.get("package_path", "")).endswith("kitt/cli/main.py"))
+            package_path = Path(str(extra.get("package_path", "")))
+            self.assertEqual(package_path.name, "main.py")
+            self.assertEqual(package_path.parent.name, "cli")
+            self.assertEqual(package_path.parent.parent.name, "kitt")
             self.assertTrue(extra.get("executable"))
             self.assertEqual(extra.get("pid"), os.getpid())
 
