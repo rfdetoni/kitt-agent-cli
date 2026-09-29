@@ -1339,7 +1339,7 @@ class SafeRuntime:
 
     def _op_memory_correct(self, args):
         if not self.memory or not hasattr(self.memory, "remember_correction"):
-            return SafeRuntimeResult(False, "memory.correct", error="hybrid memory service unavailable")
+            return SafeRuntimeResult(False, "memory.correct", error="kitt-memory service unavailable")
         context = str(args.get("context", "")).strip()
         predicted = str(args.get("predicted", "")).strip()
         corrected = str(args.get("corrected", "")).strip()
