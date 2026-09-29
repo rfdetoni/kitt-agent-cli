@@ -1,11 +1,28 @@
-import time
 from kitt.core.turn_events import (
-    ApprovalRequired, BudgetApplied, EditApplied, MetricsRecorded, ModelSelected,
-    TextDelta, ToolCallProposed, ToolCompleted, ToolStarted, TurnBlocked, TurnCancelled,
-    TurnCompleted, TurnFailed, TurnStarted, ChildAgentSpawned, ChildAgentProgress, ChildAgentFinished,
-    ThinkingStarted, ThinkingCompleted, FilterCompleted, ContextResolved, ContextBuildCompleted
+    ApprovalRequired,
+    BudgetApplied,
+    EditApplied,
+    MetricsRecorded,
+    ModelSelected,
+    TextDelta,
+    ToolCallProposed,
+    ToolCompleted,
+    ToolStarted,
+    TurnBlocked,
+    TurnCancelled,
+    TurnCompleted,
+    TurnFailed,
+    TurnStarted,
+    ChildAgentSpawned,
+    ChildAgentProgress,
+    ChildAgentFinished,
+    ThinkingStarted,
+    ThinkingCompleted,
+    FilterCompleted,
+    ContextResolved,
+    ContextBuildCompleted,
 )
-from kitt.ui.state import AgentTaskStep, TranscriptBlock, UIState, safe_text
+from kitt.ui.state import UIState
 
 
 TERMINAL_EVENTS = (TurnCompleted, TurnFailed, TurnCancelled, TurnBlocked)
@@ -137,10 +154,17 @@ def format_tool_bullet(tool_name: str, args: dict | None) -> str:
 
 
 from kitt.ui.reducer_handlers import (
-    handle_turn_started, handle_thinking_started, handle_thinking_completed,
-    handle_tool_proposed, handle_text_delta, handle_tool_started, handle_tool_completed,
-    handle_approval_required, handle_context_events, handle_child_agent_events,
-    handle_terminal_events
+    handle_turn_started,
+    handle_thinking_started,
+    handle_thinking_completed,
+    handle_tool_proposed,
+    handle_text_delta,
+    handle_tool_started,
+    handle_tool_completed,
+    handle_approval_required,
+    handle_context_events,
+    handle_child_agent_events,
+    handle_terminal_events,
 )
 
 
