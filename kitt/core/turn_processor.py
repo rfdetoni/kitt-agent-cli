@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 import concurrent.futures
 import hashlib
-import inspect
 import json
 import logging
-import queue
 import re
 import threading
 import time
 from dataclasses import replace
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Iterator
-from kitt.domain.entities import ContextPlan, EditResult, ModelProfile, SemanticTask
+from kitt.domain.entities import ModelProfile
 from kitt.router.router import TaskRouter
-from kitt.router.features import TaskFeatureExtractor
 from kitt.router.models import ModelCapabilities
 from kitt.router.policy import RoutingPolicy
 from kitt.memory.memory_manager import MemoryManager
@@ -24,7 +20,6 @@ from kitt.skills.discovery import SkillDiscovery
 from kitt.skills.loader import ProgressiveSkillLoader
 from kitt.context_engine.engine import ContextEngine
 from kitt.context.working_set import ConversationWorkingSetStore
-from kitt.context_filter.semantic_filter import SemanticFilter
 from kitt.context_filter.fallback import is_container_runtime_request
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
@@ -43,39 +38,32 @@ from kitt.edit_format.strategy import (
 from kitt.tools.build_detector import BuildDetector
 from kitt.tools.log_reducer import LogReducer
 from kitt.tools.registry import ToolRegistry
-from kitt.tools.safe_python import (
-    PYTHON_TOOL_CALL_OPEN,
-    parse_python_compute_call,
-)
-from kitt.tools.protocol import TOOL_CALL_OPEN, parse_tool_call
 from kitt.tools.surface_selector import ToolSurfaceSelector
 from kitt.llm.client import LLMClient
-from kitt.llm.attachments import (
-    AttachmentError,
-    attach_to_first_user_message,
-)
 from kitt.core.session_state import SessionState
-from kitt.core.execution_request import ExecutionRequest
 from kitt.core.turn_command import TurnCommand
 import uuid
 from urllib.parse import urlsplit
 from kitt.core.turn_events import (
-    TurnEvent, TurnStarted, FilterCompleted, ContextResolved, BudgetApplied,
-    ContextBuildCompleted, ModelSelected, TextDelta, ToolCallProposed, ApprovalRequired, ToolStarted, ToolCompleted,
-    ThinkingStarted, ThinkingCompleted,
-    EditApplied, MetricsRecorded, TurnCompleted, TurnFailed,
-    TurnCancelled, TurnBlocked
+    TurnEvent,
+    TurnStarted,
+    FilterCompleted,
+    ContextResolved,
+    BudgetApplied,
+    ContextBuildCompleted,
+    ModelSelected,
+    EditApplied,
+    TurnCompleted,
+    TurnFailed,
+    TurnCancelled,
+    TurnBlocked,
 )
 from kitt.core.pending_action import PendingAction
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.logging import trace_event
 from kitt.core.turn_execution_guard import TurnExecutionGuard
 from kitt.core.turn_helpers import (
-    _attachment_path_key,
-    _attachment_retrieval_prompt,
     _reverse_proxy_identity,
-    _same_reverse_proxy_endpoint,
-    detect_chat_limit_message,
 )
 from kitt.core.turn_tool_loop import TurnToolLoopMixin
 from kitt.core.turn_finalization import TurnFinalizationMixin
@@ -87,17 +75,10 @@ from kitt.security.context import ExecutionSecurityContext
 from kitt.security.capabilities import (
     capabilities_for_tools,
     READ_ONLY_CAPABILITIES,
-    CAP_REPO_WRITE,
     CAP_BROWSER_READ,
     CAP_BROWSER_WRITE,
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
-)
-from kitt.metrics.models import TurnMetrics
-from kitt.metrics.cost_estimator import estimate_cost
-from kitt.prompts import (
-    CONTEXT_SUMMARY_SYSTEM as CONTEXT_SUMMARY_PROMPT,
-    CONTEXT_SUMMARY_USER_TEMPLATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -505,7 +486,6 @@ class TurnProcessor(
         queue so TUI/daemon heartbeats, cancellation and other tasks continue
         to make progress while a model/tool call is blocked.
         """
-        import asyncio as _asyncio
 
         loop = _asyncio.get_running_loop()
         queue: _asyncio.Queue = _asyncio.Queue(maxsize=128)
