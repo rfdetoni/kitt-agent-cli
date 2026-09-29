@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 import time
 from dataclasses import dataclass
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Optional
 
 
 PRIVACY_MODES = {"offline", "local_only", "hybrid_redacted", "cloud_allowed"}
