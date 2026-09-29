@@ -10,4 +10,3 @@ class UIBackend(Protocol):
 
 # Import-safe public name expected by callers; prompt_toolkit remains imported
 # lazily by KittUIApp only when controls/application are built.
-from kitt.ui.app import KittUIApp as PromptToolkitBackend
