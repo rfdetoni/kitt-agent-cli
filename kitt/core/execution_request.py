@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -8,6 +8,7 @@ class ExecutionRequest:
     system_prompt: str
     messages: list[dict[str, str]]
     enabled_tools: list[str]
+    tool_definitions: list[dict] = field(default_factory=list)
     max_output_tokens: int = 1200
     estimated_input_tokens: int = 0
     agent_route: str | None = None
