@@ -385,6 +385,10 @@ class TurnContextMixin:
             system_prompt=sys_prompt,
             messages=[{"role": "user", "content": principal_task_prompt}],
             enabled_tools=tools_for_contract,
+            tool_definitions=self._tool_definitions(
+                tools_for_contract,
+                planned_tools=plan.enabled_tools,
+            ),
             max_output_tokens=exe_profile.max_output_tokens,
             estimated_input_tokens=allocated["total_input_tokens"]
         )
