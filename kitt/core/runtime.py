@@ -309,7 +309,6 @@ class KittRuntime:
             state_root=state_root,
             db=database,
             workspace_id=identity.id,
-            memory_repo=memory_repo,
             memory_manager=memory,
         )
         memory = native.memory
@@ -318,7 +317,6 @@ class KittRuntime:
         registry.native_engine = native.engine
         registry.output_optimizer = native.output
         registry.coordinator = native.coordinator
-        events.subscribe("*", native.on_event)
 
         registry.attach_services(
             artifacts=artifacts,
