@@ -4,10 +4,23 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 from kitt.core.turn_events import (
-    ApprovalRequired, BudgetApplied, EditApplied, MetricsRecorded, ModelSelected,
-    TextDelta, ToolCallProposed, ToolCompleted, ToolStarted, TurnBlocked, TurnCancelled,
-    TurnCompleted, TurnFailed, TurnStarted, ChildAgentSpawned, ChildAgentProgress, ChildAgentFinished,
-    ThinkingStarted, ThinkingCompleted, FilterCompleted, ContextResolved, ContextBuildCompleted
+    ApprovalRequired,
+    TextDelta,
+    ToolCallProposed,
+    ToolCompleted,
+    ToolStarted,
+    TurnCancelled,
+    TurnCompleted,
+    TurnFailed,
+    TurnStarted,
+    ChildAgentSpawned,
+    ChildAgentProgress,
+    ChildAgentFinished,
+    ThinkingStarted,
+    ThinkingCompleted,
+    FilterCompleted,
+    ContextResolved,
+    ContextBuildCompleted,
 )
 from kitt.ui.state import AgentTaskStep, TranscriptBlock, UIState, safe_text
 from kitt.ui.surface_renderer import surface_fragments
