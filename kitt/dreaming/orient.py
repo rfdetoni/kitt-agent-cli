@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import time
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List
 
 from kitt.dreaming.models import (
     DreamSnapshot,
     SessionDigest,
     SessionEntryDigest,
-    MemoryRecord,
 )
 from kitt.dreaming.repository import MemoryRepository
 from kitt.history.database import HistoryDatabase
