@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rfdetoni/kitt-memory
-          ref: 73105776fc38cd92ebcffe65b38bd03059c92c11
+          ref: 4c5ce26cc7dd5b2fc27ec4956ab39131e8389d09
           path: memory-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
@@ -76,7 +76,7 @@ jobs:
       - name: Compose Assistant runtime namespace
         run: >-
           python -m pip install --no-deps
-          "git+https://github.com/rfdetoni/kitt-assistant.git@58ebdbaf6bc2c9135d645cd782d639e226e24d03#subdirectory=packages/kitt-assistant-runtime"
+          "git+https://github.com/rfdetoni/kitt-assistant.git@8db268e5b2daed9bb29b9e1a4ad2cf318eeafa6b#subdirectory=packages/kitt-assistant-runtime"
       - name: Regression suite
         run: python -m pytest -q
       - name: Compile package
@@ -84,4 +84,4 @@ jobs:
       - name: Static critical checks
         run: |
           python -m pip install ruff
-          ruff check kitt --select F821,E9,B904,B905,S314
+          ruff check kitt --select F401,F841,F821,E9,B904,B905,S314 --exclude "**/__init__.py"
