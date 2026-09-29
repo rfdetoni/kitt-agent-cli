@@ -1,7 +1,6 @@
 """Safe workspace listing and mutation helpers for compact runtime operations."""
 from __future__ import annotations
 
-import hashlib
 import os
 import shutil
 import stat
