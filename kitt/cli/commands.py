@@ -6,7 +6,6 @@ import sys
 from typing import Optional
 
 from kitt.llm.auth import ProviderAuthService
-from kitt.llm.catalog import ProviderCatalogService
 from kitt.llm.registry import ProviderRegistry
 
 
