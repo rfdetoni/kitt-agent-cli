@@ -186,6 +186,7 @@ class TurnToolLoopMixin:
                 ),
                 "route": effective_agent_route,
                 "conversation_id": cmd.conversation_id,
+                "tool_definitions": request.tool_definitions,
             }
             try:
                 signature = inspect.signature(self._stream_execution_response)
