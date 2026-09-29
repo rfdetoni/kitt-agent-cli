@@ -1,15 +1,11 @@
 """Transactional Model Selection Service ensuring atomic configuration, capability validation, and auth handling."""
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any, Callable, Coroutine, Optional
 
-from kitt.domain.entities import ModelProfile, RouterConfig
-from kitt.llm.auth import ProviderAuthService, ProviderAuthState
-from kitt.llm.catalog import ProviderCatalogService
-from kitt.llm.domain import ModelDescriptor, ProviderDescriptor
+from kitt.domain.entities import ModelProfile
 from kitt.llm.registry import ProviderRegistry
 from kitt.router.router import TaskRouter
 
