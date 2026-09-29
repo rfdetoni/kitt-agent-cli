@@ -8,9 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Protocol
 
 from kitt.llm.domain import (
-    ModelDescriptor,
     ModelDiscoveryResult,
-    ProviderDiscoveryStatus,
     ProviderHealth,
     ProviderAuthError,
     ProviderConnectionError,
