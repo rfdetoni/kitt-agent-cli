@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from kitt.cli.main import _configure_debug_log, build_parser
+from kitt.cli.main import _configure_debug_log, _log_runtime_identity, build_parser
 from kitt.core.logging import (
     configure_logging,
     sanitize_message,
@@ -50,6 +50,21 @@ class LoggingLevelTests(unittest.TestCase):
                 "cli.logging.configured",
             )
             self.assertEqual(payload.get("extra_data", {}).get("level"), 2)
+
+    def test_runtime_identity_event_reports_loaded_agent(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            path = Path(temp) / "agent.log"
+            configure_logging(2, path)
+
+            _log_runtime_identity()
+
+            payload = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+            extra = payload.get("extra_data", {})
+            self.assertEqual(extra.get("event"), "agent.startup")
+            self.assertTrue(extra.get("version"))
+            self.assertTrue(str(extra.get("package_path", "")).endswith("kitt/cli/main.py"))
+            self.assertTrue(extra.get("executable"))
+            self.assertEqual(extra.get("pid"), os.getpid())
 
     def test_level_2_records_full_payload_and_redacts_secrets(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
