@@ -133,22 +133,13 @@ def _extract_host_tool_literal(system_prompt: str) -> Optional[str]:
     return None
 
 
-def extract_openai_tools(system_prompt: Optional[str]) -> List[Dict[str, Any]]:
-    """Convert TurnProcessor's existing host-tool descriptor into OpenAI tools."""
-    if not system_prompt:
-        return []
-    literal = _extract_host_tool_literal(system_prompt)
-    if not literal:
-        return []
-    try:
-        value = ast.literal_eval(literal)
-    except (SyntaxError, ValueError):
-        return []
-    if not isinstance(value, list):
-        return []
+def openai_tools_from_definitions(
+    definitions: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Convert structural KITT tool definitions into OpenAI function tools."""
     result: List[Dict[str, Any]] = []
     seen = set()
-    for entry in value:
+    for entry in definitions or []:
         if not isinstance(entry, dict):
             continue
         name = entry.get("name")
@@ -166,6 +157,22 @@ def extract_openai_tools(system_prompt: Optional[str]) -> List[Dict[str, Any]]:
             function["description"] = description.strip()[:4096]
         result.append({"type": "function", "function": function})
     return result
+
+
+def extract_openai_tools(system_prompt: Optional[str]) -> List[Dict[str, Any]]:
+    """Convert a legacy textual host-tool descriptor into OpenAI tools."""
+    if not system_prompt:
+        return []
+    literal = _extract_host_tool_literal(system_prompt)
+    if not literal:
+        return []
+    try:
+        value = ast.literal_eval(literal)
+    except (SyntaxError, ValueError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return openai_tools_from_definitions(value)
 
 
 def strip_legacy_tool_contract(system_prompt: Optional[str]) -> Optional[str]:
@@ -333,10 +340,11 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
         else:
             url = f"{base}/v1/chat/completions"
 
-        native_system_prompt, tools = prepare_reverse_proxy_system_prompt(request.system_prompt)
-        # The ContextPlan/Tool Contract is the execution authority. Never infer or
-        # resurrect host tools from user text here: doing so can advertise a tool
-        # that ToolRegistry will correctly reject as disabled for this turn.
+        native_system_prompt, legacy_tools = prepare_reverse_proxy_system_prompt(request.system_prompt)
+        tools = openai_tools_from_definitions(request.tool_definitions) or legacy_tools
+        # Structural tool definitions carried by the execution request are the
+        # authority. Legacy prompt extraction is fallback-only and never infers
+        # capabilities from user/workspace text.
 
         messages: List[Dict[str, Any]] = []
         if native_system_prompt:
