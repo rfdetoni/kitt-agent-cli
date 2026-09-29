@@ -65,6 +65,7 @@ def handle_turn_started(state: UIState, event: TurnStarted) -> None:
     state.route = "session"
     state.active_turn_id = event.turn_id
     state.active_conversation_id = event.conversation_id
+    state.pending_recovery = None
     state.is_thinking = True
     state.status_text = "SCANNING"
     state.append_message("user", event.prompt)
@@ -396,9 +397,14 @@ def handle_terminal_events(state: UIState, event: object) -> None:
                     if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
                         clean_text = f"{clean_text} ({elapsed:.1f}s) ✔"
                 elif isinstance(event, TurnFailed):
-                    block.status = "error"
-                    if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
-                        clean_text = f"{clean_text} ({elapsed:.1f}s) ✖"
+                    if getattr(event, "recoverable", False):
+                        block.status = "done"
+                        if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
+                            clean_text = f"{clean_text} ({elapsed:.1f}s) ✔"
+                    else:
+                        block.status = "error"
+                        if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
+                            clean_text = f"{clean_text} ({elapsed:.1f}s) ✖"
                 elif isinstance(event, TurnCancelled):
                     block.status = "cancelled"
                     if not any(clean_text.endswith(g) for g in ("✔", "✖", "∅", "⏸")):
@@ -435,11 +441,29 @@ def handle_terminal_events(state: UIState, event: object) -> None:
             state.append_message("system", summary_msg)
             state.add_toast("✔ Processo concluído com sucesso!")
     elif isinstance(event, TurnFailed):
-        state.status_text = "✖ FAILED"
         error_msg = event.error or "Erro durante o processamento"
-        state.append_message("error", f"✖ [PROCESSO FALHOU]\n  ↳ Causa: {error_msg}")
-        state.add_toast(f"✖ Processo falhou: {error_msg}", persistent=True)
+        if getattr(event, "recoverable", False):
+            state.status_text = "↻ RECOVERABLE"
+            state.pending_recovery = {
+                "turn_id": getattr(event, "turn_id", "") or "",
+                "conversation_id": getattr(event, "conversation_id", "") or state.active_conversation_id or "",
+                "error": error_msg,
+                "recovery_action": getattr(event, "recovery_action", "") or "continue",
+            }
+            state.append_message(
+                "error",
+                f"↻ [RESPOSTA DO MODELO INVÁLIDA]\n"
+                f"  ↳ Causa: {error_msg}\n"
+                "  ↳ A sessão foi preservada; escolha Continuar ou Tentar novamente."
+            )
+            state.add_toast("Resposta inválida do modelo — a sessão foi preservada.", persistent=True)
+        else:
+            state.pending_recovery = None
+            state.status_text = "✖ FAILED"
+            state.append_message("error", f"✖ [PROCESSO FALHOU]\n  ↳ Causa: {error_msg}")
+            state.add_toast(f"✖ Processo falhou: {error_msg}", persistent=True)
     elif isinstance(event, TurnCancelled):
+        state.pending_recovery = None
         state.active_tasks = []
         state.status_text = "∅ CANCELLED"
         reason = event.reason or "Cancelado pelo usuário"
