@@ -304,6 +304,8 @@ def inject_agent_turn_context(
     messages: List[Dict[str, Any]],
     workspace_context: Any,
     route: Optional[str] = None,
+    *,
+    discovery_required: bool = False,
 ) -> List[Dict[str, Any]]:
     """Prefix volatile turn data to the last real user task without mutating inputs.
 
@@ -317,6 +319,9 @@ def inject_agent_turn_context(
     }
     if route is not None:
         payload["route"] = normalize_agent_route(route)
+    if discovery_required:
+        payload["discovery_required"] = True
+        payload["execution_phase"] = "discovery"
 
     envelope = (
         f"{TURN_CONTEXT_MARKER}\n"
