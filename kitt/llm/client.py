@@ -384,11 +384,13 @@ class LLMClient:
                 if route is not None
                 else infer_agent_route(system_prompt, messages)
             )
+            discovery_required = "[KITT EXECUTION SLICE: DISCOVERY]" in (system_prompt or "")
             system_prompt, workspace_context = split_workspace_context(system_prompt)
             messages = inject_agent_turn_context(
                 messages,
                 workspace_context=workspace_context,
                 route=contract_route,
+                discovery_required=discovery_required,
             )
             extra_headers[AGENT_CONTRACT_HEADER] = AGENT_CONTRACT_VERSION
             extra_headers[AGENT_ROUTE_HEADER] = contract_route
