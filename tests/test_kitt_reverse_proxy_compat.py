@@ -166,7 +166,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             headers = {}
 
             def __init__(self):
-                self._stream = io.BytesIO(b"data: [DONE]\\n")
+                self._stream = io.BytesIO(b"data: [DONE]" + bytes([10]))
 
             def __enter__(self):
                 return self
