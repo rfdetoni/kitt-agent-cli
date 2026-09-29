@@ -161,6 +161,64 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertIn("Memory:\nkeep this", cleaned)
         self.assertIn("Project Guidelines:\nkeep that", cleaned)
 
+    def test_structural_tool_definitions_survive_compact_prompt(self):
+        class FakeResponse:
+            headers = {}
+
+            def __init__(self):
+                self._stream = io.BytesIO(b"data: [DONE]\\n")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def readline(self, size=-1):
+                return self._stream.readline(size)
+
+        captured = {}
+
+        def fake_open(request, timeout):
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        request = LLMRequest(
+            model="gemini-web",
+            messages=[{"role": "user", "content": "inspect"}],
+            system_prompt="[KITT EXECUTION SLICE: DISCOVERY]\\nInspect first.",
+            tool_definitions=[{
+                "name": "kitt_runtime",
+                "description": "Workspace runtime",
+                "args": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["repo.list", "repo.read", "repo.write_file"],
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                },
+            }],
+            base_url="http://127.0.0.1:3000",
+            extra_headers={"X-Kitt-Agent-Contract": "v1"},
+        )
+
+        with patch(
+            "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
+            side_effect=fake_open,
+        ):
+            list(KittReverseProxyAdapter().stream(request))
+
+        payload = captured["payload"]
+        self.assertEqual(payload["tools"][0]["function"]["name"], "kitt_runtime")
+        self.assertEqual(
+            payload["tools"][0]["function"]["parameters"]["properties"]["operation"]["enum"],
+            ["repo.list", "repo.read", "repo.write_file"],
+        )
+        self.assertNotIn("Tool Contract:", payload["messages"][0]["content"])
+
     def test_stream_reconstructs_native_tool_call_and_preserves_headers(self):
         class FakeResponse:
             headers = {}
