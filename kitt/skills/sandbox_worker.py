@@ -5,7 +5,7 @@ import json
 import math
 import re
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 ALLOWED_MODULES = {"json", "math", "re"}
 FORBIDDEN_ATTRIBUTES = {
