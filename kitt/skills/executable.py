@@ -1,26 +1,16 @@
 from __future__ import annotations
 
 import ast
-import concurrent.futures
-import datetime
-import json
-import math
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Set
+from typing import Any, Dict, List, Optional, Set
 
 from kitt.security.capabilities import (
-    ALL_CAPABILITIES,
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
-    CAP_CHILD_MESSAGE,
     CAP_CHILD_SPAWN,
-    CAP_GOAL_MANAGE,
-    CAP_MCP_CALL,
-    CAP_MEMORY_READ,
-    CAP_MEMORY_WRITE,
     CAP_PROCESS_RUN,
     CAP_REPO_READ,
     CAP_REPO_SEARCH,
