@@ -1,6 +1,8 @@
 """Complete OAuth 2.0 subsystem with PKCE loopback, Device Code flow, and token refresh."""
 from __future__ import annotations
 
+import webbrowser
+
 import base64
 import hashlib
 import json
