@@ -256,6 +256,39 @@ def infer_agent_route(
     return "chat"
 
 
+def compact_reverse_proxy_orchestration(system_prompt: Optional[str]) -> Optional[str]:
+    """Keep only trusted incremental orchestration for the reverse proxy.
+
+    The reverse proxy already receives tool schemas structurally and owns the
+    strict execution persona. Forwarding the Agent persona and textual Tool
+    Contract again creates a superprompt and wastes the provider context.
+    """
+    if not system_prompt:
+        return system_prompt
+
+    markers = (
+        "Memory:",
+        "Learned Harness:",
+        "Mandatory Constraints:",
+        "[PLANNING MODE ACTIVE]",
+        "[KITT EXECUTION SLICE:",
+    )
+    positions = sorted(
+        (position, marker)
+        for marker in markers
+        if (position := system_prompt.find(marker)) >= 0
+    )
+    parts: List[str] = []
+    for index, (start, marker) in enumerate(positions):
+        end = positions[index + 1][0] if index + 1 < len(positions) else len(system_prompt)
+        section = system_prompt[start:end].strip()
+        payload = section[len(marker):].strip()
+        if payload or marker.startswith("[KITT "):
+            parts.append(section)
+    compact = "\n\n".join(parts).strip()
+    return compact[:4096] or None
+
+
 def split_workspace_context(system_prompt: Optional[str]) -> Tuple[Optional[str], Any]:
     """Move repository-derived sections out of the provider system prompt.
 
@@ -317,11 +350,14 @@ def inject_agent_turn_context(
     payload: Dict[str, Any] = {
         "workspace_context": workspace_context,
     }
-    if route is not None:
-        payload["route"] = normalize_agent_route(route)
+    normalized_route = normalize_agent_route(route) if route is not None else None
+    if normalized_route is not None:
+        payload["route"] = normalized_route
+    if normalized_route in {"code-generation", "code-edit"}:
+        payload["execution_plan"] = ["discovery", "mutation", "validation"]
+        payload["execution_phase"] = "discovery" if discovery_required else "mutation"
     if discovery_required:
         payload["discovery_required"] = True
-        payload["execution_phase"] = "discovery"
 
     envelope = (
         f"{TURN_CONTEXT_MARKER}\n"
