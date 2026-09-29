@@ -1,6 +1,1 @@
-"""Container and orchestration inspection."""
-from kitt.extensions.builtin_plugins.shared import install
-
-
-def setup(ctx):
-    return install(ctx, "container")
+"""Manifest-only bundled plugin; implementation is shared by the builtin loader."""

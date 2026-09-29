@@ -1,6 +1,1 @@
-"""Language-server discovery and integration planning."""
-from kitt.extensions.builtin_plugins.shared import install
-
-
-def setup(ctx):
-    return install(ctx, "lsp")
+"""Manifest-only bundled plugin; implementation is shared by the builtin loader."""

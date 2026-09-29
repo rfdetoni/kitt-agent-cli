@@ -619,6 +619,16 @@ class PluginLoader:
             manifest, snapshot_root
         )
 
+        if manifest.source == "builtin":
+            from kitt.extensions.builtin_plugins import shared as builtin_shared
+
+            plugin_id = manifest.name.removeprefix("kitt-")
+            if builtin_shared.supports(plugin_id):
+                builtin_shared.install(instance.context, plugin_id)
+                instance.handle = DefaultPluginHandle()
+                instance.state = PluginState.LOADED
+                return instance
+
         if not manifest.trusted_in_process:
             return await self._load_worker_async(
                 instance,

@@ -412,6 +412,10 @@ def _execute(plugin_id: str, root: Path, args: dict[str, Any]) -> dict[str, Any]
     return fn()
 
 
+def supports(plugin_id: str) -> bool:
+    return plugin_id in _SPECS
+
+
 def install(ctx, plugin_id: str):
     if plugin_id not in _SPECS: raise ValueError(f"unknown builtin plugin: {plugin_id}")
     root = _root(ctx); name, description, schema = _SPECS[plugin_id]
