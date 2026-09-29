@@ -9,7 +9,12 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from kitt.llm.domain import ProviderConnectionError, ProviderProtocolError, ProviderTimeoutError
+from kitt.llm.domain import (
+    ProviderConnectionError,
+    ProviderProtocolError,
+    ProviderRecoverableError,
+    ProviderTimeoutError,
+)
 from kitt.llm.http_security import read_error_body, secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
 from kitt.llm.providers.openai_chat import OpenAIChatAdapter
@@ -258,19 +263,31 @@ def _is_tool_feedback_message(content: Any) -> bool:
     return any(text.startswith(prefix) for prefix in _TOOL_FEEDBACK_PREFIXES)
 
 
-def _proxy_error_message(body: str) -> str:
-    """Extract a short proxy error message without echoing an arbitrary response body."""
+def _proxy_error_details(body: str) -> Tuple[str, str, bool, str]:
+    """Extract bounded recovery metadata from a structured proxy error."""
     try:
         value = json.loads(body)
     except (json.JSONDecodeError, TypeError):
-        return ""
+        return "", "", False, ""
     if not isinstance(value, dict):
-        return ""
+        return "", "", False, ""
     error = value.get("error")
-    message = error.get("message") if isinstance(error, dict) else None
-    if not isinstance(message, str):
-        return ""
-    return " ".join(message.split())[:500]
+    if not isinstance(error, dict):
+        return "", "", False, ""
+    message = error.get("message")
+    code = error.get("code")
+    action = error.get("recovery_action")
+    recoverable = error.get("recoverable") is True
+    return (
+        " ".join(message.split())[:500] if isinstance(message, str) else "",
+        str(code)[:128] if isinstance(code, str) else "",
+        recoverable,
+        str(action)[:32] if isinstance(action, str) else "",
+    )
+
+
+def _proxy_error_message(body: str) -> str:
+    return _proxy_error_details(body)[0]
 
 
 def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -473,6 +490,15 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                 yield from self.stream(retry_request)
                 return
 
+            detail, proxy_code, recoverable, recovery_action = _proxy_error_details(body)
+            if recoverable and proxy_code:
+                raise ProviderRecoverableError(
+                    f"KITT reverse proxy returned a recoverable model response error: "
+                    f"{proxy_code}{f': {detail}' if detail else ''}",
+                    code=proxy_code,
+                    recovery_action=recovery_action or "continue",
+                ) from exc
+
             semantic_codes = (
                 "tool_required_but_not_called",
                 "tool_parse_failed",
@@ -483,7 +509,6 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             )
             matched = next((code for code in semantic_codes if code in body), None)
             if matched:
-                detail = _proxy_error_message(body)
                 if matched in {"tool_required_but_not_called", "tool_parse_failed", "invalid_tool_call"} and not any(
                     message.get("role") == "user"
                     and "KITT TOOL RETRY" in str(message.get("content", ""))
