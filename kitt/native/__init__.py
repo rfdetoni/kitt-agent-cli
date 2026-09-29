@@ -1,4 +1,4 @@
-"""KITT-owned native acceleration, memory intelligence and workspace coordination.
+"""KITT-owned native acceleration and workspace coordination.
 
 This package is a clean-room implementation designed for KITT.  The optional
 Rust extension accelerates deterministic hot paths; every public capability has
