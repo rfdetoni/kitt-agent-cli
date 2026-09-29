@@ -108,7 +108,7 @@ class TurnModelMixin:
         session_key: str = "",
         route: Optional[str] = None,
         conversation_id: str = "",
-        tool_definitions: Optional[List[Dict[str, Any]]] = None,
+        tool_definitions: Optional[List[Dict[str, object]]] = None,
     ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
