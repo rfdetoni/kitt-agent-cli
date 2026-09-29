@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 from kitt.router.models import ExecutionHandoff
 
 ESCALATION_STATES = {
