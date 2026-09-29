@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from kitt.benchmarks.context_benchmark import run_once
 
 
