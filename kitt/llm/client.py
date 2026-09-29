@@ -15,6 +15,7 @@ from kitt.llm.agent_contract import (
     AGENT_CONTRACT_HEADER,
     AGENT_CONTRACT_VERSION,
     AGENT_ROUTE_HEADER,
+    compact_reverse_proxy_orchestration,
     infer_agent_route,
     inject_agent_turn_context,
     normalize_agent_route,
@@ -386,6 +387,7 @@ class LLMClient:
             )
             discovery_required = "[KITT EXECUTION SLICE: DISCOVERY]" in (system_prompt or "")
             system_prompt, workspace_context = split_workspace_context(system_prompt)
+            system_prompt = compact_reverse_proxy_orchestration(system_prompt)
             messages = inject_agent_turn_context(
                 messages,
                 workspace_context=workspace_context,
