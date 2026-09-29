@@ -1,21 +1,12 @@
-# Migration, Crash Recovery & Integrity Guide
+# Agent state schema and recovery
 
-## 1. Migration Version Strategy
+The Agent supports only its current history schema. Historical local schema migrations were intentionally removed because durable semantic memory now belongs exclusively to `kitt-memory` and the ecosystem does not promise backward compatibility with obsolete Agent state.
 
-- Version 10 (`prime_agent_persistence_v10`): Published baseline creating `runtime_states`, `child_messages`, `daemon_events`, and baseline goal scheduling columns.
-- Version 11 (`prime_agent_hardening_v11`): Adds goal leasing (`lease_id`, `lease_expires_at`), task tracking columns (`current_task_id`, `task_started_at`), correlation IDs on child messages (`correlation_id`, `reply_to`), and indexes for scheduler claims.
+## Current behavior
 
-## 2. Integrity Verification
+- a missing database is initialized directly from the current schema definition;
+- a database already at the current schema opens normally;
+- any older or newer schema is rejected fail-closed with `kitt doctor --reset-state` guidance;
+- memory tables are never created in the Agent history database.
 
-- SQLite connection enables foreign keys and WAL mode.
-- `PRAGMA foreign_key_check` and `PRAGMA integrity_check` executed on startup and in migration test suites.
-
-## 3. Crash Recovery Matrix
-
-| Crash Scenario | Recovery Mechanism | Invariant Guaranteed |
-|---|---|---|
-| Daemon killed with SIGKILL (`kill -9`) | Stale socket and PID detected on restart; active sessions recoverable from SQLite | No corrupted state; clean daemon restart |
-| TUI abruptly disconnected | Background tasks in daemon continue executing uninterrupted; sequence IDs preserved | Reattaching restores full transcript and tasks |
-| SQLite database locked (`SQLITE_BUSY`) | Immediate transaction retry with exponential backoff and timeout | No lost transactions |
-| Child worker process failure/timeout | Process tree killed; child status updated to `FAILED`/`TIMED_OUT` with truthful error | Child never falsely marked as completed |
-| Skill runtime exception | Error captured, sandboxed and returned as structured failure | Main host runtime remains operational |
+This policy prevents retired memory/knowledge tables from being resurrected by migration code and keeps recovery deterministic.
