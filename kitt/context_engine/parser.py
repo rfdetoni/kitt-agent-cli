@@ -1,7 +1,7 @@
 import re
 import ast
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional
 from kitt.domain.entities import Tag, FileTags
 
 JAVA_PACKAGE_REGEX = re.compile(r'^\s*package\s+([a-zA-Z0-9_.]+)\s*;', re.MULTILINE)
