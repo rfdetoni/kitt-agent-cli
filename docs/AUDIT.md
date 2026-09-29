@@ -4,7 +4,7 @@ Last updated: 2026-09-10.
 
 ## Current ownership
 
-`kitt-agent-cli` is the Python control plane. It owns routing/providers, policy and approvals, goals and retained children, plugins/MCP/hooks, history/memory orchestration, telemetry, `kitt_runtime`, and the Python native bridge/fallback.
+`kitt-agent-cli` is the Python control plane. It owns routing/providers, policy and approvals, goals and retained children, plugins/MCP/hooks, history/Dreaming orchestration, telemetry, `kitt_runtime`, and the Python native bridge/fallback. Durable memory storage belongs exclusively to `kitt-memory`.
 
 It does **not** own Rust crates or native wheel builds (`kitt-toolbox`), the daemon/remote runtime (`kitt-assistant`), or eval/evolution packages (`kitt-ai-workers`). The module-boundary workflow is authoritative and must reject those ownership regressions.
 
