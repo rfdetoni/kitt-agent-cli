@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 
 def _select_popup_action(ui, entry: dict) -> None:
