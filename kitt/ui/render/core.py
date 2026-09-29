@@ -252,6 +252,26 @@ def _context_details_text(ui) -> str:
 
 
 def _toast_text(ui) -> str:
+    pending = getattr(ui.state, "pending_recovery", None)
+    if pending and ui.state.active_overlay is None:
+        error = str(pending.get("error") or "Resposta inválida do modelo")
+        error = " ".join(error.split())
+        if len(error) > 120:
+            error = error[:117] + "..."
+        lines = [
+            f" ↻ {error}",
+            "  [c] Continuar   [r] Tentar novamente   [Esc] Ignorar",
+        ]
+        ui.interactions.begin("recovery")
+        ui.interactions.add_text(
+            "recovery", 1, lines[1], "[c] Continuar", "recovery.action", "continue"
+        )
+        ui.interactions.add_text(
+            "recovery", 1, lines[1], "[r] Tentar novamente", "recovery.action", "retry"
+        )
+        return "\n".join(lines)
+
+    ui.interactions.begin("recovery")
     toasts = ui.state.active_toasts()
     if not toasts:
         return ""
