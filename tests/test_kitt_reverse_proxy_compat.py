@@ -488,6 +488,96 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                 "kitt_runtime",
             )
 
+    def test_tool_retry_preserves_structural_tool_definitions(self):
+        adapter = KittReverseProxyAdapter()
+        calls = []
+
+        class FakeToolHTTPError(urllib.error.HTTPError):
+            def __init__(self):
+                super().__init__(
+                    "http://127.0.0.1:3000/v1/chat/completions",
+                    400,
+                    "Bad Request",
+                    {},
+                    None,
+                )
+                self._fp = io.BytesIO(
+                    b'{"error":{"message":"invalid tool payload","code":"tool_parse_failed"}}'
+                )
+
+            def read(self, *args):
+                return self._fp.read(*args)
+
+        class FakeSuccessResponse:
+            def __init__(self):
+                self._lines = [
+                    b'data: {"choices":[{"delta":{"content":"ok after retry"}}]}' + bytes([10]),
+                    b"data: [DONE]" + bytes([10]),
+                ]
+                self._idx = 0
+
+            def readline(self, *args):
+                if self._idx < len(self._lines):
+                    line = self._lines[self._idx]
+                    self._idx += 1
+                    return line
+                return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(req, timeout=300):
+            calls.append(req)
+            if len(calls) == 1:
+                raise FakeToolHTTPError()
+            return FakeSuccessResponse()
+
+        request = LLMRequest(
+            model="gemini-web",
+            messages=[{"role": "user", "content": "inspect"}],
+            system_prompt="[KITT EXECUTION SLICE: DISCOVERY]\nInspect first.",
+            tool_definitions=[{
+                "name": "kitt_runtime",
+                "description": "Workspace runtime",
+                "args": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["repo.list", "repo.read"],
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                },
+            }],
+        )
+
+        with patch(
+            "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
+            side_effect=fake_urlopen,
+        ):
+            chunks = list(adapter.stream(request))
+
+        self.assertEqual("".join(chunks), "ok after retry")
+        self.assertEqual(len(calls), 2)
+        first_payload = json.loads(calls[0].data.decode("utf-8"))
+        retry_payload = json.loads(calls[1].data.decode("utf-8"))
+        self.assertEqual(
+            first_payload["tools"][0]["function"]["name"],
+            "kitt_runtime",
+        )
+        self.assertEqual(
+            retry_payload["tools"][0]["function"]["name"],
+            "kitt_runtime",
+        )
+        self.assertIn(
+            "KITT TOOL RETRY",
+            retry_payload["messages"][-1]["content"],
+        )
+
     def test_read_error_body_caches_on_repeated_reads(self):
         from kitt.llm.http_security import read_error_body
 
