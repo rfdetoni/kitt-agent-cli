@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 # Default prices in USD per 1M tokens
 DEFAULT_PRICE_TABLE: Dict[str, Dict[str, float]] = {
