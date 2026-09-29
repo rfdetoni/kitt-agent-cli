@@ -5,6 +5,7 @@ from kitt.llm.agent_contract import (
     TURN_CONTEXT_END_MARKER,
     TURN_CONTEXT_MARKER,
     UNTRUSTED_WORKSPACE_LABEL,
+    compact_reverse_proxy_orchestration,
     infer_agent_route,
     inject_agent_turn_context,
     normalize_agent_route,
@@ -114,6 +115,40 @@ class TestAgentContractContext(unittest.TestCase):
         )[0]
         payload = json.loads(envelope.split("\n", 1)[1])
         self.assertTrue(payload["discovery_required"])
+        self.assertEqual(payload["execution_phase"], "discovery")
+
+
+    def test_reverse_proxy_orchestration_drops_duplicate_persona_and_tool_contract(self):
+        system_prompt = (
+            "You are an autonomous coding agent operating inside the user's workspace.\n\n"
+            "Tool Contract:\nAvailable host tools: [{'name': 'kitt_runtime'}]\n\n"
+            "Memory:\ntrusted memory\n\n"
+            "Learned Harness:\ncompact harness\n\n"
+            "[KITT EXECUTION SLICE: DISCOVERY]\nInspect first."
+        )
+        compact = compact_reverse_proxy_orchestration(system_prompt)
+        self.assertNotIn("autonomous coding agent", compact or "")
+        self.assertNotIn("Tool Contract:", compact or "")
+        self.assertIn("Memory:\ntrusted memory", compact or "")
+        self.assertIn("Learned Harness:\ncompact harness", compact or "")
+        self.assertIn("[KITT EXECUTION SLICE: DISCOVERY]", compact or "")
+        self.assertLessEqual(len((compact or "").encode("utf-8")), 4096)
+
+    def test_mutation_turn_context_includes_compact_execution_plan(self):
+        result = inject_agent_turn_context(
+            [{"role": "user", "content": "Build the application"}],
+            workspace_context={"files": ["package.json"]},
+            route="code-generation",
+            discovery_required=True,
+        )
+        envelope = result[0]["content"].split(
+            f"\n{TURN_CONTEXT_END_MARKER}\n\n", 1
+        )[0]
+        payload = json.loads(envelope.split("\n", 1)[1])
+        self.assertEqual(
+            payload["execution_plan"],
+            ["discovery", "mutation", "validation"],
+        )
         self.assertEqual(payload["execution_phase"], "discovery")
 
     def test_route_contract_is_closed_to_known_router_routes(self):
