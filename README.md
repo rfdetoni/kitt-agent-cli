@@ -671,3 +671,12 @@ Agent CLI 0.77.3 fixes three user-facing execution issues:
 - CI now composes the Agent against the promoted Assistant 0.1.11 snapshot, which fixes the Linux voice-disabled native build used by the root ecosystem installer when ALSA development headers are unavailable.
 - Agent runtime behavior and public tool/protocol contracts are unchanged from 0.77.1.
 - Package metadata, source-tree fallback version and `uv.lock` are aligned at 0.77.2.
+
+
+## Agent CLI 0.78.2 — dead-code and authority cleanup
+
+- removes the obsolete Agent-local hybrid memory implementation and keeps durable corrections/concepts/links in `kitt-memoryd` only;
+- removes dead native event wiring and obsolete native-memory parameters;
+- current Agent history schema is created directly for new state and older local schema revisions are intentionally rejected instead of migrated;
+- bundled first-party inspection plugins share one loader implementation instead of one Python setup wrapper per plugin;
+- CI validates the current Memory/Assistant/Toolbox ecosystem revisions and adds unused-symbol checks.
