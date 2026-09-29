@@ -4,6 +4,10 @@
 
 **Control plane local-first para agentes autônomos de programação.**
 
+## Agent CLI 0.78.10 — dependências K.I.T.T. seguindo main
+
+Dependências VCS internas do ecossistema agora seguem `main` dos repositórios irmãos em vez de embutir SHAs cross-repo. O instalador raiz compõe os sources atuais e registra os SHAs efetivamente instalados apenas como proveniência.
+
 ## Agent CLI 0.78.9 — recuperação após Ctrl+C
 
 O cancelamento agora cria uma fronteira real para a fila local do TUI. Se uma thread de provider/tool ainda estiver encerrando após **Ctrl+C**, o bridge aposenta aquele executor de worker único e permite que o próximo prompt comece em um worker novo, em vez de ficar preso atrás do turno cancelado. A limpeza por geração também impede que um consumidor antigo apague o estado do turno substituto.
