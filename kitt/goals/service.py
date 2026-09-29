@@ -1,13 +1,14 @@
 import json
-import sqlite3
 import time
 import uuid
-from typing import List, Optional
 
 from kitt.goals.models import Goal, QualityGate
 from kitt.history.database import HistoryDatabase
 from kitt.security.capabilities import (
-    CAP_ARTIFACT_READ, CAP_REPO_READ, CAP_REPO_SEARCH, canonicalize_capabilities,
+    CAP_ARTIFACT_READ,
+    CAP_REPO_READ,
+    CAP_REPO_SEARCH,
+    canonicalize_capabilities,
 )
 
 
