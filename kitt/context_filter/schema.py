@@ -1,7 +1,11 @@
 import json
-from typing import Dict, Any, Tuple
+from typing import Any, Tuple
 from kitt.domain.entities import (
-    SemanticTask, ContextPlan, Constraint, TaskIntent, RiskLevel, ConstraintKind
+    SemanticTask,
+    Constraint,
+    TaskIntent,
+    RiskLevel,
+    ConstraintKind,
 )
 
 VALID_INTENTS = {'ASK', 'PLAN', 'IMPLEMENT', 'DEBUG', 'TEST', 'REVIEW', 'DOCUMENT', 'REFACTOR', 'UNKNOWN'}
