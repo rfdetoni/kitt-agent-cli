@@ -1,6 +1,8 @@
 # K.I.T.T. Agent CLI
 
-## Agent CLI 0.78.8 — recoverable model-response failures
+## Agent CLI 0.78.9 — Ctrl+C cancellation recovery
+
+Agent CLI 0.78.9 makes cancellation a hard boundary for the local TUI execution lane. If a provider/tool thread is still unwinding after **Ctrl+C**, the bridge retires that single-worker executor and starts the next prompt on a fresh worker instead of queueing behind the cancelled turn. Generation-aware cleanup also prevents a stale consumer from clearing the replacement turn state.
 
 Agent CLI 0.78.8 no longer treats an invalid model/chat response as an automatic end of the conversation. Recoverable reverse-proxy failures preserve the active session and are surfaced in the TUI with explicit **Continue** and **Retry** actions (keyboard or mouse).
 
