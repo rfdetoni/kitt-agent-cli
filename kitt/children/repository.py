@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import List, Optional
+from typing import Optional
 
 from kitt.children.models import ChildSession
 from kitt.history.database import HistoryDatabase
