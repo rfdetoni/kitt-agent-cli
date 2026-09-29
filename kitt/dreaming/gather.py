@@ -5,14 +5,11 @@ import datetime
 import hashlib
 import re
 import uuid
-from typing import List, Tuple, Optional, Set, Dict, Any
+from typing import List, Tuple, Set
 
 from kitt.dreaming.models import (
     CandidateSignal,
     DreamSnapshot,
-    MemoryKind,
-    SessionDigest,
-    SessionEntryDigest,
 )
 
 # Signal patterns for deterministic extraction
