@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from difflib import SequenceMatcher
 from dataclasses import replace
 from typing import Any, List, Optional
 
@@ -273,6 +274,15 @@ class TurnContextMixin:
 
         return context_map_str, explicit_str, agents_str, skills_str, context_blocks, explicit_items, build_stats, needs_project_context
 
+    @staticmethod
+    def _goal_preserves_original_request(task: SemanticTask, prompt: str) -> bool:
+        """Skip a duplicate raw request only when the semantic goal is nearly identical."""
+        original = " ".join(re.findall(r"\w+", str(prompt or "").casefold()))
+        goal = " ".join(re.findall(r"\w+", str(task.goal or "").casefold()))
+        if len(original) < 40 or len(goal) < 40:
+            return False
+        return SequenceMatcher(None, original, goal, autojunk=False).ratio() >= 0.90
+
     def _build_system_prompt(self, cmd: TurnCommand, task: SemanticTask, plan: ContextPlan,
                              exe_profile: ModelProfile, context_map_str: str, explicit_str: str,
                              agents_str: str, skills_str: str, agent_addressed: bool,
@@ -319,7 +329,12 @@ class TurnContextMixin:
             elif not plan.include_original_prompt and task.goal and task.intent != "UNKNOWN":
                 principal_task_prompt = task.to_execution_prompt()
             elif task.goal and task.intent != "UNKNOWN" and task.confidence >= 0.70:
-                principal_task_prompt = f"{task.to_execution_prompt()}\n\nOriginal Request:\n{cmd.prompt}"
+                semantic_prompt = task.to_execution_prompt()
+                principal_task_prompt = (
+                    semantic_prompt
+                    if self._goal_preserves_original_request(task, cmd.prompt)
+                    else f"{semantic_prompt}\n\nOriginal Request:\n{cmd.prompt}"
+                )
             else:
                 principal_task_prompt = cmd.prompt
         else:
