@@ -7,7 +7,6 @@ knows how to construct deterministically.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable
