@@ -1,10 +1,11 @@
 import asyncio
 import os
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from kitt.core.turn_events import TextDelta, TurnCompleted, TurnStarted
+from kitt.core.turn_events import TextDelta, TurnCancelled, TurnCompleted, TurnStarted
 from kitt.ui.event_bridge import TurnEventBridge
 
 
@@ -17,6 +18,28 @@ class Processor:
 
     def cancel_turn(self, turn_id, reason, conversation_id=None):
         return iter(())
+
+
+class BlockingProcessor:
+    def __init__(self):
+        self.first_started = threading.Event()
+        self.release_first = threading.Event()
+
+    def run_turn(self, command):
+        yield TurnStarted(
+            turn_id=command.turn_id,
+            conversation_id=command.conversation_id,
+            prompt=command.prompt,
+        )
+        if command.prompt == "first":
+            self.first_started.set()
+            self.release_first.wait(timeout=5)
+            yield TurnCompleted(response="stale-first")
+            return
+        yield TurnCompleted(response=f"completed:{command.prompt}")
+
+    def cancel_turn(self, turn_id, reason, conversation_id=None):
+        yield TurnCancelled(reason=reason)
 
 
 class OfflineDaemonBridge:
@@ -89,6 +112,50 @@ class TestTurnEventBridge(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(bridge._queue.maxsize, 128)
         await bridge.shutdown()
 
+    async def test_cancelled_blocking_worker_does_not_block_next_prompt(self):
+        events = []
+        processor = BlockingProcessor()
+        runtime = self._runtime()
+        runtime.processor = processor
+        bridge = TurnEventBridge(runtime, events.append, lambda: None)
+
+        try:
+            first_turn = await bridge.start("first", "conversation", no_history=True)
+            started = await asyncio.wait_for(
+                asyncio.to_thread(processor.first_started.wait, 1.0),
+                timeout=1.5,
+            )
+            self.assertTrue(started)
+
+            await bridge.cancel("User pressed Ctrl+C")
+            self.assertFalse(bridge.is_active)
+
+            second_turn = await bridge.start("second", "conversation", no_history=True)
+            self.assertNotEqual(first_turn, second_turn)
+            self.assertIsNotNone(bridge._consumer)
+            await asyncio.wait_for(bridge._consumer, timeout=1.0)
+
+            completed = [event.response for event in events if isinstance(event, TurnCompleted)]
+            self.assertIn("completed:second", completed)
+            self.assertNotIn("stale-first", completed)
+            self.assertFalse(bridge.is_active)
+        finally:
+            processor.release_first.set()
+            await asyncio.sleep(0.05)
+            await bridge.shutdown()
+
+    async def test_cancelled_consumer_cannot_clear_replacement_turn_state(self):
+        bridge = TurnEventBridge(self._runtime(), lambda event: None, lambda: None)
+        bridge._turn_generation = 1
+        bridge._active_turn_id = "replacement"
+        bridge._queue_signal = asyncio.Event()
+        stale_consumer = asyncio.create_task(bridge._consume(0))
+        stale_consumer.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await stale_consumer
+
+        self.assertEqual(bridge.active_turn_id, "replacement")
+        await bridge.shutdown()
     async def test_ola_uses_local_processor_when_daemon_never_spawned(self):
         events = []
         daemon = OfflineDaemonBridge()

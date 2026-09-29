@@ -30,7 +30,7 @@ class TurnEventBridge:
         self.on_event = on_event
         self.invalidate = invalidate
         self.max_queue = max_queue
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kitt-turn")
+        self._executor = self._create_executor()
         self._queue = queue.Queue(maxsize=max_queue)
         self._consumer = None
         self._producer_future = None
@@ -49,6 +49,26 @@ class TurnEventBridge:
         self._daemon_terminal = None
         self._event_loop = None
         self._queue_signal = None
+
+    @staticmethod
+    def _create_executor() -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(max_workers=1, thread_name_prefix="kitt-turn")
+
+    def _retire_local_executor(self) -> None:
+        """Detach a worker that may still be blocked inside a cancelled turn.
+
+        Future.cancel() cannot stop a thread that is already running. Reusing
+        the same single-worker executor would therefore queue the next prompt
+        behind the cancelled provider/tool call. A fresh executor lets the next
+        turn start immediately while generation guards suppress stale events from
+        the retired worker.
+        """
+        old_executor = self._executor
+        self._executor = self._create_executor()
+        try:
+            old_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
 
     @property
     def active_turn_id(self):
@@ -306,15 +326,18 @@ class TurnEventBridge:
 
     async def cancel(self, reason="Cancelled by user"):
         turn_id = self._active_turn_id
+        producer_future = self._producer_future
+        consumer = self._consumer
         self._active_turn_id = None
+        self._producer_future = None
+        self._consumer = None
         self._turn_generation += 1
 
-        # Cancel tasks and consumer immediately so is_active flips to False right away
-        if self._producer_future and not self._producer_future.done():
-            self._producer_future.cancel()
-        if self._consumer and not self._consumer.done():
-            self._consumer.cancel()
-        self._consumer = None
+        # Stop delivery immediately. Cancelling the asyncio Future is not enough
+        # to stop an already-running executor thread, so local execution below
+        # also retires the single-worker executor when necessary.
+        if consumer and not consumer.done():
+            consumer.cancel()
 
         if self._daemon_bridge:
             if turn_id:
@@ -322,6 +345,9 @@ class TurnEventBridge:
             self.invalidate()
             return
 
+        # Mark the processor turn cancelled before allowing a replacement turn to
+        # run. Any old worker that returns from a blocking provider/tool call will
+        # hit the processor's cooperative cancellation checks.
         if turn_id:
             for event in self.runtime.processor.cancel_turn(
                 turn_id, reason, conversation_id=self._active_conversation_id
@@ -329,6 +355,10 @@ class TurnEventBridge:
                 self._deliver(event)
         else:
             self._deliver(TurnCancelled(reason=reason))
+
+        if producer_future and not producer_future.done():
+            producer_future.cancel()
+            self._retire_local_executor()
 
         while not self._queue.empty():
             try:
@@ -402,7 +432,10 @@ class TurnEventBridge:
                         self._accumulated_assistant_text += item.delta
                     self._deliver(item)
         finally:
-            self._active_turn_id = None
+            # A cancelled consumer may finish after a replacement turn has
+            # already started. Only its own generation may clear active state.
+            if gen == self._turn_generation:
+                self._active_turn_id = None
 
     def _persist_assistant_response_if_needed(self, response=""):
         if self._daemon_bridge or self._no_history or not self._active_turn_id or not self._active_conversation_id:
