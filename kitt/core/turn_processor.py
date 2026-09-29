@@ -63,7 +63,10 @@ from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.logging import trace_event
 from kitt.core.turn_execution_guard import TurnExecutionGuard
 from kitt.core.turn_helpers import (
+    _attachment_retrieval_prompt as _attachment_retrieval_prompt,
     _reverse_proxy_identity,
+    _same_reverse_proxy_endpoint as _same_reverse_proxy_endpoint,
+    detect_chat_limit_message as detect_chat_limit_message,
 )
 from kitt.core.turn_tool_loop import TurnToolLoopMixin
 from kitt.core.turn_finalization import TurnFinalizationMixin
