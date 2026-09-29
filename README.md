@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.78.10 — main-first ecosystem dependencies
+
+Internal K.I.T.T. VCS dependencies now follow sibling `main` branches instead of embedding cross-repository commit SHAs. The root ecosystem installer remains responsible for composing the current sibling sources and recording the exact fetched revisions as provenance.
+
 ## Agent CLI 0.78.9 — Ctrl+C cancellation recovery
 
 Agent CLI 0.78.9 makes cancellation a hard boundary for the local TUI execution lane. If a provider/tool thread is still unwinding after **Ctrl+C**, the bridge retires that single-worker executor and starts the next prompt on a fresh worker instead of queueing behind the cancelled turn. Generation-aware cleanup also prevents a stale consumer from clearing the replacement turn state.
