@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import List, Tuple, Optional, Set, Dict
+from typing import List, Tuple
 
 from kitt.dreaming.models import MemoryRecord
 from kitt.dreaming.repository import MemoryRepository
