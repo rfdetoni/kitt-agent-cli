@@ -2,34 +2,26 @@ import sqlite3
 
 from kitt.history.database import HistoryDatabase
 from kitt.history.migrations import (
-    CURRENT_SCHEMA_VERSION,
+    IncompatibleSchemaError,
     MigrationRunner,
     SCHEMA_V1_STATEMENTS,
 )
 from kitt.history.repository import HistoryRepository
 
 
-def test_schema_v1_upgrades_in_place_with_hot_path_indexes():
+def test_obsolete_schema_is_rejected_instead_of_upgraded():
     conn = sqlite3.connect(":memory:")
     for statement in SCHEMA_V1_STATEMENTS:
         conn.execute(statement)
     conn.execute("INSERT INTO schema_info (version) VALUES (1)")
     conn.commit()
 
-    MigrationRunner().migrate(conn)
-
-    version = conn.execute("SELECT version FROM schema_info").fetchone()[0]
-    indexes = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'index' AND name IS NOT NULL"
-        )
-    }
-    assert version == CURRENT_SCHEMA_VERSION
-    assert "idx_conversations_workspace_updated" in indexes
-    assert "idx_telemetry_conversation_start" in indexes
-    assert "idx_telemetry_route_start" in indexes
-    assert "idx_edit_strategy_feedback_lookup" in indexes
+    try:
+        MigrationRunner().migrate(conn)
+    except IncompatibleSchemaError:
+        pass
+    else:
+        raise AssertionError("obsolete Agent state must require explicit reset")
 
 
 def test_tool_gain_prefix_range_keeps_telemetry_semantics():
