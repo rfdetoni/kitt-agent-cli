@@ -31,6 +31,46 @@ class TurnExecutionSliceTests(unittest.TestCase):
         self.assertIn("DISCOVERY -> FOUNDATION -> DOMAIN -> APPLICATION -> VERIFY", rendered)
         self.assertIn("patch.apply", rendered)
 
+    def test_execution_slice_prefers_complete_user_prompt_over_lossy_semantic_goal(self):
+        full_prompt = (
+            "Crie o marketplace completo com autenticação, serviços e avaliações; "
+            "o comprador deve avaliar o vendedor, que é o prestador."
+        )
+        task = SemanticTask(
+            original_prompt=full_prompt,
+            intent="IMPLEMENT",
+            goal="Crie o marketplace completo com autenticação, serviços e avaliações; o comprador",
+            actions=["scaffold", "auth", "users", "services", "ratings", "tests"],
+            technologies=["angular", "typescript"],
+            confidence=0.95,
+        )
+        execution_slice = build_execution_slice(
+            self._cmd(full_prompt), task, ContextPlan(enabled_tools=["repo", "process"])
+        )
+
+        self.assertIsNotNone(execution_slice)
+        self.assertIn("que é o prestador.", execution_slice.objective)
+        self.assertNotEqual(execution_slice.objective, task.goal)
+
+    def test_execution_slice_keeps_long_prompt_tail_when_bounded(self):
+        tail = "FINAL_REQUIREMENT_MUST_SURVIVE"
+        prompt = "Build a large application " + ("with detailed constraints " * 80) + tail
+        task = SemanticTask(
+            original_prompt=prompt,
+            intent="IMPLEMENT",
+            goal="lossy semantic goal",
+            actions=["one", "two", "three", "four", "five"],
+            technologies=["python"],
+            confidence=0.95,
+        )
+        execution_slice = build_execution_slice(
+            self._cmd(prompt), task, ContextPlan(enabled_tools=["repo"])
+        )
+
+        self.assertIsNotNone(execution_slice)
+        self.assertLessEqual(len(execution_slice.objective), 1000)
+        self.assertTrue(execution_slice.objective.endswith(tail))
+
     def test_small_targeted_edit_keeps_direct_execution(self):
         task = SemanticTask(
             original_prompt="Fix src/app.py", intent="IMPLEMENT",
