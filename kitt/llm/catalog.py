@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from kitt.llm.http_security import secure_urlopen
 from kitt.llm.domain import ModelDescriptor, ProviderDescriptor
