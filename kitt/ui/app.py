@@ -312,6 +312,7 @@ class KittUIApp:
     _show_active_history = _runtime_actions._show_active_history
     _load_conversation = _runtime_actions._load_conversation
     _execute_direct_tool = _runtime_actions._execute_direct_tool
+    _recover_model_turn = _runtime_actions._recover_model_turn
     _switch_workspace = _runtime_actions._switch_workspace
     _set_reasoning_effort = _runtime_actions._set_reasoning_effort
     _set_autonomy_profile = _runtime_actions._set_autonomy_profile
