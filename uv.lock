@@ -53,11 +53,11 @@ wheels = [
 [[package]]
 name = "kitt-protocol"
 version = "0.4.0"
-source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=5369821eb12128a08d80a56874351aaf02ef5cc7#5369821eb12128a08d80a56874351aaf02ef5cc7" }
+source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=main#5369821eb12128a08d80a56874351aaf02ef5cc7" }
 
 [[package]]
 name = "kitt-agent-cli"
-version = "0.78.9"
+version = "0.78.10"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },
@@ -77,7 +77,7 @@ tui = [
 [package.metadata]
 requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1,<1" },
-    { name = "kitt-protocol", git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=5369821eb12128a08d80a56874351aaf02ef5cc7" },
+    { name = "kitt-protocol", git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=main" },
     { name = "prompt-toolkit", specifier = ">=3.0.52,<4" },
     { name = "prompt-toolkit", marker = "extra == 'tui'", specifier = ">=3.0.52,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
