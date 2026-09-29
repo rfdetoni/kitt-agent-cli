@@ -347,6 +347,7 @@ class LLMClient:
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
         route: Optional[str] = None,
+        tool_definitions: Optional[List[Dict[str, object]]] = None,
     ) -> Generator[str, None, None]:
         system_prompt = normalize_execution_system_prompt(system_prompt)
 
@@ -431,6 +432,7 @@ class LLMClient:
             messages=messages,
             system_prompt=system_prompt,
             response_format=response_format,
+            tool_definitions=list(tool_definitions or ()),
             temperature=self.profile.temperature,
             context_window=self.profile.context_window,
             max_output_tokens=self.profile.max_output_tokens,
@@ -455,6 +457,7 @@ class LLMClient:
                 system_prompt=summarize_trace_text(system_prompt),
                 messages=summarize_trace_messages(messages),
                 response_format=response_format,
+                tool_definitions_count=len(tool_definitions or ()),
                 temperature=self.profile.temperature,
                 context_window=self.profile.context_window,
                 max_output_tokens=self.profile.max_output_tokens,
