@@ -65,6 +65,8 @@ def handle_turn_started(state: UIState, event: TurnStarted) -> None:
     state.route = "session"
     state.active_turn_id = event.turn_id
     state.active_conversation_id = event.conversation_id
+    if state.pending_recovery is not None:
+        state.clear_toasts()
     state.pending_recovery = None
     state.is_thinking = True
     state.status_text = "SCANNING"
