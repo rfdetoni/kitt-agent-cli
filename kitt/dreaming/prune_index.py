@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional
 
 from kitt.dreaming.models import (
     MemoryRecord,
-    MemoryStatus,
     DreamSnapshot,
 )
 from kitt.dreaming.repository import MemoryRepository
