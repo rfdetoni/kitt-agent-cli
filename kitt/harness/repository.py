@@ -1,5 +1,5 @@
-import hashlib,json,time,uuid
-from kitt.harness.models import HarnessEntry,RefinementProposal
+import hashlib, json, time, uuid
+from kitt.harness.models import HarnessEntry
 class HarnessRepository:
     def __init__(self,db): self.db=db
     @staticmethod
