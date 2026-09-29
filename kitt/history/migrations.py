@@ -167,65 +167,6 @@ SCHEMA_V1_STATEMENTS = [
     );
     """,
     """
-    CREATE TABLE IF NOT EXISTS memories (
-        id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        content TEXT NOT NULL,
-        normalized_content TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'ACTIVE',
-        importance REAL NOT NULL DEFAULT 0.5,
-        confidence REAL NOT NULL DEFAULT 1.0,
-        created_at REAL NOT NULL,
-        updated_at REAL NOT NULL,
-        last_accessed_at REAL,
-        access_count INTEGER NOT NULL DEFAULT 0,
-        valid_from REAL,
-        valid_until REAL,
-        supersedes_id TEXT,
-        content_hash TEXT NOT NULL,
-        pinned INTEGER NOT NULL DEFAULT 0,
-        metadata_json TEXT DEFAULT '{}',
-        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS memory_evidence (
-        id TEXT PRIMARY KEY,
-        memory_id TEXT NOT NULL,
-        workspace_id TEXT NOT NULL,
-        session_entry_id TEXT,
-        conversation_id TEXT,
-        source_kind TEXT NOT NULL,
-        evidence_text TEXT NOT NULL,
-        created_at REAL NOT NULL,
-        FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE,
-        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS dream_runs (
-        id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        started_at REAL NOT NULL,
-        finished_at REAL,
-        status TEXT NOT NULL,
-        sessions_scanned INTEGER NOT NULL DEFAULT 0,
-        entries_scanned INTEGER NOT NULL DEFAULT 0,
-        signals_found INTEGER NOT NULL DEFAULT 0,
-        memories_added INTEGER NOT NULL DEFAULT 0,
-        memories_merged INTEGER NOT NULL DEFAULT 0,
-        memories_superseded INTEGER NOT NULL DEFAULT 0,
-        memories_archived INTEGER NOT NULL DEFAULT 0,
-        model TEXT NOT NULL DEFAULT '',
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        failure_reason TEXT,
-        dry_run INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    );
-    """,
-    """
     CREATE TABLE IF NOT EXISTS daemon_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -560,61 +501,6 @@ SCHEMA_V1_STATEMENTS = [
     );
     """,
     """
-    CREATE TABLE IF NOT EXISTS knowledge_concepts (
-        id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        definition TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        revision INTEGER NOT NULL DEFAULT 1,
-        labels_json TEXT NOT NULL DEFAULT '[]',
-        source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
-        created_at REAL NOT NULL,
-        updated_at REAL NOT NULL,
-        UNIQUE(workspace_id, name)
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS knowledge_links (
-        id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        target_id TEXT NOT NULL,
-        relation TEXT NOT NULL,
-        weight REAL NOT NULL DEFAULT 1.0,
-        created_at REAL NOT NULL,
-        UNIQUE(workspace_id, source_id, target_id, relation),
-        CHECK(source_id <> target_id),
-        FOREIGN KEY(source_id) REFERENCES knowledge_concepts(id) ON DELETE CASCADE,
-        FOREIGN KEY(target_id) REFERENCES knowledge_concepts(id) ON DELETE CASCADE
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS correction_memories (
-        id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        context TEXT NOT NULL,
-        predicted TEXT NOT NULL,
-        corrected TEXT NOT NULL,
-        reason TEXT,
-        source TEXT NOT NULL DEFAULT 'user',
-        applied_count INTEGER NOT NULL DEFAULT 0,
-        vector_json TEXT,
-        created_at REAL NOT NULL,
-        updated_at REAL NOT NULL
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS native_memory_vectors (
-        memory_id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        vector_json TEXT NOT NULL,
-        dimensions INTEGER NOT NULL,
-        encoder TEXT NOT NULL,
-        updated_at REAL NOT NULL
-    );
-    """,
-    """
     CREATE TABLE IF NOT EXISTS edit_changesets (
         id TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
@@ -654,11 +540,6 @@ SCHEMA_V1_STATEMENTS = [
     # Indices
     "CREATE INDEX IF NOT EXISTS idx_session_entries_conversation_generation ON session_entries(conversation_id, generation, created_at);",
     "CREATE INDEX IF NOT EXISTS idx_session_entries_parent ON session_entries(parent_entry_id);",
-    "CREATE INDEX IF NOT EXISTS idx_memories_ws_status ON memories(workspace_id, status);",
-    "CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(workspace_id, content_hash);",
-    "CREATE INDEX IF NOT EXISTS idx_evidence_memory_id ON memory_evidence(memory_id);",
-    "CREATE INDEX IF NOT EXISTS idx_evidence_session_entry ON memory_evidence(session_entry_id);",
-    "CREATE INDEX IF NOT EXISTS idx_dream_runs_ws_started ON dream_runs(workspace_id, started_at);",
     "CREATE INDEX IF NOT EXISTS idx_daemon_events_session ON daemon_events(session_id, id ASC);",
     "CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at DESC, id DESC);",
     "CREATE INDEX IF NOT EXISTS idx_artifacts_conversation_created ON artifacts(conversation_id, created_at DESC);",
@@ -1002,16 +883,15 @@ SCHEMA_V6_STATEMENTS = [
 ]
 
 
-SCHEMA_V7_STATEMENTS = [
-    "DROP TABLE IF EXISTS memory_evidence;",
-    "DROP TABLE IF EXISTS dream_runs;",
-    "DROP TABLE IF EXISTS native_memory_vectors;",
-    "DROP TABLE IF EXISTS knowledge_links;",
-    "DROP TABLE IF EXISTS knowledge_concepts;",
-    "DROP TABLE IF EXISTS correction_memories;",
-    "DROP TABLE IF EXISTS memories;",
-]
 
+CURRENT_SCHEMA_STATEMENTS = [
+    *SCHEMA_V1_STATEMENTS,
+    *SCHEMA_V2_STATEMENTS,
+    *SCHEMA_V3_STATEMENTS,
+    *SCHEMA_V4_STATEMENTS,
+    *SCHEMA_V5_STATEMENTS,
+    *SCHEMA_V6_STATEMENTS,
+]
 
 class IncompatibleSchemaError(RuntimeError):
     """Raised when an incompatible database schema is detected."""
@@ -1036,81 +916,20 @@ class MigrationRunner:
 
     def migrate(self, conn: sqlite3.Connection) -> None:
         current_version = self.get_current_version(conn)
-
         if current_version == self.target_version:
             return
-
-        if current_version > self.target_version:
+        if current_version != 0:
             raise IncompatibleSchemaError(
-                f"Database schema version {current_version} is newer than supported version {self.target_version}. "
-                "Run: kitt doctor --reset-state"
+                f"State schema version {current_version} is obsolete; only schema "
+                f"{self.target_version} is supported. Run: kitt doctor --reset-state"
             )
 
-        if current_version not in (0, 1, 2, 3, 4, 5, 6):
-            raise IncompatibleSchemaError(
-                f"State schema version {current_version} is incompatible with this development build. "
-                "Run: kitt doctor --reset-state"
+        with conn:
+            for statement in CURRENT_SCHEMA_STATEMENTS:
+                conn.execute(statement)
+            conn.execute("DELETE FROM schema_info;")
+            conn.execute(
+                "INSERT INTO schema_info (version) VALUES (?);",
+                (self.target_version,),
             )
-
-        if current_version == 0:
-            # Fresh database: initialize v1 first so the incremental path is
-            # identical to upgrades from an existing installation.
-            with conn:
-                for statement in SCHEMA_V1_STATEMENTS:
-                    conn.execute(statement)
-                conn.execute("INSERT INTO schema_info (version) VALUES (1);")
-            current_version = 1
-            logger.info("Initialized KITT SQLite schema version 1")
-
-        if current_version == 1:
-            with conn:
-                for statement in SCHEMA_V2_STATEMENTS:
-                    conn.execute(statement)
-                conn.execute("UPDATE schema_info SET version = 2;")
-            current_version = 2
-            logger.info("Migrated KITT SQLite schema to version 2")
-
-        if current_version == 2:
-            with conn:
-                for statement in SCHEMA_V3_STATEMENTS:
-                    conn.execute(statement)
-                conn.execute("UPDATE schema_info SET version = 3;")
-            current_version = 3
-            logger.info("Migrated KITT SQLite schema to version 3")
-
-        if current_version == 3:
-            with conn:
-                for statement in SCHEMA_V4_STATEMENTS:
-                    conn.execute(statement)
-                conn.execute("UPDATE schema_info SET version = 4;")
-            current_version = 4
-            logger.info("Migrated KITT SQLite schema to version 4")
-
-        if current_version == 4:
-            with conn:
-                for statement in SCHEMA_V5_STATEMENTS:
-                    conn.execute(statement)
-                conn.execute("UPDATE schema_info SET version = 5;")
-            current_version = 5
-            logger.info("Migrated KITT SQLite schema to version 5")
-
-        if current_version == 5:
-            with conn:
-                for statement in SCHEMA_V6_STATEMENTS:
-                    conn.execute(statement)
-                conn.execute("UPDATE schema_info SET version = 6;")
-            current_version = 6
-            logger.info("Migrated KITT SQLite schema to version 6")
-
-        if current_version == 6:
-            with conn:
-                for statement in SCHEMA_V7_STATEMENTS:
-                    conn.execute(statement)
-                conn.execute("UPDATE schema_info SET version = 7;")
-            current_version = 7
-            logger.info("Migrated KITT SQLite schema to version 7 (external memory authority)")
-
-        if current_version != self.target_version:
-            raise IncompatibleSchemaError(
-                f"State schema version {current_version} did not reach target {self.target_version}."
-            )
+        logger.info("Initialized KITT SQLite schema version %s", self.target_version)
