@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import fields, is_dataclass
 from types import MethodType
 from typing import Any, Iterator
 
