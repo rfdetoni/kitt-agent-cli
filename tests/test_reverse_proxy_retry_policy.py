@@ -1,7 +1,14 @@
+import io
+import json
 import unittest
+import urllib.error
+from unittest.mock import patch
 
 from kitt.domain.entities import ModelProfile
 from kitt.llm.client import LLMClient, LLMConnectionError, LLMTimeoutError
+from kitt.llm.domain import ProviderRecoverableError
+from kitt.llm.providers.base import LLMRequest
+from kitt.llm.providers.kitt_reverse_proxy import KittReverseProxyAdapter
 from kitt.llm.retry import RetryConfig, RetryPolicy
 
 
@@ -60,6 +67,39 @@ class ReverseProxyRetryPolicyTests(unittest.TestCase):
 
     def test_generic_502_remains_retryable(self):
         self.assertTrue(RetryPolicy().is_retryable(LLMConnectionError("HTTP 502: Bad Gateway")))
+
+    def test_recoverable_contract_error_preserves_recovery_metadata(self):
+        body = json.dumps({
+            "error": {
+                "message": "model returned invalid contract",
+                "code": "agent_contract_invalid",
+                "recoverable": True,
+                "recovery_action": "continue",
+            }
+        }).encode()
+        error = urllib.error.HTTPError(
+            "http://127.0.0.1:3000/v1/chat/completions",
+            409,
+            "Conflict",
+            {},
+            io.BytesIO(body),
+        )
+        request = LLMRequest(
+            model="chatgpt-web",
+            messages=[{"role": "user", "content": "continue"}],
+            base_url="http://127.0.0.1:3000",
+        )
+        adapter = KittReverseProxyAdapter()
+
+        with patch(
+            "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
+            side_effect=error,
+        ):
+            with self.assertRaises(ProviderRecoverableError) as raised:
+                list(adapter.stream(request))
+
+        self.assertEqual(raised.exception.code, "agent_contract_invalid")
+        self.assertEqual(raised.exception.recovery_action, "continue")
 
 
 if __name__ == "__main__":
