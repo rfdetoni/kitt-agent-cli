@@ -341,7 +341,6 @@ def build_key_bindings(ui):
         delta = -1 if "left" in str(event.key_sequence[0].key) else 1
         pat = ui.model_setup_model.cycle_pattern(delta)
         curr = ui.add_provider_url_buffer.text.strip()
-        known_defaults = [p.get("default_url", "") for p in ui.model_setup_model.selected_pattern.__class__.__dict__.values() if isinstance(p, dict)]
         if not curr or curr in ("http://", "http://localhost:11434", "http://localhost:8000/v1", "https://api.anthropic.com", "https://generativelanguage.googleapis.com"):
             ui.add_provider_url_buffer.text = pat.get("default_url", "http://")
         event.app.invalidate()
