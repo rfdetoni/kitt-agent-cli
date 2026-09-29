@@ -46,8 +46,17 @@ class ExecutionSlice:
 
 
 def _objective(task: SemanticTask, prompt: str) -> str:
-    value = str(task.goal or prompt or "").replace("\x00", " ")
-    return " ".join(value.split())[:1000] or "Complete the requested workspace change."
+    # The raw user prompt is authoritative. SemanticTask.goal may be a lossy
+    # extraction, so it is only a fallback when the original prompt is absent.
+    value = str(prompt or task.original_prompt or task.goal or "").replace("\x00", " ")
+    compact = " ".join(value.split())
+    if not compact:
+        return "Complete the requested workspace change."
+    if len(compact) <= 1000:
+        return compact
+    # Keep the objective bounded without dropping the tail, where qualifiers
+    # and closing requirements frequently live.
+    return compact[:720].rstrip() + " … " + compact[-276:].lstrip()
 
 
 def _milestones(intent: str) -> tuple[str, ...]:
