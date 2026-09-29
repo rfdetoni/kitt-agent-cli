@@ -1,7 +1,6 @@
 """System, execution, patch, and git tool handlers."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict
 
 from kitt.security.execution_sandbox import SandboxUnavailable
