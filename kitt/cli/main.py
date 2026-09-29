@@ -27,6 +27,17 @@ def _agent_version() -> str:
         return "dev"
 
 
+def _log_runtime_identity() -> None:
+    debug_event(
+        logger,
+        "agent.startup",
+        version=_agent_version(),
+        package_path=str(Path(__file__).resolve()),
+        executable=str(Path(sys.executable).resolve()),
+        pid=os.getpid(),
+    )
+
+
 def _module_available(name: str) -> bool:
     try:
         return importlib.util.find_spec(name) is not None
@@ -441,6 +452,7 @@ def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     _configure_debug_log(args)
+    _log_runtime_identity()
     notify_if_update_available(component="agent-cli")
 
     if args.subcommand == "models":
