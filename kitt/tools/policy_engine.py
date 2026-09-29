@@ -3,9 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import shlex
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from kitt.domain.entities import Permission
 from kitt.security.action_review import ActionReviewBroker, ActionReviewResult
