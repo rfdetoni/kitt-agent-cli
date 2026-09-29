@@ -383,6 +383,18 @@ class TurnProcessor(
     ) -> str:
         prompt_budget = PromptBudget(profile.context_window, profile.max_output_tokens)
         max_allowed = prompt_budget.max_input_tokens
+        output_tokens = TokenCounter.count_tokens(output)
+        reserve_tokens = min(
+            max(128, output_tokens),
+            max(128, int(max_allowed * 0.20)),
+        ) if output else 0
+        if reserve_tokens:
+            self._rebudget_execution_messages(
+                messages,
+                system_prompt,
+                profile,
+                reserve_tokens=reserve_tokens,
+            )
         used = (
             self._token_ledger_instance().total_input_tokens(system_prompt, messages)
             + self._token_ledger_instance().count_text(wrapper_prefix + wrapper_suffix)
@@ -390,17 +402,25 @@ class TurnProcessor(
         remaining = max(0, max_allowed - used - 80)
         if remaining <= 0:
             return ""
-        if TokenCounter.count_tokens(output) <= remaining:
+        if output_tokens <= remaining:
             return output
         return prompt_budget._truncate_to_tokens(output, remaining)
 
     def _rebudget_execution_messages(
-        self, messages: List[Dict[str, str]], system_prompt: str, profile
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: str,
+        profile,
+        *,
+        reserve_tokens: int = 0,
     ) -> None:
-        """Keep each follow-up request inside provider input budget."""
-        available = PromptBudget(
-            profile.context_window, profile.max_output_tokens
-        ).max_input_tokens
+        """Keep follow-ups inside budget while reserving room for fresh tool evidence."""
+        available = max(
+            0,
+            PromptBudget(
+                profile.context_window, profile.max_output_tokens
+            ).max_input_tokens - max(0, int(reserve_tokens)),
+        )
         used = self._token_ledger_instance().total_input_tokens(system_prompt, messages)
         if used <= available:
             return

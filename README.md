@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.78.11 — evidence-backed validation and repair
+
+Build/test/check results are now completion gates instead of advisory model context. Failed command stdout/stderr is preserved for repair, fresh tool diagnostics receive prompt-budget headroom, any workspace mutation invalidates older successful validation, and explicit test/fix requests cannot complete until a later host validation succeeds.
+
 ## Agent CLI 0.78.10 — main-first ecosystem dependencies
 
 Internal K.I.T.T. VCS dependencies now follow sibling `main` branches instead of embedding cross-repository commit SHAs. The root ecosystem installer remains responsible for composing the current sibling sources and recording the exact fetched revisions as provenance.

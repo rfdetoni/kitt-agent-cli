@@ -1,10 +1,12 @@
 import io
 import unittest
 import urllib.error
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from kitt.llm.agent_contract import TURN_CONTEXT_MARKER, inject_agent_turn_context
 from kitt.llm.domain import ProviderProtocolError
+from kitt.core.turn_processor import TurnProcessor
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.providers.kitt_reverse_proxy import (
     KittReverseProxyAdapter,
@@ -121,6 +123,31 @@ class ReverseProxyToolFeedbackRegressionTests(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("invalid_tool_request", message)
         self.assertIn("tool_call_id desconhecido", message)
+
+
+    def test_tool_output_budget_reserves_room_for_latest_diagnostics(self):
+        processor = TurnProcessor.__new__(TurnProcessor)
+        processor._token_ledger = None
+        profile = SimpleNamespace(
+            context_window=256,
+            max_output_tokens=64,
+            backend="local",
+            base_url="",
+        )
+        messages = [
+            {"role": "user", "content": "fix the Angular project"},
+            {"role": "assistant", "content": "x" * 1800},
+        ]
+        fitted = processor._fit_tool_output(
+            "system",
+            messages,
+            "TS2551: Property getCurrentUser does not exist\n" * 8,
+            profile,
+            wrapper_prefix="HOST_STATUS: error\nHOST_OUTPUT:\n",
+            wrapper_suffix="\nrepair and retry",
+        )
+        self.assertIn("TS2551", fitted)
+        self.assertLess(len(messages[1]["content"]), 1800)
 
 
 if __name__ == "__main__":

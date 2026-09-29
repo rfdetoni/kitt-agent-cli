@@ -4,6 +4,10 @@
 
 **Control plane local-first para agentes autônomos de programação.**
 
+## Agent CLI 0.78.11 — validação e correção baseadas em evidência
+
+Resultados de build/test/check agora são gates de conclusão, não apenas contexto para o modelo. Falhas preservam stdout/stderr para correção, diagnósticos recentes recebem espaço reservado no orçamento de contexto, qualquer mutação invalida validações anteriores e pedidos explícitos de teste/correção só podem concluir depois de uma validação posterior bem-sucedida no host.
+
 ## Agent CLI 0.78.10 — dependências K.I.T.T. seguindo main
 
 Dependências VCS internas do ecossistema agora seguem `main` dos repositórios irmãos em vez de embutir SHAs cross-repo. O instalador raiz compõe os sources atuais e registra os SHAs efetivamente instalados apenas como proveniência.
