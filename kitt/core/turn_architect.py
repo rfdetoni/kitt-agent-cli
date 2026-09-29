@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 import json
 import re
 import time
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget
 from kitt.core.logging import trace_event
