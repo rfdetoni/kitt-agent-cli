@@ -37,6 +37,73 @@ class MemoryManager:
         if self.persistence_enabled:
             self.client.manage("archive_workspace", {"namespace": "agent-cli", "workspace_id": self.workspace_id})
 
+
+    def remember_correction(
+        self,
+        context: str,
+        predicted: str,
+        corrected: str,
+        reason: str | None = None,
+        source: str = "agent",
+    ) -> str:
+        body = self.client.manage("correction.record", {
+            "namespace": "agent-cli",
+            "workspace_id": self.workspace_id,
+            "context": context,
+            "predicted": predicted,
+            "corrected": corrected,
+            "reason": reason,
+            "source": source,
+            "sensitivity": "private",
+        })
+        correction = body.get("correction")
+        if not isinstance(correction, dict) or not correction.get("id"):
+            raise RuntimeError("kitt-memoryd did not return a correction id")
+        return str(correction["id"])
+
+    def remember_concept(
+        self,
+        name: str,
+        definition: str,
+        confidence: float = 0.7,
+        labels=(),
+        source_memory_ids=(),
+    ) -> dict[str, Any]:
+        body = self.client.manage("concept.upsert", {
+            "namespace": "agent-cli",
+            "workspace_id": self.workspace_id,
+            "name": name,
+            "definition": definition,
+            "confidence": float(confidence),
+            "labels": [str(value) for value in labels],
+            "source_memory_ids": [str(value) for value in source_memory_ids],
+            "sensitivity": "private",
+        })
+        concept = body.get("concept")
+        if not isinstance(concept, dict):
+            raise RuntimeError("kitt-memoryd did not return a concept")
+        return concept
+
+    def link_concepts(
+        self,
+        source_id: str,
+        target_id: str,
+        relation: str = "RELATED",
+        weight: float = 1.0,
+    ) -> str:
+        body = self.client.manage("concept.link", {
+            "namespace": "agent-cli",
+            "workspace_id": self.workspace_id,
+            "source_id": source_id,
+            "target_id": target_id,
+            "relation": relation,
+            "weight": float(weight),
+        })
+        edge = body.get("edge")
+        if not isinstance(edge, dict) or not edge.get("id"):
+            raise RuntimeError("kitt-memoryd did not return a knowledge-link id")
+        return str(edge["id"])
+
     @staticmethod
     def _item(record: dict[str, Any]) -> MemoryItem | None:
         text = str(record.get("content") or "").strip()
