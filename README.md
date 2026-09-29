@@ -680,3 +680,12 @@ Agent CLI 0.77.3 fixes three user-facing execution issues:
 - current Agent history schema is created directly for new state and older local schema revisions are intentionally rejected instead of migrated;
 - bundled first-party inspection plugins share one loader implementation instead of one Python setup wrapper per plugin;
 - CI validates the current Memory/Assistant/Toolbox ecosystem revisions and adds unused-symbol checks.
+
+
+## Agent CLI 0.78.3 — validated dead-code cleanup
+
+- removes unused Python imports and local bindings exposed by the new Ruff gate while preserving intentional public compatibility exports;
+- restores explicit compatibility aliases for `PromptToolkitBackend` and historical turn helpers instead of relying on incidental imports;
+- restores the history timestamp dependency required by workspace persistence;
+- keeps the standalone `kitt-memoryd` authority and current-schema-only Agent state policy introduced in 0.78.2;
+- validates the cleanup across Docker, Prime Architecture, full CI and multi-OS PR checks before ecosystem promotion.
