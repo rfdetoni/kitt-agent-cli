@@ -4,9 +4,11 @@
 
 **Control plane local-first para agentes autônomos de programação.**
 
-## Agent CLI 0.78.8 — recuperação de respostas inválidas do modelo
+## Agent CLI 0.78.9 — recuperação após Ctrl+C
 
-Falhas em que o modelo/chat responde fora do contrato não encerram mais a conversa automaticamente. Quando o Reverse Proxy sinaliza uma falha recuperável, a sessão é preservada e o TUI apresenta **Continuar** e **Tentar novamente**, também clicáveis por mouse.
+O cancelamento agora cria uma fronteira real para a fila local do TUI. Se uma thread de provider/tool ainda estiver encerrando após **Ctrl+C**, o bridge aposenta aquele executor de worker único e permite que o próximo prompt comece em um worker novo, em vez de ficar preso atrás do turno cancelado. A limpeza por geração também impede que um consumidor antigo apague o estado do turno substituto.
+
+Agent CLI 0.78.8 também deixou de encerrar automaticamente a conversa quando o modelo/chat responde fora do contrato. Quando o Reverse Proxy sinaliza uma falha recuperável, a sessão é preservada e o TUI apresenta **Continuar** e **Tentar novamente**, também clicáveis por mouse.
 
 A retomada usa a mesma conversa e orienta o modelo a não repetir tools ou mutações já concluídas. Erros reais de rede/protocolo que não forem marcados como recuperáveis continuam seguindo o fluxo normal de falha.
 
