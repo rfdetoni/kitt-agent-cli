@@ -1,19 +1,14 @@
 """DreamingService: Orchestrates the 4 phases of Dreaming Mode (ORIENT, GATHER, CONSOLIDATE, PRUNE & INDEX)."""
 from __future__ import annotations
 
-import hashlib
 import time
 import uuid
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, Dict, Any
+from typing import Callable, List, Optional, Dict, Any
 
 from kitt.dreaming.models import (
-    CandidateSignal,
-    DreamOperation,
-    DreamPlan,
     DreamResult,
     DreamRun,
-    DreamSnapshot,
     MemoryEvidence,
     MemoryRecord,
 )
