@@ -52,7 +52,7 @@ The model still sees the compact policy-governed `kitt_runtime` surface. Native 
 
 Dreaming, history, goals, approvals, artifacts and workspace execution state remain Agent-owned. Reusable durable memory primitives belong in `kitt-memory`; the Agent remains responsible for deciding when session evidence becomes durable knowledge and for orchestrating Dreaming/consolidation.
 
-Agent-originated project memories are committed first to the Agent's structured SQLite repository. `kittd/kitt-memory` is an interoperability mirror and an additional recall source, not a switchable authority: shared results are merged with local structured records, so daemon availability can add shared knowledge but can never hide Agent-durable memory. Markdown files are human-readable recovery storage only when structured persistence is unavailable. Project-memory clearing archives the local canonical records and best-effort deletes exact shared mirrors. Default files contain headers only; engineering defaults are policy, never fabricated user memory.
+Durable memory has exactly one authority: `kitt-memoryd`. The Agent history database stores conversation/execution state only. Dreaming remains Agent-owned orchestration, but memory records, corrections, concepts, links, provenance, dream-run persistence and maintenance are committed through the memory service. Markdown memory files, when present, are projections only and never a fallback database.
 
 Child worktrees isolate code edits while the original workspace remains the state root for history, approvals, memory and coordination. Isolation is reinforced by KITT's own mutation coordination layer:
 
