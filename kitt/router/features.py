@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Set, List
+from typing import Any, Set
 from kitt.router.models import TaskFeatures
 
 READ_KEYWORDS = {
@@ -65,7 +65,6 @@ class TaskFeatureExtractor:
         secondary = tuple(getattr(task, "secondary_intents", ()))
         is_mutation = intent in {"IMPLEMENT", "REFACTOR"}
         is_debug = intent == "DEBUG"
-        is_read = intent in {"ASK", "READ", "PLAN", "DOCUMENT"} and not (is_mutation or is_debug)
 
         risk = str(getattr(task, "risk", "LOW")).upper()
         if risk not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
