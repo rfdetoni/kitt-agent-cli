@@ -66,7 +66,7 @@ class _CredentialFileLock:
         self._handle = None
 
     def __enter__(self):
-        parent = CredentialStore._ensure_private_dir(self.path.parent)
+        CredentialStore._ensure_private_dir(self.path.parent)
         if self.path.is_symlink():
             raise PermissionError(
                 f"Refusing symlink credential lock: {self.path}"
