@@ -5,7 +5,6 @@ from typing import Any
 from kitt.integrations.semantic import SemanticCodeIntelligence
 from kitt.runtime import core_runtime as _core
 from kitt.runtime.search_fallback import full_scan_search
-from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_SEARCH, CAP_REPO_WRITE
 from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt.security.workspace_mutations import delete_path, list_entries, move_path
 
