@@ -138,11 +138,10 @@ class DynamicFormattingEngine:
                 continue
 
             current = prepared.content
-            current_hash = data.sha256
             healed = current != before
             if healed:
                 try:
-                    current_hash = self.fs.atomic_write(
+                    self.fs.atomic_write(
                         relative,
                         current,
                         expected_exists=True,
