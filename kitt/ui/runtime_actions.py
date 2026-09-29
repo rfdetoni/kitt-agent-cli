@@ -53,6 +53,7 @@ async def _load_conversation(ui, conversation: dict) -> bool:
             return False
     messages = await ui._run_blocking(ui.runtime.history.repo.get_messages_for_conversation, conv_id)
     ui.state.active_conversation_id = conv_id
+    ui.state.pending_recovery = None
     ui.state.route = "session"
     ui.state.transcript.clear()
     for message in messages[-500:]:
@@ -102,6 +103,67 @@ async def _execute_direct_tool(ui, tool_name: str, args: dict) -> None:
             pending["direct_tool"] = True
         return
     ui._show_result(result.output if result.success else f"Error: {result.error or result.output}")
+
+
+async def _recover_model_turn(ui, action: str = "continue") -> None:
+    pending = ui.state.pending_recovery
+    if not pending:
+        return
+    if ui.state.is_thinking or (ui.bridge and ui.bridge.is_active):
+        ui.state.add_toast("Já existe uma execução em andamento.", duration=2.0)
+        return
+
+    action = "retry" if str(action).lower() == "retry" else "continue"
+    conversation_id = str(
+        pending.get("conversation_id")
+        or ui.state.active_conversation_id
+        or ""
+    )
+    if not conversation_id:
+        conversation = ui.runtime.history.get_or_create_active()
+        conversation_id = str(conversation["id"])
+
+    # Keep the recovery instruction narrow and continuation-safe. The provider
+    # session already owns the prior model/tool round trips; do not replay the
+    # original task or any completed mutation.
+    if action == "retry":
+        prompt = (
+            "Retry only the last incomplete model step using the current conversation state. "
+            "Do not repeat any tool call or mutation that already succeeded. "
+            "Return a valid next action and continue the task."
+        )
+        label = "Tentando novamente a última resposta do modelo…"
+    else:
+        prompt = (
+            "Continue from the last valid state in this same conversation. "
+            "Do not repeat completed tool calls or mutations. "
+            "Resume only the incomplete step and continue until the task is complete."
+        )
+        label = "Continuando da última etapa válida…"
+
+    ui.state.pending_recovery = None
+    ui.state.clear_toasts()
+    ui.state.append_message("system", f"↻ {label}")
+    ui.state.status_text = "RECOVERING"
+    mode = (
+        "plan"
+        if (ui.state.planning_mode or ui.state.turn_mode == "plan")
+        else ("ask" if ui.state.turn_mode == "ask" else "auto")
+    )
+    try:
+        await ui.bridge.start(
+            prompt,
+            conversation_id,
+            explicit_files=set(ui.explicit_files),
+            no_history=not ui.runtime.config.history_enabled,
+            mode=mode,
+        )
+    except Exception as exc:
+        ui.state.pending_recovery = pending
+        ui.state.status_text = "↻ RECOVERABLE"
+        ui.state.add_toast(f"Falha ao retomar: {exc}", persistent=True)
+    if ui.application:
+        ui.application.invalidate()
 
 
 async def _switch_workspace(ui, raw_path: str) -> None:

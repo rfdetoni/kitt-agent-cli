@@ -9,6 +9,7 @@ from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 
 from kitt.ui.interaction import InteractionMap
 from kitt.ui.mouse import interactive_surface_mouse_handler
+from kitt.ui.render.core import _toast_text
 from kitt.ui.render.overlays import _permission_text
 from kitt.ui.state import UIState
 from kitt.ui.reverse_proxy_panel import ReverseProxyPanelModel
@@ -233,5 +234,57 @@ def test_permission_action_requires_press_and_release_inside_exact_label():
         await asyncio.sleep(0)
 
         ui.resolve_approval.assert_awaited_once_with("once")
+
+    asyncio.run(scenario())
+
+
+def test_recoverable_model_failure_renders_clickable_continue_and_retry_actions():
+    state = UIState()
+    state.pending_recovery = {
+        "turn_id": "turn-1",
+        "conversation_id": "conv-1",
+        "error": "agent_contract_invalid",
+        "recovery_action": "continue",
+    }
+    ui = SimpleNamespace(
+        state=state,
+        interactions=InteractionMap(),
+        prompt_buffer=SimpleNamespace(text=""),
+    )
+
+    text = _toast_text(ui)
+    lines = text.splitlines()
+    assert "[c] Continuar" in lines[1]
+    assert "[r] Tentar novamente" in lines[1]
+
+    continue_x = lines[1].index("[c] Continuar") + 1
+    retry_x = lines[1].index("[r] Tentar novamente") + 1
+    assert ui.interactions.resolve("recovery", continue_x, 1).value == "continue"
+    assert ui.interactions.resolve("recovery", retry_x, 1).value == "retry"
+
+
+def test_recovery_mouse_action_calls_same_recovery_controller():
+    async def scenario():
+        ui = SimpleNamespace(
+            interactions=InteractionMap(),
+            application=MagicMock(),
+            toast_control=object(),
+            _recover_model_turn=AsyncMock(),
+        )
+        ui.application.layout.focus = MagicMock()
+        ui.interactions.begin("recovery")
+        ui.interactions.add(
+            "recovery", 1, 2, 14, "recovery.action", "continue"
+        )
+
+        interactive_surface_mouse_handler(
+            ui, "recovery", _mouse(MouseEventType.MOUSE_DOWN, 4, 1)
+        )
+        interactive_surface_mouse_handler(
+            ui, "recovery", _mouse(MouseEventType.MOUSE_UP, 4, 1)
+        )
+        await asyncio.sleep(0)
+
+        ui._recover_model_turn.assert_awaited_once_with("continue")
 
     asyncio.run(scenario())

@@ -1,10 +1,12 @@
 # K.I.T.T. Agent CLI
 
-## Agent CLI 0.78.7 — authoritative objectives and runtime identity
+## Agent CLI 0.78.8 — recoverable model-response failures
 
-Agent CLI 0.78.7 keeps the original user prompt authoritative when building bounded execution slices. If semantic extraction shortens a goal, the discovery bootstrap no longer loses the closing requirements; oversized prompts remain bounded while preserving both the beginning and the tail.
+Agent CLI 0.78.8 no longer treats an invalid model/chat response as an automatic end of the conversation. Recoverable reverse-proxy failures preserve the active session and are surfaced in the TUI with explicit **Continue** and **Retry** actions (keyboard or mouse).
 
-Full/debug logs now emit an `agent.startup` identity event with the loaded Agent version, module path, Python executable and process ID. This makes stale resident runtimes immediately distinguishable after an ecosystem update.
+Recovery starts from the same conversation state and instructs the model not to replay tool calls or mutations that already succeeded. Network/protocol failures that are not declared recoverable remain normal failures.
+
+Agent CLI 0.78.7 also keeps the original user prompt authoritative when building bounded execution slices and emits the `agent.startup` debug identity event for stale-runtime diagnosis.
 
 [Português (Brasil)](README.pt-BR.md)
 

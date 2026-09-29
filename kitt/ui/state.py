@@ -107,6 +107,7 @@ class UIState:
     transcript_window_blocks: int = 120
     transcript_window_step: int = 120
     pending_approvals: list[dict[str, Any]] = field(default_factory=list)
+    pending_recovery: dict[str, Any] | None = None
     toasts: list[Toast] = field(default_factory=list)
     input_draft: str = ""
     tokens_used: int = 0

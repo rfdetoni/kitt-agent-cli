@@ -101,6 +101,25 @@ class ProviderProtocolError(ProviderError):
     """Raised when API returns malformed JSON or unexpected schema."""
 
 
+class ProviderRecoverableError(ProviderProtocolError):
+    """Raised when the provider rejected only the current model response.
+
+    The transport/session is still valid, so callers may offer an explicit
+    continue/retry action without reconnecting or replaying completed tools.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "provider_recoverable_error",
+        recovery_action: str = "continue",
+    ):
+        super().__init__(message)
+        self.code = code
+        self.recovery_action = recovery_action
+
+
 class ProviderOutputLimitError(ProviderProtocolError):
     """Raised when a provider explicitly reports max-output truncation."""
 

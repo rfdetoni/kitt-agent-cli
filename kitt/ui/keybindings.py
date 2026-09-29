@@ -545,9 +545,40 @@ def build_key_bindings(ui):
     def _(event):
         ui.close_overlay()
 
+    # Recoverable model response actions. These take precedence over the
+    # generic notice dismissal so Enter cannot accidentally hide the choices.
+    has_recovery = Condition(
+        lambda: ui.state.pending_recovery is not None
+        and ui.state.active_overlay is None
+        and not ui.state.is_thinking
+        and not (ui.bridge and ui.bridge.is_active)
+    )
+
+    @kb.add("c", filter=has_recovery, eager=True)
+    @kb.add("C", filter=has_recovery, eager=True)
+    def _(event):
+        asyncio.create_task(ui._recover_model_turn("continue"))
+
+    @kb.add("r", filter=has_recovery, eager=True)
+    @kb.add("R", filter=has_recovery, eager=True)
+    def _(event):
+        asyncio.create_task(ui._recover_model_turn("retry"))
+
+    @kb.add("escape", filter=has_recovery, eager=True)
+    def _(event):
+        ui.state.pending_recovery = None
+        ui.state.clear_toasts()
+        ui.state.status_text = "SYSTEM ONLINE"
+        if ui.application:
+            ui.application.invalidate()
+
     # Notice popup dismissal keybindings
     has_toasts = Condition(lambda: bool(ui.state.active_toasts()))
-    notice_popup = has_toasts & Condition(lambda: ui.state.active_overlay is None)
+    notice_popup = (
+        has_toasts
+        & ~has_recovery
+        & Condition(lambda: ui.state.active_overlay is None)
+    )
     @kb.add("escape", filter=notice_popup, eager=True)
     @kb.add("enter", filter=notice_popup, eager=True)
     def _(event):

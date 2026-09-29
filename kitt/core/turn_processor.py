@@ -41,6 +41,7 @@ from kitt.tools.log_reducer import LogReducer
 from kitt.tools.registry import ToolRegistry
 from kitt.tools.surface_selector import ToolSurfaceSelector
 from kitt.llm.client import LLMClient
+from kitt.llm.domain import ProviderRecoverableError
 from kitt.core.session_state import SessionState
 from kitt.core.turn_command import TurnCommand
 import uuid
@@ -1194,8 +1195,28 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     return
                 yield ev
 
+        except ProviderRecoverableError as e:
+            trace_event(
+                logger,
+                "turn.recoverable_failure",
+                turn_id=cmd.turn_id,
+                conversation_id=cmd.conversation_id,
+                error_code=getattr(e, "code", "provider_recoverable_error"),
+                recovery_action=getattr(e, "recovery_action", "continue"),
+            )
+            yield TurnFailed(
+                error=str(e),
+                turn_id=cmd.turn_id,
+                conversation_id=cmd.conversation_id,
+                recoverable=True,
+                recovery_action=getattr(e, "recovery_action", "continue"),
+            )
         except Exception as e:
-            yield TurnFailed(error=str(e))
+            yield TurnFailed(
+                error=str(e),
+                turn_id=cmd.turn_id,
+                conversation_id=cmd.conversation_id,
+            )
         finally:
             self._attachment_paths_by_turn.pop(cmd.turn_id, None)
             self._attachment_wire_sent.discard(cmd.turn_id)
