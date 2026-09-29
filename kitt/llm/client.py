@@ -6,7 +6,6 @@ import concurrent.futures
 import hashlib
 import logging
 import threading
-import urllib.request
 import uuid
 from typing import Dict, Generator, List, Optional
 
@@ -28,7 +27,6 @@ from kitt.llm.endpoint_security import (
     resolve_endpoint_credential,
 )
 from kitt.llm.domain import (
-    ProviderAuthError,
     ProviderConnectionError,
     ProviderError,
     ProviderProtocolError,
