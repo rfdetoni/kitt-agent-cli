@@ -627,6 +627,35 @@ class TurnProcessor(
                 allowed.append(name)
         return tuple(allowed)
 
+    def _tool_definitions(self, enabled_tools, planned_tools=None) -> list[dict]:
+        """Return the exact model-visible tool schemas for this execution turn."""
+        if not enabled_tools:
+            return []
+
+        definitions = [
+            dict(item)
+            for item in self.registry.get_tool_definitions(enabled_tools)
+        ]
+        if "kitt_runtime" not in enabled_tools or len(enabled_tools) != 1:
+            return definitions
+
+        edit_strategy = str(
+            getattr(self.session_state, "edit_strategy", "search_replace")
+            or "search_replace"
+        )
+        operations = self._runtime_operations_for_tools(
+            planned_tools or enabled_tools,
+            edit_strategy=edit_strategy,
+        )
+        runtime_definition = dict(definitions[0])
+        runtime_args = dict(runtime_definition.get("args") or {})
+        runtime_args["operation"] = {
+            "type": "string",
+            "enum": list(operations),
+        }
+        runtime_definition["args"] = runtime_args
+        return [runtime_definition]
+
     def _tool_instructions(self, enabled_tools, planned_tools=None) -> str:
         if not enabled_tools:
             return "No host tools are enabled. Answer directly."
@@ -642,18 +671,13 @@ class TurnProcessor(
             )
             operations_text = ", ".join(operations) or "(none)"
 
-            # Keep the model-facing runtime schema stable across turns. The
-            # per-turn operation allowlist is still enforced by the host and is
-            # appended after the invariant contract for provider prefix caching.
-            runtime_definition = dict(
-                self.registry.get_tool_definitions(["kitt_runtime"])[0]
-            )
-            runtime_args = dict(runtime_definition.get("args") or {})
-            runtime_args["operation"] = {
-                "type": "string",
-                "enum": list(operations),
-            }
-            runtime_definition["args"] = runtime_args
+            # Keep one structural source of truth for the model-visible
+            # runtime schema. The same definition is carried separately from
+            # prompt text to reverse-proxy providers.
+            runtime_definition = self._tool_definitions(
+                enabled_tools,
+                planned_tools=planned_tools,
+            )[0]
 
             examples = []
             if edit_strategy == "architect_editor":
@@ -733,7 +757,7 @@ Supported operations for this turn: {operations_text}.
 """.strip()
 
         instructions = f"""
-Available host tools: {self.registry.get_tool_definitions(enabled_tools)}
+Available host tools: {self._tool_definitions(enabled_tools, planned_tools=planned_tools)}
 For a host tool, respond with exactly:
 <kitt-tool>
 {{"name":"read_file","arguments":{{"path":"relative/path.py","start_line":1,"end_line":200}}}}
