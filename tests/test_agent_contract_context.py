@@ -82,6 +82,7 @@ class TestAgentContractContext(unittest.TestCase):
         payload = json.loads(envelope.split("\n", 1)[1])
         self.assertEqual(payload["route"], "context-gather")
         self.assertEqual(payload["workspace_context"], {"data": "repo evidence"})
+        self.assertNotIn("discovery_required", payload)
         self.assertEqual(original_content, original[0]["content"])
         self.assertEqual(original, [{"role": "user", "content": "Inspect the repository"}])
 
@@ -97,6 +98,23 @@ class TestAgentContractContext(unittest.TestCase):
         self.assertEqual(result[-1]["role"], "user")
         self.assertTrue(result[-1]["content"].startswith(TURN_CONTEXT_MARKER))
         self.assertTrue(result[-1]["content"].endswith(TURN_CONTEXT_END_MARKER))
+
+
+    def test_turn_context_preserves_discovery_phase_for_reverse_proxy(self):
+        original = [{"role": "user", "content": "Build the application"}]
+        result = inject_agent_turn_context(
+            original,
+            workspace_context={"files": [".kitt-router.json"]},
+            route="code-generation",
+            discovery_required=True,
+        )
+
+        envelope = result[0]["content"].split(
+            f"\n{TURN_CONTEXT_END_MARKER}\n\n", 1
+        )[0]
+        payload = json.loads(envelope.split("\n", 1)[1])
+        self.assertTrue(payload["discovery_required"])
+        self.assertEqual(payload["execution_phase"], "discovery")
 
     def test_route_contract_is_closed_to_known_router_routes(self):
         self.assertEqual(normalize_agent_route(None), "chat")
