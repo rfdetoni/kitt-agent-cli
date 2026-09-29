@@ -705,3 +705,11 @@ Agent CLI 0.77.3 fixes three user-facing execution issues:
 - The turn envelope carries a deterministic three-stage plan: `discovery -> mutation -> validation`, with only the current phase exposed to the model.
 - Trusted incremental orchestration sent to the reverse proxy is bounded to 4 KiB; workspace evidence remains a structured untrusted turn payload.
 - Direct/local providers keep their existing prompt behavior; the compaction applies specifically to the KITT reverse-proxy boundary.
+
+
+## Agent CLI 0.78.6 — structural reverse-proxy tools
+
+- Tool schemas now travel structurally from the execution request through the model/client boundary instead of being rediscovered from prompt text.
+- Reverse-proxy prompt compaction can safely remove the textual `Tool Contract` without dropping `kitt_runtime`.
+- The structural schema preserves the exact per-turn `kitt_runtime.operation` allowlist; host policy and approval checks remain authoritative.
+- Added a regression test for compact discovery prompts with structural tools.
