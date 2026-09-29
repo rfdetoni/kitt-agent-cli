@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, List, Dict, Set, Optional
+from typing import Any, List, Set, Optional
 from kitt.domain.entities import SemanticTask, ContextPlan, ChangeSet
 
 @dataclass
