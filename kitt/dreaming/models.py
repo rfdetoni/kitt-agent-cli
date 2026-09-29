@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, field
-from typing import Literal, Tuple, Optional, List, Dict, Any
+from typing import Literal, Tuple, Optional
 
 MemoryKind = Literal[
     "USER_PREFERENCE",
