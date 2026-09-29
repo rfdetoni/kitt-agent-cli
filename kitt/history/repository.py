@@ -1,10 +1,8 @@
 import json
 import uuid
-import time
 import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Dict, Any, Optional
-from kitt.history.database import HistoryDatabase
 
 if TYPE_CHECKING:
     from kitt.core.pending_action import PendingAction
@@ -59,7 +57,6 @@ def get_or_create_workspace_identity(root_path: str | Path):
     Uses a transient connection against the default on-disk location.  Prefer
     ``resolve_workspace_identity`` when a database handle already exists.
     """
-    from kitt.history.database import HistoryDatabase
     from kitt.history.migrations import MigrationRunner
 
     canon = canonical_workspace_path(root_path)
@@ -94,7 +91,6 @@ class HistoryRepository:
     def get_or_create_workspace(self, root_path: str) -> Dict[str, Any]:
         canon = canonical_workspace_path(root_path)
         path_hash = hashlib.sha256(canon.encode('utf-8')).hexdigest()
-        display_name = str(Path(canon).name) or "workspace"
         now = time.time()
 
         with self.db.get_connection() as conn:
@@ -664,7 +660,7 @@ class HistoryRepository:
             )
 
     def get_valid_pending_action(self, action_id: str, workspace_id: str) -> Optional['PendingAction']:
-        import json, time
+        import json
         from kitt.core.pending_action import PendingAction
         
         with self.db.get_connection() as conn:
