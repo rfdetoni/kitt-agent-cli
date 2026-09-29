@@ -7,6 +7,7 @@ from unittest.mock import patch
 from kitt.llm.agent_contract import TURN_CONTEXT_MARKER, inject_agent_turn_context
 from kitt.llm.domain import ProviderProtocolError
 from kitt.core.turn_processor import TurnProcessor
+from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.providers.kitt_reverse_proxy import (
     KittReverseProxyAdapter,
@@ -129,17 +130,26 @@ class ReverseProxyToolFeedbackRegressionTests(unittest.TestCase):
         processor = TurnProcessor.__new__(TurnProcessor)
         processor._token_ledger = None
         profile = SimpleNamespace(
-            context_window=256,
-            max_output_tokens=64,
-            backend="local",
-            base_url="",
+            context_window=2048,
+            max_output_tokens=256,
+            backend="kitt-reverse-proxy",
+            protocol="kitt-reverse-proxy",
+            base_url="http://127.0.0.1:3000",
+            credential_ref=None,
+            api_key=None,
         )
         messages = [
             {"role": "user", "content": "fix the Angular project"},
             {"role": "assistant", "content": "x" * 1800},
         ]
+        huge_workspace_prompt = (
+            "You are K.I.T.T., an autonomous coding agent.\n\n"
+            "Tool Contract:\nuse host tools\n\n"
+            "Files Context:\n" + ("export const stale = true;\n" * 3000) + "\n\n"
+            "Repo Map:\n" + ("src/app/legacy.ts\n" * 3000)
+        )
         fitted = processor._fit_tool_output(
-            "system",
+            huge_workspace_prompt,
             messages,
             "TS2551: Property getCurrentUser does not exist\n" * 8,
             profile,
@@ -147,7 +157,11 @@ class ReverseProxyToolFeedbackRegressionTests(unittest.TestCase):
             wrapper_suffix="\nrepair and retry",
         )
         self.assertIn("TS2551", fitted)
-        self.assertLess(len(messages[1]["content"]), 1800)
+        self.assertTrue(fitted.strip())
+        self.assertLess(
+            TokenCounter.count_tokens(processor._budget_system_prompt(huge_workspace_prompt, profile)),
+            TokenCounter.count_tokens(huge_workspace_prompt),
+        )
 
 
 if __name__ == "__main__":
