@@ -1,6 +1,6 @@
 import re
-from typing import List, Tuple
-from kitt.domain.entities import Constraint, ConstraintKind
+from typing import List
+from kitt.domain.entities import Constraint
 
 FILE_EXTENSIONS = r'(?:py|html|css|js|ts|tsx|jsx|json|md|txt|toml|yaml|yml|sh|rs|go|c|cpp|h|hpp|java|sql|xml|env|ini|cfg)'
 PATH_PATTERN = re.compile(r'(?:@)?(?:[a-zA-Z0-9_\-\.]+/)*[a-zA-Z0-9_\-]+\.' + FILE_EXTENSIONS + r'\b', re.IGNORECASE)
