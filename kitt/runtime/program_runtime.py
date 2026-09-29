@@ -1,7 +1,6 @@
 """Bounded read-only program IR for compressing multi-step model/tool interaction."""
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from kitt.runtime.programmatic_flow import (
