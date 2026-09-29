@@ -1,14 +1,10 @@
 """Model selector, provider discovery, and role assignment configuration."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from kitt.domain.entities import ModelProfile, RouterConfig
-from kitt.llm.auth import ProviderAuthService
 from kitt.llm.domain import (
-    ModelDescriptor,
     ModelDiscoveryResult,
     ProviderDiscoveryStatus,
 )
