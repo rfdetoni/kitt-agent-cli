@@ -58,14 +58,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rfdetoni/kitt-memory
-          ref: 73105776fc38cd92ebcffe65b38bd03059c92c11
+          ref: 4c5ce26cc7dd5b2fc27ec4956ab39131e8389d09
           path: memory-source
           persist-credentials: false
       - name: Checkout Assistant runtime companion
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rfdetoni/kitt-assistant
-          ref: 58ebdbaf6bc2c9135d645cd782d639e226e24d03
+          ref: 8db268e5b2daed9bb29b9e1a4ad2cf318eeafa6b
           path: assistant-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
