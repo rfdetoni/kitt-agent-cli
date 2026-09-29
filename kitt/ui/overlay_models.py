@@ -84,7 +84,7 @@ class DiffViewerModel:
 
 
 from kitt.ui.model_picker_state import ModelSelectionBehavior
-from kitt.ui.provider_picker_state import PROVIDER_PATTERNS, ProviderPatternBehavior
+from kitt.ui.provider_picker_state import ProviderPatternBehavior
 from kitt.ui.provider_catalog_state import ProviderCatalogBehavior
 from kitt.ui.provider_popup_state import ProviderPopupBehavior
 
