@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio as _asyncio
 import concurrent.futures
 import hashlib
 import json
