@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rfdetoni/kitt-memory
-          ref: 4c5ce26cc7dd5b2fc27ec4956ab39131e8389d09
+          ref: defa05c7712c726a4accc3626757b270d190387b
           path: memory-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
