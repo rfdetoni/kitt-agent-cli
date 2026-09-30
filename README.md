@@ -1,16 +1,12 @@
 # K.I.T.T. Agent CLI
 
-## Agent CLI 0.80.2 — bounded roles, managed processes and measurable learning
+## Agent CLI 0.80.3 — structural-only KITT execution transport
 
-Agent CLI 0.80.2 completes the agent-engineering rollout with host-enforced structural roles (`DISCOVER`, `ARCHITECT`, `IMPLEMENT`, `VERIFY`, `REVIEW`). Each role carries explicit tool/capability, mutation, context, model and budget policy; tool execution rechecks the role at the security boundary rather than trusting a prompt persona.
+Agent CLI 0.80.3 removes the final internal superprompt/tool-discovery compatibility path. Reverse Proxy execution now sends context exclusively as typed `kitt_context`, tools exclusively through structural `tool_definitions`, and route/correlation identity through `kitt_meta`. Textual `[KITT TURN CONTEXT]`, `Available host tools:` and `Tool Contract:` parsing are no longer used to recover executable authority.
 
-Background commands now have a workspace-owned lifecycle through `process.start/read/stdin/signal/stop/resume`. Output and exit become durable `PROCESS_OUTPUT`/`PROCESS_EXIT` observations before they are exposed back to the model, buffers are bounded/redacted, and control operations revalidate the authority snapshot captured when the process started. Synchronous `process.run` remains available for bounded build/test commands.
+The same request ID is shared between `kitt_meta` and the HTTP request header, while conversation/turn/request correlation remains out of model-visible logical history. Retry/continue retains the typed envelope and usage callback, so WebChat continuity no longer depends on reparsing a generated system prompt.
 
-`kitt learn` provides local evidence-only optimization analytics. It reports privacy-safe tool signatures and waste categories, can suggest measured experiments, and exposes `experiment start/switch/report` control/candidate windows. Raw command arguments and secrets are not included in its tool portfolio, missing provider telemetry stays unobserved rather than becoming zero, and a candidate is never promoted automatically.
-
-Skill discovery is bounded before semantic selection by root/depth/file/per-file/aggregate byte limits. Plugin capabilities and saved permissions are structurally enforced, including workspace + executable identity. Public Memory lifecycle hooks submit only evidence digests into the shared `kitt-memoryd` job pipeline, so the Agent does not create a parallel memory store or relearn recalled memory.
-
-The Reverse Proxy transport now carries typed context and available usage telemetry while preserving WebChat continuity and keeping managed process controls classified as mutations. This release is designed for KITT Protocol **0.5.1**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.1** and Assistant Runtime **0.2.26**.
+This patch keeps all 0.80.2 agent-engineering features: durable EventLedger/RunCoordinator state, ContextEpoch/recovery refs, global budgets with child leases, authority snapshots, selective rollback, managed background processes, structural roles, bounded skill/plugin discovery, Memory lifecycle evidence and privacy-safe `kitt learn`. It is paired with KITT Protocol **0.5.1**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.2** and Assistant Runtime **0.2.26**.
 
 ## Agent CLI 0.80.2 — hardened agent engineering runtime
 
