@@ -3,7 +3,10 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from kitt.core.completion_guard import (\n    _ProgressAwareExecutionLedger,\n    install_completion_guard,\n)
+from kitt.core.completion_guard import (
+    _ProgressAwareExecutionLedger,
+    install_completion_guard,
+)
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.turn_events import ToolCompleted, ToolStarted, TurnFailed
 
