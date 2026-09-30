@@ -119,7 +119,11 @@ class TestPrimeRuntime(unittest.TestCase):
         self.assertNotIn("goal.inspect", instructions)
         self.assertNotIn("live compact catalog", instructions)
 
-        native_tools = extract_openai_tools(instructions)
+        definitions = self.runtime.processor._tool_definitions(
+            ["kitt_runtime"],
+            planned_tools=planned_tools,
+        )
+        native_tools = openai_tools_from_definitions(definitions)
         self.assertEqual(len(native_tools), 1)
         operation_enum = native_tools[0]["function"]["parameters"]["properties"]["operation"]["enum"]
         self.assertEqual(
