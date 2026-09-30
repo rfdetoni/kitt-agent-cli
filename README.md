@@ -136,7 +136,7 @@ kitt evolve runs
 The full-screen TUI uses retained `prompt_toolkit` controls and enables application mouse support by default:
 
 - **Mouse wheel** scrolls only the panel under the pointer. Scroll routing is isolated through a central panel registry.
-- **F10** or `/mouse` toggles TUI mouse reporting off/on. Turn it off when native terminal text selection is preferred.
+- **F10** or `/mouse` toggles TUI mouse handling for interactive overlays. The main transcript always leaves terminal mouse reporting free for native text selection/copy.
 - **Ctrl+P** is the universal discovery path for commands and actions.
 - Direct `Ctrl+X` chords are intentionally limited to **Ctrl+X N** (new conversation), **Ctrl+X B** (sidebar) and **Ctrl+X A** (agents).
 - **F12** opens the model/provider wizard. Provider selection, endpoint configuration and authentication remain inside the same modal surface.
@@ -502,7 +502,7 @@ Mouse and keyboard share the same controller actions:
 - model and provider lists retain their existing hover/click behavior;
 - KITT Reverse Proxy service, plugin, profile and action controls are clickable.
 
-Mouse support remains enabled by default. Use `F10` or `/mouse` when native terminal text selection/copy is preferred. Wheel routing remains isolated to the panel under the pointer.
+Mouse support remains enabled by default for interactive overlays. The main transcript does not capture terminal mouse reporting, so native text selection/copy works directly; use `F10` or `/mouse` to disable TUI mouse handling inside overlays as well. Wheel routing remains isolated to the active interactive panel.
 
 Agent CLI **0.72.3** hardens this path: mouse-down records the semantic target without virtualizing the list before mouse-up, plain-text modal scrolling no longer snaps back to row zero, modal projections strip raw ANSI escape sequences before prompt_toolkit renders them, and Reverse Proxy action buttons expose explicit hover feedback without moving their hit-test geometry.
 
