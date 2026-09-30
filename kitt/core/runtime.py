@@ -215,7 +215,9 @@ class KittRuntime:
             state_root, persistence_enabled=persistence_enabled
         )
         approval = ApprovalManager(
-            db=database, ttl_seconds=config.approval_ttl_seconds
+            db=database,
+            ttl_seconds=config.approval_ttl_seconds,
+            workspace_id=identity.id,
         )
         policy = PolicyEngine(
             canonical_root,
