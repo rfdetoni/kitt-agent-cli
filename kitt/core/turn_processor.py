@@ -21,7 +21,6 @@ from kitt.skills.discovery import SkillDiscovery
 from kitt.skills.loader import ProgressiveSkillLoader
 from kitt.context_engine.engine import ContextEngine
 from kitt.context.working_set import ConversationWorkingSetStore
-from kitt.context_filter.fallback import is_container_runtime_request
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context.tool_receipts import (
