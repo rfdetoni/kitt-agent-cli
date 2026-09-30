@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -11,6 +12,7 @@ from kitt.compaction.validator import CompactionValidator
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.history.database import HistoryDatabase
 from kitt.history.session_tree import SessionTreeRepository
+from kitt_protocol import ContextRecoveryRef, RecoveryMode
 
 
 class CompactionService:
@@ -20,11 +22,15 @@ class CompactionService:
         tree: SessionTreeRepository,
         summarizer: Optional[Callable[[str], str]] = None,
         keep_recent: int = 6,
+        artifact_store=None,
+        workspace_id: str = "",
     ):
         self.db = db
         self.tree = tree
         self.summarizer = summarizer
         self.default_keep_recent = keep_recent
+        self.artifact_store = artifact_store
+        self.workspace_id = str(workspace_id or "")
         self.validator = CompactionValidator()
 
     def compact(
@@ -42,6 +48,35 @@ class CompactionService:
             str(e.payload.get("content") or e.payload.get("summary") or e.payload)
             for e in old
         )
+        recovery_refs: list[dict[str, object]] = []
+        if self.artifact_store is not None and self.workspace_id and raw:
+            raw_bytes = raw.encode("utf-8")
+            try:
+                artifact = self.artifact_store.put(
+                    self.workspace_id,
+                    raw_bytes,
+                    "COMPACTION_SOURCE",
+                    "Exact pre-compaction conversation context",
+                    conversation_id=conversation_id,
+                    metadata={
+                        "compacted_entry_ids": [e.id for e in old],
+                        "recovery": "EXACT",
+                    },
+                )
+                recovery_refs.append(
+                    {
+                        "artifact_id": artifact.id,
+                        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                        "original_bytes": len(raw_bytes),
+                        "token_estimate": TokenCounter.count_tokens(raw),
+                        "media_type": "text/plain; charset=utf-8",
+                        "recovery": RecoveryMode.EXACT.value,
+                    }
+                )
+            except Exception:
+                # Compaction remains available in ephemeral/test runtimes, but
+                # callers can see that no exact recovery reference was created.
+                recovery_refs = []
         narrative = self.summarizer(raw) if self.summarizer else self._deterministic_summary(raw)
         working_state = self._working_state(raw, narrative, mandatory_facts or [])
         summary = working_state.render() or narrative
@@ -55,6 +90,7 @@ class CompactionService:
                 "summary": summary,
                 "working_state": working_state.to_dict(),
                 "compacted_entry_ids": [e.id for e in old],
+                "recovery_refs": recovery_refs,
             },
             parent_entry_id=old[0].parent_entry_id,
             use_active_parent=False,
@@ -87,7 +123,11 @@ class CompactionService:
                     after,
                     1,
                     None,
-                    json.dumps({**details, "working_state": working_state.to_dict()}),
+                    json.dumps({
+                        **details,
+                        "working_state": working_state.to_dict(),
+                        "recovery_refs": recovery_refs,
+                    }),
                     time.time(),
                 ),
             )
@@ -101,6 +141,7 @@ class CompactionService:
             valid,
             details,
             working_state,
+            tuple(recovery_refs),
         )
 
     @staticmethod
