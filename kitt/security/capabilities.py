@@ -7,6 +7,7 @@ CAP_REPO_SEARCH = "repo.search"
 CAP_REPO_WRITE = "repo.write"
 CAP_CONTROL_PLANE_WRITE = "control_plane.write"
 CAP_PROCESS_RUN = "process.run"
+CAP_SAFE_COMPUTE = "compute.safe"
 CAP_ARTIFACT_READ = "artifact.read"
 CAP_ARTIFACT_WRITE = "artifact.write"
 CAP_CHILD_SPAWN = "child.spawn"
@@ -26,6 +27,7 @@ ALL_CAPABILITIES: FrozenSet[str] = frozenset({
     CAP_REPO_WRITE,
     CAP_CONTROL_PLANE_WRITE,
     CAP_PROCESS_RUN,
+    CAP_SAFE_COMPUTE,
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
     CAP_CHILD_SPAWN,
@@ -52,6 +54,7 @@ READ_ONLY_CAPABILITIES: FrozenSet[str] = frozenset({
     CAP_ARTIFACT_READ,
     CAP_CHILD_INSPECT,
     CAP_MEMORY_READ,
+    CAP_SAFE_COMPUTE,
     CAP_BROWSER_READ,
 })
 
@@ -67,7 +70,7 @@ TOOL_TO_CAPABILITY = {
     "write_file": CAP_REPO_WRITE,
     "apply_patch": CAP_REPO_WRITE,
     "run_command": CAP_PROCESS_RUN,
-    "python_compute": CAP_PROCESS_RUN,
+    "python_compute": CAP_SAFE_COMPUTE,
     "artifact_store": CAP_ARTIFACT_WRITE,
     "artifacts_store": CAP_ARTIFACT_WRITE,
     "artifact_read": CAP_ARTIFACT_READ,
