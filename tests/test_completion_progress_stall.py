@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from kitt.core.completion_guard import install_completion_guard
+from kitt.core.completion_guard import (\n    _ProgressAwareExecutionLedger,\n    install_completion_guard,\n)
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.turn_events import ToolCompleted, ToolStarted, TurnFailed
 
@@ -14,6 +14,99 @@ class _Registry:
 
 
 class CompletionProgressStallTests(unittest.TestCase):
+    def test_alternating_a_b_loop_is_detected(self):
+        ledger = _ProgressAwareExecutionLedger()
+        calls = [
+            ("a-1", {"operation": "repo.list", "arguments": {"path": "."}}),
+            ("b-1", {"operation": "repo.search", "arguments": {"pattern": "Foo"}}),
+            ("a-2", {"operation": "repo.list", "arguments": {"path": "."}}),
+        ]
+        for call_id, args in calls:
+            started = ToolStarted(
+                tool_name="kitt_runtime",
+                args=args,
+                call_id=call_id,
+            )
+            self.assertIsNone(ledger.start(started))
+            ledger.complete(
+                ToolCompleted(
+                    tool_name="kitt_runtime",
+                    success=True,
+                    output="same",
+                    call_id=call_id,
+                )
+            )
+
+        stall = ledger.start(
+            ToolStarted(
+                tool_name="kitt_runtime",
+                args={
+                    "operation": "repo.search",
+                    "arguments": {"pattern": "Foo"},
+                },
+                call_id="b-2",
+            )
+        )
+
+        self.assertIsNotNone(stall)
+        self.assertIn("A/B/A/B", stall)
+
+    def test_prose_only_mutation_attempt_gets_nudge_then_hard_stop(self):
+        class Processor:
+            def __init__(self):
+                self.calls = 0
+                self.session_state = SimpleNamespace(
+                    last_task=SimpleNamespace(
+                        intent="IMPLEMENT",
+                        actions=["edit"],
+                    )
+                )
+
+            def _execute_tool_loop(
+                self,
+                cmd,
+                request,
+                *args,
+                agent_route=None,
+                **kwargs,
+            ):
+                self.calls += 1
+                yield None, "I implemented it in prose.", list(request.messages)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            processor = Processor()
+            install_completion_guard(processor, _Registry(Path(tmp)))
+            cmd = SimpleNamespace(
+                prompt="crie o projeto e implemente o backend",
+                mode="auto",
+                turn_id="turn-prose",
+            )
+            request = ExecutionRequest(
+                system_prompt="test",
+                messages=[{"role": "user", "content": cmd.prompt}],
+                enabled_tools=["kitt_runtime"],
+            )
+
+            events = list(
+                processor._execute_tool_loop(
+                    cmd,
+                    request,
+                    None,
+                    None,
+                    "local",
+                    None,
+                )
+            )
+            failures = [
+                event
+                for event, _, _ in events
+                if isinstance(event, TurnFailed)
+            ]
+
+            self.assertEqual(processor.calls, 3)
+            self.assertEqual(len(failures), 1)
+            self.assertIn("prose-only", failures[0].error)
+
     def test_three_identical_repo_lists_fail_before_runaway_loop(self):
         class Processor:
             def __init__(self):
