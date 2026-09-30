@@ -284,6 +284,7 @@ def handle_approval_required(state: UIState, event: ApprovalRequired) -> None:
         "conversation_id": conv_id,
         "approval_id": event.approval_request_id,
         "workspace_id": event.workspace_id,
+        "executable_identity": event.executable_identity,
         "tool_name": event.tool_name,
         "args": event.args,
         "action_hash": event.action_hash,
