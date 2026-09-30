@@ -382,6 +382,22 @@ class TurnProcessor(
         wrapper_suffix: str = "",
     ) -> str:
         prompt_budget = PromptBudget(profile.context_window, profile.max_output_tokens)
+
+        # Browser-backed reverse-proxy sessions are stateful and the proxy reduces
+        # the API transcript to the next browser delta. Charging the full local
+        # execution transcript against the model window can therefore report zero
+        # remaining tokens even though the current host observation is the one
+        # piece of evidence the browser model still needs. Keep that observation
+        # bounded independently instead of silently dropping it.
+        if _reverse_proxy_identity(profile) is not None:
+            observation_budget = max(
+                256,
+                min(2048, max(256, int(profile.context_window) // 4)),
+            )
+            if TokenCounter.count_tokens(output) <= observation_budget:
+                return output
+            return prompt_budget._truncate_to_tokens(output, observation_budget)
+
         max_allowed = prompt_budget.max_input_tokens
         used = (
             self._token_ledger_instance().total_input_tokens(system_prompt, messages)
