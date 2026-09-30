@@ -375,6 +375,10 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             "temperature": request.temperature,
             "max_tokens": request.max_output_tokens,
         }
+        if request.context_envelope:
+            # KITT reverse-proxy consumes this typed IR before provider lowering.
+            # It is intentionally independent from human-language prompt parsing.
+            payload["kitt_context"] = request.context_envelope
         if tools:
             payload.update({
                 "tools": tools,

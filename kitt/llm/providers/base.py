@@ -27,6 +27,7 @@ class LLMRequest:
     system_prompt: Optional[str] = None
     response_format: Optional[str] = None
     tool_definitions: List[Dict[str, Any]] = field(default_factory=list)
+    context_envelope: Optional[Dict[str, Any]] = None
     temperature: float = 0.0
     context_window: int = 8192
     max_output_tokens: int = 4096

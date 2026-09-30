@@ -15,11 +15,7 @@ from kitt.llm.agent_contract import (
     AGENT_CONTRACT_HEADER,
     AGENT_CONTRACT_VERSION,
     AGENT_ROUTE_HEADER,
-    compact_reverse_proxy_orchestration,
-    infer_agent_route,
-    inject_agent_turn_context,
     normalize_agent_route,
-    split_workspace_context,
 )
 from kitt.llm.auth import ProviderAuthService
 from kitt.llm.browser_gateway import KittProxyBrowserGateway
@@ -270,6 +266,7 @@ class LLMClient:
         reasoning_effort: Optional[int] = None,
         route: Optional[str] = None,
         loop_action_budget: int = 4,
+        context_envelope: Optional[Dict[str, object]] = None,
     ) -> str:
         full_text = "".join(
             self.chat_stream(
@@ -280,6 +277,7 @@ class LLMClient:
                 reasoning_effort=reasoning_effort,
                 route=route,
                 loop_action_budget=loop_action_budget,
+                context_envelope=context_envelope,
             )
         )
         if not full_text.strip():
@@ -295,6 +293,7 @@ class LLMClient:
         reasoning_effort: Optional[int] = None,
         route: Optional[str] = None,
         loop_action_budget: int = 4,
+        context_envelope: Optional[Dict[str, object]] = None,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
@@ -311,6 +310,7 @@ class LLMClient:
                     reasoning_effort=reasoning_effort,
                     route=route,
                     loop_action_budget=loop_action_budget,
+                    context_envelope=context_envelope,
                 ):
                     if stop.is_set():
                         break
@@ -353,6 +353,7 @@ class LLMClient:
         route: Optional[str] = None,
         tool_definitions: Optional[List[Dict[str, object]]] = None,
         loop_action_budget: int = 4,
+        context_envelope: Optional[Dict[str, object]] = None,
     ) -> Generator[str, None, None]:
         system_prompt = normalize_execution_system_prompt(system_prompt)
 
@@ -386,20 +387,12 @@ class LLMClient:
         is_kitt_proxy = self._is_kitt_proxy()
         extra_headers: Dict[str, str] = {}
         if is_kitt_proxy:
+            # Route and context are structural. Never infer intent/tool authority
+            # by reparsing a textual system prompt.
             contract_route = (
                 normalize_agent_route(route)
                 if route is not None
-                else infer_agent_route(system_prompt, messages)
-            )
-            discovery_required = "[KITT EXECUTION SLICE: DISCOVERY]" in (system_prompt or "")
-            system_prompt, workspace_context = split_workspace_context(system_prompt)
-            system_prompt = compact_reverse_proxy_orchestration(system_prompt)
-            messages = inject_agent_turn_context(
-                messages,
-                workspace_context=workspace_context,
-                route=contract_route,
-                discovery_required=discovery_required,
-                loop_action_budget=loop_action_budget,
+                else ("agent-loop" if tool_definitions else "chat")
             )
             extra_headers[AGENT_CONTRACT_HEADER] = AGENT_CONTRACT_VERSION
             extra_headers[AGENT_ROUTE_HEADER] = contract_route
@@ -439,6 +432,7 @@ class LLMClient:
             system_prompt=system_prompt,
             response_format=response_format,
             tool_definitions=list(tool_definitions or ()),
+            context_envelope=dict(context_envelope) if context_envelope else None,
             temperature=self.profile.temperature,
             context_window=self.profile.context_window,
             max_output_tokens=self.profile.max_output_tokens,
@@ -464,6 +458,7 @@ class LLMClient:
                 messages=summarize_trace_messages(messages),
                 response_format=response_format,
                 tool_definitions_count=len(tool_definitions or ()),
+                context_segments_count=len((context_envelope or {}).get("segments", [])),
                 temperature=self.profile.temperature,
                 context_window=self.profile.context_window,
                 max_output_tokens=self.profile.max_output_tokens,
