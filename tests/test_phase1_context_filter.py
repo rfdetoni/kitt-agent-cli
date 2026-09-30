@@ -62,14 +62,16 @@ class TestPhase1ContextFilter(unittest.TestCase):
         self.assertEqual(task.intent, "ASK")
         self.assertEqual(plan.enabled_tools, [])
 
-    def test_explicitly_excluded_backend_is_not_synthesized_as_creation_action(self):
+    def test_creation_fallback_does_not_synthesize_domain_specific_scopes(self):
         task = self.fallback.generate_task(
             "Crie uma aplicação web Angular com frontend completo. "
             "Não crie backend nesta etapa."
         )
 
-        self.assertTrue(any("frontend scope" in action for action in task.actions))
-        self.assertFalse(any("backend scope" in action for action in task.actions))
+        rendered = "\n".join(task.actions)
+        self.assertNotIn("backend scope", rendered)
+        self.assertNotIn("frontend scope", rendered)
+        self.assertIn("only the project scope explicitly requested", rendered)
 
     def test_prompt_budget_output_reservation(self):
         budget = PromptBudget(window_size=8192, reserved_output=1200)
