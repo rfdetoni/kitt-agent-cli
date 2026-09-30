@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kitt.llm.providers.kitt_reverse_proxy import extract_openai_tools
+from kitt.llm.providers.kitt_reverse_proxy import openai_tools_from_definitions
 from kitt.runtime.safe_runtime import OPERATION_SPECS, SafeRuntime
 from kitt.security.capabilities import CAP_REPO_WRITE
 from kitt.tools.registry import ToolRegistry
@@ -299,7 +299,7 @@ class SafeRuntimeWorkspaceWriteTests(unittest.TestCase):
                     argument_schema["description"],
                 )
 
-                tools = extract_openai_tools(f"Available host tools: {[definition]}")
+                tools = openai_tools_from_definitions([definition])
                 native = tools[0]["function"]["parameters"]
                 self.assertIn(
                     "repo.write_file",
