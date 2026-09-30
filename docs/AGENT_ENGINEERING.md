@@ -1,6 +1,6 @@
 # Agent Engineering Architecture
 
-K.I.T.T. Agent CLI 0.80.0 keeps model reasoning flexible while moving execution
+K.I.T.T. Agent CLI 0.80.1 keeps model reasoning flexible while moving execution
 authority, durability, recovery and measurement into deterministic host-owned
 contracts.
 
@@ -127,3 +127,48 @@ appropriate, the isolated baseline/candidate experiment service.
 5. Large exact evidence is recoverable without forcing it into model context.
 6. Memory retrieval is not treated as proof of memory use.
 7. Learning observations do not silently rewrite runtime behavior.
+
+
+## Structural roles and bounded extensibility
+
+Agent roles are host-owned contracts rather than personas. `DISCOVER`,
+`ARCHITECT`, `IMPLEMENT`, `VERIFY` and `REVIEW` define capabilities,
+allowed tools, mutation authority, context policy, model policy and budget policy.
+The tool boundary rechecks the selected role so a read-only role cannot mutate
+even if the model requests it.
+
+Skill discovery is bounded before semantic selection by configurable maximum
+roots, traversal depth, file count, per-file bytes and aggregate bytes. Plugin
+exports remain constrained by typed `PluginCapabilities` in both in-process
+and isolated-worker execution.
+
+## Managed processes
+
+The compact runtime supports `process.start/read/stdin/signal/stop/resume` in
+addition to synchronous `process.run`. A managed process is workspace-scoped,
+has a stable identity across turns, emits durable `PROCESS_OUTPUT` and
+`PROCESS_EXIT` observations, and retains a bounded redacted output buffer.
+Control operations revalidate the authority snapshot captured at process start;
+stale policy, autonomy, approval revision, capability or executable identity
+fails closed.
+
+## Local learning telemetry
+
+`kitt learn` reports local evidence with privacy-safe tool signatures such as
+`Read(*.java)`, `Read(lockfile)`, `Bash(git diff)` and
+`mcp__server__tool`. Raw command arguments and repository paths are not exposed
+through the portfolio view.
+
+`kitt learn experiment start <feature>`, `switch <feature> control|candidate`
+and `report <feature>` measure observed sessions, turns, success/validation,
+tokens, latency, errors, tool calls and memory consumption when available.
+Missing provider metrics remain unobserved rather than being fabricated as zero.
+Candidate promotion is never automatic.
+
+## Public Memory lifecycle evidence
+
+The Agent sends digest-only lifecycle evidence for `session.started`,
+`turn.started`, `tool.completed`, `turn.completed` and `session.ended`.
+`kitt-memoryd` validates the lifecycle class, rejects memory/recall sources and
+routes the evidence into the same idempotent `MemoryJob` pipeline. No second
+durable memory store exists in the Agent or Reverse Proxy.
