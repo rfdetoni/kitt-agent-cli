@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import hashlib
 import json
 import re
 import time
 import uuid
-from dataclasses import asdict
-from typing import Any, Callable, List, Optional
+from typing import Callable, List, Optional
 
 from kitt.compaction.models import CompactionResult, WorkingState
 from kitt.compaction.validator import CompactionValidator
@@ -15,7 +13,6 @@ from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.history.database import HistoryDatabase
 from kitt.history.session_tree import SessionTreeRepository
 from kitt_protocol import CompactionCheckpoint, ContextRecoveryRef, RecoveryMode
-from kitt_protocol import ContextRecoveryRef, RecoveryMode
 
 
 class CompactionService:
@@ -97,35 +94,6 @@ class CompactionService:
             str(e.payload.get("content") or e.payload.get("summary") or e.payload)
             for e in old
         )
-        recovery_refs: list[dict[str, object]] = []
-        if self.artifact_store is not None and self.workspace_id and raw:
-            raw_bytes = raw.encode("utf-8")
-            try:
-                artifact = self.artifact_store.put(
-                    self.workspace_id,
-                    raw_bytes,
-                    "COMPACTION_SOURCE",
-                    "Exact pre-compaction conversation context",
-                    conversation_id=conversation_id,
-                    metadata={
-                        "compacted_entry_ids": [e.id for e in old],
-                        "recovery": "EXACT",
-                    },
-                )
-                recovery_refs.append(
-                    {
-                        "artifact_id": artifact.id,
-                        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
-                        "original_bytes": len(raw_bytes),
-                        "token_estimate": TokenCounter.count_tokens(raw),
-                        "media_type": "text/plain; charset=utf-8",
-                        "recovery": RecoveryMode.EXACT.value,
-                    }
-                )
-            except Exception:
-                # Compaction remains available in ephemeral/test runtimes, but
-                # callers can see that no exact recovery reference was created.
-                recovery_refs = []
         narrative = self.summarizer(raw) if self.summarizer else self._deterministic_summary(raw)
         working_state = self._working_state(raw, narrative, mandatory_facts or [])
         summary = working_state.render() or narrative
@@ -134,6 +102,29 @@ class CompactionService:
             raw=raw,
             working_state=working_state,
         )
+        recovery_refs = tuple(
+            {
+                "artifact_id": ref.artifact_id,
+                "sha256": ref.sha256,
+                "original_bytes": ref.original_bytes,
+                "token_estimate": ref.token_estimate,
+                "media_type": ref.media_type,
+                "recovery": ref.recovery.value,
+            }
+            for ref in checkpoint.recovery_refs
+        )
+        checkpoint_payload = {
+            "objective": checkpoint.objective,
+            "constraints": list(checkpoint.constraints),
+            "decisions": list(checkpoint.decisions),
+            "completed": list(checkpoint.completed),
+            "active": list(checkpoint.active),
+            "blocked": list(checkpoint.blocked),
+            "next_actions": list(checkpoint.next_actions),
+            "relevant_files": list(checkpoint.relevant_files),
+            "validation_state": list(checkpoint.validation_state),
+            "recovery_refs": list(recovery_refs),
+        }
         valid, details = self.validator.validate(summary, mandatory_facts or [])
         if not valid:
             raise ValueError(f"Unsafe compaction: {details}")
@@ -143,8 +134,9 @@ class CompactionService:
             {
                 "summary": summary,
                 "working_state": working_state.to_dict(),
+                "checkpoint": checkpoint_payload,
                 "compacted_entry_ids": [e.id for e in old],
-                "recovery_refs": recovery_refs,
+                "recovery_refs": list(recovery_refs),
             },
             parent_entry_id=old[0].parent_entry_id,
             use_active_parent=False,
@@ -180,7 +172,8 @@ class CompactionService:
                     json.dumps({
                         **details,
                         "working_state": working_state.to_dict(),
-                        "recovery_refs": recovery_refs,
+                        "checkpoint": checkpoint_payload,
+                        "recovery_refs": list(recovery_refs),
                     }),
                     time.time(),
                 ),
@@ -195,7 +188,8 @@ class CompactionService:
             valid,
             details,
             working_state,
-            tuple(recovery_refs),
+            checkpoint_payload,
+            recovery_refs,
         )
 
     @staticmethod
