@@ -279,10 +279,19 @@ class TurnEventBridge:
             return []
         return await self._daemon_bridge.list_approvals()
 
-    async def remember_approval(self, tool_name: str, scope: str) -> dict:
+    async def remember_approval(
+        self,
+        tool_name: str,
+        scope: str,
+        executable_identity: str = "",
+    ) -> dict:
         if not self._daemon_bridge:
             raise RuntimeError("Daemon approval authority is not active")
-        return await self._daemon_bridge.remember_approval(tool_name, scope)
+        return await self._daemon_bridge.remember_approval(
+            tool_name,
+            scope,
+            executable_identity=executable_identity,
+        )
 
     async def clear_remembered(self, scope: str = "session") -> dict:
         if not self._daemon_bridge:
