@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.core.turn_command import TurnCommand
+from kitt.core.turn_helpers import _reverse_proxy_identity
 from kitt.core.turn_events import (
     TextDelta,
     ThinkingCompleted,
@@ -18,6 +19,7 @@ from kitt.domain.entities import SemanticTask
 from kitt.llm.attachments import attach_to_first_user_message
 from kitt.llm.client import LLMClient
 from kitt.router.features import TaskFeatureExtractor
+from kitt.router.models import RoutingDecision
 from kitt.tools.protocol import TOOL_CALL_OPEN
 from kitt.tools.safe_python import PYTHON_TOOL_CALL_OPEN
 
@@ -303,6 +305,47 @@ class TurnModelMixin:
 
     def _resolve_execution_profile(self, cmd: TurnCommand, task: Optional[SemanticTask] = None) -> tuple:
         configured_exe_name, configured_exe = self.router.resolve_profile_for_task("code-generation")
+        explicit_client_profile = getattr(self.execution_client, "profile", None)
+        llm_first_profile = (
+            explicit_client_profile
+            if _reverse_proxy_identity(explicit_client_profile) is not None
+            else configured_exe
+            if _reverse_proxy_identity(configured_exe) is not None
+            else None
+        )
+        if llm_first_profile is not None:
+            profile_name = (
+                configured_exe_name
+                if llm_first_profile is configured_exe
+                else str(getattr(llm_first_profile, "model", "") or "reverse-proxy")
+            )
+            desired_output = max(
+                llm_first_profile.max_output_tokens,
+                min(4096, max(1024, llm_first_profile.context_window // 2)),
+            )
+            safe_output = min(
+                desired_output,
+                llm_first_profile.context_window - PromptBudget.MIN_INPUT_TOKENS,
+            )
+            llm_first_profile = replace(
+                llm_first_profile,
+                max_output_tokens=max(64, safe_output),
+            )
+            decision = RoutingDecision(
+                route_id=f"llm-first-{cmd.turn_id[:12]}",
+                selected_profile=profile_name,
+                selected_tier="large" if llm_first_profile.context_window > 8192 else "small",
+                context_profile=None,
+                reasons=("Reverse-proxy execution profile is explicitly configured; natural-language model routing is bypassed.",),
+                component_scores={profile_name: 1.0},
+                escalation_conditions=("validation_failed", "provider_unavailable"),
+                privacy_mode=getattr(self.config, "privacy_mode", "hybrid_redacted"),
+                privacy_decision="ALLOWED",
+                policy_version="llm-first-v1",
+                created_at=str(time.time()),
+            )
+            return profile_name, llm_first_profile, decision, None
+
         features = TaskFeatureExtractor.from_task(task, prompt=cmd.prompt, explicit_files=tuple(cmd.explicit_files)) if task else TaskFeatureExtractor.extract(cmd.prompt, explicit_files=tuple(cmd.explicit_files))
         routing_decision = self.routing_policy.select_route(
             features,
