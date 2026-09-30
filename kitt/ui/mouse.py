@@ -75,7 +75,11 @@ def toggle_mouse_support(ui) -> bool:
                 ui.application.output.disable_mouse_support()
         except Exception:
             pass
-    msg = "Mouse TUI ativado (Scroll Interativo)" if ui.mouse_support_enabled else "Mouse Terminal Nativo (Seleção/Cópia de Texto Habilitada)"
+    msg = (
+        "Mouse TUI ativo em menus/modais; transcript mantém seleção/cópia nativa"
+        if ui.mouse_support_enabled
+        else "Mouse TUI desativado; seleção/cópia nativa disponível em toda a interface"
+    )
     ui.state.add_toast(msg)
     if ui.application:
         ui.application.invalidate()

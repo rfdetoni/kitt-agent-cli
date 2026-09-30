@@ -48,6 +48,18 @@ class TestTUIApplication(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("PromptSession", type(app).__name__)
             self.assertEqual(app.cursor.get_cursor_shape(app), CursorShape.BLINKING_BEAM)
 
+    def test_mouse_capture_is_limited_to_interactive_overlays(self):
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+
+            self.assertFalse(ui._mouse_capture_enabled())
+            ui.state.active_overlay = "help"
+            self.assertTrue(ui._mouse_capture_enabled())
+
+            ui.mouse_support_enabled = False
+            self.assertFalse(ui._mouse_capture_enabled())
+
     async def test_scanner_animates_while_visible_even_when_idle(self):
         with create_pipe_input() as pipe:
             ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput())
