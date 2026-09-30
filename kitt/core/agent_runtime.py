@@ -372,9 +372,13 @@ class DurableTurnJournal:
         self.ledger = None
         self.episodes = None
         self.invariants = None
+        self.run_coordinator = getattr(processor, "run_coordinator", None)
         if self.db is not None:
             projections = build_default_projection_registry(self.db)
-            self.ledger = SessionLedger(self.db, projections)
+            self.ledger = getattr(processor, "event_ledger", None)
+            if self.ledger is None:
+                self.ledger = EventLedger(self.db, projections)
+                processor.event_ledger = self.ledger
             self.episodes = TaskEpisodeService(
                 self.db,
                 self.ledger,
@@ -400,6 +404,19 @@ class DurableTurnJournal:
     def begin(self, cmd: TurnCommand) -> None:
         persistent = _ensure_turn(self.processor, cmd)
         self.started[cmd.turn_id] = time.time()
+        budgets = getattr(self.processor, "execution_budgets", None)
+        if budgets is None:
+            budgets = {}
+            self.processor.execution_budgets = budgets
+        if cmd.turn_id not in budgets:
+            budgets[cmd.turn_id] = _new_execution_budget(self.processor)
+        if persistent and self.run_coordinator is not None:
+            self.run_coordinator.transition(
+                cmd.conversation_id,
+                cmd.turn_id,
+                "RUNNING",
+                reason="turn-begin",
+            )
         if persistent:
             store = _state_store(self.processor, cmd.conversation_id)
             if store:
@@ -509,6 +526,8 @@ class DurableTurnJournal:
                     turn_id=cmd.turn_id,
                     episode_id=episode_id,
                     force_checkpoint=state in TERMINAL,
+                    source="turn-processor",
+                    durability="DURABLE",
                 )
             except Exception:
                 event_record = None
@@ -523,11 +542,36 @@ class DurableTurnJournal:
             except Exception:
                 pass
 
+        if self.run_coordinator is not None and name in {
+            "TurnStarted",
+            "ApprovalRequired",
+            "TurnCompleted",
+            "TurnFailed",
+            "TurnBlocked",
+            "TurnCancelled",
+        }:
+            self.run_coordinator.observe_event(
+                cmd.conversation_id,
+                cmd.turn_id,
+                name,
+            )
+
         if name == "ModelSelected":
             self.profiles[cmd.turn_id] = str(getattr(event, "profile_name", "") or "")
         if state:
             self.state(cmd, state, getattr(event, "error", None) if state == "FAILED" else None)
         if state in TERMINAL:
+            budget = getattr(self.processor, "execution_budgets", {}).get(cmd.turn_id)
+            if budget is not None:
+                snapshots = getattr(
+                    self.processor,
+                    "execution_budget_snapshots",
+                    None,
+                )
+                if snapshots is None:
+                    snapshots = {}
+                    self.processor.execution_budget_snapshots = snapshots
+                snapshots[cmd.turn_id] = budget.snapshot()
             profile = self.profiles.pop(cmd.turn_id, "")
             started = self.started.pop(cmd.turn_id, time.time())
             if state in {"COMPLETED", "FAILED"}:
