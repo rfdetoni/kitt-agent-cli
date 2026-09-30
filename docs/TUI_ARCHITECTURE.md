@@ -44,7 +44,7 @@ The prompt no longer delegates wheel events to the transcript. This is enforced 
 
 ## Mouse policy
 
-Application mouse support is enabled by default. This makes hover-local wheel navigation work immediately. `F10` or `/mouse` disables it when native terminal text selection is desired. The status bar exposes the current mouse state permanently.
+Mouse interaction is enabled by default for interactive overlays, but terminal mouse reporting stays disabled on the main transcript so native text selection/copy works without a mode switch. `F10` or `/mouse` can disable TUI mouse handling entirely when native selection is desired inside overlays too. The status bar exposes the configured mouse state permanently.
 
 ### OpenTUI-inspired interaction model
 
