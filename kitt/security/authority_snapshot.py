@@ -99,6 +99,11 @@ def capture_authority_snapshot(
 def validate_authority_snapshot(
     envelope: dict[str, Any] | None,
     security_context,
+    *,
+    policy: Any | None = None,
+    autonomy: Any | None = None,
+    approval_manager: Any | None = None,
+    sandbox_profile: str | None = None,
 ) -> None:
     if not envelope:
         raise PermissionError("missing execution authority snapshot")
@@ -136,3 +141,26 @@ def validate_authority_snapshot(
         raise PermissionError("execution authority filesystem capability mismatch")
     if list(snapshot.get("network_caps") or []) != current_network:
         raise PermissionError("execution authority network capability mismatch")
+
+    if policy is not None and autonomy is not None and approval_manager is not None:
+        current = capture_authority_snapshot(
+            security_context,
+            policy=policy,
+            autonomy=autonomy,
+            approval_manager=approval_manager,
+            sandbox_profile=(
+                sandbox_profile
+                if sandbox_profile is not None
+                else str(snapshot.get("sandbox_profile") or "default")
+            ),
+        )["snapshot"]
+        for key in (
+            "policy_revision",
+            "autonomy_revision",
+            "approval_revision",
+            "sandbox_profile",
+        ):
+            if str(snapshot.get(key) or "") != str(current.get(key) or ""):
+                raise PermissionError(
+                    f"execution authority snapshot {key} is stale"
+                )
