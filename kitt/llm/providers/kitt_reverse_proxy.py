@@ -93,6 +93,34 @@ def _normalize_parameters(name: str, raw: Any) -> Dict[str, Any]:
     return schema
 
 
+def openai_tools_from_definitions(
+    definitions: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Convert structural KITT tool definitions into OpenAI function tools."""
+    result: List[Dict[str, Any]] = []
+    seen = set()
+    for entry in definitions or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", name)
+            or name in seen
+        ):
+            continue
+        seen.add(name)
+        function: Dict[str, Any] = {
+            "name": name,
+            "parameters": _normalize_parameters(name, entry.get("args")),
+        }
+        description = entry.get("description")
+        if isinstance(description, str) and description.strip():
+            function["description"] = description.strip()[:4096]
+        result.append({"type": "function", "function": function})
+    return result
+
+
 def _reject_legacy_tool_contract(system_prompt: Optional[str]) -> None:
     if system_prompt and "Tool Contract:" in system_prompt:
         raise ProviderProtocolError(
