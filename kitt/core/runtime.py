@@ -241,6 +241,7 @@ class KittRuntime:
         )
 
         registry = ToolRegistry(canonical_root, context_engine=context_engine)
+        registry.workspace_id = identity.id
         registry.policy = policy
         registry.approval_manager = approval
         registry.runtime_config = config
