@@ -99,6 +99,24 @@ class ExecutionBudgetLedger:
             self.input_tokens += max(0, int(input_tokens))
             self.cost += max(0.0, float(cost))
 
+    def reconcile_model_input(
+        self,
+        *,
+        estimated_tokens: int,
+        actual_tokens: int,
+    ) -> None:
+        """Replace one preflight input estimate with provider-observed usage."""
+        estimated = max(0, int(estimated_tokens))
+        actual = max(0, int(actual_tokens))
+        with self._lock:
+            self._check_duration()
+            current_without_estimate = max(0, self.input_tokens - estimated)
+            next_total = current_without_estimate + actual
+            delta = next_total - self.input_tokens
+            if delta > 0:
+                self._check_tokens(next_input=delta)
+            self.input_tokens = next_total
+
     def record_model_output(self, *, output_tokens: int = 0, cost: float = 0.0) -> None:
         with self._lock:
             self._check_duration()
