@@ -43,7 +43,7 @@ RULES:
 6. Output JSON ONLY. No markdown, no conversation.
 """
 
-FilterSource = Literal['LLM', 'DETERMINISTIC_BYPASS', 'FALLBACK']
+FilterSource = Literal['LLM', 'LLM_FIRST', 'DETERMINISTIC_BYPASS', 'FALLBACK']
 
 
 def _is_reverse_proxy_profile(profile: ModelProfile) -> bool:
