@@ -13,6 +13,7 @@ from types import MethodType
 from typing import Any, Iterator
 
 from kitt.core.execution_budget import ExecutionBudgetLedger
+from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import ApprovalRequired, TurnCompleted, TurnFailed
 from kitt.evidence.episodes import TaskEpisodeService
@@ -61,7 +62,7 @@ def _state_store(processor, conversation_id: str):
 
 
 def _new_execution_budget(processor) -> ExecutionBudgetLedger:
-    config = processor.config
+    config = getattr(processor, "config", None) or RuntimeConfig()
     max_input = max(1, int(getattr(config, "max_input_tokens_per_turn", 262144)))
     max_output = max(1, int(getattr(config, "max_output_tokens_per_turn", 131072)))
     max_total = max(
