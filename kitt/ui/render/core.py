@@ -62,6 +62,10 @@ def _transcript_text(ui):
     limit = max(1, int(getattr(ui.state, "transcript_window_blocks", 120)))
     hidden_count = max(0, len(transcript) - limit)
     visible_blocks = transcript[hidden_count:]
+    last_toggle_block_id = next(
+        (block.id for block in reversed(transcript) if block.kind in {"tool", "thought"}),
+        None,
+    )
     live_ids = set()
 
     if hidden_count:
@@ -91,6 +95,7 @@ def _transcript_text(ui):
             block.collapsed,
             str(full_output) if full_output is not None else None,
             elapsed,
+            block.id == last_toggle_block_id,
         )
         cached = cache.get(block.id)
         if cached and cached[0] == signature:
@@ -112,16 +117,17 @@ def _transcript_text(ui):
                 else:
                     text = f"{text} ({elapsed or 0}s...)"
 
+            is_toggle_target = block.id == last_toggle_block_id
             if block.collapsed:
                 first_line = text.split("\n")[0]
-                fragment.append(
-                    (f"class:{block.kind}", f"{first_line} (ctrl+o para expandir)\n")
-                )
+                hint = " (ctrl+o para expandir)" if is_toggle_target else ""
+                fragment.append((f"class:{block.kind}", f"{first_line}{hint}\n"))
             elif full_output is not None:
+                hint = "\n    (ctrl+o para recolher)" if is_toggle_target else ""
                 fragment.append(
                     (
                         f"class:{block.kind}",
-                        f"{text}\n    {full_output}\n    (ctrl+o para recolher)\n",
+                        f"{text}\n    {full_output}{hint}\n",
                     )
                 )
             else:
