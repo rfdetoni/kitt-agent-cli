@@ -97,6 +97,68 @@ def _new_execution_budget(processor) -> ExecutionBudgetLedger:
     )
 
 
+def reserve_child_budget(
+    processor,
+    parent_turn_id: str,
+    child_id: str,
+    token_cap: int,
+):
+    budgets = getattr(processor, "execution_budgets", None)
+    if budgets is None:
+        budgets = {}
+        processor.execution_budgets = budgets
+    ledger = budgets.get(parent_turn_id)
+    if ledger is None:
+        ledger = _new_execution_budget(processor)
+        budgets[parent_turn_id] = ledger
+
+    call_cap = max(
+        1,
+        min(
+            8,
+            int(getattr(processor.config, "max_model_calls_per_turn", 24)),
+        ),
+    )
+    lease = ledger.reserve_subagent(
+        child_id,
+        token_cap=max(1, int(token_cap)),
+        call_cap=call_cap,
+        cost_cap=0.0,
+    )
+    leases = getattr(processor, "child_budget_leases", None)
+    if leases is None:
+        leases = {}
+        processor.child_budget_leases = leases
+    leases[child_id] = {
+        "turn_id": parent_turn_id,
+        "lease_id": lease.id,
+        "token_cap": lease.token_cap,
+    }
+    return lease
+
+
+def settle_child_budget(
+    processor,
+    child_id: str,
+    tokens_used: int = 0,
+) -> None:
+    leases = getattr(processor, "child_budget_leases", {})
+    binding = leases.pop(child_id, None)
+    if not binding:
+        return
+    ledger = getattr(processor, "execution_budgets", {}).get(
+        binding["turn_id"]
+    )
+    if ledger is None:
+        return
+    token_cap = max(0, int(binding.get("token_cap", 0)))
+    ledger.consume_child(
+        binding["lease_id"],
+        tokens=min(max(0, int(tokens_used)), token_cap),
+    )
+    ledger.settle_child(binding["lease_id"])
+
+
 def _jsonable(value: Any) -> Any:
     try:
         json.dumps(value)
