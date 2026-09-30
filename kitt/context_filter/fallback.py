@@ -132,15 +132,10 @@ def _execution_actions(
     ))
 
     if creation_request:
-        explicit_scopes = False
-        if 'backend' in prompt_lower or 'back end' in prompt_lower:
-            actions.append('create and implement the requested backend scope using host mutation tools')
-            explicit_scopes = True
-        if 'frontend' in prompt_lower or 'front end' in prompt_lower:
-            actions.append('create and implement the requested frontend scope using host mutation tools')
-            explicit_scopes = True
-        if not explicit_scopes:
-            actions.append('create and implement the requested project structure using host mutation tools')
+        actions.append(
+            'create and implement only the project scope explicitly requested by the user '
+            'using host mutation tools'
+        )
     else:
         actions.append('apply the requested workspace change using the available host mutation tools')
 

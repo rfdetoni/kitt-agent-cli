@@ -1,5 +1,14 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.79.0 — LLM-first bounded execution loops
+
+Reverse-proxy/WebChat execution now uses agent-contract **v2** with a language-neutral `agent-loop`. The original human request is forwarded verbatim and is the semantic authority: Agent CLI no longer compiles, translates, summarizes, or lexically classifies natural-language intent before WebChat decides what to do.
+
+KITT remains deterministic where it should be: capability scoping, policy/approval, repository/process execution, host evidence, cancellation, token bounds and validation gates. The model owns a short execution loop with an objective, completion criteria and status. After the configured `agent_loop_action_budget` host round trips (default **4**), the Reverse Proxy requires a checkpoint so the model reassesses actual evidence before continuing.
+
+The first agent-loop mutation requires repository evidence, and any mutation still requires a successful host build/test/check before final completion when validation is available. This is an internal ecosystem protocol change; Agent CLI 0.79.0 is paired with Reverse Proxy 4.7.0 and does not retain agent-contract v1 compatibility.
+
+
 ## Agent CLI 0.78.11 — transcript copy and WebChat continuity
 
 Agent CLI 0.78.11 restores native terminal text selection/copy on the main transcript while keeping mouse interaction available in menus and modal surfaces. The `Ctrl+O` expand/collapse hint is now rendered only on the latest tool/thought block that the shortcut can actually toggle.

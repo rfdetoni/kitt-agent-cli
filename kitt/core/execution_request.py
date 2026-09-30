@@ -12,3 +12,4 @@ class ExecutionRequest:
     max_output_tokens: int = 1200
     estimated_input_tokens: int = 0
     agent_route: str | None = None
+    loop_action_budget: int = 4

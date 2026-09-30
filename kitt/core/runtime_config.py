@@ -39,6 +39,7 @@ class RuntimeConfig:
     max_search_bytes: int = 262144
     max_search_time_ms: int = 3000
     max_tool_calls_per_turn: int = 8
+    agent_loop_action_budget: int = 4
 
     compaction_keep_recent: int = 6
     compaction_min_tokens: int = 0

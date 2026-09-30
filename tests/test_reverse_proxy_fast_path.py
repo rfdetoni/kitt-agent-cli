@@ -17,7 +17,7 @@ class TestReverseProxyFastPath(unittest.TestCase):
         result = SemanticFilter(profile, _FailIfCalled()).filter_and_plan(
             "crie uma pasta teste", session_key="conv", deterministic_only=True
         )
-        self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+        self.assertEqual(result.source, "LLM_FIRST")
 
     def test_reverse_proxy_profile_never_consumes_browser_turn_for_semantic_planning(self):
         profile = ModelProfile(
@@ -36,11 +36,12 @@ class TestReverseProxyFastPath(unittest.TestCase):
 
         result = semantic_filter.filter_and_plan(prompt, session_key="conv")
 
-        self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+        self.assertEqual(result.source, "LLM_FIRST")
         self.assertIsNone(semantic_filter.llm_client)
-        self.assertEqual(result.task.intent, "IMPLEMENT")
-        self.assertIn("repository_map", result.plan.enabled_tools)
-        self.assertIn("write_file", result.plan.enabled_tools)
+        self.assertEqual(result.task.intent, "UNKNOWN")
+        self.assertEqual(result.task.original_prompt, prompt)
+        self.assertTrue(result.plan.include_original_prompt)
+        self.assertIn("kitt_runtime", result.plan.enabled_tools)
         self.assertIn("run_command", result.plan.enabled_tools)
 
     def test_reverse_proxy_protocol_alias_also_bypasses_semantic_llm(self):
@@ -55,7 +56,7 @@ class TestReverseProxyFastPath(unittest.TestCase):
         result = semantic_filter.filter_and_plan(
             "crie uma pasta teste", session_key="conv"
         )
-        self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+        self.assertEqual(result.source, "LLM_FIRST")
         self.assertIsNone(semantic_filter.llm_client)
         self.assertTrue(result.plan.enabled_tools)
 

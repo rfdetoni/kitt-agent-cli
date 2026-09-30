@@ -25,6 +25,14 @@ kitt-agent-cli (Python control plane)
         └─ assistant/evolution capabilities are composed as sibling packages
 ```
 
+## LLM-first reverse-proxy boundary
+
+Browser-backed execution deliberately separates **semantic decisions** from **deterministic governance**. When the execution profile is KITT Reverse Proxy, Agent CLI does not derive intent, scope, language, technology or domain from the user's natural-language request. It carries the original request verbatim into agent-contract v2 and exposes the governed runtime surface structurally.
+
+The Reverse Proxy presents that request to WebChat through the `agent-loop` route. The model maintains a bounded loop state (`objective`, `completion_criteria`, `status`, `validation_summary`) and selects one host action at a time. KITT counts completed host round trips rather than model prose; every `agent_loop_action_budget` actions it requires a checkpoint before another action can proceed.
+
+The host remains authoritative for security and truth: allowed operations come from capabilities, writes/processes still traverse policy and approvals, repository evidence must precede the first mutation, and final completion after a mutation requires a successful host validation when validation capability exists. No list of language-specific verbs or domain scopes is required in this path.
+
 ## Ownership boundary
 
 `rfdetoni/kitt-toolbox` owns the Rust crates `kitt-native-engine` and `kitt-native-python`, their Maturin build, Rust formatting/lint/tests and the `kitt_native` wheel. `kitt-agent-cli` does **not** vendor or compile those crates.

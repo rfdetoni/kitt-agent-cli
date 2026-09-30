@@ -735,6 +735,23 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
         legacy_route = agent_route or loop_kwargs.pop("agent_route", None)
         if legacy_route and not getattr(current_request, "agent_route", None):
             current_request = replace(current_request, agent_route=legacy_route)
+
+        if getattr(current_request, "agent_route", None) == "agent-loop":
+            # agent-contract v2 delegates natural-language scope/completion
+            # decisions to WebChat. The host still enforces tool policy,
+            # approvals, execution status and proxy validation gates, so the
+            # legacy lexical completion guard must not reinterpret the prompt.
+            yield from original_loop(
+                cmd,
+                current_request,
+                exe_profile,
+                exe_client,
+                workspace_id,
+                security_context,
+                **loop_kwargs,
+            )
+            return
+
         recoveries = 0
         stall_redirects = 0
         last_recovery_revision = 0

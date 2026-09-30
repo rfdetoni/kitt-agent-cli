@@ -269,6 +269,7 @@ class LLMClient:
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
         route: Optional[str] = None,
+        loop_action_budget: int = 4,
     ) -> str:
         full_text = "".join(
             self.chat_stream(
@@ -278,6 +279,7 @@ class LLMClient:
                 session_key=session_key,
                 reasoning_effort=reasoning_effort,
                 route=route,
+                loop_action_budget=loop_action_budget,
             )
         )
         if not full_text.strip():
@@ -292,6 +294,7 @@ class LLMClient:
         session_key: Optional[str] = None,
         reasoning_effort: Optional[int] = None,
         route: Optional[str] = None,
+        loop_action_budget: int = 4,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
@@ -307,6 +310,7 @@ class LLMClient:
                     session_key=session_key,
                     reasoning_effort=reasoning_effort,
                     route=route,
+                    loop_action_budget=loop_action_budget,
                 ):
                     if stop.is_set():
                         break
@@ -348,6 +352,7 @@ class LLMClient:
         reasoning_effort: Optional[int] = None,
         route: Optional[str] = None,
         tool_definitions: Optional[List[Dict[str, object]]] = None,
+        loop_action_budget: int = 4,
     ) -> Generator[str, None, None]:
         system_prompt = normalize_execution_system_prompt(system_prompt)
 
@@ -394,6 +399,7 @@ class LLMClient:
                 workspace_context=workspace_context,
                 route=contract_route,
                 discovery_required=discovery_required,
+                loop_action_budget=loop_action_budget,
             )
             extra_headers[AGENT_CONTRACT_HEADER] = AGENT_CONTRACT_VERSION
             extra_headers[AGENT_ROUTE_HEADER] = contract_route

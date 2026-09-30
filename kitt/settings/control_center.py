@@ -106,6 +106,7 @@ class SettingsDescriptorProvider:
             {"key": "persistence_enabled", "label": "Persistence", "type": "boolean", "default": default_config.persistence_enabled, "apply_mode": "component_restart"},
             {"key": "privacy_mode", "label": "Privacy mode", "type": "enum", "default": default_config.privacy_mode, "options": ["hybrid_redacted", "local_only", "ephemeral"], "apply_mode": "component_restart"},
             {"key": "max_tool_calls_per_turn", "label": "Tool calls / turn", "type": "integer", "default": default_config.max_tool_calls_per_turn, "minimum": 1, "maximum": 64, "apply_mode": "component_restart"},
+            {"key": "agent_loop_action_budget", "label": "Agent loop action budget", "type": "integer", "default": default_config.agent_loop_action_budget, "minimum": 1, "maximum": 32, "apply_mode": "component_restart", "description": "Host round trips allowed before the WebChat model must reassess the bounded execution loop."},
             {"key": "process_timeout_seconds", "label": "Process timeout (s)", "type": "integer", "default": default_config.process_timeout_seconds, "minimum": 1, "maximum": 3600, "apply_mode": "component_restart"},
             {"key": "safe_runtime_enabled", "label": "Safe runtime", "type": "boolean", "default": default_config.safe_runtime_enabled, "apply_mode": "component_restart"},
             {"key": "architect_enabled", "label": "Architect phase", "type": "boolean", "default": default_config.architect_enabled, "apply_mode": "component_restart"},

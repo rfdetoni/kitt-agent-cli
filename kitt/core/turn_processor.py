@@ -21,7 +21,6 @@ from kitt.skills.discovery import SkillDiscovery
 from kitt.skills.loader import ProgressiveSkillLoader
 from kitt.context_engine.engine import ContextEngine
 from kitt.context.working_set import ConversationWorkingSetStore
-from kitt.context_filter.fallback import is_container_runtime_request
 from kitt.context_filter.context_resolver import ContextResolver
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context.tool_receipts import (
@@ -202,43 +201,9 @@ class TurnProcessor(
 
     @staticmethod
     def _agent_route_for_task(task, mode: str = "", prompt: str = "") -> str:
-        """Pin the proxy route, with the original user mutation intent as the highest signal."""
+        """Route only from explicit KITT task state; natural-language intent belongs to the LLM."""
         if mode == "plan":
             return "context-gather"
-
-        original_prompt = str(getattr(task, "original_prompt", "") or "")
-        source_prompt = original_prompt or prompt or ""
-        text = source_prompt.casefold()
-        if is_container_runtime_request(source_prompt):
-            # Container lifecycle commands must remain execution-capable even when
-            # semantic extraction has no repository path or symbol to anchor on.
-            return "validate-diff"
-        workspace_targets = (
-            "projeto", "project", "site", "app", "aplicação", "aplicacao",
-            "backend", "frontend", "front end", "repositório", "repositorio",
-            "repository", "repo", "arquivo", "file", "pasta", "folder",
-            "diretório", "diretorio", "directory", "código", "codigo", "code",
-        )
-        edit_terms = (
-            "corrija", "corrigir", "conserte", "consertar", "repare", "reparar",
-            "refatore", "refatorar", "atualize", "atualizar", "modifique",
-            "modificar", "altere", "alterar", "edite", "editar", "remova",
-            "remover", "converta", "converter", "convert", "migre", "migrar",
-            "migrate", "troque", "trocar", "substitua", "substituir", "replace",
-            "switch", "porte", "portar", "port", "fix", "repair", "refactor", "update",
-            "modify", "change", "edit", "remove", "delete",
-        )
-        create_terms = (
-            "crie", "criar", "cria", "implemente", "implementar", "gere",
-            "gerar", "construa", "monte", "create", "build", "implement",
-            "generate", "scaffold", "write", "mkdir",
-        )
-        if any(target in text for target in workspace_targets):
-            if any(term in text for term in edit_terms):
-                return "code-edit"
-            if any(term in text for term in create_terms):
-                return "code-generation"
-
         raw_intent = getattr(task, "intent", "")
         intent = str(getattr(raw_intent, "value", raw_intent) or "").upper()
         if intent == "IMPLEMENT":
@@ -382,6 +347,22 @@ class TurnProcessor(
         wrapper_suffix: str = "",
     ) -> str:
         prompt_budget = PromptBudget(profile.context_window, profile.max_output_tokens)
+
+        # Browser-backed reverse-proxy sessions are stateful and the proxy reduces
+        # the API transcript to the next browser delta. Charging the full local
+        # execution transcript against the model window can therefore report zero
+        # remaining tokens even though the current host observation is the one
+        # piece of evidence the browser model still needs. Keep that observation
+        # bounded independently instead of silently dropping it.
+        if _reverse_proxy_identity(profile) is not None:
+            observation_budget = max(
+                256,
+                min(2048, max(256, int(profile.context_window) // 4)),
+            )
+            if TokenCounter.count_tokens(output) <= observation_budget:
+                return output
+            return prompt_budget._truncate_to_tokens(output, observation_budget)
+
         max_allowed = prompt_budget.max_input_tokens
         used = (
             self._token_ledger_instance().total_input_tokens(system_prompt, messages)
@@ -813,39 +794,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
 
     @staticmethod
-    def _browser_intent(prompt: str) -> tuple[bool, bool]:
-        text = str(prompt or "").casefold()
-        read_terms = (
-            "browser", "navegador", "website", "web site", "site", "webpage",
-            "web page", "página web", "pagina web", "frontend", "front-end",
-            "preview", "screenshot", "captura de tela", "localhost", "renderize",
-            "renderizar", "visual da página", "visual da pagina",
-        )
-        write_terms = (
-            "click", "clique", "clicar", "preencha", "preencher", "fill",
-            "digite", "digitar", "type", "submit", "envie o formulário",
-            "envie o formulario", "interaja", "interagir", "login", "log in",
-            "autentique", "autenticar",
-        )
-        has_url = bool(
-            re.search(
-                r"https?://|\blocalhost(?::\d+)?\b|\b127\.0\.0\.1(?::\d+)?\b",
-                text,
-            )
-        )
-        read_requested = has_url or any(term in text for term in read_terms)
-        write_requested = read_requested and any(term in text for term in write_terms)
-        return read_requested, write_requested
-
-    @staticmethod
     def _browser_origin_scope(prompt: str) -> tuple[str, ...]:
         text = str(prompt or "")
-        folded = text.casefold()
         scope: list[str] = []
-        generic_local_terms = (
-            "frontend", "front-end", "preview", "captura de tela",
-            "screenshot", "renderize", "renderizar",
-        )
         explicit_url_matches = re.findall(
             r"https?://[^\s<>'\"\]\)]+",
             text,
@@ -892,10 +843,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         for match in bare_local.finditer(residual):
             add_origin(f"http://{match.group(0)}")
 
-        # Broad loopback authority is only a fallback for local-preview intent
-        # where the user did not name an endpoint.
-        if not scope and any(term in folded for term in generic_local_terms):
-            scope.append("loopback")
         return tuple(dict.fromkeys(scope))
 
     def _browser_authorities_for_turn(
@@ -904,13 +851,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         exe_client: LLMClient,
         exe_profile: ModelProfile,
     ) -> tuple[str, ...]:
-        read_requested, write_requested = self._browser_intent(cmd.prompt)
         origin_scope = self._browser_origin_scope(cmd.prompt)
-        if (
-            not read_requested
-            or not origin_scope
-            or _reverse_proxy_identity(exe_profile) is None
-        ):
+        if not origin_scope or _reverse_proxy_identity(exe_profile) is None:
             return ()
         session_key = self._provider_session_key(exe_profile, cmd.conversation_id)
         try:
@@ -925,7 +867,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return ()
         self.registry.bind_browser_gateway(cmd.conversation_id, gateway)
         authorities = [CAP_BROWSER_READ]
-        if write_requested and cmd.mode not in {"plan", "ask"}:
+        if cmd.mode not in {"plan", "ask"}:
             authorities.append(CAP_BROWSER_WRITE)
         return tuple(authorities)
 
@@ -1054,27 +996,37 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 )
             yield ContextResolved(resolved_count=len(context_blocks) + len(explicit_items))
 
-            execution_slice = build_execution_slice(cmd, task, plan)
+            llm_first_proxy = _reverse_proxy_identity(exe_profile) is not None
+            execution_slice = None
             architect_handoff = None
-            if execution_slice is None:
-                architect_handoff = self._maybe_architect_handoff(
-                    cmd,
-                    task,
-                    context_map_str,
-                    explicit_str,
-                )
-                if architect_handoff is not None:
-                    context_map_str = (
-                        f"{architect_handoff.render()}\n\n{context_map_str}"
-                    ).strip()
-            else:
+            if llm_first_proxy:
                 trace_event(
                     logger,
                     "architect.skipped",
                     turn_id=cmd.turn_id,
-                    reason="discovery_first_execution_slice",
-                    slice_reason=execution_slice.reason,
+                    reason="llm_first_reverse_proxy_loop",
                 )
+            else:
+                execution_slice = build_execution_slice(cmd, task, plan)
+                if execution_slice is None:
+                    architect_handoff = self._maybe_architect_handoff(
+                        cmd,
+                        task,
+                        context_map_str,
+                        explicit_str,
+                    )
+                    if architect_handoff is not None:
+                        context_map_str = (
+                            f"{architect_handoff.render()}\n\n{context_map_str}"
+                        ).strip()
+                else:
+                    trace_event(
+                        logger,
+                        "architect.skipped",
+                        turn_id=cmd.turn_id,
+                        reason="discovery_first_execution_slice",
+                        slice_reason=execution_slice.reason,
+                    )
 
             # 4. System Prompt and Budgeting
             if cmd.turn_id in self.cancelled_turns:
@@ -1094,7 +1046,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             edit_decision = self.edit_strategy_selector.select(
                 model_capabilities=getattr(exe_client, "capabilities", None),
                 task=task,
-                prompt=cmd.prompt,
+                prompt="" if llm_first_proxy else cmd.prompt,
                 explicit_files=cmd.explicit_files,
                 root_path=self.root_path,
                 history=self.edit_strategy_tracker.snapshot(edit_context),
@@ -1159,7 +1111,11 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
             full_response = ""
             execution_messages = []
-            agent_route = self._agent_route_for_task(task, cmd.mode, cmd.prompt)
+            agent_route = (
+                "agent-loop"
+                if llm_first_proxy
+                else self._agent_route_for_task(task, cmd.mode, cmd.prompt)
+            )
             request = replace(request, agent_route=agent_route)
             for ev, resp, msgs in self._execute_tool_loop(
                 cmd, request, exe_profile, exe_client, workspace_id, security_context,
