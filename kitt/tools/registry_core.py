@@ -104,6 +104,7 @@ class ToolRegistry:
 
         self._custom_tools: Dict[str, Dict[str, Any]] = {}
         self._safe_runtime_instance = None
+        self.process_manager = None
         self.runtime_mode = "auto"
         self._handlers: Dict[str, ToolHandler] = {
             "kitt_runtime": SafeRuntimeHandler(),
@@ -129,6 +130,13 @@ class ToolRegistry:
         }
 
     def close(self) -> None:
+        manager = getattr(self, "process_manager", None)
+        if manager is not None:
+            try:
+                manager.close()
+            except Exception:
+                pass
+            self.process_manager = None
         with self._browser_gateway_lock:
             self._browser_gateways.clear()
         if self.context_engine is not None:
