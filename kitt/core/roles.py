@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any
 
+from kitt_protocol import AgentRole
 from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
     CAP_MEMORY_READ,
@@ -12,14 +12,6 @@ from kitt.security.capabilities import (
     CAP_REPO_SEARCH,
     CAP_REPO_WRITE,
 )
-
-
-class AgentRole(StrEnum):
-    DISCOVER = "DISCOVER"
-    ARCHITECT = "ARCHITECT"
-    IMPLEMENT = "IMPLEMENT"
-    VERIFY = "VERIFY"
-    REVIEW = "REVIEW"
 
 
 _READ_TOOLS = frozenset(
