@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.providers.kitt_reverse_proxy import KittReverseProxyAdapter
-from kitt.prompts import KITT_AGENT_PERSONA
 
 
 MEUFAZTUDO_PROMPT = (
@@ -81,18 +80,25 @@ class ReverseProxyWorkspaceToolFailsafeTests(unittest.TestCase):
         self.assertNotIn('tools', payload)
         self.assertNotIn('tool_choice', payload)
 
-    def test_explicit_context_plan_contract_is_the_only_runtime_tool_authority(self):
+    def test_structural_context_plan_is_the_only_runtime_tool_authority(self):
         payload = self._capture_payload(LLMRequest(
             model='gemini-web',
-            system_prompt=(
-                "Tool Contract:\n"
-                "Available host tools: [{'name': 'kitt_runtime', 'description': 'Workspace runtime', "
-                "'args': {'operation': {'type': 'string', 'enum': ['repo.read', 'repo.write_file']}, "
-                "'arguments': {'type': 'object', 'additionalProperties': True}}}]\n"
-                "For a host tool, respond with exactly: <kitt-tool>...</kitt-tool>\n\n"
-                "Memory:\nnone"
-            ),
+            system_prompt='Memory:\nnone',
             messages=[{'role': 'user', 'content': MEUFAZTUDO_PROMPT}],
+            tool_definitions=[{
+                'name': 'kitt_runtime',
+                'description': 'Workspace runtime',
+                'args': {
+                    'operation': {
+                        'type': 'string',
+                        'enum': ['repo.read', 'repo.write_file'],
+                    },
+                    'arguments': {
+                        'type': 'object',
+                        'additionalProperties': True,
+                    },
+                },
+            }],
             extra_headers={'X-Kitt-Route': 'code-generation'},
         ))
 
@@ -101,7 +107,7 @@ class ReverseProxyWorkspaceToolFailsafeTests(unittest.TestCase):
             [tool['function']['name'] for tool in payload['tools']],
             ['kitt_runtime'],
         )
-        self.assertIn(KITT_AGENT_PERSONA, payload['messages'][0]['content'])
+        self.assertEqual(payload['messages'][0]['content'], 'Memory:\nnone')
 
     def test_meufaztudo_context_summary_never_gains_mutation_tool(self):
         payload = self._capture_payload(LLMRequest(
