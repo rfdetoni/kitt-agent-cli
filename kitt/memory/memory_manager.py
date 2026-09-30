@@ -140,9 +140,13 @@ class MemoryManager:
         if not self.persistence_enabled:
             return []
         trace_id = ""
-        recall_with_trace = getattr(self.client, "recall_with_trace", None)
+        recall_with_trace = getattr(type(self.client), "recall_with_trace", None)
         if callable(recall_with_trace):
-            rows, trace_id = recall_with_trace(self.workspace_id, prompt, limit=8)
+            rows, trace_id = self.client.recall_with_trace(
+                self.workspace_id,
+                prompt,
+                limit=8,
+            )
         else:
             rows = self.client.recall(self.workspace_id, prompt, limit=8)
         result: list[MemoryItem] = []
