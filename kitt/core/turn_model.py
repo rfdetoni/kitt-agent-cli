@@ -341,7 +341,7 @@ class TurnModelMixin:
                 escalation_conditions=("validation_failed", "provider_unavailable"),
                 privacy_mode=getattr(self.config, "privacy_mode", "hybrid_redacted"),
                 privacy_decision="ALLOWED",
-                policy_version="llm-first-v1",
+                policy_version="llm-first-v2",
                 created_at=str(time.time()),
             )
             return profile_name, llm_first_profile, decision, None
