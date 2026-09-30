@@ -12,14 +12,16 @@ from dataclasses import fields, is_dataclass
 from types import MethodType
 from typing import Any, Iterator
 
+from kitt.core.execution_budget import ExecutionBudgetLedger
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import ApprovalRequired, TurnCompleted, TurnFailed
 from kitt.evidence.episodes import TaskEpisodeService
 from kitt.evidence.invariants import RuntimeInvariantService
-from kitt.evidence.ledger import SessionLedger
+from kitt.evidence.ledger import EventLedger
 from kitt.evidence.projections import build_default_projection_registry
 from kitt.runtime.state import RuntimeStateStore
 from kitt.validation.orchestrator import VerificationOrchestrator
+from kitt_protocol import ExecutionBudget
 
 TERMINAL = {"COMPLETED", "FAILED", "BLOCKED", "CANCELLED"}
 EVENT_STATE = {
@@ -52,6 +54,43 @@ def _state_store(processor, conversation_id: str):
         return RuntimeStateStore(db, processor.workspace_id, conversation_id)
     except Exception:
         return None
+
+
+def _new_execution_budget(processor) -> ExecutionBudgetLedger:
+    config = processor.config
+    max_input = max(1, int(getattr(config, "max_input_tokens_per_turn", 262144)))
+    max_output = max(1, int(getattr(config, "max_output_tokens_per_turn", 131072)))
+    max_total = max(
+        max_input,
+        max_output,
+        int(getattr(config, "max_total_tokens_per_turn", 327680)),
+    )
+    return ExecutionBudgetLedger(
+        ExecutionBudget(
+            max_model_calls=max(
+                1, int(getattr(config, "max_model_calls_per_turn", 24))
+            ),
+            max_input_tokens=max_input,
+            max_output_tokens=max_output,
+            max_total_tokens=max_total,
+            max_cost=max(0.0, float(getattr(config, "max_cost_per_turn", 50.0))),
+            max_duration_ms=max(
+                1000,
+                int(
+                    float(
+                        getattr(config, "max_turn_duration_seconds", 1800.0)
+                    )
+                    * 1000
+                ),
+            ),
+            max_tool_calls=max(
+                1, int(getattr(config, "max_tool_calls_per_turn", 8))
+            ),
+            max_subagents=max(
+                0, int(getattr(config, "max_subagents_per_turn", 4))
+            ),
+        )
+    )
 
 
 def _jsonable(value: Any) -> Any:
