@@ -37,7 +37,7 @@ def test_schema_v7_keeps_evidence_and_removes_local_memory_tables(tmp_path: Path
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
-        assert version == CURRENT_SCHEMA_VERSION == 8
+        assert version == CURRENT_SCHEMA_VERSION == 9
         assert {
             "session_events",
             "session_projection_cache",
