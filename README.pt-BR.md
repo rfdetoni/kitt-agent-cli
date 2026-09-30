@@ -4,6 +4,14 @@
 
 **Control plane local-first para agentes autônomos de programação.**
 
+## Agent CLI 0.79.0 — loops de execução LLM-first
+
+A execução via Reverse Proxy/WebChat agora usa o agent-contract **v2** com uma rota neutra `agent-loop`. O pedido original do usuário é encaminhado sem reescrita e passa a ser a autoridade semântica: o Agent CLI não compila, traduz, resume nem classifica lexicalmente a linguagem natural antes de o WebChat decidir a próxima ação.
+
+O KITT continua determinístico nas responsabilidades corretas: capabilities, policy/approvals, execução de repositório/processos, evidência do host, cancelamento, limites de tokens e gates de validação. O modelo mantém um loop curto com objetivo, critérios de conclusão e status. Após `agent_loop_action_budget` round trips do host (padrão **4**), o Reverse Proxy exige um checkpoint para que o modelo reavalie a evidência real antes de continuar.
+
+A primeira mutação do `agent-loop` exige evidência do repositório e, após qualquer mutação, a conclusão continua bloqueada até uma validação host bem-sucedida quando houver `process.run`. Esta é uma mudança interna do ecossistema: Agent CLI 0.79.0 deve ser usado com Reverse Proxy 4.7.0 e não mantém compatibilidade com agent-contract v1.
+
 ## Agent CLI 0.78.11 — cópia no transcript e continuidade WebChat
 
 O transcript principal voltou a permitir seleção e cópia nativas pelo terminal sem desativar o mouse dos menus e modais. O aviso de `Ctrl+O` agora aparece somente no último bloco de tool/thought que o atalho realmente consegue expandir ou recolher.
