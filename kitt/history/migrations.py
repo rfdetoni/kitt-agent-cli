@@ -6,7 +6,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -326,6 +326,8 @@ SCHEMA_V1_STATEMENTS = [
         context_summary TEXT DEFAULT '',
         runtime_conversation_id TEXT,
         security_context_json TEXT DEFAULT '{}',
+        budget_lease_json TEXT DEFAULT '{}',
+        lineage_json TEXT DEFAULT '{}',
         FOREIGN KEY(parent_conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
     """,
