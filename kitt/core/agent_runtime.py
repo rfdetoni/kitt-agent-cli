@@ -729,38 +729,95 @@ def _install_tool_execution(processor, registry) -> None:
                 )
                 claimed = True
 
+        snapshot_service = getattr(
+            processor,
+            "workspace_snapshot_service",
+            None,
+        )
+        snapshot = None
         try:
+            if (
+                snapshot_service is not None
+                and coordinator is not None
+                and conv
+                and turn
+                and _file_mutation(name, arguments)
+            ):
+                planned_paths = coordinator.mutation_paths(name, arguments)
+                if (
+                    planned_paths
+                    and "." not in planned_paths
+                    and all(path for path in planned_paths)
+                ):
+                    snapshot = snapshot_service.capture(
+                        conversation_id=conv,
+                        turn_id=turn,
+                        paths=planned_paths,
+                    )
+
             result = original(name, args, *pos, **kwargs)
+            paths = _affected_paths(processor, name, arguments, result)
+            if snapshot is not None:
+                result.metadata = dict(getattr(result, "metadata", {}) or {})
+                result.metadata["workspace_snapshot_id"] = snapshot.snapshot_id
+
+            if (
+                getattr(result, "success", False)
+                and _file_mutation(name, arguments)
+                and paths
+            ):
+                report = verifier.verify(paths)
+                result.metadata = dict(getattr(result, "metadata", {}) or {})
+                result.metadata["verification"] = report.as_dict()
+                if not report.ok:
+                    if snapshot is not None:
+                        restored = snapshot_service.restore(
+                            snapshot.snapshot_id,
+                            conversation_id=conv,
+                            turn_id=turn,
+                        )
+                        result.metadata["post_edit_rolled_back"] = True
+                        result.metadata["rollback_paths"] = restored
+                    result.success = False
+                    result.error = (
+                        "Post-edit verification failed:\n"
+                        + report.failure_message()
+                    )
+            if getattr(result, "success", False) and paths:
+                _expire_code_memory(processor, paths)
+                journal = getattr(processor, "turn_journal", None)
+                if journal is not None:
+                    inner_operation = (
+                        str(arguments.get("operation") or name)
+                        if name == "kitt_runtime"
+                        and isinstance(arguments, dict)
+                        else name
+                    )
+                    journal.record_deliverables(
+                        turn,
+                        paths,
+                        kind=inner_operation,
+                    )
+            if replay_key and store and getattr(result, "success", False):
+                try:
+                    store.set(
+                        replay_key,
+                        {
+                            "completed": True,
+                            "output": str(
+                                getattr(result, "output", "")
+                            )[:12000],
+                            "paths": paths,
+                            "completed_at": time.time(),
+                        },
+                        ttl_seconds=604800,
+                    )
+                except Exception:
+                    pass
+            return result
         finally:
             if claimed and coordinator is not None:
                 coordinator.release_tool(conv, turn)
-
-        paths = _affected_paths(processor, name, arguments, result)
-        if getattr(result, "success", False) and _file_mutation(name, arguments) and paths:
-            report = verifier.verify(paths)
-            result.metadata = dict(getattr(result, "metadata", {}) or {})
-            result.metadata["verification"] = report.as_dict()
-            if not report.ok:
-                result.success = False
-                result.error = "Post-edit verification failed:\n" + report.failure_message()
-        if getattr(result, "success", False) and paths:
-            _expire_code_memory(processor, paths)
-            journal = getattr(processor, "turn_journal", None)
-            if journal is not None:
-                inner_operation = (
-                    str(arguments.get("operation") or name)
-                    if name == "kitt_runtime" and isinstance(arguments, dict)
-                    else name
-                )
-                journal.record_deliverables(turn, paths, kind=inner_operation)
-        if replay_key and store and getattr(result, "success", False):
-            try:
-                store.set(replay_key, {"completed": True,
-                    "output": str(getattr(result, "output", ""))[:12000], "paths": paths,
-                    "completed_at": time.time()}, ttl_seconds=604800)
-            except Exception:
-                pass
-        return result
 
     registry.execute_tool = execute_tool
     registry._agent_engineering_execute_installed = True
