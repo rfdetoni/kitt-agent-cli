@@ -267,6 +267,7 @@ class LLMClient:
         route: Optional[str] = None,
         loop_action_budget: int = 4,
         context_envelope: Optional[Dict[str, object]] = None,
+        request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
     ) -> str:
         full_text = "".join(
@@ -279,6 +280,7 @@ class LLMClient:
                 route=route,
                 loop_action_budget=loop_action_budget,
                 context_envelope=context_envelope,
+                request_metadata=request_metadata,
                 usage_callback=usage_callback,
             )
         )
@@ -296,6 +298,7 @@ class LLMClient:
         route: Optional[str] = None,
         loop_action_budget: int = 4,
         context_envelope: Optional[Dict[str, object]] = None,
+        request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
@@ -358,6 +361,7 @@ class LLMClient:
         tool_definitions: Optional[List[Dict[str, object]]] = None,
         loop_action_budget: int = 4,
         context_envelope: Optional[Dict[str, object]] = None,
+        request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
     ) -> Generator[str, None, None]:
         system_prompt = normalize_execution_system_prompt(system_prompt)
@@ -438,6 +442,7 @@ class LLMClient:
             response_format=response_format,
             tool_definitions=list(tool_definitions or ()),
             context_envelope=dict(context_envelope) if context_envelope else None,
+            request_metadata=dict(request_metadata) if request_metadata else None,
             usage_callback=usage_callback,
             temperature=self.profile.temperature,
             context_window=self.profile.context_window,
