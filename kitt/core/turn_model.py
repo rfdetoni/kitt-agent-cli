@@ -23,6 +23,7 @@ from kitt.router.features import TaskFeatureExtractor
 from kitt.router.models import RoutingDecision
 from kitt.tools.protocol import TOOL_CALL_OPEN
 from kitt.tools.safe_python import PYTHON_TOOL_CALL_OPEN
+from kitt_protocol import KittRequestMetadata
 
 
 class TurnModelMixin:
@@ -180,12 +181,12 @@ class TurnModelMixin:
                 "tool_definitions": list(tool_definitions or ()),
                 "loop_action_budget": loop_action_budget,
                 "context_envelope": context_envelope,
-                "request_metadata": {
-                    "conversation_id": conversation_id,
-                    "turn_id": turn_id,
-                    "request_id": uuid.uuid4().hex,
-                    "route": str(route or ""),
-                },
+                "request_metadata": KittRequestMetadata(
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    request_id=uuid.uuid4().hex,
+                    route=str(route or "chat"),
+                ).to_mapping(),
                 "usage_callback": _observe_usage,
             }
             try:
