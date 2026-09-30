@@ -48,11 +48,13 @@ class ManagedProcessManager:
         runner: ProcessRunner,
         registry: Any,
         *,
+        workspace_id: str,
         ledger: Any = None,
         max_event_bytes: int = _DEFAULT_EVENT_BYTES,
     ) -> None:
         self.runner = runner
         self.registry = registry
+        self.workspace_id = str(workspace_id or "")
         self.ledger = ledger
         self.max_event_bytes = max(4096, int(max_event_bytes))
         self._lock = threading.RLock()
@@ -220,7 +222,7 @@ class ManagedProcessManager:
         if security_context is None:
             raise PermissionError("ExecutionSecurityContext is required")
         security_context.assert_scope(
-            self.registry.workspace_id,
+            self.workspace_id,
             session.conversation_id,
         )
         snapshot = session.authority_snapshot.get("snapshot") or {}
@@ -354,7 +356,7 @@ class ManagedProcessManager:
     ) -> dict[str, Any]:
         session = self._get(process_id)
         security_context.assert_scope(
-            self.registry.workspace_id,
+            self.workspace_id,
             session.conversation_id,
         )
         bounded = max(1, min(int(limit), 500))
