@@ -285,6 +285,7 @@ class _ProgressAwareExecutionLedger:
         self.pending_validations: dict[str, tuple[str, str]] = {}
         self.pending_explorations: dict[str, tuple[str, str, bool]] = {}
         self.exploration_results: dict[str, tuple[str, int]] = {}
+        self.exploration_sequence: list[str] = []
         self.explorations_since_progress = 0
 
     @property
@@ -325,6 +326,18 @@ class _ProgressAwareExecutionLedger:
                 "too many exploration calls without a successful mutation "
                 f"({_MAX_EXPLORATIONS_WITHOUT_PROGRESS} allowed)"
             )
+
+        if len(self.exploration_sequence) >= 3:
+            a, b, c = self.exploration_sequence[-3:]
+            if (
+                a == c
+                and a != b
+                and exploration_signature == b
+            ):
+                return (
+                    "alternating exploration loop detected: A/B/A/B "
+                    f"({operation})"
+                )
 
         previous = self.exploration_results.get(exploration_signature)
         previous_count = previous[1] if previous else 0
@@ -380,6 +393,9 @@ class _ProgressAwareExecutionLedger:
                 )
 
             self.exploration_results[exploration_signature] = (fingerprint, count)
+            self.exploration_sequence.append(exploration_signature)
+            if len(self.exploration_sequence) > 8:
+                del self.exploration_sequence[:-8]
             if counts_toward_stall:
                 self.explorations_since_progress += 1
             elif event.success:
@@ -387,8 +403,9 @@ class _ProgressAwareExecutionLedger:
                 # even before the first mutation. Grant a fresh broad-discovery window.
                 self.explorations_since_progress = 0
 
-        if new_mutation:
+        if new_mutation or new_validation:
             self.exploration_results.clear()
+            self.exploration_sequence.clear()
             self.pending_explorations.clear()
             self.explorations_since_progress = 0
 
@@ -754,6 +771,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
 
         recoveries = 0
         stall_redirects = 0
+        monologue_redirects = 0
         last_recovery_revision = 0
         ledger = _ProgressAwareExecutionLedger()
         failed_mutations: dict[str, str] = {}
@@ -767,6 +785,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
         while True:
             terminal: tuple[str, list] | None = None
             restart_for_stall: str | None = None
+            tool_events_this_pass = 0
             stream = original_loop(
                 cmd,
                 current_request,
@@ -783,6 +802,7 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                         continue
 
                     if isinstance(event, ToolStarted):
+                        tool_events_this_pass += 1
                         stall = ledger.start(event)
                         if stall and mutation_required:
                             if stall_redirects < _MAX_STALL_REDIRECTS:
@@ -843,6 +863,41 @@ def install_completion_guard(processor: Any, registry: Any, *, max_retries: int 
                 return
 
             response, messages = terminal
+            if (
+                mutation_required
+                and not ledger.successful_mutations
+                and tool_events_this_pass == 0
+            ):
+                stall = (
+                    "model returned a prose-only implementation attempt "
+                    "without any host tool action"
+                )
+                if monologue_redirects < _MAX_STALL_REDIRECTS:
+                    monologue_redirects += 1
+                    retry_messages = list(messages)
+                    retry_messages.extend(
+                        [
+                            {"role": "assistant", "content": response},
+                            {
+                                "role": "user",
+                                "content": _forward_progress_retry_message(stall),
+                            },
+                        ]
+                    )
+                    current_request = replace(
+                        current_request,
+                        messages=retry_messages,
+                    )
+                    continue
+                yield TurnFailed(
+                    error=(
+                        "Execution stalled: "
+                        + stall
+                        + ". The requested mutation was never attempted."
+                    )
+                ), None, None
+                return
+
             missing = missing_claimed_workspace_files(
                 registry.root_path,
                 response,
