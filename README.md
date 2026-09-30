@@ -1,8 +1,8 @@
 # K.I.T.T. Agent CLI
 
-## Agent CLI 0.80.1 — bounded roles, managed processes and measurable learning
+## Agent CLI 0.80.2 — bounded roles, managed processes and measurable learning
 
-Agent CLI 0.80.1 completes the agent-engineering rollout with host-enforced structural roles (`DISCOVER`, `ARCHITECT`, `IMPLEMENT`, `VERIFY`, `REVIEW`). Each role carries explicit tool/capability, mutation, context, model and budget policy; tool execution rechecks the role at the security boundary rather than trusting a prompt persona.
+Agent CLI 0.80.2 completes the agent-engineering rollout with host-enforced structural roles (`DISCOVER`, `ARCHITECT`, `IMPLEMENT`, `VERIFY`, `REVIEW`). Each role carries explicit tool/capability, mutation, context, model and budget policy; tool execution rechecks the role at the security boundary rather than trusting a prompt persona.
 
 Background commands now have a workspace-owned lifecycle through `process.start/read/stdin/signal/stop/resume`. Output and exit become durable `PROCESS_OUTPUT`/`PROCESS_EXIT` observations before they are exposed back to the model, buffers are bounded/redacted, and control operations revalidate the authority snapshot captured when the process started. Synchronous `process.run` remains available for bounded build/test commands.
 
@@ -12,9 +12,9 @@ Skill discovery is bounded before semantic selection by root/depth/file/per-file
 
 The Reverse Proxy transport now carries typed context and available usage telemetry while preserving WebChat continuity and keeping managed process controls classified as mutations. This release is designed for KITT Protocol **0.5.1**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.1** and Assistant Runtime **0.2.26**.
 
-## Agent CLI 0.80.1 — hardened agent engineering runtime
+## Agent CLI 0.80.2 — hardened agent engineering runtime
 
-Agent CLI 0.80.1 completes the durable Agent Engineering rollout with structural agent roles, bounded skill discovery, managed background-process lifecycle, public Memory lifecycle evidence, privacy-safe `kitt learn` analytics, stronger no-progress recovery and provider usage reconciliation.
+Agent CLI 0.80.2 completes the durable Agent Engineering rollout with structural agent roles, bounded skill discovery, managed background-process lifecycle, public Memory lifecycle evidence, privacy-safe `kitt learn` analytics, stronger no-progress recovery and provider usage reconciliation.
 
 `DISCOVER / ARCHITECT / IMPLEMENT / VERIFY / REVIEW` are enforced by host-side tool/mutation policy rather than prompt persona. Managed processes now expose `process.start/read/stdin/signal/stop/resume`, persist `PROCESS_OUTPUT` / `PROCESS_EXIT` observations and revalidate the original authority snapshot before control operations. Skill discovery is bounded by roots, depth, file count and byte budgets before semantic selection.
 
