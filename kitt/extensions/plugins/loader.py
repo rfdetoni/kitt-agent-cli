@@ -335,6 +335,7 @@ class PluginLoader:
                 manifest.name,
                 manifest.permissions,
                 self.hook_registry,
+                declared_hooks=manifest.capabilities.hooks,
             ),
             tools=ToolAPI(
                 manifest.name,
@@ -343,11 +344,13 @@ class PluginLoader:
                 trusted_first_party=(
                     manifest.source == "builtin"
                 ),
+                declared_tools=manifest.capabilities.tools,
             ),
             commands=CommandAPI(
                 manifest.name,
                 manifest.permissions,
                 self.command_registry,
+                declared_commands=manifest.capabilities.commands,
             ),
             mcp=MCPAPI(
                 manifest.name,
@@ -462,6 +465,12 @@ class PluginLoader:
                 )
 
             if kind == "tool":
+                declared = frozenset(instance.manifest.capabilities.tools)
+                if declared and name not in declared:
+                    raise PluginLoadError(
+                        f"Plugin '{instance.manifest.name}' worker registered "
+                        f"undeclared tool '{name}'."
+                    )
                 if self.tool_registry is None:
                     continue
 
@@ -482,6 +491,12 @@ class PluginLoader:
                 continue
 
             if kind == "hook":
+                declared = frozenset(instance.manifest.capabilities.hooks)
+                if declared and name not in declared:
+                    raise PluginLoadError(
+                        f"Plugin '{instance.manifest.name}' worker registered "
+                        f"undeclared hook '{name}'."
+                    )
                 if self.hook_registry is None:
                     continue
 
@@ -515,6 +530,15 @@ class PluginLoader:
                 continue
 
             if kind == "command":
+                declared = frozenset(
+                    "/" + str(item).lstrip("/")
+                    for item in instance.manifest.capabilities.commands
+                )
+                if declared and name not in declared:
+                    raise PluginLoadError(
+                        f"Plugin '{instance.manifest.name}' worker registered "
+                        f"undeclared command '{name}'."
+                    )
                 if self.command_registry is None or not hasattr(
                     self.command_registry, "register"
                 ):
@@ -555,6 +579,19 @@ class PluginLoader:
             "api_version": manifest.api_version,
             "entrypoint": manifest.entrypoint,
             "permissions": sorted(manifest.permissions),
+            "capabilities": {
+                "tools": list(manifest.capabilities.tools),
+                "providers": list(manifest.capabilities.providers),
+                "skills": list(manifest.capabilities.skills),
+                "hooks": list(manifest.capabilities.hooks),
+                "commands": list(manifest.capabilities.commands),
+                "context_sources": list(
+                    manifest.capabilities.context_sources
+                ),
+                "ui_extensions": list(
+                    manifest.capabilities.ui_extensions
+                ),
+            },
             "source": manifest.source,
         }
         config_payload = dict(
