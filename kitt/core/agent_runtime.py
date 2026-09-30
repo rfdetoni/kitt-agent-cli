@@ -578,6 +578,69 @@ class DurableTurnJournal:
         except Exception:
             pass
 
+    def record_learning_outcome(
+        self,
+        cmd: TurnCommand,
+        *,
+        episode_id: str | None,
+        state: str,
+    ) -> None:
+        if not episode_id or state not in {"COMPLETED", "FAILED"}:
+            return
+        harness = getattr(self.processor, "harness_service", None)
+        if harness is None or self.ledger is None:
+            return
+        try:
+            efficiency = harness.episode_efficiency(episode_id)
+        except Exception:
+            efficiency = None
+        try:
+            candidates = harness.learning_capture(
+                self.processor.workspace_id,
+                min_occurrences=2,
+                limit=5,
+            )
+        except Exception:
+            candidates = []
+
+        payload = {
+            "episode_id": episode_id,
+            "terminal_state": state,
+            "efficiency": efficiency,
+            "learning_candidates": [
+                {
+                    "normalized_objective": item.get(
+                        "normalized_objective",
+                        "",
+                    ),
+                    "count": int(item.get("count", 0) or 0),
+                    "recommended_owner": item.get(
+                        "recommended_owner",
+                        "",
+                    ),
+                    "requires_intervention": bool(
+                        item.get("requires_intervention", True)
+                    ),
+                    "episode_ids": list(
+                        item.get("episode_ids") or ()
+                    )[:20],
+                }
+                for item in candidates
+            ],
+            "auto_apply": False,
+        }
+        self.ledger.append_event(
+            cmd.conversation_id,
+            "EpisodeLearningObserved",
+            payload,
+            turn_id=cmd.turn_id,
+            episode_id=episode_id,
+            source="learning-loop",
+            durability="DURABLE",
+            model_visible=False,
+            replayable=True,
+        )
+
     def observe(self, cmd: TurnCommand, event: Any) -> None:
         name = type(event).__name__
         state = EVENT_STATE.get(name)
@@ -657,6 +720,15 @@ class DurableTurnJournal:
                     )
                 except Exception:
                     pass
+            try:
+                self.record_learning_outcome(
+                    cmd,
+                    episode_id=episode_id,
+                    state=state,
+                )
+            except Exception:
+                # Learning is evidence-only and must never change turn outcome.
+                pass
             if self.invariants is not None:
                 try:
                     self.invariants.check_terminal(cmd.conversation_id, cmd.turn_id)
