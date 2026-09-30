@@ -152,6 +152,39 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         risk_cost=3,
         sandbox_profile="workspace-write",
     ),
+    "process.start": RuntimeOperationSpec(
+        "process.start",
+        CAP_PROCESS_RUN,
+        "run_command",
+        sensitive=True,
+        risk_cost=3,
+        sandbox_profile="workspace-write",
+    ),
+    "process.read": RuntimeOperationSpec(
+        "process.read",
+        CAP_PROCESS_RUN,
+        sensitive=False,
+    ),
+    "process.stdin": RuntimeOperationSpec(
+        "process.stdin",
+        CAP_PROCESS_RUN,
+        sensitive=True,
+    ),
+    "process.signal": RuntimeOperationSpec(
+        "process.signal",
+        CAP_PROCESS_RUN,
+        sensitive=True,
+    ),
+    "process.stop": RuntimeOperationSpec(
+        "process.stop",
+        CAP_PROCESS_RUN,
+        sensitive=True,
+    ),
+    "process.resume": RuntimeOperationSpec(
+        "process.resume",
+        CAP_PROCESS_RUN,
+        sensitive=True,
+    ),
     "children.spawn": RuntimeOperationSpec(
         "children.spawn",
         CAP_CHILD_SPAWN,
@@ -277,6 +310,7 @@ class SafeRuntime:
         skill_manager=None,
         surface_service=None,
         backend_service=None,
+        process_manager=None,
         state_store: Optional[RuntimeStateStore] = None,
         db=None,
     ):
@@ -292,6 +326,7 @@ class SafeRuntime:
         self.skills = skill_manager
         self.surfaces = surface_service
         self.backend = backend_service
+        self.process_manager = process_manager
         self.db = db
         self.state = state_store or (
             RuntimeStateStore(db, workspace_id, conversation_id) if db else None
@@ -423,7 +458,7 @@ class SafeRuntime:
             and CAP_CONTROL_PLANE_WRITE not in capabilities
         )
         network_elevation = bool(
-            op == "process.run"
+            op in {"process.run", "process.start"}
             and args.get("network", False) is True
             and CAP_NETWORK_ACCESS not in capabilities
         )
@@ -467,7 +502,7 @@ class SafeRuntime:
                     False,
                     op,
                     error=(
-                        "Operation 'process.run' requests network access and requires "
+                        f"Operation '{op}' requests network access and requires "
                         "explicit user approval or CAP_NETWORK_ACCESS."
                     ),
                     requires_approval=True,
@@ -754,6 +789,24 @@ class SafeRuntime:
             "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
+            "process.start": lambda: self._op_process_start(
+                args, turn_id, security_context
+            ),
+            "process.read": lambda: self._op_process_read(
+                args, security_context
+            ),
+            "process.stdin": lambda: self._op_process_stdin(
+                args, turn_id, security_context
+            ),
+            "process.signal": lambda: self._op_process_signal(
+                args, turn_id, security_context
+            ),
+            "process.stop": lambda: self._op_process_stop(
+                args, turn_id, security_context
+            ),
+            "process.resume": lambda: self._op_process_resume(
+                args, turn_id, security_context
+            ),
             "children.spawn": lambda: self._op_registry_tool("children.spawn", "child_spawn", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "children.send": lambda: self._op_children_send(args),
             "children.inspect": lambda: self._op_children_inspect(args),
@@ -780,6 +833,111 @@ class SafeRuntime:
             "handles.resolve": lambda: self._op_handles_resolve(args, security_context),
         }
         return handlers[op]()
+
+    def _managed_processes(self):
+        manager = self.process_manager
+        if manager is None and self.registry is not None:
+            manager = getattr(self.registry, "process_manager", None)
+        if manager is None:
+            raise RuntimeError("managed process lifecycle is unavailable")
+        return manager
+
+    def _op_process_start(
+        self,
+        args: dict,
+        turn_id: str,
+        security_context,
+    ) -> SafeRuntimeResult:
+        argv = args.get("argv")
+        if not isinstance(argv, list):
+            return SafeRuntimeResult(
+                False,
+                "process.start",
+                error="process.start requires argv as a string list",
+            )
+        profile = (
+            "workspace-write+network"
+            if args.get("network") is True
+            else str(args.get("sandbox_profile") or "workspace-write")
+        )
+        data = self._managed_processes().start(
+            argv=argv,
+            conversation_id=self.conversation_id,
+            turn_id=turn_id,
+            security_context=security_context,
+            cwd=args.get("cwd"),
+            env=args.get("env") if isinstance(args.get("env"), dict) else None,
+            sandbox_profile=profile,
+            require_strong_sandbox=bool(args.get("require_strong_sandbox", False)),
+        )
+        return SafeRuntimeResult(True, "process.start", data=data)
+
+    def _op_process_read(
+        self,
+        args: dict,
+        security_context,
+    ) -> SafeRuntimeResult:
+        data = self._managed_processes().read(
+            str(args.get("process_id") or ""),
+            security_context=security_context,
+            after_seq=int(args.get("after_seq", 0) or 0),
+            limit=int(args.get("limit", 100) or 100),
+        )
+        return SafeRuntimeResult(True, "process.read", data=data)
+
+    def _op_process_stdin(
+        self,
+        args: dict,
+        turn_id: str,
+        security_context,
+    ) -> SafeRuntimeResult:
+        data = self._managed_processes().stdin(
+            str(args.get("process_id") or ""),
+            str(args.get("data") or ""),
+            security_context=security_context,
+            turn_id=turn_id,
+        )
+        return SafeRuntimeResult(True, "process.stdin", data=data)
+
+    def _op_process_signal(
+        self,
+        args: dict,
+        turn_id: str,
+        security_context,
+    ) -> SafeRuntimeResult:
+        data = self._managed_processes().signal(
+            str(args.get("process_id") or ""),
+            str(args.get("signal") or ""),
+            security_context=security_context,
+            turn_id=turn_id,
+        )
+        return SafeRuntimeResult(True, "process.signal", data=data)
+
+    def _op_process_stop(
+        self,
+        args: dict,
+        turn_id: str,
+        security_context,
+    ) -> SafeRuntimeResult:
+        data = self._managed_processes().stop(
+            str(args.get("process_id") or ""),
+            security_context=security_context,
+            turn_id=turn_id,
+        )
+        return SafeRuntimeResult(True, "process.stop", data=data)
+
+    def _op_process_resume(
+        self,
+        args: dict,
+        turn_id: str,
+        security_context,
+    ) -> SafeRuntimeResult:
+        data = self._managed_processes().resume(
+            str(args.get("process_id") or ""),
+            security_context=security_context,
+            turn_id=turn_id,
+        )
+        return SafeRuntimeResult(True, "process.resume", data=data)
 
     def _op_browser_action(self, operation: str, args: dict) -> SafeRuntimeResult:
         if not self.registry or not hasattr(self.registry, "get_browser_gateway"):
