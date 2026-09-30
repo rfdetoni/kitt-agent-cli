@@ -296,7 +296,13 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
         try:
             tool_name = pending.get("tool_name", "apply_patch")
             if remember_scope:
-                await ui.bridge.remember_approval(tool_name, remember_scope)
+                await ui.bridge.remember_approval(
+                    tool_name,
+                    remember_scope,
+                    executable_identity=str(
+                        pending.get("executable_identity") or ""
+                    ),
+                )
                 ui.state.add_toast(
                     f"Sempre permitir {tool_name} ativado para este {remember_scope}."
                 )
@@ -315,8 +321,20 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
     if remember_scope:
         tool_name = pending.get("tool_name", "apply_patch")
         ui.runtime.approval.remember(
-            tool_name, "**", "allow", remember_scope,
-            conversation_id=pending.get("conversation_id") if remember_scope == "session" else None,
+            tool_name,
+            "**",
+            "allow",
+            remember_scope,
+            conversation_id=(
+                pending.get("conversation_id")
+                if remember_scope == "session"
+                else None
+            ),
+            workspace_id=pending.get("workspace_id"),
+            executable_identity=str(
+                pending.get("executable_identity") or ""
+            )
+            or None,
         )
         ui.state.add_toast(f"Sempre permitir {tool_name} ativado para este {remember_scope}.")
 
