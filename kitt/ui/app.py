@@ -150,6 +150,14 @@ class KittUIApp:
         from kitt.ui.controls import build_controls
         build_controls(self)
 
+    def _mouse_capture_enabled(self) -> bool:
+        """Capture mouse only on interactive overlays.
+
+        The main transcript intentionally leaves terminal mouse reporting disabled
+        so users can select and copy text with their terminal normally.
+        """
+        return bool(self.mouse_support_enabled and self.state.active_overlay is not None)
+
     def build_application(self):
         from prompt_toolkit.application import Application
         from prompt_toolkit.cursor_shapes import CursorShape
@@ -172,7 +180,7 @@ class KittUIApp:
             style=DEFAULT_THEME.prompt_toolkit_style(),
             full_screen=True,
             cursor=CursorShape.BLINKING_BEAM,
-            mouse_support=Condition(lambda: getattr(self, "mouse_support_enabled", False)),
+            mouse_support=Condition(self._mouse_capture_enabled),
             refresh_interval=None,
             min_redraw_interval=1 / 30,
             input=self.input,
