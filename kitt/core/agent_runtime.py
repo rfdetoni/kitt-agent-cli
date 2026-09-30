@@ -578,6 +578,20 @@ class DurableTurnJournal:
         except Exception:
             pass
 
+    def end_sessions(self) -> None:
+        for conversation_id in list(self.memory_sessions):
+            self._memory_lifecycle(
+                "session.ended",
+                source_id=conversation_id,
+                source_revision="closed",
+                evidence={
+                    "conversation_id": conversation_id,
+                    "workspace_id": self.processor.workspace_id,
+                },
+                source_kind="session",
+            )
+        self.memory_sessions.clear()
+
     def record_model_request(
         self,
         *,
