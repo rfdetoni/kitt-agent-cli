@@ -1236,6 +1236,29 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return
         sec_ctx = ExecutionSecurityContext.from_dict(pa.security_context)
         sec_ctx.assert_scope(pa.workspace_id, pa.conversation_id)
+        try:
+            from kitt.security.authority_snapshot import validate_authority_snapshot
+
+            sandbox = getattr(
+                getattr(self.registry, "process_runner", None),
+                "sandbox",
+                None,
+            )
+            validate_authority_snapshot(
+                pa.security_context.get("authority_snapshot"),
+                sec_ctx,
+                policy=self.registry.policy,
+                autonomy=self.registry.policy.autonomy,
+                approval_manager=self.registry.approval_manager,
+                sandbox_profile=str(
+                    getattr(sandbox, "default_profile", "workspace-write")
+                ),
+            )
+        except PermissionError as exc:
+            yield TurnFailed(
+                error=f"Execution authority changed since approval: {exc}"
+            )
+            return
 
         if not self.turn_guard.begin(turn_id):
             yield TurnCancelled(reason="Turn cancelled before approved action execution")
