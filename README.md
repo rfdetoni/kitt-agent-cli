@@ -1,5 +1,17 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.80.1 — bounded roles, managed processes and measurable learning
+
+Agent CLI 0.80.1 completes the agent-engineering rollout with host-enforced structural roles (`DISCOVER`, `ARCHITECT`, `IMPLEMENT`, `VERIFY`, `REVIEW`). Each role carries explicit tool/capability, mutation, context, model and budget policy; tool execution rechecks the role at the security boundary rather than trusting a prompt persona.
+
+Background commands now have a workspace-owned lifecycle through `process.start/read/stdin/signal/stop/resume`. Output and exit become durable `PROCESS_OUTPUT`/`PROCESS_EXIT` observations before they are exposed back to the model, buffers are bounded/redacted, and control operations revalidate the authority snapshot captured when the process started. Synchronous `process.run` remains available for bounded build/test commands.
+
+`kitt learn` provides local evidence-only optimization analytics. It reports privacy-safe tool signatures and waste categories, can suggest measured experiments, and exposes `experiment start/switch/report` control/candidate windows. Raw command arguments and secrets are not included in its tool portfolio, missing provider telemetry stays unobserved rather than becoming zero, and a candidate is never promoted automatically.
+
+Skill discovery is bounded before semantic selection by root/depth/file/per-file/aggregate byte limits. Plugin capabilities and saved permissions are structurally enforced, including workspace + executable identity. Public Memory lifecycle hooks submit only evidence digests into the shared `kitt-memoryd` job pipeline, so the Agent does not create a parallel memory store or relearn recalled memory.
+
+The Reverse Proxy transport now carries typed context and available usage telemetry while preserving WebChat continuity and keeping managed process controls classified as mutations. This release is designed for KITT Protocol **0.5.1**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.1** and Assistant Runtime **0.2.26**.
+
 ## Agent CLI 0.80.0 — durable agent engineering
 
 Agent CLI 0.80.0 moves execution durability, recovery and authority into deterministic host-owned contracts without creating a second agent runtime. The append-only EventLedger and RunCoordinator now track replayable run state, workspace mutations stay leased through verification and rollback, and each turn uses one global execution budget that delegates bounded wallet slices to retained subagents with persisted lineage.
@@ -146,6 +158,11 @@ kitt --root /path/to/project
 kitt models
 kitt sessions
 kitt incident --since 30m
+kitt learn
+kitt learn suggest
+kitt learn experiment start context-cache
+kitt learn experiment switch context-cache candidate
+kitt learn experiment report context-cache
 kitt doctor
 kitt --help
 ```
