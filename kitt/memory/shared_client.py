@@ -267,6 +267,45 @@ class KittMemoryClient:
         )
         return rows
 
+    def lifecycle(
+        self,
+        event: str,
+        *,
+        workspace_id: str,
+        source_id: str,
+        source_revision: str,
+        input_digest: str,
+        source_kind: str = "external",
+        namespace: str = "agent-cli",
+        source_watermark: str = "",
+    ) -> dict[str, Any]:
+        allowed = {
+            "session.started",
+            "turn.started",
+            "tool.completed",
+            "turn.completed",
+            "session.ended",
+        }
+        event_name = str(event or "").strip()
+        if event_name not in allowed:
+            raise ValueError(f"unsupported memory lifecycle event: {event_name}")
+        digest = str(input_digest or "").strip().lower()
+        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+            raise ValueError("input_digest must be a SHA-256 hex digest")
+        return self.manage(
+            "lifecycle.ingest",
+            {
+                "event": event_name,
+                "namespace": str(namespace or "agent-cli"),
+                "workspace_id": str(workspace_id),
+                "source_id": str(source_id),
+                "source_revision": str(source_revision),
+                "source_watermark": str(source_watermark or ""),
+                "input_digest": digest,
+                "source_kind": str(source_kind or "external"),
+            },
+        )
+
     def forget(self, memory_id: str) -> bool:
         body = self._call(MEMORY_FORGET_REQUEST, {"id": memory_id}, MEMORY_FORGET_RESPONSE)
         return bool(body.get("deleted")) if isinstance(body, dict) else False
