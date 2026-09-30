@@ -266,6 +266,8 @@ class KittRuntime:
             session_tree,
             summarizer=_build_compaction_summarizer(task_router),
             keep_recent=config.compaction_keep_recent,
+            artifact_store=artifacts,
+            workspace_id=identity.id,
         )
         events = EventBus()
         surface_service = SurfaceService(
