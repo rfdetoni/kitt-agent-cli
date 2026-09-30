@@ -132,7 +132,11 @@ class ApprovalManager:
         conv = str(conversation_id or "").strip() or None
         if scope == "session" and conv is None:
             raise ValueError("Session-scoped approval requires conversation_id")
-        workspace = str(workspace_id or self.workspace_id or "").strip()
+        workspace = str(
+            workspace_id
+            or self.workspace_id
+            or ("local" if self.db is None else "")
+        ).strip()
         if scope == "workspace":
             conv = None
             if not workspace:
@@ -220,7 +224,11 @@ class ApprovalManager:
         import fnmatch
         import re
         conv = str(conversation_id or "").strip() or None
-        workspace = str(workspace_id or self.workspace_id or "").strip()
+        workspace = str(
+            workspace_id
+            or self.workspace_id
+            or ("local" if self.db is None else "")
+        ).strip()
         identity = str(executable_identity or "").strip() or None
         with self._lock:
             rules = list(self.remembered_rules)
@@ -257,7 +265,11 @@ class ApprovalManager:
         *,
         workspace_id: str | None = None,
     ) -> list[SavedPermission]:
-        workspace = str(workspace_id or self.workspace_id or "").strip()
+        workspace = str(
+            workspace_id
+            or self.workspace_id
+            or ("local" if self.db is None else "")
+        ).strip()
         with self._lock:
             rules = list(self.remembered_rules)
         result: list[SavedPermission] = []
