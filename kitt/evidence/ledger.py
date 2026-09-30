@@ -7,6 +7,11 @@ import uuid
 from typing import Any
 
 from .models import SessionEventRecord
+
+try:
+    from kitt_protocol import AgentEvent
+except Exception:  # protocol is optional for low-level isolated tests
+    AgentEvent = None
 from .projections import SessionProjectionRegistry, build_default_projection_registry
 
 
@@ -55,6 +60,9 @@ class SessionLedger:
             sequence=int(row["sequence"]),
             event_type=row["event_type"],
             payload=json.loads(row["payload_json"] or "{}"),
+            source=row["source"],
+            durability=row["durability"],
+            parent_event_id=row["parent_event_id"],
             payload_hash=row["payload_hash"],
             model_visible=bool(row["model_visible"]),
             replayable=bool(row["replayable"]),
@@ -72,6 +80,9 @@ class SessionLedger:
         model_visible: bool = False,
         replayable: bool = True,
         force_checkpoint: bool = False,
+        source: str = "kitt-agent-cli",
+        durability: str = "DURABLE",
+        parent_event_id: str | None = None,
     ) -> SessionEventRecord:
         if not conversation_id:
             raise ValueError("conversation_id is required")
@@ -97,8 +108,9 @@ class SessionLedger:
             conn.execute(
                 """INSERT INTO session_events(
                        id,conversation_id,turn_id,episode_id,sequence,event_type,
-                       payload_json,payload_hash,model_visible,replayable,created_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                       parent_event_id,source,durability,payload_json,payload_hash,
+                       model_visible,replayable,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     event_id,
                     conversation_id,
@@ -106,6 +118,9 @@ class SessionLedger:
                     episode_id,
                     sequence,
                     event_type,
+                    parent_event_id,
+                    str(source or "kitt-agent-cli"),
+                    str(durability or "DURABLE"),
                     encoded,
                     digest,
                     int(model_visible),
@@ -122,6 +137,9 @@ class SessionLedger:
             event_type=event_type,
             payload=body,
             payload_hash=digest,
+            source=str(source or "kitt-agent-cli"),
+            durability=str(durability or "DURABLE"),
+            parent_event_id=parent_event_id,
             model_visible=model_visible,
             replayable=replayable,
             created_at=now,
@@ -157,6 +175,65 @@ class SessionLedger:
             model_visible=True,
             replayable=True,
             force_checkpoint=True,
+            source="model-gateway",
+            durability="DURABLE",
+        )
+
+    def append_event(
+        self,
+        conversation_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        turn_id: str | None = None,
+        source: str = "kitt-agent-cli",
+        durability: str = "DURABLE",
+        parent_event_id: str | None = None,
+        model_visible: bool = False,
+        replayable: bool = True,
+        publisher=None,
+    ) -> SessionEventRecord:
+        """Persist an event before publishing it to an external observer."""
+        record = self.append(
+            conversation_id,
+            event_type,
+            payload,
+            turn_id=turn_id,
+            source=source,
+            durability=durability,
+            parent_event_id=parent_event_id,
+            model_visible=model_visible,
+            replayable=replayable,
+        )
+        if publisher is not None:
+            publisher(event_type, dict(record.payload))
+        return record
+
+    def as_agent_event(self, record: SessionEventRecord):
+        if AgentEvent is None:
+            return {
+                "event_id": record.id,
+                "conversation_id": record.conversation_id,
+                "turn_id": record.turn_id or "",
+                "parent_event_id": record.parent_event_id,
+                "seq": record.sequence,
+                "kind": record.event_type,
+                "source": record.source,
+                "timestamp": int(record.created_at * 1000),
+                "payload": dict(record.payload),
+                "durability": record.durability,
+            }
+        return AgentEvent(
+            event_id=record.id,
+            conversation_id=record.conversation_id,
+            turn_id=record.turn_id or "",
+            parent_event_id=record.parent_event_id,
+            seq=record.sequence,
+            kind=record.event_type,
+            source=record.source,
+            timestamp=int(record.created_at * 1000),
+            payload=dict(record.payload),
+            durability=record.durability,
         )
 
     def events(
@@ -200,3 +277,8 @@ class SessionLedger:
         payload["payload_hash"] = row["payload_hash"]
         payload["sequence"] = int(row["sequence"])
         return payload
+
+
+class EventLedger(SessionLedger):
+    """Canonical name for the durable append-only execution event log."""
+

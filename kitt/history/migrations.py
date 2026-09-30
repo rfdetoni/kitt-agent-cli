@@ -6,7 +6,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -617,6 +617,9 @@ SCHEMA_V5_STATEMENTS = [
         episode_id TEXT,
         sequence INTEGER NOT NULL,
         event_type TEXT NOT NULL,
+        parent_event_id TEXT,
+        source TEXT NOT NULL DEFAULT 'kitt-agent-cli',
+        durability TEXT NOT NULL DEFAULT 'DURABLE',
         payload_json TEXT NOT NULL,
         payload_hash TEXT NOT NULL,
         model_visible INTEGER NOT NULL DEFAULT 0,
