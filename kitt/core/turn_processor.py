@@ -139,7 +139,13 @@ class TurnProcessor(
         )
         self.context_resolver = ContextResolver(root_dir=root_dir)
         self.deterministic_extractor = DeterministicExtractor()
-        self.skill_discovery = SkillDiscovery()
+        self.skill_discovery = SkillDiscovery(
+            max_roots=self.config.skill_discovery_max_roots,
+            max_depth=self.config.skill_discovery_max_depth,
+            max_files=self.config.skill_discovery_max_files,
+            max_file_bytes=self.config.skill_discovery_max_file_bytes,
+            max_total_bytes=self.config.skill_discovery_max_total_bytes,
+        )
         self.skill_loader = ProgressiveSkillLoader()
         self.diff_parser = PatchParser()
         self.edit_strategy_selector = EditStrategySelector()
