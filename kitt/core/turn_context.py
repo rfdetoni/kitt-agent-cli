@@ -444,10 +444,20 @@ class TurnContextMixin:
             conversation_id=cmd.conversation_id,
             turn_id=cmd.turn_id,
             memory_context=memory_context,
+            harness_context=harness_context,
             repo_map=allocated.get("repo_map", ""),
             files_context=allocated.get("files_context", ""),
+            guidelines_context=agents_str,
             skills_context=skills_str,
             tool_definitions=tool_definitions,
+            policy_context={
+                "formatting_contract": formatting_contract,
+                "mandatory_constraints": mandatory_constraints,
+                "execution_instruction": execution_instruction,
+                "planning_instruction": planning_instruction,
+                "loop_action_budget": loop_action_budget,
+                "mode": cmd.mode,
+            },
             provider_profile=exe_profile,
         )
         persist_context_epoch(
