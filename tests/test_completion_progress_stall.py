@@ -106,9 +106,10 @@ class CompletionProgressStallTests(unittest.TestCase):
                 if isinstance(event, TurnFailed)
             ]
 
-            self.assertEqual(processor.calls, 3)
+            self.assertEqual(processor.calls, 2)
             self.assertEqual(len(failures), 1)
             self.assertIn("prose-only", failures[0].error)
+            self.assertIn("requested mutation was never attempted", failures[0].error)
 
     def test_three_identical_repo_lists_fail_before_runaway_loop(self):
         class Processor:
