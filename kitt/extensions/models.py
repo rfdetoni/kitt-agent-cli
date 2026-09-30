@@ -6,6 +6,8 @@ from enum import Enum
 from pathlib import Path
 from typing import FrozenSet, List, Optional, Set
 
+from kitt_protocol import PluginCapabilities
+
 CURRENT_PLUGIN_API_VERSION = "1"
 
 VALID_PERMISSIONS: FrozenSet[str] = frozenset({
@@ -74,3 +76,4 @@ class PluginManifest:
     source: str = "workspace"
     manifest_path: Optional[Path] = None
     trusted_in_process: bool = False
+    capabilities: PluginCapabilities = field(default_factory=PluginCapabilities)
