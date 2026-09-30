@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, List, Literal
+import time
 
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.memory.shared_client import KittMemoryClient
@@ -15,6 +16,8 @@ class MemoryItem:
     priority: int = 1
     tags: List[str] = field(default_factory=list)
     created_at: str = ""
+    memory_id: str = ""
+    recall_trace_id: str = ""
 
 
 class MemoryManager:
@@ -105,13 +108,19 @@ class MemoryManager:
         return str(edge["id"])
 
     @staticmethod
-    def _item(record: dict[str, Any]) -> MemoryItem | None:
+    def _item(record: dict[str, Any], recall_trace_id: str = "") -> MemoryItem | None:
         text = str(record.get("content") or "").strip()
         if not text:
             return None
         scope = "GLOBAL" if str(record.get("scope") or "").lower() == "global" else "PROJECT"
         priority = 3 if record.get("pinned") else 2
-        return MemoryItem(text=text, scope=scope, priority=priority)
+        return MemoryItem(
+            text=text,
+            scope=scope,
+            priority=priority,
+            memory_id=str(record.get("id") or ""),
+            recall_trace_id=str(recall_trace_id or ""),
+        )
 
     def get_items(self) -> List[MemoryItem]:
         if not self.persistence_enabled:
@@ -130,25 +139,78 @@ class MemoryManager:
     def get_relevant_memories(self, prompt: str) -> List[MemoryItem]:
         if not self.persistence_enabled:
             return []
-        rows = self.client.recall(self.workspace_id, prompt, limit=8)
+        trace_id = ""
+        recall_with_trace = getattr(self.client, "recall_with_trace", None)
+        if callable(recall_with_trace):
+            rows, trace_id = recall_with_trace(self.workspace_id, prompt, limit=8)
+        else:
+            rows = self.client.recall(self.workspace_id, prompt, limit=8)
         result: list[MemoryItem] = []
         for row in rows:
-            item = self._item(row)
+            item = self._item(row, trace_id)
             if item:
                 result.append(item)
         return result
 
-    def get_memory_context(self, prompt: str = "", max_tokens: int = 400) -> str:
+    def _record_presented(
+        self,
+        items: List[MemoryItem],
+        *,
+        turn_id: str,
+        purpose: str,
+    ) -> None:
+        if not turn_id:
+            return
+        now = int(time.time())
+        for item in items:
+            if not item.memory_id or not item.recall_trace_id:
+                continue
+            try:
+                self.client.manage(
+                    "receipt.record",
+                    {
+                        "receipt": {
+                            "recall_trace_id": item.recall_trace_id,
+                            "memory_id": item.memory_id,
+                            "consumer": "kitt-agent-cli",
+                            "purpose": purpose,
+                            "presented": True,
+                            "referenced": False,
+                            "used_for_action": False,
+                            "outcome": "",
+                            "turn_id": turn_id,
+                            "consumed_at": now,
+                        }
+                    },
+                )
+            except Exception:
+                # Evidence telemetry must never make memory recall unavailable.
+                continue
+
+    def get_memory_context(
+        self,
+        prompt: str = "",
+        max_tokens: int = 400,
+        *,
+        turn_id: str = "",
+    ) -> str:
         items = self.get_relevant_memories(prompt) if prompt else self.get_items()
         if not prompt:
             body = "\n".join(f"- {item.text}" for item in items) if items else "(empty)"
             return f"--- Project Memory ---\n{body}"
         lines: list[str] = []
+        selected: list[MemoryItem] = []
         used = 0
         for item in items:
             line = f"- [{item.scope}] {item.text}"
             cost = TokenCounter.count_tokens(line)
             if used + cost <= max_tokens:
                 lines.append(line)
+                selected.append(item)
                 used += cost
+        self._record_presented(
+            selected,
+            turn_id=turn_id,
+            purpose="context-envelope",
+        )
         return "\n".join(lines)
