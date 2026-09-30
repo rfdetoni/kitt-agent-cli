@@ -38,7 +38,13 @@ The table documents authority metadata. Operation-specific argument validation r
 | memory.link | memory.write | memory_save | yes | 0 | - | - |
 | memory.query | memory.read | - | no | 0 | - | - |
 | patch.apply | repo.write | apply_patch | yes | 1 | - | apply_patch |
+| process.read | process.run | - | no | 0 | - | - |
+| process.resume | process.run | - | yes | 0 | - | - |
 | process.run | process.run | run_command | yes | 3 | workspace-write | run_command |
+| process.signal | process.run | - | yes | 0 | - | - |
+| process.start | process.run | run_command | yes | 3 | workspace-write | - |
+| process.stdin | process.run | - | yes | 0 | - | - |
+| process.stop | process.run | - | yes | 0 | - | - |
 | program.execute | - | - | no | 0 | - | - |
 | repo.ast_search | repo.search | search | no | 0 | - | - |
 | repo.call_hierarchy | repo.search | search | no | 0 | - | - |
