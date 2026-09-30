@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from typing import Any
 
 from kitt.core.runtime import KittRuntime
@@ -62,6 +63,39 @@ def _bind_child_proxy_session(runtime: KittRuntime, request: dict) -> str:
 def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
     child_conversation = request["runtime_conversation_id"]
     _validate_child_conversation(runtime, child_conversation)
+
+    lease = request.get("budget_lease")
+    if isinstance(lease, dict) and lease:
+        token_cap = max(1, int(lease.get("token_cap", 1) or 1))
+        call_cap = max(1, int(lease.get("call_cap", 1) or 1))
+        cost_cap = max(0.0, float(lease.get("cost_cap", 0.0) or 0.0))
+        current = runtime.processor.config
+        runtime.processor.config = replace(
+            current,
+            max_model_calls_per_turn=min(
+                int(getattr(current, "max_model_calls_per_turn", call_cap)),
+                call_cap,
+            ),
+            max_input_tokens_per_turn=min(
+                int(getattr(current, "max_input_tokens_per_turn", token_cap)),
+                token_cap,
+            ),
+            max_output_tokens_per_turn=min(
+                int(getattr(current, "max_output_tokens_per_turn", token_cap)),
+                token_cap,
+            ),
+            max_total_tokens_per_turn=min(
+                int(getattr(current, "max_total_tokens_per_turn", token_cap)),
+                token_cap,
+            ),
+            max_cost_per_turn=min(
+                float(getattr(current, "max_cost_per_turn", cost_cap)),
+                cost_cap,
+            )
+            if cost_cap > 0
+            else float(getattr(current, "max_cost_per_turn", 50.0)),
+            max_subagents_per_turn=0,
+        )
 
     source_context = ExecutionSecurityContext.from_dict(request["security_context"])
     security_context = ExecutionSecurityContext(
