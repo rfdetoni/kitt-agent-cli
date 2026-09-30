@@ -390,6 +390,49 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evolve_opportunities.add_argument("--limit", type=int, default=10)
 
+    learn_parser = subparsers.add_parser(
+        "learn",
+        parents=[common],
+        help="Inspect local optimization evidence without auto-applying changes",
+    )
+    learn_sub = learn_parser.add_subparsers(
+        dest="learn_action",
+        help="Learning action",
+    )
+    learn_sub.add_parser(
+        "suggest",
+        parents=[common],
+        help="Show evidence-backed optimization candidates",
+    )
+    learn_experiment = learn_sub.add_parser(
+        "experiment",
+        parents=[common],
+        help="Manage local control/candidate measurement windows",
+    )
+    learn_experiment_sub = learn_experiment.add_subparsers(
+        dest="learn_experiment_action",
+        help="Experiment action",
+    )
+    learn_start = learn_experiment_sub.add_parser(
+        "start",
+        parents=[common],
+        help="Start the control arm for a feature",
+    )
+    learn_start.add_argument("feature")
+    learn_switch = learn_experiment_sub.add_parser(
+        "switch",
+        parents=[common],
+        help="Switch an experiment to control or candidate",
+    )
+    learn_switch.add_argument("feature")
+    learn_switch.add_argument("arm", choices=["control", "candidate"])
+    learn_report = learn_experiment_sub.add_parser(
+        "report",
+        parents=[common],
+        help="Compare observed experiment arms",
+    )
+    learn_report.add_argument("feature")
+
     doctor_parser = subparsers.add_parser(
         "doctor",
         parents=[common],
@@ -560,6 +603,11 @@ def main(argv=None) -> int:
         from kitt.evolution.cli import handle_evolve_command
 
         return handle_evolve_command(args)
+
+    if args.subcommand == "learn":
+        from kitt.cli.commands import handle_learn_command
+
+        return handle_learn_command(args)
 
     if args.subcommand == "doctor":
         from kitt.cli.commands import handle_doctor_command
