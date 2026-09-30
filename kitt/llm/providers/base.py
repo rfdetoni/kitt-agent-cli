@@ -5,7 +5,7 @@ import urllib.error
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Protocol
+from typing import Any, Callable, Dict, Iterator, List, Optional, Protocol
 
 from kitt.llm.domain import (
     ModelDiscoveryResult,
@@ -28,6 +28,7 @@ class LLMRequest:
     response_format: Optional[str] = None
     tool_definitions: List[Dict[str, Any]] = field(default_factory=list)
     context_envelope: Optional[Dict[str, Any]] = None
+    usage_callback: Optional[Callable[[Dict[str, Any]], None]] = None
     temperature: float = 0.0
     context_window: int = 8192
     max_output_tokens: int = 4096
