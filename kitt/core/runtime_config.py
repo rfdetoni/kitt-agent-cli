@@ -58,6 +58,11 @@ class RuntimeConfig:
 
     max_skills_per_prompt: int = 3
     max_skill_body_chars: int = 16000
+    skill_discovery_max_roots: int = 8
+    skill_discovery_max_depth: int = 5
+    skill_discovery_max_files: int = 256
+    skill_discovery_max_file_bytes: int = 256 * 1024
+    skill_discovery_max_total_bytes: int = 4 * 1024 * 1024
     max_harness_chars: int = 12000
     max_index_file_bytes: int = 512 * 1024
     max_index_files: int = 20000
