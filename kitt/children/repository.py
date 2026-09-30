@@ -41,13 +41,16 @@ class ChildRepository:
             context_summary=d.get("context_summary", ""),
             runtime_conversation_id=d.get("runtime_conversation_id"),
             security_context=json.loads(d.get("security_context_json") or "{}"),
+            budget_lease=json.loads(d.get("budget_lease_json") or "{}"),
+            lineage=json.loads(d.get("lineage_json") or "{}"),
         )
 
     def create(self, parent_conversation_id, parent_turn_id, name, task, depth,
                model_profile, allowed_paths, enabled_tools, token_budget,
                timeout_seconds, capabilities=None, runtime_conversation_id=None,
-               security_context=None):
-        cid = f"child_{uuid.uuid4().hex}"
+               security_context=None, budget_lease=None, lineage=None,
+               child_id=None):
+        cid = str(child_id or f"child_{uuid.uuid4().hex}")
         runtime_conversation_id = runtime_conversation_id or f"childconv_{cid}"
         now = time.time()
         with self.db.get_connection() as c:
@@ -75,14 +78,16 @@ class ChildRepository:
                     id,parent_conversation_id,parent_turn_id,name,task,state,depth,
                     model_profile,allowed_paths_json,enabled_tools_json,token_budget,
                     timeout_seconds,created_at,capabilities_json,runtime_conversation_id,
-                    security_context_json
-                ) VALUES(?,?,?,?,?,'CREATED',?,?,?,?,?,?,?,?,?,?)""",
+                    security_context_json,budget_lease_json,lineage_json
+                ) VALUES(?,?,?,?,?,'CREATED',?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     cid, parent_conversation_id, parent_turn_id, name, task, depth,
                     model_profile, json.dumps(allowed_paths), json.dumps(enabled_tools),
                     token_budget, timeout_seconds, now,
                     json.dumps(sorted(capabilities or ())), runtime_conversation_id,
                     json.dumps(security_context or {}, ensure_ascii=False),
+                    json.dumps(budget_lease or {}, ensure_ascii=False),
+                    json.dumps(lineage or {}, ensure_ascii=False),
                 ),
             )
             c.commit()
@@ -126,7 +131,7 @@ class ChildRepository:
             "state", "tokens_used", "result_artifact_id", "error", "started_at",
             "completed_at", "task", "current_task_id", "task_started_at",
             "capabilities_json", "context_summary", "runtime_conversation_id",
-            "security_context_json",
+            "security_context_json", "budget_lease_json", "lineage_json",
         }
         values = {k: v for k, v in fields.items() if k in allowed}
         if not values:
