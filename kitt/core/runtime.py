@@ -795,11 +795,21 @@ class KittRuntime:
 
         errors = []
         for name, close_async, close_sync in (
+            (
+                "memory_lifecycle",
+                None,
+                getattr(
+                    getattr(self.processor, "turn_journal", None),
+                    "end_sessions",
+                    None,
+                ),
+            ),
             ("goal_scheduler", None, getattr(self.goal_scheduler, "stop", None)),
             ("dream_scheduler", None, getattr(self.dream_scheduler, "close", None)),
             ("extensions", getattr(self.extensions, "stop", None), None),
             ("children", None, getattr(self.children, "close", None)),
             ("run_coordinator", None, getattr(self.run_coordinator, "close", None)),
+            ("registry", None, getattr(self.registry, "close", None)),
             ("processor", None, getattr(self.processor, "close", None)),
             ("metrics", None, getattr(self.metrics, "close", None)),
             ("artifacts", None, getattr(self.artifacts, "close", None)),
@@ -835,10 +845,19 @@ class KittRuntime:
 
         errors = []
         for name, close_sync in (
+            (
+                "memory_lifecycle",
+                getattr(
+                    getattr(self.processor, "turn_journal", None),
+                    "end_sessions",
+                    None,
+                ),
+            ),
             ("goal_scheduler", getattr(self.goal_scheduler, "stop", None)),
             ("dream_scheduler", getattr(self.dream_scheduler, "close", None)),
             ("children", getattr(self.children, "close", None)),
             ("run_coordinator", getattr(self.run_coordinator, "close", None)),
+            ("registry", getattr(self.registry, "close", None)),
             ("processor", getattr(self.processor, "close", None)),
             ("metrics", getattr(self.metrics, "close", None)),
             ("artifacts", getattr(self.artifacts, "close", None)),
