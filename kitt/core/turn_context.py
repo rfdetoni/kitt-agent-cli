@@ -17,6 +17,13 @@ from kitt.core.turn_helpers import (
 )
 from kitt.domain.entities import ContextPlan, ModelProfile, SemanticTask
 from kitt.formatting.contract import FormattingContractManager
+from kitt.context.envelope import (
+    ContextEnvelopeBuilder,
+    envelope_mapping,
+    envelope_token_cost,
+    lower_context_envelope,
+)
+from kitt_protocol import CacheRegion, ContextKind, ContextStability, ContextTrust, RecoveryMode
 from kitt.llm.client import LLMClient
 from kitt.prompts import (
     CONTEXT_SUMMARY_SYSTEM as CONTEXT_SUMMARY_PROMPT,
@@ -311,33 +318,22 @@ class TurnContextMixin:
         mandatory_constraints = [c.text for c in task.constraints if c.mandatory]
         use_agent_prompt = bool(plan.enabled_tools) or agent_addressed
         tools_for_contract = exposed_tools if exposed_tools is not None else plan.enabled_tools
-        turn_context = ""
+        tool_definitions = self._tool_definitions(
+            tools_for_contract,
+            planned_tools=plan.enabled_tools,
+        )
+
         if plan.enabled_tools:
-            tool_contract = self._tool_instructions(
-                tools_for_contract,
-                planned_tools=plan.enabled_tools,
-            )
-            formatting_contract = FormattingContractManager(
-                self.root_path
-            ).prompt_summary(
-                paths=[*(cmd.explicit_files or ()), *task.paths]
-            )
-            slice_instruction = (
-                f"\n\n{execution_slice.render()}" if execution_slice is not None else ""
-            )
             base_sys = (
-                f"{'You are K.I.T.T., an autonomous coding agent.' if agent_addressed else 'Answer directly and concisely.'}\n\n"
-                f"Tool Contract:\n{tool_contract}{slice_instruction}"
-            ).strip()
-            turn_context = (
-                f"Memory:\n{self.memory.get_memory_context(cmd.prompt)}\n\n"
-                f"Active Skills:\n{skills_str}\n\n"
-                f"Project Guidelines:\n{agents_str}\n\n"
-                f"Formatting Contract:\n{formatting_contract}\n\n"
-                f"Learned Harness:\n{self.harness_service.prompt(workspace_id, cmd.conversation_id, max_chars=self.config.max_harness_chars) if self.harness_service and self.history_service else ''}"
-            ).strip()
+                "You are K.I.T.T., an autonomous coding agent."
+                if agent_addressed
+                else "You are an execution agent. Follow the original user request and host policy."
+            )
         elif use_agent_prompt:
-            base_sys = "You are K.I.T.T., the autonomous coding agent. Answer in one direct, concise sentence. Do not expose reasoning."
+            base_sys = (
+                "You are K.I.T.T., the autonomous coding agent. "
+                "Answer in one direct, concise sentence. Do not expose reasoning."
+            )
         else:
             base_sys = "Answer in one direct, concise sentence. Do not expose reasoning."
 
@@ -363,57 +359,266 @@ class TurnContextMixin:
         else:
             principal_task_prompt = cmd.prompt
 
+        history_context = self._history_context(
+            cmd.conversation_id,
+            exclude_prompt=cmd.prompt,
+        )
         allocated = budget.allocate_context(
             system_prompt=base_sys,
             task_prompt=principal_task_prompt,
             mandatory_constraints=mandatory_constraints,
             repo_map=context_map_str,
             files_context=explicit_str,
-            history_context=self._history_context(cmd.conversation_id, exclude_prompt=cmd.prompt),
-            recent_results=turn_context
+            history_context=history_context,
+            recent_results="",
         )
 
-        constraints_part = f"Mandatory Constraints:\n{allocated['constraints_text']}\n\n" if allocated.get('constraints_text') else ""
-        dynamic_part = (
-            f"Turn Context:\n{allocated['recent_results']}\n\n"
-            if allocated.get("recent_results")
+        loop_action_budget = max(
+            1,
+            int(getattr(self.config, "agent_loop_action_budget", 4)),
+        )
+        formatting_contract = (
+            FormattingContractManager(self.root_path).prompt_summary(
+                paths=[*(cmd.explicit_files or ()), *task.paths]
+            )
+            if plan.enabled_tools
             else ""
         )
-        sys_prompt = (
-            f"{allocated['system_prompt']}\n\n"
-            f"{constraints_part}"
-            f"{dynamic_part}"
-            f"Files Context:\n{allocated['files_context']}\n\n"
-            f"Repo Map:\n{allocated['repo_map']}\n\n"
-            f"Recent Conversation:\n{allocated['history_context']}"
-        ).strip() if plan.enabled_tools else (
-            f"{base_sys}\n\nProject context:\n{context_map_str}".strip() if context_map_str else base_sys
+        memory_context = (
+            self.memory.get_memory_context(cmd.prompt, max_tokens=600)
+            if plan.enabled_tools
+            else ""
+        )
+        harness_context = (
+            self.harness_service.prompt(
+                workspace_id,
+                cmd.conversation_id,
+                max_chars=self.config.max_harness_chars,
+            )
+            if plan.enabled_tools and self.harness_service and self.history_service
+            else ""
+        )
+        tool_instructions = (
+            self._tool_instructions(
+                tools_for_contract,
+                planned_tools=plan.enabled_tools,
+            )
+            if plan.enabled_tools
+            else ""
+        )
+        execution_instruction = (
+            execution_slice.render()
+            if execution_slice is not None
+            else ""
+        )
+        planning_instruction = (
+            "Planning Mode is active. Inspect with read-only tools only. "
+            "Return an actionable implementation plan with architecture context, "
+            "atomic implementation steps, risks/edge cases and exact validation steps. "
+            "Do not mutate files in this turn."
+            if cmd.mode == "plan"
+            else ""
         )
 
-        if cmd.mode == "plan":
-            planning_instruction = (
-                "\n\n[PLANNING MODE ACTIVE]\n"
-                "You are operating in Planning Mode. Formulate a structured, actionable implementation plan.\n"
-                "Do NOT modify files or propose write/patch tools in this turn.\n"
-                "Inspect the codebase using available read tools (read_file, search, repository_map).\n"
-                "Structure your final plan with:\n"
-                "1. Context & Architecture Analysis: Summary of existing code and dependencies.\n"
-                "2. Step-by-Step Implementation Steps: Atomic actions, targeted files, and symbol changes.\n"
-                "3. Risk & Edge-Case Assessment: Potential regressions and mitigations.\n"
-                "4. Verification & Testing Strategy: Exact test commands or reproduction steps."
+        context_budget = max(
+            256,
+            budget.max_input_tokens
+            - TokenCounter.count_tokens(principal_task_prompt)
+            - TokenCounter.count_tokens(base_sys)
+            - 128,
+        )
+        builder = ContextEnvelopeBuilder(
+            epoch=f"{cmd.conversation_id}:{cmd.turn_id}",
+            max_tokens=context_budget,
+        )
+        builder.add(
+            ContextKind.SYSTEM_INSTRUCTION,
+            base_sys,
+            source="kitt-agent-cli",
+            trust=ContextTrust.TRUSTED,
+            stability=ContextStability.BUILD,
+            priority=100,
+            recovery=RecoveryMode.RECOMPUTE,
+            cache_region=CacheRegion.FROZEN_PREFIX,
+            lifecycle="build",
+        )
+        builder.add(
+            ContextKind.USER_INTENT,
+            principal_task_prompt,
+            source="user",
+            trust=ContextTrust.TRUSTED,
+            stability=ContextStability.TURN,
+            priority=100,
+            sensitivity="private",
+            recovery=RecoveryMode.NONE,
+            cache_region=CacheRegion.LIVE_ZONE,
+            lifecycle="turn",
+            ttl_turns=1,
+        )
+        if tool_definitions:
+            builder.add(
+                ContextKind.TOOL_SCHEMA,
+                {
+                    "definitions": tool_definitions,
+                    "instructions": tool_instructions,
+                },
+                source="tool-registry",
+                trust=ContextTrust.TRUSTED,
+                stability=ContextStability.BUILD,
+                priority=98,
+                recovery=RecoveryMode.RECOMPUTE,
+                cache_region=CacheRegion.FROZEN_PREFIX,
+                lifecycle="build",
             )
-            sys_prompt = sys_prompt + planning_instruction
+        builder.add(
+            ContextKind.OUTPUT_CONTRACT,
+            {
+                "instructions": "\n".join(
+                    item for item in (
+                        execution_instruction,
+                        planning_instruction,
+                        (
+                            "Mandatory constraints:\n"
+                            + "\n".join(f"- {item}" for item in mandatory_constraints)
+                            if mandatory_constraints
+                            else ""
+                        ),
+                    )
+                    if item
+                ),
+                "loop_action_budget": loop_action_budget,
+                "planning_mode": cmd.mode == "plan",
+                "discovery_required": execution_slice is not None,
+            },
+            source="run-coordinator",
+            trust=ContextTrust.TRUSTED,
+            stability=ContextStability.TURN,
+            priority=97,
+            recovery=RecoveryMode.RECOMPUTE,
+            cache_region=CacheRegion.LIVE_ZONE,
+            lifecycle="turn",
+            ttl_turns=1,
+        )
+        builder.add(
+            ContextKind.MEMORY_RECALL,
+            memory_context,
+            source="kitt-memoryd",
+            trust=ContextTrust.TRUSTED,
+            stability=ContextStability.SESSION,
+            priority=94,
+            sensitivity="private",
+            recovery=RecoveryMode.SOURCE_REF,
+            cache_region=CacheRegion.SESSION_PREFIX,
+            lifecycle="session",
+        )
+        builder.add(
+            ContextKind.HARNESS_KNOWLEDGE,
+            harness_context,
+            source="harness",
+            trust=ContextTrust.TRUSTED,
+            stability=ContextStability.SESSION,
+            priority=86,
+            recovery=RecoveryMode.SOURCE_REF,
+            cache_region=CacheRegion.SESSION_PREFIX,
+            lifecycle="session",
+        )
+        builder.add(
+            ContextKind.SKILL,
+            skills_str if skills_str != "No specific skills loaded." else "",
+            source="workspace-skills",
+            trust=ContextTrust.UNTRUSTED_WORKSPACE,
+            stability=ContextStability.SESSION,
+            priority=82,
+            recovery=RecoveryMode.SOURCE_REF,
+            cache_region=CacheRegion.SESSION_PREFIX,
+            lifecycle="session",
+        )
+        builder.add(
+            ContextKind.PROJECT_GUIDELINE,
+            agents_str,
+            source="workspace-guidelines",
+            trust=ContextTrust.UNTRUSTED_WORKSPACE,
+            stability=ContextStability.SESSION,
+            priority=84,
+            recovery=RecoveryMode.SOURCE_REF,
+            cache_region=CacheRegion.SESSION_PREFIX,
+            lifecycle="session",
+        )
+        builder.add(
+            ContextKind.OUTPUT_CONTRACT,
+            formatting_contract,
+            source="formatting-policy",
+            trust=ContextTrust.UNTRUSTED_WORKSPACE,
+            stability=ContextStability.SESSION,
+            priority=80,
+            recovery=RecoveryMode.RECOMPUTE,
+            cache_region=CacheRegion.SESSION_PREFIX,
+            lifecycle="session",
+        )
+        builder.add(
+            ContextKind.FILE_EVIDENCE,
+            allocated.get("files_context", ""),
+            source="repository",
+            trust=ContextTrust.UNTRUSTED_WORKSPACE,
+            stability=ContextStability.TURN,
+            priority=78,
+            recovery=RecoveryMode.SOURCE_REF,
+            cache_region=CacheRegion.LIVE_ZONE,
+            lifecycle="turn",
+            ttl_turns=1,
+        )
+        builder.add(
+            ContextKind.REPOSITORY_MAP,
+            allocated.get("repo_map", ""),
+            source="repository",
+            trust=ContextTrust.UNTRUSTED_WORKSPACE,
+            stability=ContextStability.TURN,
+            priority=76,
+            recovery=RecoveryMode.RECOMPUTE,
+            cache_region=CacheRegion.LIVE_ZONE,
+            lifecycle="turn",
+            ttl_turns=1,
+        )
+        builder.add(
+            ContextKind.SEARCH_EVIDENCE,
+            allocated.get("history_context", ""),
+            source="conversation-ledger",
+            trust=ContextTrust.EXTERNAL,
+            stability=ContextStability.SESSION,
+            priority=72,
+            sensitivity="private",
+            recovery=RecoveryMode.SOURCE_REF,
+            cache_region=CacheRegion.LIVE_ZONE,
+            lifecycle="session",
+        )
+        context_envelope = builder.build()
+
+        # Reverse-proxy requests carry the typed envelope as data. Text-only
+        # providers receive a deterministic one-way lowering of the same IR.
+        sys_prompt = (
+            base_sys
+            if llm_first_proxy
+            else lower_context_envelope(context_envelope)
+        )
+        allocated["total_input_tokens"] = (
+            TokenCounter.count_tokens(principal_task_prompt)
+            + (
+                envelope_token_cost(context_envelope)
+                if llm_first_proxy
+                else TokenCounter.count_tokens(sys_prompt)
+            )
+        )
+        allocated["context_envelope_tokens"] = envelope_token_cost(context_envelope)
 
         request = ExecutionRequest(
             system_prompt=sys_prompt,
             messages=[{"role": "user", "content": principal_task_prompt}],
             enabled_tools=tools_for_contract,
-            tool_definitions=self._tool_definitions(
-                tools_for_contract,
-                planned_tools=plan.enabled_tools,
-            ),
+            tool_definitions=tool_definitions,
             max_output_tokens=exe_profile.max_output_tokens,
             estimated_input_tokens=allocated["total_input_tokens"],
-            loop_action_budget=max(1, int(getattr(self.config, "agent_loop_action_budget", 4))),
+            loop_action_budget=loop_action_budget,
+            context_envelope=envelope_mapping(context_envelope),
         )
         return sys_prompt, base_sys, allocated, request
+

@@ -216,6 +216,7 @@ class TurnToolLoopMixin:
                 "conversation_id": cmd.conversation_id,
                 "tool_definitions": request.tool_definitions,
                 "loop_action_budget": request.loop_action_budget,
+                "context_envelope": request.context_envelope,
             }
             try:
                 signature = inspect.signature(self._stream_execution_response)
