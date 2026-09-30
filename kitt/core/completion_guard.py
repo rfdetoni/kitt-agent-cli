@@ -205,7 +205,7 @@ class CompletionContract:
         return issues
 
 
-_MAX_STALL_REDIRECTS = 2
+_MAX_STALL_REDIRECTS = 1
 _FOCUSED_EXPLORATION_OPERATIONS = frozenset({
     "repo.read",
     "repo.read_symbol",
