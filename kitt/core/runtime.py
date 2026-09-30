@@ -173,6 +173,8 @@ class KittRuntime:
     native: Optional[Any] = None
     surface_service: Optional[Any] = None
     backend_service: Optional[Any] = None
+    event_ledger: Optional[Any] = None
+    run_coordinator: Optional[Any] = None
 
     def __post_init__(self):
         self._closed = False
@@ -376,6 +378,20 @@ class KittRuntime:
         registry.path_policy = path_policy
         registry.attach_processor(processor)
 
+        from kitt.core.run_coordinator import RunCoordinator
+        from kitt.evidence.ledger import EventLedger
+
+        event_ledger = EventLedger(database)
+        run_coordinator = RunCoordinator(
+            event_ledger,
+            workspace_coordinator=native.coordinator,
+        )
+        processor.event_ledger = event_ledger
+        processor.run_coordinator = run_coordinator
+        processor.execution_budgets = {}
+        processor.execution_budget_snapshots = {}
+        processor.child_budget_leases = {}
+
         # Durable event/evidence projection is installed at the existing
         # processor/registry seam. It adds replay and validation without a
         # second workflow engine or model-facing API.
@@ -452,6 +468,8 @@ class KittRuntime:
             native=native,
             surface_service=surface_service,
             backend_service=backend_service,
+            event_ledger=event_ledger,
+            run_coordinator=run_coordinator,
         )
         runtime_holder["runtime"] = runtime
         runtime.prime_metrics = prime_metrics
@@ -740,6 +758,7 @@ class KittRuntime:
             ("dream_scheduler", None, getattr(self.dream_scheduler, "close", None)),
             ("extensions", getattr(self.extensions, "stop", None), None),
             ("children", None, getattr(self.children, "close", None)),
+            ("run_coordinator", None, getattr(self.run_coordinator, "close", None)),
             ("processor", None, getattr(self.processor, "close", None)),
             ("metrics", None, getattr(self.metrics, "close", None)),
             ("artifacts", None, getattr(self.artifacts, "close", None)),
@@ -778,6 +797,7 @@ class KittRuntime:
             ("goal_scheduler", getattr(self.goal_scheduler, "stop", None)),
             ("dream_scheduler", getattr(self.dream_scheduler, "close", None)),
             ("children", getattr(self.children, "close", None)),
+            ("run_coordinator", getattr(self.run_coordinator, "close", None)),
             ("processor", getattr(self.processor, "close", None)),
             ("metrics", getattr(self.metrics, "close", None)),
             ("artifacts", getattr(self.artifacts, "close", None)),
