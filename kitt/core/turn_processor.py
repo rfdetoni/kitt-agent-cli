@@ -202,43 +202,9 @@ class TurnProcessor(
 
     @staticmethod
     def _agent_route_for_task(task, mode: str = "", prompt: str = "") -> str:
-        """Pin the proxy route, with the original user mutation intent as the highest signal."""
+        """Route only from explicit KITT task state; natural-language intent belongs to the LLM."""
         if mode == "plan":
             return "context-gather"
-
-        original_prompt = str(getattr(task, "original_prompt", "") or "")
-        source_prompt = original_prompt or prompt or ""
-        text = source_prompt.casefold()
-        if is_container_runtime_request(source_prompt):
-            # Container lifecycle commands must remain execution-capable even when
-            # semantic extraction has no repository path or symbol to anchor on.
-            return "validate-diff"
-        workspace_targets = (
-            "projeto", "project", "site", "app", "aplicação", "aplicacao",
-            "backend", "frontend", "front end", "repositório", "repositorio",
-            "repository", "repo", "arquivo", "file", "pasta", "folder",
-            "diretório", "diretorio", "directory", "código", "codigo", "code",
-        )
-        edit_terms = (
-            "corrija", "corrigir", "conserte", "consertar", "repare", "reparar",
-            "refatore", "refatorar", "atualize", "atualizar", "modifique",
-            "modificar", "altere", "alterar", "edite", "editar", "remova",
-            "remover", "converta", "converter", "convert", "migre", "migrar",
-            "migrate", "troque", "trocar", "substitua", "substituir", "replace",
-            "switch", "porte", "portar", "port", "fix", "repair", "refactor", "update",
-            "modify", "change", "edit", "remove", "delete",
-        )
-        create_terms = (
-            "crie", "criar", "cria", "implemente", "implementar", "gere",
-            "gerar", "construa", "monte", "create", "build", "implement",
-            "generate", "scaffold", "write", "mkdir",
-        )
-        if any(target in text for target in workspace_targets):
-            if any(term in text for term in edit_terms):
-                return "code-edit"
-            if any(term in text for term in create_terms):
-                return "code-generation"
-
         raw_intent = getattr(task, "intent", "")
         intent = str(getattr(raw_intent, "value", raw_intent) or "").upper()
         if intent == "IMPLEMENT":
@@ -1070,27 +1036,37 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 )
             yield ContextResolved(resolved_count=len(context_blocks) + len(explicit_items))
 
-            execution_slice = build_execution_slice(cmd, task, plan)
+            llm_first_proxy = _reverse_proxy_identity(exe_profile) is not None
+            execution_slice = None
             architect_handoff = None
-            if execution_slice is None:
-                architect_handoff = self._maybe_architect_handoff(
-                    cmd,
-                    task,
-                    context_map_str,
-                    explicit_str,
-                )
-                if architect_handoff is not None:
-                    context_map_str = (
-                        f"{architect_handoff.render()}\n\n{context_map_str}"
-                    ).strip()
-            else:
+            if llm_first_proxy:
                 trace_event(
                     logger,
                     "architect.skipped",
                     turn_id=cmd.turn_id,
-                    reason="discovery_first_execution_slice",
-                    slice_reason=execution_slice.reason,
+                    reason="llm_first_reverse_proxy_loop",
                 )
+            else:
+                execution_slice = build_execution_slice(cmd, task, plan)
+                if execution_slice is None:
+                    architect_handoff = self._maybe_architect_handoff(
+                        cmd,
+                        task,
+                        context_map_str,
+                        explicit_str,
+                    )
+                    if architect_handoff is not None:
+                        context_map_str = (
+                            f"{architect_handoff.render()}\n\n{context_map_str}"
+                        ).strip()
+                else:
+                    trace_event(
+                        logger,
+                        "architect.skipped",
+                        turn_id=cmd.turn_id,
+                        reason="discovery_first_execution_slice",
+                        slice_reason=execution_slice.reason,
+                    )
 
             # 4. System Prompt and Budgeting
             if cmd.turn_id in self.cancelled_turns:
@@ -1175,7 +1151,11 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 return
             full_response = ""
             execution_messages = []
-            agent_route = self._agent_route_for_task(task, cmd.mode, cmd.prompt)
+            agent_route = (
+                "agent-loop"
+                if llm_first_proxy
+                else self._agent_route_for_task(task, cmd.mode, cmd.prompt)
+            )
             request = replace(request, agent_route=agent_route)
             for ev, resp, msgs in self._execute_tool_loop(
                 cmd, request, exe_profile, exe_client, workspace_id, security_context,
