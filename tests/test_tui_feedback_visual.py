@@ -1,6 +1,7 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
-from kitt.ui.state import UIState, AgentTaskStep
+from kitt.ui.state import UIState, AgentTaskStep, TranscriptBlock
 from kitt.ui.reducer import reduce_ui_event
 from kitt.core.turn_events import (
     TurnStarted, TurnCompleted, TurnFailed, ToolStarted, ToolCompleted,
@@ -137,6 +138,38 @@ class TestTUIVisualFeedback(unittest.TestCase):
 
         state.toggle_last_tool_collapse()
         self.assertFalse(block.collapsed)
+
+    def test_ctrl_o_hint_is_rendered_only_for_last_toggleable_block(self):
+        state = UIState()
+        state.transcript = [
+            TranscriptBlock(
+                id="tool-old",
+                kind="tool",
+                text="old tool",
+                collapsed=True,
+                metadata={"full_output": "old output"},
+            ),
+            TranscriptBlock(id="answer", kind="assistant", text="intermediate answer"),
+            TranscriptBlock(
+                id="tool-latest",
+                kind="tool",
+                text="latest tool",
+                collapsed=True,
+                metadata={"full_output": "latest output"},
+            ),
+        ]
+        ui = SimpleNamespace(state=state)
+
+        rendered = "".join(text for _, text in KittUIApp._transcript_text(ui))
+        self.assertEqual(rendered.count("ctrl+o para expandir"), 1)
+        self.assertNotIn("old tool (ctrl+o", rendered)
+        self.assertIn("latest tool (ctrl+o para expandir)", rendered)
+
+        state.toggle_last_tool_collapse()
+        rendered = "".join(text for _, text in KittUIApp._transcript_text(ui))
+        self.assertEqual(rendered.count("ctrl+o para recolher"), 1)
+        self.assertNotIn("old tool (ctrl+o", rendered)
+        self.assertIn("latest output\n    (ctrl+o para recolher)", rendered)
 
     def test_tool_call_proposed_progress_and_payload_tokens(self):
         from kitt.core.turn_events import ToolCallProposed
