@@ -175,6 +175,7 @@ class KittRuntime:
     backend_service: Optional[Any] = None
     event_ledger: Optional[Any] = None
     run_coordinator: Optional[Any] = None
+    workspace_snapshots: Optional[Any] = None
 
     def __post_init__(self):
         self._closed = False
@@ -379,6 +380,7 @@ class KittRuntime:
         processor.child_manager = children
 
         from kitt.core.run_coordinator import RunCoordinator
+        from kitt.core.workspace_snapshot import WorkspaceSnapshotService
         from kitt.evidence.ledger import EventLedger
 
         event_ledger = EventLedger(database)
@@ -386,8 +388,15 @@ class KittRuntime:
             event_ledger,
             workspace_coordinator=native.coordinator,
         )
+        workspace_snapshots = WorkspaceSnapshotService(
+            canonical_root,
+            workspace_id=identity.id,
+            artifact_store=artifacts,
+            ledger=event_ledger,
+        )
         processor.event_ledger = event_ledger
         processor.run_coordinator = run_coordinator
+        processor.workspace_snapshot_service = workspace_snapshots
         processor.execution_budgets = {}
         processor.execution_budget_snapshots = {}
         processor.child_budget_leases = {}
@@ -490,6 +499,7 @@ class KittRuntime:
             backend_service=backend_service,
             event_ledger=event_ledger,
             run_coordinator=run_coordinator,
+            workspace_snapshots=workspace_snapshots,
         )
         runtime_holder["runtime"] = runtime
         runtime.prime_metrics = prime_metrics
