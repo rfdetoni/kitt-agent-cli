@@ -12,9 +12,15 @@ Skill discovery is bounded before semantic selection by root/depth/file/per-file
 
 The Reverse Proxy transport now carries typed context and available usage telemetry while preserving WebChat continuity and keeping managed process controls classified as mutations. This release is designed for KITT Protocol **0.5.1**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.1** and Assistant Runtime **0.2.26**.
 
-## Agent CLI 0.80.0 — durable agent engineering
+## Agent CLI 0.80.1 — hardened agent engineering runtime
 
-Agent CLI 0.80.0 moves execution durability, recovery and authority into deterministic host-owned contracts without creating a second agent runtime. The append-only EventLedger and RunCoordinator now track replayable run state, workspace mutations stay leased through verification and rollback, and each turn uses one global execution budget that delegates bounded wallet slices to retained subagents with persisted lineage.
+Agent CLI 0.80.1 completes the durable Agent Engineering rollout with structural agent roles, bounded skill discovery, managed background-process lifecycle, public Memory lifecycle evidence, privacy-safe `kitt learn` analytics, stronger no-progress recovery and provider usage reconciliation.
+
+`DISCOVER / ARCHITECT / IMPLEMENT / VERIFY / REVIEW` are enforced by host-side tool/mutation policy rather than prompt persona. Managed processes now expose `process.start/read/stdin/signal/stop/resume`, persist `PROCESS_OUTPUT` / `PROCESS_EXIT` observations and revalidate the original authority snapshot before control operations. Skill discovery is bounded by roots, depth, file count and byte budgets before semantic selection.
+
+`kitt learn`, `kitt learn suggest` and `kitt learn experiment ...` expose anonymized local evidence and control/candidate comparisons without automatic promotion. Memory lifecycle hooks are digest-only and feed the shared `kitt-memoryd` job pipeline; raw prompts/tool arguments are not copied into a parallel memory store.
+
+Agent CLI 0.80.0 moved execution durability, recovery and authority into deterministic host-owned contracts without creating a second agent runtime. The append-only EventLedger and RunCoordinator now track replayable run state, workspace mutations stay leased through verification and rollback, and each turn uses one global execution budget that delegates bounded wallet slices to retained subagents with persisted lineage.
 
 Model context now carries a content-derived ContextEpoch across memory, repository evidence, skills, plugin/tool surface, policy/formatting constraints and provider configuration. Large exact context remains recoverable through ArtifactStore references, and compaction writes a structured checkpoint with exact source recovery instead of making the summary the only remaining evidence.
 
@@ -22,7 +28,7 @@ Approval resumes revalidate an ExecutionAuthoritySnapshot against current policy
 
 Pre-mutation WorkspaceSnapshots support exact rollback when post-edit verification fails. Memory recall is traceable through kitt-memory RecallTrace/MemoryConsumptionReceipt contracts, and terminal Task Episodes emit efficiency plus evidence-backed learning candidates without silently auto-applying runtime changes.
 
-This release is designed for KITT Protocol **0.5.0**, KITT Memory **0.6.0** and Assistant Runtime **0.2.26**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) for ownership boundaries, invariants and implementation details.
+This release is designed for KITT Protocol **0.5.1**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.1** and Assistant Runtime **0.2.26**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) for ownership boundaries, invariants and implementation details.
 
 ## Agent CLI 0.79.0 — LLM-first bounded execution loops
 
