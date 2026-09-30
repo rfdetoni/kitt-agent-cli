@@ -1,5 +1,17 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.80.0 — durable agent engineering
+
+Agent CLI 0.80.0 moves execution durability, recovery and authority into deterministic host-owned contracts without creating a second agent runtime. The append-only EventLedger and RunCoordinator now track replayable run state, workspace mutations stay leased through verification and rollback, and each turn uses one global execution budget that delegates bounded wallet slices to retained subagents with persisted lineage.
+
+Model context now carries a content-derived ContextEpoch across memory, repository evidence, skills, plugin/tool surface, policy/formatting constraints and provider configuration. Large exact context remains recoverable through ArtifactStore references, and compaction writes a structured checkpoint with exact source recovery instead of making the summary the only remaining evidence.
+
+Approval resumes revalidate an ExecutionAuthoritySnapshot against current policy, autonomy, sandbox and capabilities. Workspace “always allow” rules use typed SavedPermission semantics and can be bound to the executable principal, while plugins may declare typed export capabilities that are enforced in both in-process and isolated-worker execution.
+
+Pre-mutation WorkspaceSnapshots support exact rollback when post-edit verification fails. Memory recall is traceable through kitt-memory RecallTrace/MemoryConsumptionReceipt contracts, and terminal Task Episodes emit efficiency plus evidence-backed learning candidates without silently auto-applying runtime changes.
+
+This release is designed for KITT Protocol **0.5.0**, KITT Memory **0.6.0** and Assistant Runtime **0.2.26**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) for ownership boundaries, invariants and implementation details.
+
 ## Agent CLI 0.79.0 — LLM-first bounded execution loops
 
 Reverse-proxy/WebChat execution now uses agent-contract **v2** with a language-neutral `agent-loop`. The original human request is forwarded verbatim and is the semantic authority: Agent CLI no longer compiles, translates, summarizes, or lexically classifies natural-language intent before WebChat decides what to do.
@@ -86,6 +98,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - **Quick start:** [QUICKSTART.md](QUICKSTART.md)
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Runtime reference:** [docs/RUNTIME_REFERENCE.md](docs/RUNTIME_REFERENCE.md)
+- **Agent engineering architecture:** [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md)
 - **Accessibility:** [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md)
 - **Performance:** [docs/PERFORMANCE.md](docs/PERFORMANCE.md)
 - **Domain architecture:** [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md)
