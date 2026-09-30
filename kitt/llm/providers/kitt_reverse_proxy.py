@@ -428,6 +428,24 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                         raise ProviderProtocolError("KITT reverse proxy returned a non-object SSE event")
                     if "error" in chunk:
                         raise ProviderProtocolError("KITT reverse proxy returned an SSE error")
+                    usage = chunk.get("usage")
+                    if isinstance(usage, dict) and request.usage_callback is not None:
+                        safe_usage = {
+                            key: value
+                            for key, value in usage.items()
+                            if key in {
+                                "prompt_tokens",
+                                "completion_tokens",
+                                "total_tokens",
+                                "kitt_estimated",
+                            }
+                            and isinstance(value, (int, float, bool))
+                        }
+                        if safe_usage:
+                            try:
+                                request.usage_callback(safe_usage)
+                            except Exception:
+                                pass
                     choices = chunk.get("choices")
                     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                         continue
@@ -482,6 +500,12 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                     system_prompt=request.system_prompt,
                     response_format=request.response_format,
                     tool_definitions=list(request.tool_definitions),
+                    context_envelope=(
+                        dict(request.context_envelope)
+                        if request.context_envelope
+                        else None
+                    ),
+                    usage_callback=request.usage_callback,
                     temperature=request.temperature,
                     context_window=request.context_window,
                     max_output_tokens=request.max_output_tokens,
@@ -529,6 +553,12 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                         system_prompt=request.system_prompt,
                         response_format=request.response_format,
                         tool_definitions=list(request.tool_definitions),
+                        context_envelope=(
+                            dict(request.context_envelope)
+                            if request.context_envelope
+                            else None
+                        ),
+                        usage_callback=request.usage_callback,
                         temperature=request.temperature,
                         context_window=request.context_window,
                         max_output_tokens=request.max_output_tokens,
