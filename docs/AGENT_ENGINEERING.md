@@ -118,6 +118,66 @@ Candidates are evidence only and carry `auto_apply=false`; changes to skills,
 hooks, plugins or harness behavior must go through an intervention and, where
 appropriate, the isolated baseline/candidate experiment service.
 
+## Structural roles
+
+The shared Protocol `AgentRole` contract defines `DISCOVER`, `ARCHITECT`,
+`IMPLEMENT`, `VERIFY` and `REVIEW`. Each role maps to explicit capabilities,
+allowed tools, mutation permission, context policy, model policy and budget
+policy. Tool execution checks that policy again at the registry seam, so a
+read-only role cannot mutate simply because model output requests it.
+
+`python_compute` uses the dedicated `compute.safe` capability. It does not
+inherit `process.run`, because the safe evaluator cannot import, access files,
+open network connections or invoke a shell.
+
+## Managed background processes
+
+`kitt_runtime` exposes `process.start`, `process.read`, `process.stdin`,
+`process.signal`, `process.stop` and `process.resume` in addition to
+synchronous `process.run`. The manager is workspace-owned rather than turn-owned,
+so a process can survive across turns without losing identity.
+
+Start captures an `ExecutionAuthoritySnapshot`. Subsequent control operations
+revalidate that original authority against current policy/autonomy/approval
+revisions before acting. Output is redacted and bounded, then persisted as
+`PROCESS_OUTPUT` before `process.read` can expose it; process completion is
+persisted as `PROCESS_EXIT`.
+
+## No-progress and completion
+
+The completion guard tracks action/result fingerprints, alternating exploration
+loops, prose-only mutation attempts and mutation/validation progress. A stalled
+implementation receives exactly one structural forward-progress nudge. Repeating
+the same no-progress behavior then fails closed instead of creating an
+unbounded retry loop.
+
+## Local learning and experiments
+
+`kitt learn` reads canonical ledger/telemetry evidence and emits only
+privacy-safe tool categories such as `Read(*.java)`, `Read(lockfile)`,
+`Bash(git diff)` and `mcp__server__tool`. It detects reread/tool-output/
+compaction/MCP/subagent/retry/memory/cache/context/router waste without exporting
+raw command arguments.
+
+`kitt learn experiment start <feature>`, `switch <feature> control|candidate`
+and `report <feature>` create measured windows. Reports compare observed
+success/validation, tokens, latency, errors, tool calls and memory consumption.
+Unobserved cache/cost/provider fields remain explicitly unobserved. Even when the
+candidate has measurable gains and no quality regression, promotion stays
+explicit; the learning service never auto-applies it.
+
+## Skills and public memory lifecycle
+
+Skill discovery applies `max_roots`, `max_depth`, `max_files`,
+`max_file_bytes` and `max_total_bytes` before semantic selection. Plugin
+exports are likewise constrained to declared `PluginCapabilities`.
+
+The Agent publishes `session.started`, `turn.started`, `tool.completed`,
+`turn.completed` and `session.ended` as evidence digests to `kitt-memoryd`.
+Memory converts those hooks into its existing durable/idempotent job pipeline;
+the Agent does not persist a second semantic-memory store and recalled memory is
+not submitted as fresh evidence.
+
 ## Invariants
 
 1. No mutation bypasses host policy or capability checks.
@@ -127,6 +187,9 @@ appropriate, the isolated baseline/candidate experiment service.
 5. Large exact evidence is recoverable without forcing it into model context.
 6. Memory retrieval is not treated as proof of memory use.
 7. Learning observations do not silently rewrite runtime behavior.
+8. Background process control cannot outlive or bypass the authority captured at start.
+9. Skill/plugin discovery is bounded before model-visible semantic selection.
+10. Public Memory lifecycle hooks carry evidence digests, not raw prompt/tool payloads.
 
 
 ## Structural roles and bounded extensibility
