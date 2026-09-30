@@ -99,6 +99,21 @@ def is_workspace_mutation_request(prompt: str) -> bool:
     )
 
 
+def _scope_is_explicitly_excluded(prompt_lower: str, *scope_terms: str) -> bool:
+    """Detect an explicit negative scope without treating a mere mention as requested work."""
+    negative = r"(?:não|nao|never|do\s+not|don['’]t|without|sem)"
+    creation = r"(?:crie|criar|create|build|implemente|implementar|implement|adicione|adicionar|add)?"
+    for scope in scope_terms:
+        escaped = re.escape(scope)
+        if re.search(
+            rf"\b{negative}\b[^.;\n]{{0,40}}\b{creation}\s*{escaped}\b",
+            prompt_lower,
+            re.IGNORECASE,
+        ):
+            return True
+    return False
+
+
 def _execution_actions(
     prompt_lower: str,
     intent: TaskIntent,
@@ -133,13 +148,19 @@ def _execution_actions(
 
     if creation_request:
         explicit_scopes = False
-        if 'backend' in prompt_lower or 'back end' in prompt_lower:
+        backend_mentioned = 'backend' in prompt_lower or 'back end' in prompt_lower
+        frontend_mentioned = 'frontend' in prompt_lower or 'front end' in prompt_lower
+        if backend_mentioned and not _scope_is_explicitly_excluded(
+            prompt_lower, 'backend', 'back end'
+        ):
             actions.append('create and implement the requested backend scope using host mutation tools')
             explicit_scopes = True
-        if 'frontend' in prompt_lower or 'front end' in prompt_lower:
+        if frontend_mentioned and not _scope_is_explicitly_excluded(
+            prompt_lower, 'frontend', 'front end'
+        ):
             actions.append('create and implement the requested frontend scope using host mutation tools')
             explicit_scopes = True
-        if not explicit_scopes:
+        if not explicit_scopes and not (backend_mentioned or frontend_mentioned):
             actions.append('create and implement the requested project structure using host mutation tools')
     else:
         actions.append('apply the requested workspace change using the available host mutation tools')
