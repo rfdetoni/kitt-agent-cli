@@ -109,6 +109,7 @@ class TurnModelMixin:
         route: Optional[str] = None,
         conversation_id: str = "",
         tool_definitions: Optional[List[Dict[str, object]]] = None,
+        loop_action_budget: int = 4,
     ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         profile = getattr(client, "profile", None)
@@ -153,6 +154,7 @@ class TurnModelMixin:
                 "reasoning_effort": getattr(self, "reasoning_effort", 50),
                 "route": route,
                 "tool_definitions": list(tool_definitions or ()),
+                "loop_action_budget": loop_action_budget,
             }
             try:
                 sig = inspect.signature(client.chat_stream)
