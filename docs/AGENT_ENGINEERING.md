@@ -1,6 +1,6 @@
 # Agent Engineering Architecture
 
-K.I.T.T. Agent CLI 0.80.1 keeps model reasoning flexible while moving execution
+K.I.T.T. Agent CLI 0.80.2 keeps model reasoning flexible while moving execution
 authority, durability, recovery and measurement into deterministic host-owned
 contracts.
 
