@@ -122,7 +122,7 @@ def test_turn_browser_scope_is_explicit_and_bounded_to_user_origins():
     ) == ("https://example.com",)
     assert TurnProcessor._browser_origin_scope(
         "valide o frontend local"
-    ) == ("loopback",)
+    ) == ()
 
 
 def test_turn_browser_scope_never_broadens_explicit_loopback_or_credentials():
@@ -139,7 +139,7 @@ def test_turn_browser_scope_never_broadens_explicit_loopback_or_credentials():
     ) == ()
     assert TurnProcessor._browser_origin_scope(
         "valide o frontend local"
-    ) == ("loopback",)
+    ) == ()
 
 
 def test_gateway_rejects_credentials_and_unspecified_host_from_loopback_scope(monkeypatch):
