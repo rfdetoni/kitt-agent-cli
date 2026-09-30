@@ -4,6 +4,18 @@
 
 **Control plane local-first para agentes autônomos de programação.**
 
+## Agent CLI 0.80.1 — roles estruturais, processos gerenciados e aprendizado mensurável
+
+O Agent agora aplica estruturalmente os roles `DISCOVER`, `ARCHITECT`, `IMPLEMENT`, `VERIFY` e `REVIEW`, com tools/capabilities, mutação, contexto, modelo e orçamento próprios. O boundary de execução revalida a policy do role; persona de prompt não é mecanismo de segurança.
+
+Processos longos podem usar `process.start/read/stdin/signal/stop/resume`. Saída e término viram eventos duráveis `PROCESS_OUTPUT`/`PROCESS_EXIT`, o buffer é limitado/redigido e operações de controle reutilizam a identidade do processo mas revalidam o `ExecutionAuthoritySnapshot` capturado no início.
+
+`kitt learn` analisa telemetria local com assinaturas anonimizadas, detecta desperdícios como rereads/retries/compaction/context duplication e permite janelas `control/candidate` com `experiment start/switch/report`. O sistema não registra argumentos sensíveis nessa visão e nunca promove candidato automaticamente apenas por parecer menor.
+
+A descoberta de skills recebe limites de roots/profundidade/arquivos/bytes antes da seleção semântica. Hooks públicos de lifecycle enviam somente digests de evidência para o mesmo pipeline de jobs do `kitt-memoryd`, preservando o Memory como única autoridade de memória durável.
+
+Compatibilidade desta rodada: KITT Protocol **0.5.1**, KITT Memory **0.6.1**, Reverse Proxy **4.7.1** e Assistant Runtime **0.2.26**.
+
 ## Agent CLI 0.79.0 — loops de execução LLM-first
 
 A execução via Reverse Proxy/WebChat agora usa o agent-contract **v2** com uma rota neutra `agent-loop`. O pedido original do usuário é encaminhado sem reescrita e passa a ser a autoridade semântica: o Agent CLI não compila, traduz, resume nem classifica lexicalmente a linguagem natural antes de o WebChat decidir a próxima ação.
@@ -74,6 +86,8 @@ kitt
 kitt --root /caminho/do/projeto
 kitt models
 kitt sessions
+kitt learn
+kitt learn suggest
 kitt doctor
 kitt --help
 ```
