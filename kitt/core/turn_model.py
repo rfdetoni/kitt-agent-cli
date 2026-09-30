@@ -4,6 +4,7 @@ import base64
 import inspect
 import re
 import time
+import uuid
 from dataclasses import replace
 from typing import Dict, List, Optional
 
@@ -179,6 +180,12 @@ class TurnModelMixin:
                 "tool_definitions": list(tool_definitions or ()),
                 "loop_action_budget": loop_action_budget,
                 "context_envelope": context_envelope,
+                "request_metadata": {
+                    "conversation_id": conversation_id,
+                    "turn_id": turn_id,
+                    "request_id": uuid.uuid4().hex,
+                    "route": str(route or ""),
+                },
                 "usage_callback": _observe_usage,
             }
             try:
