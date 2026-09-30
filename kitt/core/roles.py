@@ -140,6 +140,7 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
                 CAP_REPO_SEARCH,
                 CAP_ARTIFACT_READ,
                 CAP_MEMORY_READ,
+                CAP_SAFE_COMPUTE,
                 CAP_PROCESS_RUN,
             }
         ),
