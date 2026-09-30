@@ -38,6 +38,7 @@ from kitt.edit_format.strategy import (
 from kitt.llm.attachments import AttachmentError
 from kitt.llm.client import LLMClient
 from kitt.llm.domain import ProviderOutputLimitError
+from kitt.security.authority_snapshot import capture_authority_snapshot
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.protocol import extract_tool_reasoning_summary, parse_tool_call
 from kitt.tools.safe_python import parse_python_compute_call
@@ -630,6 +631,24 @@ class TurnToolLoopMixin:
                     sec_dict["mutation_preconditions"] = [
                         p.to_dict() for p in preconditions
                     ]
+                    sandbox = getattr(
+                        getattr(self.registry, "process_runner", None),
+                        "sandbox",
+                        None,
+                    )
+                    sec_dict["authority_snapshot"] = capture_authority_snapshot(
+                        security_context,
+                        policy=self.registry.policy,
+                        autonomy=self.registry.policy.autonomy,
+                        approval_manager=self.registry.approval_manager,
+                        sandbox_profile=str(
+                            getattr(
+                                sandbox,
+                                "default_profile",
+                                "workspace-write",
+                            )
+                        ),
+                    )
                     pa = PendingAction(
                         f"pa_{cmd.turn_id}",
                         approval_id,
