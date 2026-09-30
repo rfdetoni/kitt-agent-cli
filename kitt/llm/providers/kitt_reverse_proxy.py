@@ -1,7 +1,6 @@
 """Native compatibility adapter for kitt-reverse-proxy."""
 from __future__ import annotations
 
-import ast
 import json
 import re
 import socket
@@ -18,7 +17,6 @@ from kitt.llm.domain import (
 from kitt.llm.http_security import read_error_body, secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
 from kitt.llm.providers.openai_chat import OpenAIChatAdapter
-from kitt.prompts import KITT_AGENT_PERSONA
 
 _TOOL_LIST_MARKER_RE = re.compile(r"Available host tools?:\s*", re.IGNORECASE)
 _BRIDGE_RE = re.compile(r"<kitt-tool>\s*(\{[\s\S]*\})\s*</kitt-tool>", re.IGNORECASE)
@@ -45,10 +43,6 @@ _REQUIRED_ARGS = {
     "child_spawn": ("task",),
     "harness_remember": ("text",),
 }
-_CONCISE_AGENT_PREFIXES = (
-    "Answer directly and concisely.",
-    "Answer in one direct, concise sentence. Do not expose reasoning.",
-)
 _TOOL_RETRY_PROMPT = (
     "[KITT TOOL RETRY] The request is not complete yet. "
     "Emit exactly one valid JSON <tool_call> envelope now, with quotes, backslashes, "
@@ -99,127 +93,11 @@ def _normalize_parameters(name: str, raw: Any) -> Dict[str, Any]:
     return schema
 
 
-def _extract_host_tool_literal(system_prompt: str) -> Optional[str]:
-    """Return the complete Python-list literal after the host-tool marker.
-
-    The old single-line regex silently lost tools when prompt budgeting or
-    formatting wrapped the descriptor. Scan the bracketed literal instead so
-    nested schemas and multi-line tool catalogs remain parseable.
-    """
-    marker = _TOOL_LIST_MARKER_RE.search(system_prompt)
-    if not marker:
-        return None
-    start = system_prompt.find("[", marker.end())
-    if start < 0:
-        return None
-
-    depth = 0
-    quote: Optional[str] = None
-    escaped = False
-    for index in range(start, len(system_prompt)):
-        char = system_prompt[index]
-        if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-        if char in {"'", '"'}:
-            quote = char
-            continue
-        if char == "[":
-            depth += 1
-        elif char == "]":
-            depth -= 1
-            if depth == 0:
-                return system_prompt[start:index + 1]
-    return None
-
-
-def openai_tools_from_definitions(
-    definitions: Optional[List[Dict[str, Any]]],
-) -> List[Dict[str, Any]]:
-    """Convert structural KITT tool definitions into OpenAI function tools."""
-    result: List[Dict[str, Any]] = []
-    seen = set()
-    for entry in definitions or []:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("name")
-        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", name):
-            continue
-        if name in seen:
-            continue
-        seen.add(name)
-        function: Dict[str, Any] = {
-            "name": name,
-            "parameters": _normalize_parameters(name, entry.get("args")),
-        }
-        description = entry.get("description")
-        if isinstance(description, str) and description.strip():
-            function["description"] = description.strip()[:4096]
-        result.append({"type": "function", "function": function})
-    return result
-
-
-def extract_openai_tools(system_prompt: Optional[str]) -> List[Dict[str, Any]]:
-    """Convert a legacy textual host-tool descriptor into OpenAI tools."""
-    if not system_prompt:
-        return []
-    literal = _extract_host_tool_literal(system_prompt)
-    if not literal:
-        return []
-    try:
-        value = ast.literal_eval(literal)
-    except (SyntaxError, ValueError):
-        return []
-    if not isinstance(value, list):
-        return []
-    return openai_tools_from_definitions(value)
-
-
-def strip_legacy_tool_contract(system_prompt: Optional[str]) -> Optional[str]:
-    """Remove only TurnProcessor's textual Tool Contract for native proxy calls."""
-    if not system_prompt:
-        return system_prompt
-    cleaned = re.sub(
-        r"(?:^|\n)Tool Contract:\n[\s\S]*?\n\nMemory:\n",
-        "\nMemory:\n",
-        system_prompt,
-        count=1,
-    )
-    return cleaned.strip()
-
-
-def _ensure_agent_execution_prompt(system_prompt: Optional[str]) -> str:
-    """Promote tool-enabled reverse-proxy turns to an execution-agent contract."""
-    text = (system_prompt or "").strip()
-    for prefix in _CONCISE_AGENT_PREFIXES:
-        if text.startswith(prefix):
-            text = text[len(prefix):].lstrip()
-            break
-    if KITT_AGENT_PERSONA not in text:
-        text = f"{KITT_AGENT_PERSONA}\n\n{text}".strip()
-    return text
-
-
-def prepare_reverse_proxy_system_prompt(
-    system_prompt: Optional[str],
-) -> Tuple[Optional[str], List[Dict[str, Any]]]:
-    """Prepare a fail-safe system prompt and native tools for the browser proxy.
-
-    Only remove the legacy textual contract after native tool extraction has
-    succeeded. If conversion fails, preserve the legacy contract so the model
-    can still emit <kitt-tool> and the TurnProcessor retains an executable path.
-    """
-    tools = extract_openai_tools(system_prompt)
-    has_tool_contract = bool(system_prompt and "Tool Contract:" in system_prompt)
-    native_prompt = strip_legacy_tool_contract(system_prompt) if tools else system_prompt
-    if tools or has_tool_contract:
-        native_prompt = _ensure_agent_execution_prompt(native_prompt)
-    return native_prompt, tools
+def _reject_legacy_tool_contract(system_prompt: Optional[str]) -> None:
+    if system_prompt and "Tool Contract:" in system_prompt:
+        raise ProviderProtocolError(
+            "Legacy textual Tool Contract is not supported; send tool_definitions structurally."
+        )
 
 
 def _decode_bridge_call(content: Any) -> Optional[Tuple[str, str, Dict[str, Any], str]]:
@@ -357,15 +235,12 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
         else:
             url = f"{base}/v1/chat/completions"
 
-        native_system_prompt, legacy_tools = prepare_reverse_proxy_system_prompt(request.system_prompt)
-        tools = openai_tools_from_definitions(request.tool_definitions) or legacy_tools
-        # Structural tool definitions carried by the execution request are the
-        # authority. Legacy prompt extraction is fallback-only and never infers
-        # capabilities from user/workspace text.
+        _reject_legacy_tool_contract(request.system_prompt)
+        tools = openai_tools_from_definitions(request.tool_definitions)
 
         messages: List[Dict[str, Any]] = []
-        if native_system_prompt:
-            messages.append({"role": "system", "content": native_system_prompt})
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
         messages.extend(normalize_native_tool_messages([dict(m) for m in request.messages]))
 
         payload: Dict[str, Any] = {
@@ -376,9 +251,9 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             "max_tokens": request.max_output_tokens,
         }
         if request.context_envelope:
-            # KITT reverse-proxy consumes this typed IR before provider lowering.
-            # It is intentionally independent from human-language prompt parsing.
             payload["kitt_context"] = request.context_envelope
+        if request.request_metadata:
+            payload["kitt_meta"] = request.request_metadata
         if tools:
             payload.update({
                 "tools": tools,
@@ -503,6 +378,11 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                     context_envelope=(
                         dict(request.context_envelope)
                         if request.context_envelope
+                        else None
+                    ),
+                    request_metadata=(
+                        dict(request.request_metadata)
+                        if request.request_metadata
                         else None
                     ),
                     usage_callback=request.usage_callback,
