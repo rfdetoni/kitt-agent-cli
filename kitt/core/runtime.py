@@ -375,8 +375,6 @@ class KittRuntime:
         processor.path_policy = path_policy
         processor.network_policy = network_policy
         processor.child_manager = children
-        registry.path_policy = path_policy
-        registry.attach_processor(processor)
 
         from kitt.core.run_coordinator import RunCoordinator
         from kitt.evidence.ledger import EventLedger
@@ -391,6 +389,9 @@ class KittRuntime:
         processor.execution_budgets = {}
         processor.execution_budget_snapshots = {}
         processor.child_budget_leases = {}
+
+        registry.path_policy = path_policy
+        registry.attach_processor(processor)
 
         # Durable event/evidence projection is installed at the existing
         # processor/registry seam. It adds replay and validation without a
