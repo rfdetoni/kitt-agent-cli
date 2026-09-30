@@ -152,9 +152,15 @@ class _Events:
 
 
 class _Hooks:
-    def __init__(self, plugin_name: str, permissions: set[str]):
+    def __init__(
+        self,
+        plugin_name: str,
+        permissions: set[str],
+        declared_hooks: set[str],
+    ):
         self.plugin_name = plugin_name
         self.permissions = permissions
+        self.declared_hooks = declared_hooks
 
     def register(
         self,
@@ -166,6 +172,10 @@ class _Hooks:
         timeout_seconds: float | None = None,
     ) -> None:
         hook = str(hook_name)
+        if self.declared_hooks and hook not in self.declared_hooks:
+            raise PermissionError(
+                f"hook '{hook}' is not declared in capabilities.hooks"
+            )
         if (
             hook.startswith("tool.")
             and "tools.observe" not in self.permissions
@@ -201,9 +211,15 @@ class _Hooks:
 
 
 class _Tools:
-    def __init__(self, plugin_name: str, permissions: set[str]):
+    def __init__(
+        self,
+        plugin_name: str,
+        permissions: set[str],
+        declared_tools: set[str],
+    ):
         self.plugin_name = plugin_name
         self.permissions = permissions
+        self.declared_tools = declared_tools
 
     def register(
         self,
@@ -214,9 +230,14 @@ class _Tools:
     ) -> None:
         if "tools.register" not in self.permissions:
             raise PermissionError("tools.register permission required")
+        tool = str(tool_name)
+        if self.declared_tools and tool not in self.declared_tools:
+            raise PermissionError(
+                f"tool '{tool}' is not declared in capabilities.tools"
+            )
         _register(
             "tool",
-            str(tool_name),
+            tool,
             handler,
             description=str(description or ""),
             schema=_jsonable(schema or {}),
@@ -224,9 +245,17 @@ class _Tools:
 
 
 class _Commands:
-    def __init__(self, plugin_name: str, permissions: set[str]):
+    def __init__(
+        self,
+        plugin_name: str,
+        permissions: set[str],
+        declared_commands: set[str],
+    ):
         self.plugin_name = plugin_name
         self.permissions = permissions
+        self.declared_commands = {
+            "/" + str(item).lstrip("/") for item in declared_commands
+        }
 
     def register(
         self,
@@ -237,6 +266,10 @@ class _Commands:
         if "commands.register" not in self.permissions:
             raise PermissionError("commands.register permission required")
         name = "/" + str(command_name).lstrip("/")
+        if self.declared_commands and name not in self.declared_commands:
+            raise PermissionError(
+                f"command '{name}' is not declared in capabilities.commands"
+            )
         _register(
             "command",
             name,
@@ -248,6 +281,21 @@ class _Commands:
 class _Context:
     def __init__(self, manifest: dict, config: dict):
         permissions = set(manifest.get("permissions") or [])
+        raw_capabilities = manifest.get("capabilities")
+        capabilities = (
+            raw_capabilities if isinstance(raw_capabilities, dict) else {}
+        )
+        declared_tools = {
+            str(item) for item in capabilities.get("tools", []) if str(item)
+        }
+        declared_hooks = {
+            str(item) for item in capabilities.get("hooks", []) if str(item)
+        }
+        declared_commands = {
+            str(item)
+            for item in capabilities.get("commands", [])
+            if str(item)
+        }
         name = str(manifest.get("name") or "plugin")
         self.identity = types.SimpleNamespace(
             name=name,
@@ -262,9 +310,13 @@ class _Context:
             }
         )
         self.events = _Events(name, permissions)
-        self.hooks = _Hooks(name, permissions)
-        self.tools = _Tools(name, permissions)
-        self.commands = _Commands(name, permissions)
+        self.hooks = _Hooks(name, permissions, declared_hooks)
+        self.tools = _Tools(name, permissions, declared_tools)
+        self.commands = _Commands(
+            name,
+            permissions,
+            declared_commands,
+        )
         self.config = _Config(config)
         self.logger = _Logger(name)
 
