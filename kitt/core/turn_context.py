@@ -23,6 +23,7 @@ from kitt.context.envelope import (
     envelope_token_cost,
     lower_context_envelope,
 )
+from kitt.context.epoch import build_context_epoch, persist_context_epoch
 from kitt_protocol import CacheRegion, ContextKind, ContextStability, ContextTrust, RecoveryMode
 from kitt.llm.client import LLMClient
 from kitt.prompts import (
@@ -437,8 +438,25 @@ class TurnContextMixin:
             - TokenCounter.count_tokens(base_sys)
             - 128,
         )
+        context_epoch = build_context_epoch(
+            self,
+            conversation_id=cmd.conversation_id,
+            turn_id=cmd.turn_id,
+            memory_context=memory_context,
+            repo_map=allocated.get("repo_map", ""),
+            files_context=allocated.get("files_context", ""),
+            skills_context=skills_str,
+            tool_definitions=tool_definitions,
+            provider_profile=exe_profile,
+        )
+        persist_context_epoch(
+            self,
+            context_epoch,
+            conversation_id=cmd.conversation_id,
+            turn_id=cmd.turn_id,
+        )
         builder = ContextEnvelopeBuilder(
-            epoch=f"{cmd.conversation_id}:{cmd.turn_id}",
+            epoch=context_epoch.epoch_id,
             max_tokens=context_budget,
         )
         builder.add(
