@@ -795,39 +795,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
 
 
     @staticmethod
-    def _browser_intent(prompt: str) -> tuple[bool, bool]:
-        text = str(prompt or "").casefold()
-        read_terms = (
-            "browser", "navegador", "website", "web site", "site", "webpage",
-            "web page", "página web", "pagina web", "frontend", "front-end",
-            "preview", "screenshot", "captura de tela", "localhost", "renderize",
-            "renderizar", "visual da página", "visual da pagina",
-        )
-        write_terms = (
-            "click", "clique", "clicar", "preencha", "preencher", "fill",
-            "digite", "digitar", "type", "submit", "envie o formulário",
-            "envie o formulario", "interaja", "interagir", "login", "log in",
-            "autentique", "autenticar",
-        )
-        has_url = bool(
-            re.search(
-                r"https?://|\blocalhost(?::\d+)?\b|\b127\.0\.0\.1(?::\d+)?\b",
-                text,
-            )
-        )
-        read_requested = has_url or any(term in text for term in read_terms)
-        write_requested = read_requested and any(term in text for term in write_terms)
-        return read_requested, write_requested
-
-    @staticmethod
     def _browser_origin_scope(prompt: str) -> tuple[str, ...]:
         text = str(prompt or "")
-        folded = text.casefold()
         scope: list[str] = []
-        generic_local_terms = (
-            "frontend", "front-end", "preview", "captura de tela",
-            "screenshot", "renderize", "renderizar",
-        )
         explicit_url_matches = re.findall(
             r"https?://[^\s<>'\"\]\)]+",
             text,
@@ -874,10 +844,6 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         for match in bare_local.finditer(residual):
             add_origin(f"http://{match.group(0)}")
 
-        # Broad loopback authority is only a fallback for local-preview intent
-        # where the user did not name an endpoint.
-        if not scope and any(term in folded for term in generic_local_terms):
-            scope.append("loopback")
         return tuple(dict.fromkeys(scope))
 
     def _browser_authorities_for_turn(
@@ -886,13 +852,8 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         exe_client: LLMClient,
         exe_profile: ModelProfile,
     ) -> tuple[str, ...]:
-        read_requested, write_requested = self._browser_intent(cmd.prompt)
         origin_scope = self._browser_origin_scope(cmd.prompt)
-        if (
-            not read_requested
-            or not origin_scope
-            or _reverse_proxy_identity(exe_profile) is None
-        ):
+        if not origin_scope or _reverse_proxy_identity(exe_profile) is None:
             return ()
         session_key = self._provider_session_key(exe_profile, cmd.conversation_id)
         try:
@@ -907,7 +868,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             return ()
         self.registry.bind_browser_gateway(cmd.conversation_id, gateway)
         authorities = [CAP_BROWSER_READ]
-        if write_requested and cmd.mode not in {"plan", "ask"}:
+        if cmd.mode not in {"plan", "ask"}:
             authorities.append(CAP_BROWSER_WRITE)
         return tuple(authorities)
 
@@ -1086,7 +1047,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             edit_decision = self.edit_strategy_selector.select(
                 model_capabilities=getattr(exe_client, "capabilities", None),
                 task=task,
-                prompt=cmd.prompt,
+                prompt="" if llm_first_proxy else cmd.prompt,
                 explicit_files=cmd.explicit_files,
                 root_path=self.root_path,
                 history=self.edit_strategy_tracker.snapshot(edit_context),
