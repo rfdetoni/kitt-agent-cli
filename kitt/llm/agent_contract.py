@@ -5,7 +5,6 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from kitt.router.classifier import TaskClassifier
 
 
 AGENT_CONTRACT_HEADER = "X-Kitt-Agent-Contract"
