@@ -73,6 +73,46 @@ class TestReverseProxyPhaseSession(unittest.TestCase):
         self.assertEqual(client.routes, [("agent-loop", 5)])
 
 
+    def test_reverse_proxy_execution_bypasses_semantic_compilation_and_model_routing(self):
+        profile = ModelProfile(
+            backend="kitt-reverse-proxy",
+            protocol="kitt-reverse-proxy",
+            model="chatgpt-web",
+            base_url="http://127.0.0.1:3000",
+        )
+        processor = TurnProcessor.__new__(TurnProcessor)
+        processor.context_client = None
+        processor.execution_client = None
+        processor.router = SimpleNamespace(
+            resolve_profile_for_task=lambda _task: ("execute", profile)
+        )
+        processor.session_state = SimpleNamespace()
+        processor.working_set = SimpleNamespace(touch_paths=lambda *args, **kwargs: None)
+        processor.config = SimpleNamespace(privacy_mode="hybrid_redacted")
+
+        prompt = "バックエンドを作成せず、要求された範囲だけ変更してください。"
+        from kitt.core.turn_command import TurnCommand
+        cmd = TurnCommand(
+            conversation_id="conversation-llm-first",
+            prompt=prompt,
+            turn_id="turn-llm-first",
+        )
+
+        task, plan, filter_result, _client, _ctx_profile, _addressed = processor._run_semantic_filter(cmd)
+        self.assertEqual(filter_result.source, "LLM_FIRST")
+        self.assertEqual(task.original_prompt, prompt)
+        self.assertEqual(task.intent, "UNKNOWN")
+        self.assertEqual(task.actions, [])
+        self.assertTrue(plan.include_original_prompt)
+        self.assertIn("kitt_runtime", plan.enabled_tools)
+
+        selected_name, selected_profile, decision, blocked = processor._resolve_execution_profile(cmd, task)
+        self.assertIsNone(blocked)
+        self.assertEqual(selected_name, "execute")
+        self.assertEqual(selected_profile.model, "chatgpt-web")
+        self.assertEqual(decision.policy_version, "llm-first-v1")
+        self.assertIn("natural-language model routing is bypassed", decision.reasons[0])
+
     def test_reverse_proxy_session_is_scoped_by_logical_conversation(self):
         processor = TurnProcessor.__new__(TurnProcessor)
         processor._proxy_session_key = "agent-window:test"
