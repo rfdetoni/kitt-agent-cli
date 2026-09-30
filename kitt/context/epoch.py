@@ -145,17 +145,29 @@ def build_context_epoch(
     conversation_id: str,
     turn_id: str,
     memory_context: str,
+    harness_context: str,
     repo_map: str,
     files_context: str,
+    guidelines_context: str,
     skills_context: str,
     tool_definitions: list[dict[str, Any]],
+    policy_context: Any,
     provider_profile: Any,
 ) -> ContextEpoch:
-    memory_revision = _digest(memory_context)
+    memory_revision = _digest(
+        {
+            "memory": memory_context,
+            "harness": harness_context,
+        }
+    )
     repository_revision = _repository_revision(
         Path(processor.root_path),
         repo_map=repo_map,
-        files_context=files_context,
+        files_context="\n".join(
+            part
+            for part in (files_context, guidelines_context)
+            if part
+        ),
     )
     skills_revision = _digest(skills_context)
     plugins_revision = _digest(
@@ -170,7 +182,12 @@ def build_context_epoch(
             ),
         }
     )
-    policy_revision = _policy_revision(processor)
+    policy_revision = _digest(
+        {
+            "runtime": _policy_revision(processor),
+            "context": policy_context,
+        }
+    )
     provider_revision = _profile_revision(provider_profile)
     baseline_seq = _baseline_sequence(processor, conversation_id)
 
