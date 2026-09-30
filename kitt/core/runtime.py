@@ -396,6 +396,15 @@ class KittRuntime:
             artifact_store=artifacts,
             ledger=event_ledger,
         )
+        from kitt.runtime.process_lifecycle import ManagedProcessManager
+
+        registry.process_manager = ManagedProcessManager(
+            registry.process_runner,
+            registry,
+            workspace_id=identity.id,
+            ledger=event_ledger,
+            max_event_bytes=config.process_output_bytes,
+        )
         processor.event_ledger = event_ledger
         processor.run_coordinator = run_coordinator
         processor.workspace_snapshot_service = workspace_snapshots
