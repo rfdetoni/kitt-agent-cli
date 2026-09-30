@@ -8,6 +8,8 @@ import tomllib
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from kitt_protocol import PluginCapabilities
+
 from kitt.extensions.errors import (
     PluginCompatibilityError,
     PluginManifestError,
@@ -156,6 +158,45 @@ def parse_manifest_data(
             )
         permissions.add(permission_name)
 
+    raw_capabilities = data.get("capabilities", {})
+    if raw_capabilities is None:
+        raw_capabilities = {}
+    if not isinstance(raw_capabilities, dict):
+        raise PluginManifestError(
+            f"Plugin '{name}' capabilities must be a TOML table."
+        )
+
+    capability_values: dict[str, tuple[str, ...]] = {}
+    for key in (
+        "tools",
+        "providers",
+        "skills",
+        "hooks",
+        "commands",
+        "context_sources",
+        "ui_extensions",
+    ):
+        raw = raw_capabilities.get(key, [])
+        if not isinstance(raw, list):
+            raise PluginManifestError(
+                f"Plugin '{name}' capabilities.{key} must be a list of strings."
+            )
+        values: list[str] = []
+        for item in raw:
+            if not isinstance(item, str):
+                raise PluginManifestError(
+                    f"Plugin '{name}' capabilities.{key} contains a non-string value."
+                )
+            value = item.strip()
+            if not value or len(value) > 256:
+                raise PluginManifestError(
+                    f"Plugin '{name}' capabilities.{key} contains an invalid value."
+                )
+            if value not in values:
+                values.append(value)
+        capability_values[key] = tuple(values[:256])
+    capabilities = PluginCapabilities(**capability_values)
+
     dependencies = [
         str(item).strip()
         for item in data.get("dependencies", [])
@@ -193,4 +234,5 @@ def parse_manifest_data(
         source=source,
         manifest_path=manifest_path,
         trusted_in_process=trusted_raw,
+        capabilities=capabilities,
     )
