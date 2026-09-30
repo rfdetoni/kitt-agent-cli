@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import os
 import re
+import stat
 import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from kitt.skills.models import SkillDescriptor
-from kitt.skills.skill_manager import DEFAULT_SKILLS, SkillManager
+from kitt.skills.skill_manager import DEFAULT_SKILLS, SkillManager, SkillMetadata
 
 
 def _frontmatter(text: str) -> dict[str, str]:
@@ -115,6 +117,111 @@ class SkillDiscovery:
     _manager_lock = threading.RLock()
     _managers: Dict[str, SkillManager] = {}
 
+    def __init__(
+        self,
+        *,
+        max_roots: int = 8,
+        max_depth: int = 5,
+        max_files: int = 256,
+        max_file_bytes: int = 256 * 1024,
+        max_total_bytes: int = 4 * 1024 * 1024,
+    ) -> None:
+        self.max_roots = max(1, min(int(max_roots), 64))
+        self.max_depth = max(1, min(int(max_depth), 16))
+        self.max_files = max(1, min(int(max_files), 4096))
+        self.max_file_bytes = max(1024, min(int(max_file_bytes), 2 * 1024 * 1024))
+        self.max_total_bytes = max(
+            self.max_file_bytes,
+            min(int(max_total_bytes), 64 * 1024 * 1024),
+        )
+
+    def _bounded_roots(self, roots: Iterable[Any]) -> list[Path]:
+        result: list[Path] = []
+        seen: set[str] = set()
+        for raw in roots:
+            if len(result) >= self.max_roots:
+                break
+            try:
+                path = Path(raw).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(path)
+        return result
+
+    def _bounded_skill_files(self, roots: Iterable[Path]) -> list[Path]:
+        found: list[Path] = []
+        files_seen = 0
+        bytes_seen = 0
+        for root in roots:
+            if len(found) >= self.max_files or files_seen >= self.max_files:
+                break
+            if root.is_symlink() or not root.is_dir():
+                continue
+            for current, dirs, files in os.walk(root, followlinks=False):
+                current_path = Path(current)
+                try:
+                    relative = current_path.relative_to(root)
+                except ValueError:
+                    dirs[:] = []
+                    continue
+                depth = len(relative.parts)
+                if depth >= self.max_depth:
+                    dirs[:] = []
+                else:
+                    dirs[:] = [
+                        name
+                        for name in dirs
+                        if not (current_path / name).is_symlink()
+                    ]
+                for name in files:
+                    if files_seen >= self.max_files:
+                        return found
+                    path = current_path / name
+                    try:
+                        st = path.lstat()
+                    except OSError:
+                        continue
+                    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+                        continue
+                    files_seen += 1
+                    if st.st_size > self.max_file_bytes:
+                        continue
+                    if bytes_seen + st.st_size > self.max_total_bytes:
+                        return found
+                    bytes_seen += st.st_size
+                    if name == "SKILL.md":
+                        found.append(path)
+                        if len(found) >= self.max_files:
+                            return found
+        return found
+
+    def _bounded_descriptors(
+        self,
+        skills: Iterable[SkillMetadata],
+    ) -> list[SkillMetadata]:
+        result: list[SkillMetadata] = []
+        total = 0
+        for skill in skills:
+            if len(result) >= self.max_files:
+                break
+            size = len(
+                str(getattr(skill, "skill_md_content", "") or "").encode(
+                    "utf-8",
+                    errors="replace",
+                )
+            )
+            if size > self.max_file_bytes:
+                continue
+            if total + size > self.max_total_bytes:
+                break
+            total += size
+            result.append(skill)
+        return result
+
     @classmethod
     def _manager_for(cls, workspace: Path) -> SkillManager:
         key = str(workspace.resolve())
@@ -126,12 +233,13 @@ class SkillDiscovery:
             return manager
 
     def discover(self, roots: List[Any]) -> List[SkillDescriptor]:
-        workspace = _workspace_root(roots)
+        bounded_roots = self._bounded_roots(roots)
+        workspace = _workspace_root(bounded_roots)
         if workspace is not None:
             manager = self._manager_for(workspace)
             active = set(manager.get_active_skills())
             result: list[SkillDescriptor] = []
-            for skill in manager.list_skills():
+            for skill in self._bounded_descriptors(manager.list_skills()):
                 result.append(
                     _descriptor(
                         name=skill.name,
@@ -148,28 +256,18 @@ class SkillDiscovery:
             return sorted(result, key=lambda item: item.name)
 
         found: Dict[str, SkillDescriptor] = {}
-        saw_skills_root = False
-        for raw_root in roots:
-            root = Path(raw_root)
-            if root.name == "skills":
-                saw_skills_root = True
-            if not root.exists():
-                continue
-            patterns = [
-                "*/SKILL.md",
-                "skills/*/SKILL.md",
-                "*/skills/*/SKILL.md",
-                "plugins/*/skills/*/SKILL.md",
-            ]
-            skill_files: list[Path] = []
-            for pattern in patterns:
-                skill_files.extend(root.glob(pattern))
-            if not skill_files:
-                skill_files = list(root.glob("**/SKILL.md"))
-
-            for md in sorted(set(skill_files)):
+        saw_skills_root = any(root.name == "skills" for root in bounded_roots)
+        skill_files = self._bounded_skill_files(bounded_roots)
+        total_loaded = 0
+        for md in sorted(set(skill_files)):
                 try:
-                    text = md.read_text("utf-8", errors="ignore")
+                    raw = md.read_bytes()
+                    if len(raw) > self.max_file_bytes:
+                        continue
+                    if total_loaded + len(raw) > self.max_total_bytes:
+                        break
+                    total_loaded += len(raw)
+                    text = raw.decode("utf-8", errors="ignore")
                     meta = _frontmatter(text)
                     name = meta.get("name", md.parent.name)
                     if name in found:
