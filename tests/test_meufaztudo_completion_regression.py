@@ -37,8 +37,9 @@ class MeufaztudoCompletionRegressionTests(unittest.TestCase):
         self.assertEqual(task.intent, 'IMPLEMENT')
         self.assertIn('workspace structure', actions)
         self.assertIn('ordered execution checklist', actions)
-        self.assertIn('backend scope', actions)
-        self.assertIn('frontend scope', actions)
+        self.assertIn('only the project scope explicitly requested', actions)
+        self.assertNotIn('backend scope', actions)
+        self.assertNotIn('frontend scope', actions)
         self.assertIn('every changed project scope', actions)
         self.assertTrue(task.validation_hints)
 
@@ -49,8 +50,10 @@ class MeufaztudoCompletionRegressionTests(unittest.TestCase):
 
         self.assertEqual(task.intent, 'IMPLEMENT')
         self.assertTrue(task.validation_hints)
-        self.assertIn('backend scope', '\n'.join(task.actions))
-        self.assertIn('frontend scope', '\n'.join(task.actions))
+        actions = '\n'.join(task.actions)
+        self.assertIn('only the project scope explicitly requested', actions)
+        self.assertNotIn('backend scope', actions)
+        self.assertNotIn('frontend scope', actions)
 
     def test_contract_uses_original_prompt_even_when_semantic_task_is_misclassified(self):
         task = SimpleNamespace(
