@@ -13,6 +13,7 @@ from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_helpers import (
     _attachment_path_key,
     _attachment_retrieval_prompt,
+    _reverse_proxy_identity,
     _same_reverse_proxy_endpoint,
 )
 from kitt.domain.entities import ContextPlan, ModelProfile, SemanticTask
@@ -363,8 +364,12 @@ class TurnContextMixin:
         else:
             base_sys = "Answer in one direct, concise sentence. Do not expose reasoning."
 
-        # Single canonical task prompt decision (IR_ONLY / IR_PLUS_ORIGINAL / ORIGINAL):
-        if plan.enabled_tools:
+        # Browser-backed execution is LLM-first: the original human request is
+        # authoritative and is never replaced by a KITT-generated semantic summary.
+        llm_first_proxy = _reverse_proxy_identity(exe_profile) is not None
+        if llm_first_proxy:
+            principal_task_prompt = cmd.prompt
+        elif plan.enabled_tools:
             if getattr(task, "confidence", 1.0) < 0.70:
                 principal_task_prompt = cmd.prompt
             elif not plan.include_original_prompt and task.goal and task.intent != "UNKNOWN":
@@ -431,6 +436,7 @@ class TurnContextMixin:
                 planned_tools=plan.enabled_tools,
             ),
             max_output_tokens=exe_profile.max_output_tokens,
-            estimated_input_tokens=allocated["total_input_tokens"]
+            estimated_input_tokens=allocated["total_input_tokens"],
+            loop_action_budget=max(1, int(getattr(self.config, "agent_loop_action_budget", 4))),
         )
         return sys_prompt, base_sys, allocated, request
