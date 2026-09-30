@@ -135,7 +135,13 @@ class TurnContextMixin:
                 confidence=1.0,
             )
             if cmd.mode in {"plan", "ask"}:
-                plan.enabled_tools = ["kitt_runtime", "artifact_read", "memory_recall"]
+                plan.enabled_tools = [
+                    "read_file",
+                    "search",
+                    "repository_map",
+                    "artifact_read",
+                    "memory_recall",
+                ]
             filter_res = SemanticFilterResult(
                 task=task,
                 plan=plan,
