@@ -208,7 +208,7 @@ class KittMemoryClient:
             raise KittMemoryUnavailable("memory.remember response missing id")
         return memory_id
 
-    def recall(
+    def recall_with_trace(
         self,
         workspace_id: str,
         query: str,
@@ -219,7 +219,7 @@ class KittMemoryClient:
         as_of: int | None = None,
         allow_private: bool = True,
         allow_secret: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], str]:
         body = self._call(
             MEMORY_RECALL_REQUEST,
             {
@@ -237,7 +237,35 @@ class KittMemoryClient:
         rows = body.get("records") if isinstance(body, dict) else None
         if not isinstance(rows, list):
             raise KittMemoryUnavailable("memory.recall response missing records")
-        return [row for row in rows if isinstance(row, dict)]
+        trace_id = body.get("recall_trace_id") if isinstance(body, dict) else ""
+        return (
+            [row for row in rows if isinstance(row, dict)],
+            str(trace_id or ""),
+        )
+
+    def recall(
+        self,
+        workspace_id: str,
+        query: str,
+        limit: int = 8,
+        *,
+        namespace: str = "agent-cli",
+        scope_key: str | None = None,
+        as_of: int | None = None,
+        allow_private: bool = True,
+        allow_secret: bool = False,
+    ) -> list[dict[str, Any]]:
+        rows, _trace_id = self.recall_with_trace(
+            workspace_id,
+            query,
+            limit,
+            namespace=namespace,
+            scope_key=scope_key,
+            as_of=as_of,
+            allow_private=allow_private,
+            allow_secret=allow_secret,
+        )
+        return rows
 
     def forget(self, memory_id: str) -> bool:
         body = self._call(MEMORY_FORGET_REQUEST, {"id": memory_id}, MEMORY_FORGET_RESPONSE)
