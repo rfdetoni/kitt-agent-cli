@@ -14,7 +14,6 @@ from kitt.core.turn_helpers import (
     _attachment_path_key,
     _attachment_retrieval_prompt,
     _reverse_proxy_identity,
-    _same_reverse_proxy_endpoint,
 )
 from kitt.domain.entities import ContextPlan, ModelProfile, SemanticTask
 from kitt.formatting.contract import FormattingContractManager
@@ -109,14 +108,14 @@ class TurnContextMixin:
     def _run_semantic_filter(self, cmd: TurnCommand) -> tuple:
         ctx_profile_name, ctx_profile = self.router.resolve_profile_for_task("context-gather")
         _, execution_profile = self.router.resolve_profile_for_task("code-generation")
-        shared_reverse_proxy = (
-            self.context_client is None
-            and self.execution_client is None
-            and _same_reverse_proxy_endpoint(ctx_profile, execution_profile)
+        execution_client_profile = getattr(self.execution_client, "profile", None)
+        llm_first_reverse_proxy = (
+            _reverse_proxy_identity(execution_profile) is not None
+            or _reverse_proxy_identity(execution_client_profile) is not None
         )
         agent_addressed = self._addresses_kitt(cmd.prompt)
 
-        if shared_reverse_proxy:
+        if llm_first_reverse_proxy:
             # LLM-first execution: preserve the human request verbatim and let the
             # WebChat model interpret language, intent, scope and constraints.
             # KITT only exposes governed capabilities and host evidence.
