@@ -710,3 +710,70 @@ def handle_doctor_command(root_dir: str = ".", reset_state: bool = False) -> int
         print(f"  {badge} \033[1m{r['name']}\033[0m: {r['detail']}")
     print()
     return 1 if has_fail else 0
+
+def handle_learn_command(args) -> int:
+    """Privacy-safe local optimization evidence and control/candidate windows."""
+    import json
+
+    from kitt.history.database import HistoryDatabase
+    from kitt.history.repository import resolve_workspace_identity
+    from kitt.learn import LearnService
+    from kitt.memory.shared_client import KittMemoryClient
+
+    db = HistoryDatabase(args.root, in_memory=bool(getattr(args, "no_history", False)))
+    try:
+        identity = resolve_workspace_identity(db, args.root)
+        memory_client = None
+        try:
+            candidate = KittMemoryClient(timeout=0.2)
+            candidate.ping()
+            memory_client = candidate
+        except Exception:
+            memory_client = None
+
+        service = LearnService(
+            args.root,
+            db,
+            identity.id,
+            memory_client=memory_client,
+        )
+        action = str(getattr(args, "learn_action", "") or "summary").lower()
+
+        if action == "summary":
+            payload = service.metrics()
+        elif action == "suggest":
+            payload = {
+                "suggestions": service.suggestions(),
+                "auto_apply": False,
+            }
+        elif action == "experiment":
+            experiment_action = str(
+                getattr(args, "learn_experiment_action", "") or ""
+            ).lower()
+            feature = str(getattr(args, "feature", "") or "")
+            if experiment_action == "start":
+                payload = service.experiment_start(feature)
+            elif experiment_action == "switch":
+                payload = service.experiment_switch(
+                    feature,
+                    str(getattr(args, "arm", "") or ""),
+                )
+            elif experiment_action == "report":
+                payload = service.experiment_report(feature)
+            else:
+                print(
+                    "Usage: kitt learn experiment "
+                    "start <feature> | switch <feature> control|candidate | "
+                    "report <feature>",
+                    file=sys.stderr,
+                )
+                return 2
+        else:
+            print(f"Unknown learn action: {action}", file=sys.stderr)
+            return 2
+
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    finally:
+        db.close()
+
