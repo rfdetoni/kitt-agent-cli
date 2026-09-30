@@ -434,6 +434,7 @@ class DurableTurnJournal:
         self.profiles: dict[str, str] = {}
         self.started: dict[str, float] = {}
         self.episode_ids: dict[str, str] = {}
+        self.memory_sessions: set[str] = set()
         self.db = _db(processor)
         self.ledger = None
         self.episodes = None
@@ -467,9 +468,57 @@ class DurableTurnJournal:
             return episode.id
         return None
 
+    def _memory_lifecycle(
+        self,
+        event: str,
+        *,
+        source_id: str,
+        source_revision: str,
+        evidence: dict[str, Any],
+        source_kind: str = "agent",
+    ) -> None:
+        memory = getattr(self.processor, "memory", None)
+        hook = getattr(memory, "lifecycle_event", None)
+        if not callable(hook):
+            return
+        try:
+            hook(
+                event,
+                source_id=source_id,
+                source_revision=source_revision,
+                evidence=evidence,
+                source_kind=source_kind,
+            )
+        except Exception:
+            # Lifecycle evidence is fail-open and never owns turn execution.
+            pass
+
     def begin(self, cmd: TurnCommand) -> None:
         persistent = _ensure_turn(self.processor, cmd)
         self.started[cmd.turn_id] = time.time()
+        if cmd.conversation_id not in self.memory_sessions:
+            self._memory_lifecycle(
+                "session.started",
+                source_id=cmd.conversation_id,
+                source_revision="1",
+                evidence={
+                    "conversation_id": cmd.conversation_id,
+                    "workspace_id": self.processor.workspace_id,
+                },
+                source_kind="session",
+            )
+            self.memory_sessions.add(cmd.conversation_id)
+        self._memory_lifecycle(
+            "turn.started",
+            source_id=cmd.turn_id,
+            source_revision=cmd.turn_id,
+            evidence={
+                "conversation_id": cmd.conversation_id,
+                "turn_id": cmd.turn_id,
+                "mode": cmd.mode,
+            },
+            source_kind="agent",
+        )
         budgets = getattr(self.processor, "execution_budgets", None)
         if budgets is None:
             budgets = {}
@@ -671,6 +720,23 @@ class DurableTurnJournal:
             except Exception:
                 pass
 
+        if name == "ToolCompleted":
+            payload = _durable_event_payload(event)
+            self._memory_lifecycle(
+                "tool.completed",
+                source_id=(
+                    f"{cmd.turn_id}:"
+                    f"{str(payload.get('call_id') or payload.get('tool_name') or 'tool')}"
+                ),
+                source_revision=str(payload.get("success")),
+                evidence={
+                    "tool": str(payload.get("tool_name") or ""),
+                    "success": bool(payload.get("success")),
+                    "tokens": int(payload.get("tokens") or 0),
+                },
+                source_kind="tool",
+            )
+
         if self.run_coordinator is not None and name in {
             "TurnStarted",
             "ApprovalRequired",
@@ -690,6 +756,18 @@ class DurableTurnJournal:
         if state:
             self.state(cmd, state, getattr(event, "error", None) if state == "FAILED" else None)
         if state in TERMINAL:
+            self._memory_lifecycle(
+                "turn.completed",
+                source_id=cmd.turn_id,
+                source_revision=state,
+                evidence={
+                    "conversation_id": cmd.conversation_id,
+                    "turn_id": cmd.turn_id,
+                    "terminal_state": state,
+                    "event": name,
+                },
+                source_kind="agent",
+            )
             budget = getattr(self.processor, "execution_budgets", {}).get(cmd.turn_id)
             if budget is not None:
                 snapshots = getattr(
