@@ -57,3 +57,4 @@ class CompactionResult:
     valid: bool
     validation: Dict[str, object] = field(default_factory=dict)
     working_state: WorkingState = field(default_factory=WorkingState)
+    recovery_refs: tuple[Dict[str, object], ...] = ()
