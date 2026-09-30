@@ -110,7 +110,7 @@ class TestReverseProxyPhaseSession(unittest.TestCase):
         self.assertIsNone(blocked)
         self.assertEqual(selected_name, "execute")
         self.assertEqual(selected_profile.model, "chatgpt-web")
-        self.assertEqual(decision.policy_version, "llm-first-v1")
+        self.assertEqual(decision.policy_version, "llm-first-v2")
         self.assertIn("natural-language model routing is bypassed", decision.reasons[0])
 
     def test_reverse_proxy_session_is_scoped_by_logical_conversation(self):
