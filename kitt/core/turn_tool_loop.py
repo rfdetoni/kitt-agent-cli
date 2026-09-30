@@ -689,6 +689,10 @@ class TurnToolLoopMixin:
                     action_hash=action_hash,
                     approval_request_id=approval_id,
                     workspace_id=pa_ws,
+                    executable_identity=(
+                        f"{security_context.principal_type}:"
+                        f"{security_context.principal_id}"
+                    ),
                 ), None, None
                 return
             if not tool_result.success and tool_result.error and "Execution denied by PolicyEngine" in tool_result.error:
