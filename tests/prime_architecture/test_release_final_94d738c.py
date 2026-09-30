@@ -17,6 +17,7 @@ from kitt.extensions.mcp.transport import HTTPTransport
 from kitt.extensions.plugins.loader import PluginLoader
 from kitt.extensions.plugins.security import PluginTrustStore, prepare_trusted_plugin_snapshot
 from kitt.goals.scheduler import GoalScheduler
+from kitt.security.authority_snapshot import capture_authority_snapshot
 from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_WRITE
 from kitt.security.context import ExecutionSecurityContext
 
@@ -124,7 +125,22 @@ class TestFinalGoalFencing(unittest.TestCase):
                     created_at=1.0,
                     expires_at=9999999999.0,
                     state="pending",
-                    security_context=child_ctx.to_dict(),
+                    security_context={
+                        **child_ctx.to_dict(),
+                        "authority_snapshot": capture_authority_snapshot(
+                            child_ctx,
+                            policy=runtime.registry.policy,
+                            autonomy=runtime.registry.policy.autonomy,
+                            approval_manager=runtime.registry.approval_manager,
+                            sandbox_profile=str(
+                                getattr(
+                                    runtime.registry.process_runner.sandbox,
+                                    "default_profile",
+                                    "workspace-write",
+                                )
+                            ),
+                        ),
+                    },
                 )
                 runtime.processor.pending_actions["turn"] = pending
                 runtime.history.repo.save_pending_action(pending)
