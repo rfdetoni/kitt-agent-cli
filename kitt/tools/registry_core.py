@@ -96,6 +96,7 @@ class ToolRegistry:
         self.surface_service = None
         self.backend_service = None
         self.db = None
+        self.workspace_id = ""
         self.event_bus = None
         self.metrics_collector = None
         self._processor = None
@@ -877,6 +878,8 @@ class ToolRegistry:
         automatic_budget_reserved: bool = False,
     ) -> ToolResult:
         args = args or {}
+        if workspace_id == "default_ws" and self.workspace_id:
+            workspace_id = self.workspace_id
 
         if security_context is not None:
             try:
