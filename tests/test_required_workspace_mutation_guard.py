@@ -162,8 +162,8 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
 
             self.assertEqual(len(processor.calls), 2)
             recovery_prompt = processor.calls[1].messages[-1]["content"]
-            self.assertIn("[KITT EXECUTION REQUIRED]", recovery_prompt)
-            self.assertIn("Do not answer with setup instructions", recovery_prompt)
+            self.assertIn("[KITT FORWARD PROGRESS REQUIRED]", recovery_prompt)
+            self.assertIn("perform the required workspace mutation", recovery_prompt)
             self.assertTrue(
                 any(
                     event is None and response == "Projeto implementado no workspace."
