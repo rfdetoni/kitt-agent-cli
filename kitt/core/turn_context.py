@@ -597,7 +597,7 @@ class TurnContextMixin:
         # providers receive a deterministic one-way lowering of the same IR.
         sys_prompt = (
             base_sys
-            if llm_first_proxy
+            if llm_first_proxy or not plan.enabled_tools
             else lower_context_envelope(context_envelope)
         )
         allocated["total_input_tokens"] = (
