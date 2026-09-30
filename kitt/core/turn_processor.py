@@ -1222,6 +1222,13 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             yield TurnFailed(error="Pending action source integrity check failed.")
             return
 
+        # Cancellation is an execution boundary. Do not perform filesystem
+        # preflight or inspect current policy/authority after the user has
+        # cancelled the waiting turn.
+        if self._cancel_requested(turn_id):
+            yield TurnCancelled(reason="Turn cancelled before approved action execution")
+            return
+
         from kitt.security.mutation_preconditions import validate_preconditions
         valid, prec_error = validate_preconditions(self.root_path, pa.get_preconditions())
         if not valid:
