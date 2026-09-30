@@ -185,7 +185,13 @@ class DaemonUIBridge:
         params = {"session_id": self.attached_session_id} if self.attached_session_id else {}
         return (await self.request("approval.list", params)).get("approvals", [])
 
-    async def remember_approval(self, tool_name: str, scope: str) -> dict:
+    async def remember_approval(
+        self,
+        tool_name: str,
+        scope: str,
+        *,
+        executable_identity: str = "",
+    ) -> dict:
         if scope == "session" and not self.attached_session_id:
             raise RuntimeError("Session-scoped approval requires an attached daemon session")
         return await self.request(
@@ -195,6 +201,7 @@ class DaemonUIBridge:
                 "scope": scope,
                 "decision": "allow",
                 "path_glob": "**",
+                "executable_identity": str(executable_identity or ""),
                 "session_id": self.attached_session_id or "",
             },
         )
