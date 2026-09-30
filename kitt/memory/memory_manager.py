@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, List, Literal
+import hashlib
+import json
 import time
 
 from kitt.context_filter.prompt_budget import TokenCounter
@@ -39,6 +41,35 @@ class MemoryManager:
     def clear_project_memory(self) -> None:
         if self.persistence_enabled:
             self.client.manage("archive_workspace", {"namespace": "agent-cli", "workspace_id": self.workspace_id})
+
+
+    def lifecycle_event(
+        self,
+        event: str,
+        *,
+        source_id: str,
+        source_revision: str,
+        evidence: Any = None,
+        source_kind: str = "agent",
+    ) -> dict[str, Any]:
+        """Submit lifecycle evidence by digest; raw evidence is never persisted."""
+        canonical = json.dumps(
+            evidence if evidence is not None else {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return self.client.lifecycle(
+            event,
+            workspace_id=self.workspace_id,
+            source_id=source_id,
+            source_revision=source_revision,
+            input_digest=digest,
+            source_kind=source_kind,
+            namespace="agent-cli",
+        )
 
 
     def remember_correction(
