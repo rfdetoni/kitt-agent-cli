@@ -752,14 +752,18 @@ class DurableTurnJournal:
                 source_kind="tool",
             )
 
-        if self.run_coordinator is not None and name in {
-            "TurnStarted",
-            "ApprovalRequired",
-            "TurnCompleted",
-            "TurnFailed",
-            "TurnBlocked",
-            "TurnCancelled",
-        }:
+        if (
+            event_record is not None
+            and self.run_coordinator is not None
+            and name in {
+                "TurnStarted",
+                "ApprovalRequired",
+                "TurnCompleted",
+                "TurnFailed",
+                "TurnBlocked",
+                "TurnCancelled",
+            }
+        ):
             self.run_coordinator.observe_event(
                 cmd.conversation_id,
                 cmd.turn_id,
