@@ -605,9 +605,14 @@ class TurnContextMixin:
 
         # Reverse-proxy requests carry the typed envelope as data. Text-only
         # providers receive a deterministic one-way lowering of the same IR.
+        has_project_context = bool(
+            context_map_str.strip()
+            or explicit_str.strip()
+            or agents_str.strip()
+        )
         sys_prompt = (
             base_sys
-            if llm_first_proxy or not plan.enabled_tools
+            if llm_first_proxy or (not plan.enabled_tools and not has_project_context)
             else lower_context_envelope(context_envelope)
         )
         allocated["total_input_tokens"] = (
