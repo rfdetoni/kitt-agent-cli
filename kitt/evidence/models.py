@@ -33,11 +33,11 @@ class SessionEventRecord:
     sequence: int
     event_type: str
     payload: dict[str, Any]
+    payload_hash: str
+    created_at: float
     source: str = "kitt-agent-cli"
     durability: str = "DURABLE"
     parent_event_id: str | None = None
-    payload_hash: str
-    created_at: float
     turn_id: str | None = None
     episode_id: str | None = None
     model_visible: bool = False
