@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import Literal, Optional, Set
 
+from kitt_protocol import SavedPermission
+
 
 @dataclass(frozen=True)
 class RememberedRule:
@@ -17,6 +19,8 @@ class RememberedRule:
     scope: Literal["session", "workspace"]
     created_at: float
     conversation_id: str | None = None
+    workspace_id: str = ""
+    executable_identity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,8 +56,14 @@ class ApprovalManager:
     after a user decision has issued a nonce-bound grant.
     """
 
-    def __init__(self, ttl_seconds: float = 300.0, db=None):
+    def __init__(
+        self,
+        ttl_seconds: float = 300.0,
+        db=None,
+        workspace_id: str = "",
+    ):
         self.ttl_seconds = max(1.0, float(ttl_seconds))
+        self.workspace_id = str(workspace_id or "")
         self.used_nonces: Set[str] = set()
         self.used_grants: Set[str] = set()
         self._requests_by_id: dict[str, ApprovalRequest] = {}
@@ -78,16 +88,28 @@ class ApprovalManager:
         try:
             with self.db.get_connection() as conn:
                 rows = conn.execute(
-                    "SELECT tool_name, path_glob, decision, created_at "
-                    "FROM remembered_approval_rules ORDER BY created_at ASC"
+                    "SELECT workspace_id,tool_name,path_glob,decision,"
+                    "executable_identity,created_at "
+                    "FROM remembered_approval_rules "
+                    "WHERE workspace_id=? ORDER BY created_at ASC",
+                    (self.workspace_id,),
                 ).fetchall()
             with self._lock:
                 for row in rows:
-                    decision = row[2]
+                    decision = row[3]
                     if decision not in {"allow", "deny"}:
                         continue
                     self.remembered_rules.append(
-                        RememberedRule(row[0], row[1], decision, "workspace", row[3], None)
+                        RememberedRule(
+                            tool_name=row[1],
+                            path_glob=row[2],
+                            decision=decision,
+                            scope="workspace",
+                            created_at=row[5],
+                            conversation_id=None,
+                            workspace_id=row[0],
+                            executable_identity=row[4],
+                        )
                     )
         except Exception:
             pass
@@ -99,6 +121,9 @@ class ApprovalManager:
         decision: str,
         scope: str = "workspace",
         conversation_id: str | None = None,
+        *,
+        workspace_id: str | None = None,
+        executable_identity: str | None = None,
     ) -> None:
         if decision not in {"allow", "deny"}:
             raise ValueError("Approval decision must be allow or deny")
@@ -107,9 +132,24 @@ class ApprovalManager:
         conv = str(conversation_id or "").strip() or None
         if scope == "session" and conv is None:
             raise ValueError("Session-scoped approval requires conversation_id")
+        workspace = str(workspace_id or self.workspace_id or "").strip()
         if scope == "workspace":
             conv = None
-        rule = RememberedRule(tool_name, path_glob, decision, scope, time.time(), conv)
+            if not workspace:
+                raise ValueError(
+                    "Workspace-scoped approval requires workspace_id"
+                )
+        identity = str(executable_identity or "").strip() or None
+        rule = RememberedRule(
+            tool_name=tool_name,
+            path_glob=path_glob,
+            decision=decision,
+            scope=scope,
+            created_at=time.time(),
+            conversation_id=conv,
+            workspace_id=workspace,
+            executable_identity=identity,
+        )
 
         # Workspace rules are durable authority. Persist first so a failed DB
         # write cannot create an in-memory permission that differs after restart.
@@ -117,8 +157,16 @@ class ApprovalManager:
             with self.db.get_connection() as conn:
                 conn.execute(
                     "INSERT INTO remembered_approval_rules"
-                    "(tool_name,path_glob,decision,created_at) VALUES(?,?,?,?)",
-                    (tool_name, path_glob, decision, rule.created_at),
+                    "(workspace_id,tool_name,path_glob,decision,"
+                    "executable_identity,created_at) VALUES(?,?,?,?,?,?)",
+                    (
+                        workspace,
+                        tool_name,
+                        path_glob,
+                        decision,
+                        identity,
+                        rule.created_at,
+                    ),
                 )
         with self._lock:
             self.remembered_rules.append(rule)
@@ -141,7 +189,10 @@ class ApprovalManager:
         # failure therefore fails closed and leaves the effective policy intact.
         if self.db and scope in {None, "workspace"}:
             with self.db.get_connection() as conn:
-                conn.execute("DELETE FROM remembered_approval_rules")
+                conn.execute(
+                    "DELETE FROM remembered_approval_rules WHERE workspace_id=?",
+                    (self.workspace_id,),
+                )
 
         def matches(rule: RememberedRule) -> bool:
             if scope is None:
@@ -162,16 +213,32 @@ class ApprovalManager:
         tool_name: str,
         path: str | None,
         conversation_id: str | None = None,
+        *,
+        workspace_id: str | None = None,
+        executable_identity: str | None = None,
     ) -> str | None:
         import fnmatch
         import re
         conv = str(conversation_id or "").strip() or None
+        workspace = str(workspace_id or self.workspace_id or "").strip()
+        identity = str(executable_identity or "").strip() or None
         with self._lock:
             rules = list(self.remembered_rules)
         for rule in reversed(rules):
             if rule.tool_name != tool_name:
                 continue
             if rule.scope == "session" and rule.conversation_id != conv:
+                continue
+            if (
+                rule.scope == "workspace"
+                and rule.workspace_id
+                and rule.workspace_id != workspace
+            ):
+                continue
+            if (
+                rule.executable_identity is not None
+                and rule.executable_identity != identity
+            ):
                 continue
             if rule.path_glob is None or rule.path_glob == "**":
                 return rule.decision
@@ -184,6 +251,31 @@ class ApprovalManager:
                     if re.match(regex, path):
                         return rule.decision
         return None
+
+    def saved_permissions(
+        self,
+        *,
+        workspace_id: str | None = None,
+    ) -> list[SavedPermission]:
+        workspace = str(workspace_id or self.workspace_id or "").strip()
+        with self._lock:
+            rules = list(self.remembered_rules)
+        result: list[SavedPermission] = []
+        for rule in rules:
+            if rule.scope != "workspace":
+                continue
+            if rule.workspace_id and rule.workspace_id != workspace:
+                continue
+            result.append(
+                SavedPermission(
+                    workspace_id=workspace,
+                    action=rule.tool_name,
+                    resource_pattern=rule.path_glob or "**",
+                    decision=rule.decision,
+                    executable_identity=rule.executable_identity,
+                )
+            )
+        return result
 
     def _nonce_used_unlocked(self, nonce: str) -> bool:
         if nonce in self.used_nonces:
