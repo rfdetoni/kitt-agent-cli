@@ -53,7 +53,7 @@ wheels = [
 [[package]]
 name = "kitt-protocol"
 version = "0.5.2"
-source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=main#2afb8fe00259c3c7579d0bc3497abb08d0f4b95c" }
+source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=main#7dc6043b2faad998c7f362b015610e9da9d78011" }
 
 [[package]]
 name = "kitt-agent-cli"
