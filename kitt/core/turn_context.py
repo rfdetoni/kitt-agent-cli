@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Any, List, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
-from kitt.context_filter.semantic_filter import SemanticFilter
+from kitt.context_filter.semantic_filter import SemanticFilter, SemanticFilterResult
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_helpers import (
@@ -21,6 +21,22 @@ from kitt.llm.client import LLMClient
 from kitt.prompts import (
     CONTEXT_SUMMARY_SYSTEM as CONTEXT_SUMMARY_PROMPT,
     CONTEXT_SUMMARY_USER_TEMPLATE,
+)
+
+
+_LLM_FIRST_CAPABILITY_TOOLS = (
+    "kitt_runtime",
+    "run_command",
+    "artifact_store",
+    "artifact_read",
+    "child_spawn",
+    "child_ask",
+    "child_inspect",
+    "goal_update",
+    "goal_inspect",
+    "memory_recall",
+    "memory_save",
+    "mcp_call",
 )
 
 
@@ -97,54 +113,79 @@ class TurnContextMixin:
             and self.execution_client is None
             and _same_reverse_proxy_endpoint(ctx_profile, execution_profile)
         )
+        agent_addressed = self._addresses_kitt(cmd.prompt)
+
+        if shared_reverse_proxy:
+            # LLM-first execution: preserve the human request verbatim and let the
+            # WebChat model interpret language, intent, scope and constraints.
+            # KITT only exposes governed capabilities and host evidence.
+            task = SemanticTask(
+                original_prompt=cmd.prompt,
+                intent="UNKNOWN",
+                goal="",
+                actions=[],
+                paths=list(cmd.explicit_files or ()),
+                confidence=1.0,
+            )
+            plan = ContextPlan(
+                search_queries=[cmd.prompt],
+                preferred_paths=list(cmd.explicit_files or ()),
+                enabled_tools=list(_LLM_FIRST_CAPABILITY_TOOLS),
+                include_original_prompt=True,
+                confidence=1.0,
+            )
+            if cmd.mode in {"plan", "ask"}:
+                plan.enabled_tools = ["kitt_runtime", "artifact_read", "memory_recall"]
+            filter_res = SemanticFilterResult(
+                task=task,
+                plan=plan,
+                source="LLM_FIRST",
+                fallback_reason="reverse_proxy_llm_first",
+            )
+            self.session_state.last_task = task
+            self.session_state.last_plan = plan
+            if cmd.explicit_files:
+                self.working_set.touch_paths(
+                    cmd.conversation_id,
+                    cmd.explicit_files,
+                    cmd.turn_id,
+                    weight=2.0,
+                    kind="explicit",
+                )
+            return task, plan, filter_res, None, ctx_profile, agent_addressed
+
         if ctx_profile.max_output_tokens < 1024:
             ctx_profile = replace(ctx_profile, max_output_tokens=1024)
-        sf_client = self.context_client
-        semantic_filter = SemanticFilter(context_profile=ctx_profile, llm_client=sf_client)
+        semantic_filter = SemanticFilter(
+            context_profile=ctx_profile,
+            llm_client=self.context_client,
+        )
         filter_res = semantic_filter.filter_and_plan(
             cmd.prompt,
             session_key=self._provider_session_key(ctx_profile, cmd.conversation_id),
-            deterministic_only=shared_reverse_proxy,
         )
         sf_client = semantic_filter.llm_client
         task, plan = filter_res.task, filter_res.plan
-        # The UI model occasionally labels explicit creation requests as a
-        # conversational ASK (especially when prefixed with /ponytail).  Keep
-        # workspace mutations autonomous by applying a small deterministic
-        # safety override before tool planning.
-        prompt_lower = cmd.prompt.lower()
-        creation_request = (
-            any(term in prompt_lower for term in (
-                "crie", "criar", "create", "build", "implemente", "implementar",
-                "gere", "gerar", "construa", "adicione",
-            ))
-            and any(term in prompt_lower for term in (
-                "projeto", "pasta", "arquivo", "backend", "frontend", "front end",
-            ))
-        )
-        if creation_request:
-            if task.intent != "IMPLEMENT":
-                task = replace(task, intent="IMPLEMENT", actions=["analyze", "edit"])
-            plan.enabled_tools = list(dict.fromkeys([
-                "create_directory", "write_file", "apply_patch", "read_file",
-                "run_command", "repository_map", *plan.enabled_tools,
-            ]))
-            # Keep the emitted filter result consistent with the effective
-            # task/plan consumed by the execution loop and daemon UI.
-            filter_res.task = task
-            filter_res.plan = plan
-        agent_addressed = self._addresses_kitt(cmd.prompt)
+
         if cmd.mode == "plan":
-            READ_ONLY_TOOLS = {"read_file", "search", "repository_map", "git_status", "git_diff", "list_files"}
-            filtered_tools = [tool for tool in plan.enabled_tools if tool in READ_ONLY_TOOLS]
-            plan.enabled_tools = filtered_tools if filtered_tools else ["read_file", "search", "repository_map"]
+            read_only_tools = {
+                "read_file", "search", "repository_map", "git_status", "git_diff", "list_files"
+            }
+            filtered_tools = [tool for tool in plan.enabled_tools if tool in read_only_tools]
+            plan.enabled_tools = filtered_tools or ["read_file", "search", "repository_map"]
         elif "calculate" not in task.actions:
             plan.enabled_tools = [tool for tool in plan.enabled_tools if tool != "python_compute"]
 
         self.session_state.last_task = task
         self.session_state.last_plan = plan
         if cmd.explicit_files:
-            self.working_set.touch_paths(cmd.conversation_id, cmd.explicit_files, cmd.turn_id, weight=2.0, kind="explicit")
+            self.working_set.touch_paths(
+                cmd.conversation_id,
+                cmd.explicit_files,
+                cmd.turn_id,
+                weight=2.0,
+                kind="explicit",
+            )
         return task, plan, filter_res, sf_client, ctx_profile, agent_addressed
 
     def _build_context(
