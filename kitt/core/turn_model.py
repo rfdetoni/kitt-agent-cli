@@ -150,6 +150,19 @@ class TurnModelMixin:
             except Exception:
                 pass
 
+        execution_budget = getattr(self, "execution_budgets", {}).get(turn_id)
+        if execution_budget is not None:
+            estimated_input = TokenCounter.count_tokens(system_prompt or "")
+            for message in wire_messages:
+                if isinstance(message, dict):
+                    estimated_input += TokenCounter.count_tokens(
+                        str(message.get("content") or "")
+                    )
+            execution_budget.reserve_model_call(
+                input_tokens=estimated_input,
+                stage=str(route or "execution"),
+            )
+
         def _invoke_chat_stream(msgs, sys_prompt):
             kwargs = {
                 "system_prompt": sys_prompt,
@@ -171,6 +184,10 @@ class TurnModelMixin:
 
         if "lfm" in getattr(profile, "model", "").lower():
             raw_text = "".join(_invoke_chat_stream(wire_messages, system_prompt))
+            if execution_budget is not None:
+                execution_budget.record_model_output(
+                    output_tokens=TokenCounter.count_tokens(raw_text),
+                )
             thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
             thought_text = thought_match.group(1).strip() if thought_match else ""
             dur_ms = int((time.time() - (started_at or time.time())) * 1000)
@@ -303,6 +320,10 @@ class TurnModelMixin:
             clean = self._clean_visible_text(buffer)
             if clean:
                 yield full_response, TextDelta(delta=clean)
+        if execution_budget is not None:
+            execution_budget.record_model_output(
+                output_tokens=TokenCounter.count_tokens(full_response),
+            )
         yield full_response, None
 
     def _resolve_execution_profile(self, cmd: TurnCommand, task: Optional[SemanticTask] = None) -> tuple:
