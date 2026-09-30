@@ -28,3 +28,5 @@ class ChildSession:
     context_summary: str = ""
     runtime_conversation_id: Optional[str] = None
     security_context: dict[str, Any] = field(default_factory=dict)
+    budget_lease: dict[str, Any] = field(default_factory=dict)
+    lineage: dict[str, Any] = field(default_factory=dict)
