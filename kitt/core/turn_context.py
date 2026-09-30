@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context_filter.semantic_filter import SemanticFilter, llm_first_filter_result
 from kitt.core.execution_request import ExecutionRequest
+from kitt.core.roles import resolve_agent_role, restrict_tools
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_helpers import (
     _attachment_path_key,
@@ -129,6 +130,19 @@ class TurnContextMixin:
                         "memory_recall",
                     ],
                 )
+            role_policy = resolve_agent_role(cmd, task)
+            plan = replace(
+                plan,
+                enabled_tools=restrict_tools(
+                    role_policy,
+                    list(plan.enabled_tools),
+                ),
+            )
+            roles = getattr(self, "_agent_role_policies", None)
+            if roles is None:
+                roles = {}
+                self._agent_role_policies = roles
+            roles[cmd.turn_id] = role_policy
             self.session_state.last_task = task
             self.session_state.last_plan = plan
             if cmd.explicit_files:
@@ -163,6 +177,19 @@ class TurnContextMixin:
         elif "calculate" not in task.actions:
             plan.enabled_tools = [tool for tool in plan.enabled_tools if tool != "python_compute"]
 
+        role_policy = resolve_agent_role(cmd, task)
+        plan = replace(
+            plan,
+            enabled_tools=restrict_tools(
+                role_policy,
+                list(plan.enabled_tools),
+            ),
+        )
+        roles = getattr(self, "_agent_role_policies", None)
+        if roles is None:
+            roles = {}
+            self._agent_role_policies = roles
+        roles[cmd.turn_id] = role_policy
         self.session_state.last_task = task
         self.session_state.last_plan = plan
         if cmd.explicit_files:
@@ -719,6 +746,14 @@ class TurnContextMixin:
             tool_definitions=tool_definitions,
             max_output_tokens=exe_profile.max_output_tokens,
             estimated_input_tokens=allocated["total_input_tokens"],
+            agent_role=str(
+                getattr(
+                    getattr(self, "_agent_role_policies", {}).get(cmd.turn_id),
+                    "role",
+                    "",
+                )
+                or ""
+            ),
             loop_action_budget=loop_action_budget,
             context_envelope=envelope_mapping(context_envelope),
         )
