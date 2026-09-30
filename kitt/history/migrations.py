@@ -6,7 +6,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -423,9 +423,11 @@ SCHEMA_V1_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS remembered_approval_rules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id TEXT NOT NULL,
         tool_name TEXT NOT NULL,
         path_glob TEXT,
         decision TEXT NOT NULL,
+        executable_identity TEXT,
         created_at REAL NOT NULL
     );
     """,
