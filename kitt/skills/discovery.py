@@ -260,31 +260,31 @@ class SkillDiscovery:
         skill_files = self._bounded_skill_files(bounded_roots)
         total_loaded = 0
         for md in sorted(set(skill_files)):
-                try:
-                    raw = md.read_bytes()
-                    if len(raw) > self.max_file_bytes:
-                        continue
-                    if total_loaded + len(raw) > self.max_total_bytes:
-                        break
-                    total_loaded += len(raw)
-                    text = raw.decode("utf-8", errors="ignore")
-                    meta = _frontmatter(text)
-                    name = meta.get("name", md.parent.name)
-                    if name in found:
-                        continue
-                    found[name] = _descriptor(
-                        name=name,
-                        description=meta.get("description", ""),
-                        version=meta.get("version", "1.0.0"),
-                        author=meta.get("author", "Unknown"),
-                        path=md.parent,
-                        content=text,
-                        source="discovered",
-                        active=True,
-                        trusted=True,
-                    )
-                except Exception:
+            try:
+                raw = md.read_bytes()
+                if len(raw) > self.max_file_bytes:
                     continue
+                if total_loaded + len(raw) > self.max_total_bytes:
+                    break
+                total_loaded += len(raw)
+                text = raw.decode("utf-8", errors="ignore")
+                meta = _frontmatter(text)
+                name = meta.get("name", md.parent.name)
+                if name in found:
+                    continue
+                found[name] = _descriptor(
+                    name=name,
+                    description=meta.get("description", ""),
+                    version=meta.get("version", "1.0.0"),
+                    author=meta.get("author", "Unknown"),
+                    path=md.parent,
+                    content=text,
+                    source="discovered",
+                    active=True,
+                    trusted=True,
+                )
+            except Exception:
+                continue
 
         if saw_skills_root:
             for name, meta in DEFAULT_SKILLS.items():
