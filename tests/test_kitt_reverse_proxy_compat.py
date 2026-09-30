@@ -13,9 +13,8 @@ from kitt.tools.protocol import extract_tool_reasoning_summary, parse_tool_call
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.providers.kitt_reverse_proxy import (
     KittReverseProxyAdapter,
-    extract_openai_tools,
     normalize_native_tool_messages,
-    strip_legacy_tool_contract,
+    openai_tools_from_definitions,
 )
 
 
@@ -50,7 +49,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         registry = object.__new__(ToolRegistry)
         registry._custom_tools = {}
         definitions = registry.get_tool_definitions(["kitt_runtime"])
-        tools = extract_openai_tools(f"Available host tool: {definitions}")
+        tools = openai_tools_from_definitions(definitions)
         schema = tools[0]["function"]["parameters"]
         self.assertEqual(schema["properties"]["operation"]["enum"], list(OPERATION_SPECS))
         self.assertIn("operation", schema["required"])
@@ -86,16 +85,19 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             with self.assertRaises(ProviderProtocolError):
                 list(KittReverseProxyAdapter().stream(LLMRequest(model='fixture', messages=[])))
 
-    def test_extracts_native_tools_from_existing_prompt_contract(self):
-        prompt = (
-            "Available host tools: "
-            "[{'name': 'read_file', 'description': 'Read file', "
-            "'args': {'path': 'relative file', 'start_line': 'int >=1'}}, "
-            "{'name': 'search', 'description': 'Search repository', "
-            "'args': {'pattern': 'literal text or regex', 'regex': 'bool, default false'}}]\n"
-            "For a host tool, respond with exactly:"
-        )
-        tools = extract_openai_tools(prompt)
+    def test_converts_structural_tool_definitions_without_prompt_parsing(self):
+        tools = openai_tools_from_definitions([
+            {
+                "name": "read_file",
+                "description": "Read file",
+                "args": {"path": "relative file", "start_line": "int >=1"},
+            },
+            {
+                "name": "search",
+                "description": "Search repository",
+                "args": {"pattern": "literal text or regex", "regex": "bool, default false"},
+            },
+        ])
         self.assertEqual(
             [tool["function"]["name"] for tool in tools],
             ["read_file", "search"],
@@ -148,18 +150,6 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
     def test_ordinary_messages_are_not_reinterpreted(self):
         source = [{"role": "user", "content": "hello"}]
         self.assertEqual(normalize_native_tool_messages(source), source)
-
-    def test_strips_only_legacy_tool_contract(self):
-        source = (
-            "You are K.I.T.T.\n\n"
-            "Tool Contract:\nAvailable host tools: [{'name': 'read_file'}]\n"
-            "For a host tool, respond with exactly: <kitt-tool>...</kitt-tool>\n\n"
-            "Memory:\nkeep this\n\nProject Guidelines:\nkeep that"
-        )
-        cleaned = strip_legacy_tool_contract(source)
-        self.assertNotIn("Tool Contract:", cleaned)
-        self.assertIn("Memory:\nkeep this", cleaned)
-        self.assertIn("Project Guidelines:\nkeep that", cleaned)
 
     def test_structural_tool_definitions_survive_compact_prompt(self):
         class FakeResponse:
@@ -277,17 +267,15 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             captured["timeout"] = timeout
             return FakeResponse()
 
-        system_prompt = (
-            "Tool Contract:\n"
-            "Available host tools: [{'name': 'read_file', 'description': 'Read file', "
-            "'args': {'path': 'relative file'}}]\n"
-            "For a host tool, respond with exactly: <kitt-tool>...</kitt-tool>\n\n"
-            "Memory:\nnone"
-        )
         request = LLMRequest(
             model="chatgpt-web",
             messages=[{"role": "user", "content": "inspect"}],
-            system_prompt=system_prompt,
+            system_prompt="Memory:\nnone",
+            tool_definitions=[{
+                "name": "read_file",
+                "description": "Read file",
+                "args": {"path": "relative file"},
+            }],
             base_url="http://127.0.0.1:3000",
             extra_headers={
                 "X-Kitt-Session-Id": "abc123",
@@ -313,7 +301,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertEqual(sent["tool_choice"], "auto")
         self.assertFalse(sent["parallel_tool_calls"])
         self.assertEqual(sent["tools"][0]["function"]["name"], "read_file")
-        self.assertNotIn("Tool Contract:", sent["messages"][0]["content"])
+        self.assertEqual(sent["messages"][0]["content"], "Memory:\nnone")
         headers = {key.lower(): value for key, value in captured["request"].header_items()}
         self.assertEqual(headers["x-kitt-session-id"], "abc123")
         self.assertEqual(headers["x-kitt-request-id"], "req123")
