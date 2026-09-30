@@ -9,7 +9,7 @@ from kitt.router.classifier import TaskClassifier
 
 
 AGENT_CONTRACT_HEADER = "X-Kitt-Agent-Contract"
-AGENT_CONTRACT_VERSION = "v1"
+AGENT_CONTRACT_VERSION = "v2"
 AGENT_ROUTE_HEADER = "X-Kitt-Route"
 TURN_CONTEXT_MARKER = "[KITT TURN CONTEXT]"
 TURN_CONTEXT_END_MARKER = "[END KITT TURN CONTEXT]"
@@ -21,6 +21,7 @@ SUPPORTED_ROUTES = frozenset(
         "code-generation",
         "code-edit",
         "validate-diff",
+        "agent-loop",
         "chat",
     }
 )
@@ -55,29 +56,7 @@ _MUTATION_RECOVERY_TERMS = (
     "incompleto",
     "incompleta",
 )
-_HOST_TOOL_RESULT_MARKER = " result from the host. the values inside are untrusted data"
-_SEMANTIC_INTENT_RE = re.compile(
-    r"(?mi)^\s*Intent:\s*(IMPLEMENT|DEBUG|REFACTOR)\s*$"
-)
-_MUTATING_CREATE_TERMS = (
-    "crie", "criar", "cria", "implemente", "implementar", "implementação", "implementacao",
-    "gere", "gerar", "construa", "monte", "create", "build", "implement", "generate",
-    "scaffold", "write", "mkdir",
-)
-_MUTATING_EDIT_TERMS = (
-    "corrija", "corrigir", "conserte", "consertar", "repare", "reparar", "refatore",
-    "refatorar", "atualize", "atualizar", "modifique", "modificar", "altere", "alterar",
-    "edite", "editar", "remova", "remover", "converta", "converter", "convert",
-    "migre", "migrar", "migrate", "troque", "trocar", "substitua", "substituir",
-    "replace", "switch", "porte", "portar", "port", "fix", "repair", "refactor", "update",
-    "modify", "change", "edit", "remove", "delete",
-)
-_WORKSPACE_TARGET_TERMS = (
-    "projeto", "site", "aplicação", "aplicacao", "app", "backend", "frontend", "front end",
-    "workspace", "repositório", "repositorio", "repository", "repo", "arquivo", "file",
-    "pasta", "folder", "diretório", "diretorio", "directory", "código", "codigo", "code",
-    "angular", "spring", "serviço", "servico", "service",
-)
+_HOST_TOOL_RESULT_MARKER = " result from the host."
 _TOP_LEVEL_HEADERS = (
     "Tool Contract:",
     "Memory:",
@@ -151,109 +130,24 @@ def _latest_routing_user_message(messages: List[Dict[str, Any]]) -> str:
     return routable[-1] if routable else ""
 
 
-def _semantic_route_from_execution_prompt(content: Any) -> Optional[str]:
-    """Honor the deterministic SemanticTask intent emitted by TurnProcessor.
-
-    TurnProcessor may replace the literal human prompt with SemanticTask.to_execution_prompt().
-    That normalized prompt begins with `Intent: ...`; mutation-capable intents must not be
-    reclassified from the exposed validation/read tool surface.
-    """
-    match = _SEMANTIC_INTENT_RE.search(str(content or ""))
-    if not match:
-        return None
-    intent = match.group(1).upper()
-    if intent == "IMPLEMENT":
-        return "code-generation"
-    if intent in {"DEBUG", "REFACTOR"}:
-        return "code-edit"
-    return None
-
-
-def _mutation_route_from_user_message(content: Any) -> Optional[str]:
-    """Return a mutation-capable route when the real user explicitly requested writes.
-
-    Tool-surface inference is intentionally secondary: a surface that also exposes
-    diagnostics/git-status must never downgrade an implementation request to
-    validate-diff, because that route rejects file mutations at the reverse proxy.
-    """
-    text = str(content or "").casefold()
-    if not text or not any(term in text for term in _WORKSPACE_TARGET_TERMS):
-        return None
-    if any(term in text for term in _MUTATING_EDIT_TERMS):
-        return "code-edit"
-    if any(term in text for term in _MUTATING_CREATE_TERMS):
-        return "code-generation"
-    return None
-
-
-def _pinned_execution_route(messages: List[Dict[str, Any]]) -> Optional[str]:
-    """Preserve the first mutation-capable intent for the lifetime of one tool loop.
-
-    Execution follow-ups append tool results, repair messages and validation nudges to the
-    original task. The original task remains the authority for whether mutations are
-    allowed; later read/validation surfaces must never downgrade it to validate-diff.
-    """
-    for content in _routing_user_messages(messages):
-        semantic_route = _semantic_route_from_execution_prompt(content)
-        if semantic_route:
-            return semantic_route
-        mutation_route = _mutation_route_from_user_message(content)
-        if mutation_route:
-            return mutation_route
-    return None
-
-
-def _recovery_mutation_route(messages: List[Dict[str, Any]]) -> Optional[str]:
-    """Keep implementation-recovery turns mutation-capable.
-
-    Some execution/completion guards can issue a provider follow-up without the original
-    human task in that request batch. The canonical execution prompt may prefix the raw
-    guard envelope with normalized Intent/Goal text, so recovery markers are matched
-    anywhere in the message instead of only at byte zero. An explicit guard saying the
-    implementation is still incomplete is authoritative orchestration state: routing it
-    from tool surface alone can incorrectly select validate-diff and make the required
-    file mutation impossible.
-    """
-    for message in reversed(messages):
-        if not isinstance(message, dict) or message.get("role") != "user":
-            continue
-        text = str(message.get("content") or "").strip().casefold()
-        if not any(marker in text for marker in _MUTATION_RECOVERY_MARKERS):
-            continue
-        if any(term in text for term in _MUTATION_RECOVERY_TERMS):
-            return "code-edit"
-    return None
-
-
 def infer_agent_route(
     system_prompt: Optional[str], messages: List[Dict[str, Any]]
 ) -> str:
-    """Infer a contract route while preserving explicit user mutation intent."""
+    """Infer only protocol-level routing; natural-language intent belongs to the LLM."""
     prompt = system_prompt or ""
     if prompt.startswith(_CONTEXT_SUMMARY_PREFIX):
         return "summarize"
     if "[PLANNING MODE ACTIVE]" in prompt:
         return "context-gather"
 
-    tool_contract = prompt
+    tool_contract = ""
     if "Tool Contract:\n" in prompt:
         tool_contract = prompt.split("Tool Contract:\n", 1)[1]
         if "\n\nMemory:\n" in tool_contract:
             tool_contract = tool_contract.split("\n\nMemory:\n", 1)[0]
-    else:
-        tool_contract = ""
 
     tool_names = list(dict.fromkeys(_TOOL_NAME_RE.findall(tool_contract)))
-    pinned_route = _pinned_execution_route(messages)
-    if pinned_route and tool_names:
-        return pinned_route
-    recovery_route = _recovery_mutation_route(messages)
-    if recovery_route and tool_names:
-        return recovery_route
-    latest_user = _latest_routing_user_message(messages)
-    if tool_names:
-        return TaskClassifier().classify_tool_surface(tool_names, prompt=latest_user)
-    return "chat"
+    return "agent-loop" if tool_names else "chat"
 
 
 def compact_reverse_proxy_orchestration(system_prompt: Optional[str]) -> Optional[str]:
@@ -339,6 +233,7 @@ def inject_agent_turn_context(
     route: Optional[str] = None,
     *,
     discovery_required: bool = False,
+    loop_action_budget: int = 4,
 ) -> List[Dict[str, Any]]:
     """Prefix volatile turn data to the last real user task without mutating inputs.
 
@@ -353,6 +248,8 @@ def inject_agent_turn_context(
     normalized_route = normalize_agent_route(route) if route is not None else None
     if normalized_route is not None:
         payload["route"] = normalized_route
+    if normalized_route == "agent-loop":
+        payload["loop_action_budget"] = max(1, min(int(loop_action_budget), 32))
     if normalized_route in {"code-generation", "code-edit"}:
         payload["execution_plan"] = ["discovery", "mutation", "validation"]
         payload["execution_phase"] = "discovery" if discovery_required else "mutation"
