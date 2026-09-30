@@ -68,6 +68,7 @@ class ApprovalRequired(TurnEvent):
     action_hash: str = ""
     approval_request_id: str = ""
     workspace_id: str = ""
+    executable_identity: str = ""
 
 @dataclass
 class ThinkingStarted(TurnEvent):
