@@ -8,6 +8,7 @@ from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
     CAP_MEMORY_READ,
     CAP_PROCESS_RUN,
+    CAP_SAFE_COMPUTE,
     CAP_REPO_READ,
     CAP_REPO_SEARCH,
     CAP_REPO_WRITE,
@@ -24,6 +25,7 @@ _READ_TOOLS = frozenset(
         "git_diff",
         "artifact_read",
         "memory_recall",
+        "python_compute",
         "kitt_runtime",
     }
 )
@@ -95,7 +97,7 @@ class AgentRolePolicy:
 POLICIES: dict[AgentRole, AgentRolePolicy] = {
     AgentRole.DISCOVER: AgentRolePolicy(
         AgentRole.DISCOVER,
-        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ}),
+        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE}),
         _READ_TOOLS,
         False,
         "evidence-first",
@@ -104,7 +106,7 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
     ),
     AgentRole.ARCHITECT: AgentRolePolicy(
         AgentRole.ARCHITECT,
-        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ}),
+        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE}),
         _READ_TOOLS,
         False,
         "architecture-and-evidence",
@@ -120,6 +122,7 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
                 CAP_REPO_WRITE,
                 CAP_ARTIFACT_READ,
                 CAP_MEMORY_READ,
+                CAP_SAFE_COMPUTE,
                 CAP_PROCESS_RUN,
             }
         ),
@@ -148,7 +151,7 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
     ),
     AgentRole.REVIEW: AgentRolePolicy(
         AgentRole.REVIEW,
-        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ}),
+        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE}),
         _READ_TOOLS,
         False,
         "review-evidence",
