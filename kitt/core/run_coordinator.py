@@ -18,7 +18,7 @@ RUN_STATES = {
 }
 
 _ALLOWED_TRANSITIONS = {
-    "IDLE": {"RUNNING"},
+    "IDLE": {"RUNNING", "FAILED"},
     "RUNNING": {"STOPPING", "FOLLOWUP_PENDING", "PAUSED", "FAILED", "IDLE"},
     "STOPPING": {"FAILED", "IDLE"},
     "FOLLOWUP_PENDING": {"RUNNING", "STOPPING", "PAUSED", "FAILED", "IDLE"},
@@ -240,7 +240,12 @@ class RunCoordinator:
 
     def close(self) -> None:
         if self.workspace is not None:
-            self.workspace.gc_expired_leases()
+            try:
+                self.workspace.gc_expired_leases()
+            except Exception:
+                # Lease GC is maintenance-only; shutdown must remain idempotent
+                # even if an externally-owned temporary workspace disappeared.
+                pass
 
 
 __all__ = [
