@@ -40,3 +40,22 @@ def test_model_and_tool_limits_are_hard():
     ledger.reserve_tool_call()
     with pytest.raises(ExecutionBudgetExceeded):
         ledger.reserve_tool_call()
+
+
+def test_provider_usage_reconciles_preflight_input_estimate():
+    ledger = ExecutionBudgetLedger(_budget(max_input_tokens=100, max_total_tokens=160))
+    ledger.reserve_model_call(input_tokens=60)
+    ledger.reconcile_model_input(estimated_tokens=60, actual_tokens=25)
+    ledger.record_model_output(output_tokens=20)
+
+    snapshot = ledger.snapshot()
+    assert snapshot["usage"]["input_tokens"] == 25
+    assert snapshot["usage"]["output_tokens"] == 20
+    assert snapshot["usage"]["total_tokens"] == 45
+
+
+def test_provider_usage_reconciliation_still_enforces_hard_limit():
+    ledger = ExecutionBudgetLedger(_budget(max_input_tokens=50, max_total_tokens=80))
+    ledger.reserve_model_call(input_tokens=40)
+    with pytest.raises(ExecutionBudgetExceeded):
+        ledger.reconcile_model_input(estimated_tokens=40, actual_tokens=60)
