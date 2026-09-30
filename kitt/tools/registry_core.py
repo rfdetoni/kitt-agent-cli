@@ -937,8 +937,19 @@ class ToolRegistry:
                     "process.run network must be a boolean when provided.",
                 )
 
+        executable_identity = None
+        if security_context is not None:
+            executable_identity = (
+                f"{security_context.principal_type}:"
+                f"{security_context.principal_id}"
+            )
         permission = self.policy.evaluate_tool(
-            tool_name, args, origin=origin, conversation_id=conversation_id
+            tool_name,
+            args,
+            origin=origin,
+            conversation_id=conversation_id,
+            workspace_id=workspace_id,
+            executable_identity=executable_identity,
         )
         logger.debug(
             "policy tool=%s decision=%s origin=%s autonomy=%s grant=%s approval_id=%s hash=%s",
