@@ -226,7 +226,8 @@ class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
             failures = [event for event, _, _ in events if isinstance(event, TurnFailed)]
             self.assertEqual(len(processor.calls), 2)
             self.assertEqual(len(failures), 1)
-            self.assertIn("required a workspace mutation", failures[0].error)
+            self.assertIn("prose-only", failures[0].error)
+            self.assertIn("requested mutation was never attempted", failures[0].error)
 
     def test_question_does_not_require_mutation(self):
         processor = SimpleNamespace(
