@@ -737,6 +737,16 @@ def install_agent_engineering(processor, registry) -> None:
                     terminal = True
                 yield event
         except BaseException as exc:
+            if journal.run_coordinator is not None:
+                try:
+                    journal.run_coordinator.transition(
+                        cmd.conversation_id,
+                        cmd.turn_id,
+                        "FAILED",
+                        reason=type(exc).__name__,
+                    )
+                except Exception:
+                    pass
             journal.state(cmd, "FAILED", str(exc))
             raise
         finally:
@@ -744,6 +754,16 @@ def install_agent_engineering(processor, registry) -> None:
             if not terminal:
                 current = str((_turn(self, cmd.turn_id) or {}).get("state") or "")
                 if current not in {"WAITING_APPROVAL", *TERMINAL}:
+                    if journal.run_coordinator is not None:
+                        try:
+                            journal.run_coordinator.transition(
+                                cmd.conversation_id,
+                                cmd.turn_id,
+                                "PAUSED",
+                                reason="interrupted",
+                            )
+                        except Exception:
+                            pass
                     journal.state(cmd, "INTERRUPTED")
     processor.run_turn = MethodType(run_turn, processor)
 
@@ -753,6 +773,13 @@ def install_agent_engineering(processor, registry) -> None:
         cmd = TurnCommand(conversation_id=str(row.get("conversation_id") or ""), prompt="", turn_id=turn_id)
         previous_context = getattr(self, "_agent_trace_context", None)
         self._agent_trace_context = (cmd.turn_id, cmd.conversation_id)
+        if journal.run_coordinator is not None and cmd.conversation_id:
+            journal.run_coordinator.transition(
+                cmd.conversation_id,
+                cmd.turn_id,
+                "RUNNING",
+                reason="approval-resume",
+            )
         journal.state(cmd, "EXECUTING")
         try:
             for event in original_continue(turn_id, grant):
