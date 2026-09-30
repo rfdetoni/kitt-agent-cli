@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 from kitt.tools.approval import ApprovalManager
 from kitt.history.database import HistoryDatabase
-from kitt.history.repository import HistoryRepository
+from kitt.history.repository import HistoryRepository, resolve_workspace_identity
 from kitt.core.pending_action import PendingAction
 from kitt.ui.state import UIState
 from kitt.ui.components.permission_card import PermissionCardComponent
@@ -134,17 +134,44 @@ class TestApprovalCenter(unittest.TestCase):
             db_path = Path(tmp_dir) / "kitt.db"
             db = HistoryDatabase(str(db_path))
 
-            manager = ApprovalManager(db=db)
+            identity = resolve_workspace_identity(db, tmp_dir)
+            manager = ApprovalManager(db=db, workspace_id=identity.id)
             manager.remember("write_file", "src/**/*.py", "allow", "workspace")
 
             # Check remembered rule match
-            self.assertEqual(manager.check_remembered("write_file", "src/app.py"), "allow")
-            self.assertIsNone(manager.check_remembered("write_file", "tests/x.py"))
+            self.assertEqual(
+                manager.check_remembered(
+                    "write_file",
+                    "src/app.py",
+                    workspace_id=identity.id,
+                ),
+                "allow",
+            )
+            self.assertIsNone(
+                manager.check_remembered(
+                    "write_file",
+                    "tests/x.py",
+                    workspace_id=identity.id,
+                )
+            )
 
             # Check persistence across new ApprovalManager instance
-            manager2 = ApprovalManager(db=db)
-            self.assertEqual(manager2.check_remembered("write_file", "src/app.py"), "allow")
-            self.assertIsNone(manager2.check_remembered("write_file", "tests/x.py"))
+            manager2 = ApprovalManager(db=db, workspace_id=identity.id)
+            self.assertEqual(
+                manager2.check_remembered(
+                    "write_file",
+                    "src/app.py",
+                    workspace_id=identity.id,
+                ),
+                "allow",
+            )
+            self.assertIsNone(
+                manager2.check_remembered(
+                    "write_file",
+                    "tests/x.py",
+                    workspace_id=identity.id,
+                )
+            )
 
     def test_single_use_nonce_prevention(self):
         manager = ApprovalManager()
