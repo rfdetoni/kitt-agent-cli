@@ -395,8 +395,25 @@ class KittRuntime:
         # Durable event/evidence projection is installed at the existing
         # processor/registry seam. It adds replay and validation without a
         # second workflow engine or model-facing API.
-        from kitt.core.agent_runtime import install_agent_engineering
+        from kitt.core.agent_runtime import (
+            install_agent_engineering,
+            reserve_child_budget,
+            settle_child_budget,
+        )
         install_agent_engineering(processor, registry)
+        children.attach_budget_controller(
+            allocator=lambda turn_id, child_id, token_cap: reserve_child_budget(
+                processor,
+                turn_id,
+                child_id,
+                token_cap,
+            ),
+            settler=lambda child_id, tokens_used=0: settle_child_budget(
+                processor,
+                child_id,
+                tokens_used,
+            ),
+        )
 
         def is_idle() -> bool:
             active_conversation = history.get_active_read_only()
