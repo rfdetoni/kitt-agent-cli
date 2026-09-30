@@ -20,6 +20,10 @@ from kitt.evidence.invariants import RuntimeInvariantService
 from kitt.evidence.ledger import EventLedger
 from kitt.evidence.projections import build_default_projection_registry
 from kitt.runtime.state import RuntimeStateStore
+from kitt.security.authority_snapshot import (
+    capture_authority_snapshot,
+    validate_authority_snapshot,
+)
 from kitt.validation.orchestrator import VerificationOrchestrator
 from kitt_protocol import ExecutionBudget
 
@@ -623,7 +627,52 @@ def _install_tool_execution(processor, registry) -> None:
             except Exception:
                 pass
 
-        result = original(name, args, *pos, **kwargs)
+        budget = getattr(processor, "execution_budgets", {}).get(turn)
+        if budget is not None:
+            budget.reserve_tool_call()
+
+        security_context = kwargs.get("security_context")
+        coordinator = getattr(processor, "run_coordinator", None)
+        claimed = False
+        if _is_mutating(name, arguments) and security_context is not None:
+            sandbox = getattr(
+                getattr(registry, "process_runner", None),
+                "sandbox",
+                None,
+            )
+            sandbox_profile = str(
+                getattr(sandbox, "default_profile", "workspace-write")
+            )
+            authority = capture_authority_snapshot(
+                security_context,
+                policy=registry.policy,
+                autonomy=registry.policy.autonomy,
+                approval_manager=registry.approval_manager,
+                sandbox_profile=sandbox_profile,
+            )
+            validate_authority_snapshot(
+                authority,
+                security_context,
+                policy=registry.policy,
+                autonomy=registry.policy.autonomy,
+                approval_manager=registry.approval_manager,
+                sandbox_profile=sandbox_profile,
+            )
+            if coordinator is not None and conv and turn:
+                coordinator.claim_tool(
+                    conv,
+                    turn,
+                    name,
+                    arguments,
+                )
+                claimed = True
+
+        try:
+            result = original(name, args, *pos, **kwargs)
+        finally:
+            if claimed and coordinator is not None:
+                coordinator.release_tool(conv, turn)
+
         paths = _affected_paths(processor, name, arguments, result)
         if getattr(result, "success", False) and _file_mutation(name, arguments) and paths:
             report = verifier.verify(paths)
