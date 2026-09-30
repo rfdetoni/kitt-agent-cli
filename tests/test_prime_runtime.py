@@ -102,7 +102,7 @@ class TestPrimeRuntime(unittest.TestCase):
         self.assertTrue(events)
 
     def test_safe_runtime_prompt_scopes_capabilities_and_process_contract(self):
-        from kitt.llm.providers.kitt_reverse_proxy import extract_openai_tools
+        from kitt.llm.providers.kitt_reverse_proxy import openai_tools_from_definitions
 
         planned_tools = ["read_file", "run_command"]
         instructions = self.runtime.processor._tool_instructions(
