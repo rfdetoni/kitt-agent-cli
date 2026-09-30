@@ -578,6 +578,141 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             retry_payload["messages"][-1]["content"],
         )
 
+    def test_usage_callback_receives_proxy_usage_metadata(self):
+        observed = []
+
+        class FakeResponse:
+            def __init__(self):
+                usage = {
+                    "prompt_tokens": 17,
+                    "completion_tokens": 5,
+                    "total_tokens": 22,
+                    "kitt_estimated": True,
+                }
+                self._lines = [
+                    (
+                        "data: "
+                        + json.dumps({
+                            "choices": [{"delta": {"content": "ok"}}],
+                            "usage": usage,
+                        })
+                        + "\n"
+                    ).encode(),
+                    b"data: [DONE]\n",
+                ]
+                self._index = 0
+
+            def readline(self, *_args):
+                if self._index >= len(self._lines):
+                    return b""
+                line = self._lines[self._index]
+                self._index += 1
+                return line
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        request = LLMRequest(
+            model="chatgpt-web",
+            messages=[{"role": "user", "content": "hello"}],
+            usage_callback=lambda usage: observed.append(dict(usage)),
+        )
+        with patch(
+            "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
+            return_value=FakeResponse(),
+        ):
+            self.assertEqual(
+                "".join(KittReverseProxyAdapter().stream(request)),
+                "ok",
+            )
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]["prompt_tokens"], 17)
+        self.assertEqual(observed[0]["completion_tokens"], 5)
+        self.assertTrue(observed[0]["kitt_estimated"])
+
+    def test_tool_retry_preserves_typed_context_envelope(self):
+        adapter = KittReverseProxyAdapter()
+        calls = []
+
+        class FakeToolHTTPError(urllib.error.HTTPError):
+            def __init__(self):
+                super().__init__(
+                    "http://127.0.0.1:3000/v1/chat/completions",
+                    400,
+                    "Bad Request",
+                    {},
+                    None,
+                )
+                self._fp = io.BytesIO(
+                    b'{"error":{"message":"invalid tool payload","code":"tool_parse_failed"}}'
+                )
+
+            def read(self, *args):
+                return self._fp.read(*args)
+
+        class FakeSuccessResponse:
+            def __init__(self):
+                self._lines = [
+                    b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+                    b"data: [DONE]\n",
+                ]
+                self._index = 0
+
+            def readline(self, *_args):
+                if self._index >= len(self._lines):
+                    return b""
+                line = self._lines[self._index]
+                self._index += 1
+                return line
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        def fake_open(req, timeout=300):
+            calls.append(req)
+            if len(calls) == 1:
+                raise FakeToolHTTPError()
+            return FakeSuccessResponse()
+
+        envelope = {
+            "schema_version": 1,
+            "epoch": "ctx-test",
+            "segments": [],
+        }
+        request = LLMRequest(
+            model="chatgpt-web",
+            messages=[{"role": "user", "content": "inspect"}],
+            context_envelope=envelope,
+            tool_definitions=[{
+                "name": "kitt_runtime",
+                "args": {
+                    "operation": {"type": "string", "enum": ["repo.read"]},
+                    "arguments": {"type": "object"},
+                },
+            }],
+        )
+
+        with patch(
+            "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
+            side_effect=fake_open,
+        ):
+            self.assertEqual(
+                "".join(adapter.stream(request)),
+                "ok",
+            )
+
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            body = json.loads(call.data.decode("utf-8"))
+            self.assertEqual(body["kitt_context"], envelope)
+
     def test_read_error_body_caches_on_repeated_reads(self):
         from kitt.llm.http_security import read_error_body
 
