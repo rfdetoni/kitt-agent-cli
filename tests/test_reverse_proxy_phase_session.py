@@ -141,7 +141,9 @@ class TestReverseProxyPhaseSession(unittest.TestCase):
 
         self.assertEqual(client.session_keys, [])
         self.assertIsNone(semantic.llm_client)
-        self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+        self.assertEqual(result.source, "LLM_FIRST")
+        self.assertEqual(result.task.intent, "UNKNOWN")
+        self.assertEqual(result.task.original_prompt, "Analyze the repository and improve the implementation.")
 
 
 if __name__ == "__main__":
