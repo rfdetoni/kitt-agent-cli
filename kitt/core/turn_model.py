@@ -150,7 +150,14 @@ class TurnModelMixin:
             except Exception:
                 pass
 
+        provider_usage: Dict[str, object] = {}
+
+        def _observe_usage(usage: Dict[str, object]) -> None:
+            provider_usage.clear()
+            provider_usage.update(dict(usage))
+
         execution_budget = getattr(self, "execution_budgets", {}).get(turn_id)
+        estimated_input = 0
         if execution_budget is not None:
             estimated_input = TokenCounter.count_tokens(system_prompt or "")
             for message in wire_messages:
@@ -172,6 +179,7 @@ class TurnModelMixin:
                 "tool_definitions": list(tool_definitions or ()),
                 "loop_action_budget": loop_action_budget,
                 "context_envelope": context_envelope,
+                "usage_callback": _observe_usage,
             }
             try:
                 sig = inspect.signature(client.chat_stream)
@@ -185,8 +193,20 @@ class TurnModelMixin:
         if "lfm" in getattr(profile, "model", "").lower():
             raw_text = "".join(_invoke_chat_stream(wire_messages, system_prompt))
             if execution_budget is not None:
+                actual_input = provider_usage.get("prompt_tokens")
+                actual_output = provider_usage.get("completion_tokens")
+                if isinstance(actual_input, (int, float)) and not isinstance(actual_input, bool):
+                    execution_budget.reconcile_model_input(
+                        estimated_tokens=estimated_input,
+                        actual_tokens=int(actual_input),
+                    )
                 execution_budget.record_model_output(
-                    output_tokens=TokenCounter.count_tokens(raw_text),
+                    output_tokens=(
+                        int(actual_output)
+                        if isinstance(actual_output, (int, float))
+                        and not isinstance(actual_output, bool)
+                        else TokenCounter.count_tokens(raw_text)
+                    ),
                 )
             thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
             thought_text = thought_match.group(1).strip() if thought_match else ""
@@ -321,8 +341,20 @@ class TurnModelMixin:
             if clean:
                 yield full_response, TextDelta(delta=clean)
         if execution_budget is not None:
+            actual_input = provider_usage.get("prompt_tokens")
+            actual_output = provider_usage.get("completion_tokens")
+            if isinstance(actual_input, (int, float)) and not isinstance(actual_input, bool):
+                execution_budget.reconcile_model_input(
+                    estimated_tokens=estimated_input,
+                    actual_tokens=int(actual_input),
+                )
             execution_budget.record_model_output(
-                output_tokens=TokenCounter.count_tokens(full_response),
+                output_tokens=(
+                    int(actual_output)
+                    if isinstance(actual_output, (int, float))
+                    and not isinstance(actual_output, bool)
+                    else TokenCounter.count_tokens(full_response)
+                ),
             )
         yield full_response, None
 
