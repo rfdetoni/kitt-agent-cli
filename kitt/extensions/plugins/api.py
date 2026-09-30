@@ -100,10 +100,17 @@ class EventAPI:
 class HookAPI:
     """Lifecycle and interception hook registration API."""
 
-    def __init__(self, plugin_name: str, permissions: Set[str], hook_registry=None):
+    def __init__(
+        self,
+        plugin_name: str,
+        permissions: Set[str],
+        hook_registry=None,
+        declared_hooks: tuple[str, ...] = (),
+    ):
         self.plugin_name = plugin_name
         self.permissions = permissions
         self.hook_registry = hook_registry
+        self.declared_hooks = frozenset(str(item) for item in declared_hooks)
         self.registered_hooks: List[Tuple[str, Callable[..., Any]]] = []
 
     def register(
@@ -115,6 +122,12 @@ class HookAPI:
         fail_closed: bool = False,
         timeout_seconds: Optional[float] = None,
     ) -> None:
+        # Declared capabilities narrow exports; permissions remain authority.
+        if self.declared_hooks and hook_name not in self.declared_hooks:
+            raise PluginPermissionError(
+                f"Plugin '{self.plugin_name}' hook '{hook_name}' is not declared "
+                "in capabilities.hooks."
+            )
         # Check permissions for modifying hooks
         if hook_name.startswith("tool.") and "tools.observe" not in self.permissions and "tools.modify" not in self.permissions:
             raise PluginPermissionError(
@@ -155,11 +168,13 @@ class ToolAPI:
         tool_registry=None,
         *,
         trusted_first_party: bool = False,
+        declared_tools: tuple[str, ...] = (),
     ):
         self.plugin_name = plugin_name
         self.permissions = permissions
         self.tool_registry = tool_registry
         self.trusted_first_party = bool(trusted_first_party)
+        self.declared_tools = frozenset(str(item) for item in declared_tools)
         self.registered_tool_names: List[str] = []
 
     def register(
@@ -172,6 +187,11 @@ class ToolAPI:
         if "tools.register" not in self.permissions:
             raise PluginPermissionError(
                 f"Plugin '{self.plugin_name}' denied tool registration. Missing 'tools.register' permission."
+            )
+        if self.declared_tools and tool_name not in self.declared_tools:
+            raise PluginPermissionError(
+                f"Plugin '{self.plugin_name}' tool '{tool_name}' is not declared "
+                "in capabilities.tools."
             )
         if self.tool_registry and hasattr(self.tool_registry, "register"):
             self.tool_registry.register(
@@ -306,10 +326,19 @@ class MCPAPI:
 class CommandAPI:
     """Slash command registration API requiring 'commands.register' permission."""
 
-    def __init__(self, plugin_name: str, permissions: Set[str], command_registry=None):
+    def __init__(
+        self,
+        plugin_name: str,
+        permissions: Set[str],
+        command_registry=None,
+        declared_commands: tuple[str, ...] = (),
+    ):
         self.plugin_name = plugin_name
         self.permissions = permissions
         self.command_registry = command_registry
+        self.declared_commands = frozenset(
+            "/" + str(item).lstrip("/") for item in declared_commands
+        )
         self.registered_commands: List[str] = []
 
     def register(self, command_name: str, handler: Callable[..., Any], help_text: str = "") -> None:
@@ -318,6 +347,11 @@ class CommandAPI:
                 f"Plugin '{self.plugin_name}' denied command registration. Missing 'commands.register' permission."
             )
         cmd = "/" + command_name.lstrip("/")
+        if self.declared_commands and cmd not in self.declared_commands:
+            raise PluginPermissionError(
+                f"Plugin '{self.plugin_name}' command '{cmd}' is not declared "
+                "in capabilities.commands."
+            )
         if self.command_registry and hasattr(self.command_registry, "register"):
             self.command_registry.register(cmd, handler, help_text=help_text, owner_plugin_id=self.plugin_name)
             self.registered_commands.append(cmd)
