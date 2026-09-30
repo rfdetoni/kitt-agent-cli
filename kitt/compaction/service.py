@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import hashlib
 import json
 import re
 import time
 import uuid
-from typing import Callable, List, Optional
+from dataclasses import asdict
+from typing import Any, Callable, List, Optional
 
 from kitt.compaction.models import CompactionResult, WorkingState
 from kitt.compaction.validator import CompactionValidator
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.history.database import HistoryDatabase
 from kitt.history.session_tree import SessionTreeRepository
+from kitt_protocol import CompactionCheckpoint, ContextRecoveryRef, RecoveryMode
 from kitt_protocol import ContextRecoveryRef, RecoveryMode
 
 
@@ -32,6 +35,52 @@ class CompactionService:
         self.artifact_store = artifact_store
         self.workspace_id = str(workspace_id or "")
         self.validator = CompactionValidator()
+
+    def _checkpoint(
+        self,
+        *,
+        conversation_id: str,
+        raw: str,
+        working_state: WorkingState,
+    ) -> CompactionCheckpoint:
+        refs: list[ContextRecoveryRef] = []
+        if raw and self.artifact_store is not None and self.workspace_id:
+            encoded = raw.encode("utf-8")
+            artifact = self.artifact_store.put(
+                self.workspace_id,
+                encoded,
+                "COMPACTION_SOURCE",
+                "Exact source context retained before compaction",
+                conversation_id=conversation_id,
+                sensitivity="PRIVATE",
+                metadata={
+                    "recovery": "EXACT",
+                    "source": "compaction",
+                    "sha256": hashlib.sha256(encoded).hexdigest(),
+                },
+            )
+            refs.append(
+                ContextRecoveryRef(
+                    artifact_id=artifact.id,
+                    sha256=hashlib.sha256(encoded).hexdigest(),
+                    original_bytes=len(encoded),
+                    token_estimate=TokenCounter.count_tokens(raw),
+                    media_type="text/plain; charset=utf-8",
+                    recovery=RecoveryMode.EXACT,
+                )
+            )
+        return CompactionCheckpoint(
+            objective=working_state.objective,
+            constraints=working_state.constraints_and_decisions,
+            decisions=(),
+            completed=working_state.validation_state,
+            active=working_state.current_state,
+            blocked=working_state.errors_and_corrections,
+            next_actions=working_state.pending_work,
+            relevant_files=working_state.affected_artifacts,
+            validation_state=working_state.validation_state,
+            recovery_refs=tuple(refs),
+        )
 
     def compact(
         self,
@@ -80,6 +129,11 @@ class CompactionService:
         narrative = self.summarizer(raw) if self.summarizer else self._deterministic_summary(raw)
         working_state = self._working_state(raw, narrative, mandatory_facts or [])
         summary = working_state.render() or narrative
+        checkpoint = self._checkpoint(
+            conversation_id=conversation_id,
+            raw=raw,
+            working_state=working_state,
+        )
         valid, details = self.validator.validate(summary, mandatory_facts or [])
         if not valid:
             raise ValueError(f"Unsafe compaction: {details}")
