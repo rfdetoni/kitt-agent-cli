@@ -4,7 +4,7 @@
 
 **Control plane local-first para agentes autônomos de programação.**
 
-## Agent CLI 0.80.1 — roles estruturais, processos gerenciados e aprendizado mensurável
+## Agent CLI 0.80.2 — roles estruturais, processos gerenciados e aprendizado mensurável
 
 O Agent agora aplica estruturalmente os roles `DISCOVER`, `ARCHITECT`, `IMPLEMENT`, `VERIFY` e `REVIEW`, com tools/capabilities, mutação, contexto, modelo e orçamento próprios. O boundary de execução revalida a policy do role; persona de prompt não é mecanismo de segurança.
 
