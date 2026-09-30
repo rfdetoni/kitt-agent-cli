@@ -1,7 +1,6 @@
 import unittest
 
 from kitt.context_filter.semantic_filter import SemanticFilter
-from kitt.core.turn_processor import TurnProcessor
 from kitt.domain.entities import ModelProfile
 from kitt.tools.surface_selector import ToolSurfaceSelector
 
@@ -16,43 +15,27 @@ class ContainerRuntimeSemanticsTests(unittest.TestCase):
         )
         return SemanticFilter(profile).filter_and_plan(prompt)
 
-    def test_docker_compose_lifecycle_is_execution_capable(self):
-        prompt = "suba os containers com docker compose"
-        result = self._plan(prompt)
-
-        self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
-        self.assertEqual(result.task.intent, "TEST")
-        self.assertIn("docker", result.task.technologies)
-        self.assertIn("run_command", result.plan.enabled_tools)
-        self.assertNotIn("write_file", result.plan.enabled_tools)
-        self.assertEqual(
-            list(ToolSurfaceSelector().select_tools(result.plan)),
-            ["kitt_runtime"],
-        )
-        self.assertEqual(
-            TurnProcessor._agent_route_for_task(result.task, "auto", prompt),
-            "validate-diff",
-        )
-
-    def test_podman_and_kubernetes_operations_are_execution_capable(self):
-        for prompt, technology in (
-            ("reinicie o serviço com podman compose", "podman"),
-            ("verifique os pods com kubectl", "kubernetes"),
+    def test_container_requests_are_not_semantically_classified_by_kitt(self):
+        for prompt in (
+            "suba os containers com docker compose",
+            "reinicie o serviço com podman compose",
+            "verifique os pods com kubectl",
+            "como usar docker compose neste projeto?",
+            "docker compose でコンテナを起動してください",
         ):
             with self.subTest(prompt=prompt):
                 result = self._plan(prompt)
-                self.assertEqual(result.task.intent, "TEST")
-                self.assertIn(technology, result.task.technologies)
+                self.assertEqual(result.source, "LLM_FIRST")
+                self.assertEqual(result.task.intent, "UNKNOWN")
+                self.assertEqual(result.task.technologies, [])
+                self.assertEqual(result.task.original_prompt, prompt)
+                self.assertTrue(result.plan.include_original_prompt)
+                self.assertTrue(result.plan.enabled_tools)
                 self.assertIn("run_command", result.plan.enabled_tools)
                 self.assertEqual(
-                    TurnProcessor._agent_route_for_task(result.task, "auto", prompt),
-                    "validate-diff",
+                    list(ToolSurfaceSelector().select_tools(result.plan)),
+                    ["kitt_runtime"],
                 )
-
-    def test_container_how_to_remains_direct_chat(self):
-        result = self._plan("como usar docker compose neste projeto?")
-        self.assertEqual(result.task.intent, "ASK")
-        self.assertEqual(result.plan.enabled_tools, [])
 
 
 if __name__ == "__main__":
