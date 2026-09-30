@@ -23,6 +23,7 @@ from kitt.extensions.plugins.security import (
     prepare_trusted_plugin_snapshot,
 )
 from kitt.goals.scheduler import GoalScheduler
+from kitt.security.authority_snapshot import capture_authority_snapshot
 from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_WRITE
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.process_runner import sanitized_subprocess_env
@@ -235,7 +236,22 @@ class TestGoalApprovalResume(unittest.TestCase):
                     created_at=time.time(),
                     expires_at=time.time() + 60,
                     state="pending",
-                    security_context=goal_ctx.to_dict(),
+                    security_context={
+                        **goal_ctx.to_dict(),
+                        "authority_snapshot": capture_authority_snapshot(
+                            goal_ctx,
+                            policy=runtime.registry.policy,
+                            autonomy=runtime.registry.policy.autonomy,
+                            approval_manager=runtime.registry.approval_manager,
+                            sandbox_profile=str(
+                                getattr(
+                                    runtime.registry.process_runner.sandbox,
+                                    "default_profile",
+                                    "workspace-write",
+                                )
+                            ),
+                        ),
+                    },
                 )
                 runtime.processor.pending_actions["turn"] = pending
                 runtime.history.repo.save_pending_action(pending)
