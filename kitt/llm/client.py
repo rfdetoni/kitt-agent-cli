@@ -428,8 +428,14 @@ class LLMClient:
 
             if session_header:
                 extra_headers[session_header] = session_id
+            metadata = dict(request_metadata or {})
+            metadata["route"] = contract_route
+            metadata.setdefault("session_id", session_id)
+            request_id = str(metadata.get("request_id") or uuid.uuid4().hex)
+            metadata["request_id"] = request_id
+            request_metadata = metadata
             if request_header:
-                extra_headers[request_header] = uuid.uuid4().hex
+                extra_headers[request_header] = request_id
 
             # WebChat is the sole source of truth for reasoning. The reverse
             # proxy must never receive an agent-side reasoning header or prompt
