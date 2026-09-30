@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.78.11 — transcript copy and WebChat continuity
+
+Agent CLI 0.78.11 restores native terminal text selection/copy on the main transcript while keeping mouse interaction available in menus and modal surfaces. The `Ctrl+O` expand/collapse hint is now rendered only on the latest tool/thought block that the shortcut can actually toggle.
+
+Together with KITT Reverse Proxy 4.6.8, fresh browser-backed WebChat sessions also preserve prior API conversation context without repeatedly replaying it on subsequent turns.
+
 ## Agent CLI 0.78.10 — main-first ecosystem dependencies
 
 Internal K.I.T.T. VCS dependencies now follow sibling `main` branches instead of embedding cross-repository commit SHAs. The root ecosystem installer remains responsible for composing the current sibling sources and recording the exact fetched revisions as provenance.
