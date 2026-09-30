@@ -384,11 +384,21 @@ class TurnContextMixin:
             if plan.enabled_tools
             else ""
         )
-        memory_context = (
-            self.memory.get_memory_context(cmd.prompt, max_tokens=600)
-            if plan.enabled_tools
-            else ""
-        )
+        memory_context = ""
+        if plan.enabled_tools:
+            try:
+                memory_context = self.memory.get_memory_context(
+                    cmd.prompt,
+                    max_tokens=600,
+                    turn_id=cmd.turn_id,
+                )
+            except TypeError:
+                # Preserve compatibility with injected test/facade memory providers
+                # that implement the historical two-argument contract.
+                memory_context = self.memory.get_memory_context(
+                    cmd.prompt,
+                    max_tokens=600,
+                )
         harness_context = (
             self.harness_service.prompt(
                 workspace_id,
