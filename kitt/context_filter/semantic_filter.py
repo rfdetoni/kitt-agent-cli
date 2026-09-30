@@ -45,6 +45,21 @@ RULES:
 
 FilterSource = Literal['LLM', 'LLM_FIRST', 'DETERMINISTIC_BYPASS', 'FALLBACK']
 
+LLM_FIRST_CAPABILITY_TOOLS = (
+    "kitt_runtime",
+    "run_command",
+    "artifact_store",
+    "artifact_read",
+    "child_spawn",
+    "child_ask",
+    "child_inspect",
+    "goal_update",
+    "goal_inspect",
+    "memory_recall",
+    "memory_save",
+    "mcp_call",
+)
+
 
 def _is_reverse_proxy_profile(profile: ModelProfile) -> bool:
     """Return whether semantic planning would consume a browser-backed API turn."""
@@ -62,6 +77,36 @@ class SemanticFilterResult:
     latency_ms: float = 0.0
 
 
+def llm_first_filter_result(prompt: str, *, latency_ms: float = 0.0) -> SemanticFilterResult:
+    """Build a non-semantic execution envelope for browser-backed agents.
+
+    The prompt is carried verbatim. No intent, scope, language, technology or
+    domain inference is performed by KITT; WebChat owns those decisions.
+    """
+    task = SemanticTask(
+        original_prompt=prompt,
+        intent="UNKNOWN",
+        goal="",
+        actions=[],
+        paths=[],
+        confidence=1.0,
+    )
+    plan = ContextPlan(
+        search_queries=[prompt],
+        preferred_paths=[],
+        enabled_tools=list(LLM_FIRST_CAPABILITY_TOOLS),
+        include_original_prompt=True,
+        confidence=1.0,
+    )
+    return SemanticFilterResult(
+        task=task,
+        plan=plan,
+        source="LLM_FIRST",
+        fallback_reason="reverse_proxy_llm_first",
+        latency_ms=latency_ms,
+    )
+
+
 class SemanticFilter:
     """Orchestrates dual-model context filtering: deterministic bypass, context LLM call, schema validation, and fallback."""
 
@@ -77,17 +122,17 @@ class SemanticFilter:
     ) -> SemanticFilterResult:
         start_t = time.time()
 
-        # Browser-backed reverse-proxy sessions are execution transports, not
-        # hidden planning channels. Keep semantic planning deterministic so the
-        # first provider-visible turn is the actual execution request, carrying
-        # the host Tool Contract that the proxy converts into native tools[].
         reverse_proxy = _is_reverse_proxy_profile(self.profile)
-        if deterministic_only or reverse_proxy or self.extractor.is_trivial_prompt(prompt):
-            # An injected reverse-proxy client must not leak into the later
-            # project-context summarization phase after this bypass. Clearing it
-            # guarantees that no hidden browser turn can precede execution.
-            if reverse_proxy:
-                self.llm_client = None
+        if reverse_proxy:
+            # Browser-backed execution is LLM-first. Do not compile, classify,
+            # translate, summarize, or otherwise reinterpret the human request.
+            self.llm_client = None
+            return llm_first_filter_result(
+                prompt,
+                latency_ms=(time.time() - start_t) * 1000.0,
+            )
+
+        if deterministic_only or self.extractor.is_trivial_prompt(prompt):
             task = self.fallback_planner.generate_task(prompt)
             plan = self.fallback_planner.generate_plan(task)
             latency = (time.time() - start_t) * 1000.0
