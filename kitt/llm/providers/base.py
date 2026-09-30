@@ -28,6 +28,7 @@ class LLMRequest:
     response_format: Optional[str] = None
     tool_definitions: List[Dict[str, Any]] = field(default_factory=list)
     context_envelope: Optional[Dict[str, Any]] = None
+    request_metadata: Optional[Dict[str, Any]] = None
     usage_callback: Optional[Callable[[Dict[str, Any]], None]] = None
     temperature: float = 0.0
     context_window: int = 8192
