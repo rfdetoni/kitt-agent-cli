@@ -236,6 +236,9 @@ class PolicyEngine:
         args: dict | None = None,
         origin: str = "MODEL",
         conversation_id: str | None = None,
+        *,
+        workspace_id: str | None = None,
+        executable_identity: str | None = None,
     ) -> Permission:
         args = args or {}
         if getattr(self.autonomy, "level", "supervised") == "read_only":
@@ -251,7 +254,13 @@ class PolicyEngine:
 
         if self.approval_manager and tool_name in {"apply_patch", "write_file", "create_directory"}:
             path = args.get("path") or args.get("file")
-            remembered = self.approval_manager.check_remembered(tool_name, path, conversation_id)
+            remembered = self.approval_manager.check_remembered(
+                tool_name,
+                path,
+                conversation_id,
+                workspace_id=workspace_id,
+                executable_identity=executable_identity,
+            )
             if remembered in {"allow", "deny"}:
                 return "ALLOW" if remembered == "allow" else "DENY"
 
