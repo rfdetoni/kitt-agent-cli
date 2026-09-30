@@ -381,8 +381,8 @@ class ChildAgentManager:
             "task": task,
             "allowed_paths": child.allowed_paths,
             "security_context": security_context.to_dict(),
-            "budget_lease": dict(child.budget_lease or {}),
-            "lineage": dict(child.lineage or {}),
+            "budget_lease": dict(getattr(child, "budget_lease", None) or {}),
+            "lineage": dict(getattr(child, "lineage", None) or {}),
         }
 
     def _build_continue_payload(self, child, grant) -> dict:
