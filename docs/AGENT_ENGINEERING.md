@@ -1,6 +1,6 @@
 # Agent Engineering Architecture
 
-K.I.T.T. Agent CLI 0.80.2 keeps model reasoning flexible while moving execution
+K.I.T.T. Agent CLI 0.80.3 keeps model reasoning flexible while moving execution
 authority, durability, recovery and measurement into deterministic host-owned
 contracts.
 
@@ -20,6 +20,20 @@ workflow runtimes. Existing subsystem owners remain authoritative:
 - Harness Episodes, interventions and experiments own evidence-based learning.
 - Plugin permissions remain authority; `PluginCapabilities` is the declarative
   export contract.
+
+## Structural provider transport
+
+K.I.T.T. internal execution transport has one authoritative representation. The
+Agent emits typed `ContextEnvelope` data as `kitt_context`, native tool
+definitions as `tools`, and correlation/route identity as `kitt_meta`.
+Reverse Proxy does not infer workspace state, tool authority, route, phase or
+budgets from textual headings.
+
+Legacy `[KITT TURN CONTEXT]`, `Available host tools:` and textual
+`Tool Contract:` parsing were removed rather than retained as a second path.
+A legacy textual Tool Contract reaching the Reverse Proxy adapter fails closed.
+Conversation, turn and request IDs are structured telemetry/correlation metadata
+and are excluded from provider-visible logical history.
 
 ## Durable execution
 
