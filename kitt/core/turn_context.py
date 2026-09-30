@@ -24,6 +24,7 @@ from kitt.context.envelope import (
     lower_context_envelope,
 )
 from kitt.context.epoch import build_context_epoch, persist_context_epoch
+from kitt.context.recovery import recoverable_text_body
 from kitt_protocol import CacheRegion, ContextKind, ContextStability, ContextTrust, RecoveryMode
 from kitt.llm.client import LLMClient
 from kitt.prompts import (
@@ -529,7 +530,15 @@ class TurnContextMixin:
         )
         builder.add(
             ContextKind.MEMORY_RECALL,
-            memory_context,
+            recoverable_text_body(
+                self,
+                memory_context,
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+                artifact_type="CONTEXT_MEMORY",
+                summary="Exact memory context before prompt budgeting",
+                sensitivity="PRIVATE",
+            ),
             source="kitt-memoryd",
             trust=ContextTrust.TRUSTED,
             stability=ContextStability.SESSION,
@@ -541,7 +550,14 @@ class TurnContextMixin:
         )
         builder.add(
             ContextKind.HARNESS_KNOWLEDGE,
-            harness_context,
+            recoverable_text_body(
+                self,
+                harness_context,
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+                artifact_type="CONTEXT_HARNESS",
+                summary="Exact harness context before prompt budgeting",
+            ),
             source="harness",
             trust=ContextTrust.TRUSTED,
             stability=ContextStability.SESSION,
@@ -552,7 +568,14 @@ class TurnContextMixin:
         )
         builder.add(
             ContextKind.SKILL,
-            skills_str if skills_str != "No specific skills loaded." else "",
+            recoverable_text_body(
+                self,
+                skills_str if skills_str != "No specific skills loaded." else "",
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+                artifact_type="CONTEXT_SKILLS",
+                summary="Exact skill context before prompt budgeting",
+            ),
             source="workspace-skills",
             trust=ContextTrust.UNTRUSTED_WORKSPACE,
             stability=ContextStability.SESSION,
@@ -563,7 +586,14 @@ class TurnContextMixin:
         )
         builder.add(
             ContextKind.PROJECT_GUIDELINE,
-            agents_str,
+            recoverable_text_body(
+                self,
+                agents_str,
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+                artifact_type="CONTEXT_GUIDELINES",
+                summary="Exact project guidelines before prompt budgeting",
+            ),
             source="workspace-guidelines",
             trust=ContextTrust.UNTRUSTED_WORKSPACE,
             stability=ContextStability.SESSION,
@@ -574,7 +604,14 @@ class TurnContextMixin:
         )
         builder.add(
             ContextKind.OUTPUT_CONTRACT,
-            formatting_contract,
+            recoverable_text_body(
+                self,
+                formatting_contract,
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+                artifact_type="CONTEXT_FORMATTING",
+                summary="Exact formatting contract before prompt budgeting",
+            ),
             source="formatting-policy",
             trust=ContextTrust.UNTRUSTED_WORKSPACE,
             stability=ContextStability.SESSION,
@@ -585,7 +622,14 @@ class TurnContextMixin:
         )
         builder.add(
             ContextKind.FILE_EVIDENCE,
-            allocated.get("files_context", ""),
+            recoverable_text_body(
+                self,
+                allocated.get("files_context", ""),
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+                artifact_type="CONTEXT_FILE_EVIDENCE",
+                summary="Exact file evidence before prompt budgeting",
+            ),
             source="repository",
             trust=ContextTrust.UNTRUSTED_WORKSPACE,
             stability=ContextStability.TURN,
@@ -597,7 +641,14 @@ class TurnContextMixin:
         )
         builder.add(
             ContextKind.REPOSITORY_MAP,
-            allocated.get("repo_map", ""),
+            recoverable_text_body(
+                self,
+                allocated.get("repo_map", ""),
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+                artifact_type="CONTEXT_REPOSITORY_MAP",
+                summary="Exact repository map before prompt budgeting",
+            ),
             source="repository",
             trust=ContextTrust.UNTRUSTED_WORKSPACE,
             stability=ContextStability.TURN,
@@ -609,7 +660,15 @@ class TurnContextMixin:
         )
         builder.add(
             ContextKind.SEARCH_EVIDENCE,
-            allocated.get("history_context", ""),
+            recoverable_text_body(
+                self,
+                allocated.get("history_context", ""),
+                conversation_id=cmd.conversation_id,
+                turn_id=cmd.turn_id,
+                artifact_type="CONTEXT_HISTORY",
+                summary="Exact history context before prompt budgeting",
+                sensitivity="PRIVATE",
+            ),
             source="conversation-ledger",
             trust=ContextTrust.EXTERNAL,
             stability=ContextStability.SESSION,
