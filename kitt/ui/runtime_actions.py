@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 
 from kitt.core.turn_events import ApprovalRequired
+from kitt.security.capabilities import ALL_CAPABILITIES
+from kitt.security.context import ExecutionSecurityContext
 from kitt.ui.event_bridge import TurnEventBridge
 from kitt.ui.git import read_git_branch_name
 from kitt.ui.overlay_models import SessionPickerModel, TimelineModel
@@ -61,6 +63,19 @@ async def _load_conversation(ui, conversation: dict) -> bool:
     return True
 
 
+def _direct_user_security_context(
+    ui,
+    conversation_id: str,
+    turn_id: str,
+) -> ExecutionSecurityContext:
+    return ExecutionSecurityContext.create_user_context(
+        workspace_id=ui.runtime.workspace_id,
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        capabilities=ALL_CAPABILITIES,
+    )
+
+
 async def _execute_direct_tool(ui, tool_name: str, args: dict) -> None:
     conversation = ui.runtime.history.get_or_create_active()
     ui.state.active_conversation_id = conversation["id"]
@@ -83,9 +98,23 @@ async def _execute_direct_tool(ui, tool_name: str, args: dict) -> None:
 
     turn_id = f"ui-{uuid.uuid4().hex[:12]}"
     workspace_id = ui.runtime.workspace_id
+    security_context = _direct_user_security_context(
+        ui,
+        conversation["id"],
+        turn_id,
+    )
     result = await ui._run_blocking(
-        ui.runtime.registry.execute_tool, tool_name, args,
-        turn_id, conversation["id"], workspace_id,
+        ui.runtime.registry.execute_tool,
+        tool_name,
+        args,
+        turn_id,
+        conversation["id"],
+        workspace_id,
+        None,
+        None,
+        None,
+        "USER",
+        security_context,
     )
     if result.requires_approval:
         action_hash = ui.runtime.policy.generate_action_hash(tool_name, args)
@@ -96,7 +125,12 @@ async def _execute_direct_tool(ui, tool_name: str, args: dict) -> None:
         )
         ui._on_event(ApprovalRequired(
             turn_id=turn_id, conversation_id=conversation["id"], tool_name=tool_name, args=args, action_hash=action_hash,
-            approval_request_id=approval_id, workspace_id=workspace_id,
+            approval_request_id=approval_id,
+            workspace_id=workspace_id,
+            executable_identity=(
+                f"{security_context.principal_type}:"
+                f"{security_context.principal_id}"
+            ),
         ))
         pending = ui.state.pending_approval
         if pending:
@@ -347,10 +381,23 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
             ui.state.pending_approvals.pop(0)
             ui.close_overlay()
             if pending.get("direct_tool"):
+                security_context = _direct_user_security_context(
+                    ui,
+                    pending["conversation_id"],
+                    pending["turn_id"],
+                )
                 result = await ui._run_blocking(
                     ui.runtime.registry.execute_tool,
-                    pending["tool_name"], pending["args"], pending["turn_id"], pending["conversation_id"],
-                    pending["workspace_id"], None, grant, pending["approval_id"], "USER",
+                    pending["tool_name"],
+                    pending["args"],
+                    pending["turn_id"],
+                    pending["conversation_id"],
+                    pending["workspace_id"],
+                    None,
+                    grant,
+                    pending["approval_id"],
+                    "USER",
+                    security_context,
                 )
                 ui._show_result(result.output if result.success else f"Error: {result.error or result.output}")
                 ui.state.status_text = "SYSTEM ONLINE"
