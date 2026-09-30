@@ -4,6 +4,12 @@
 
 **Control plane local-first para agentes autônomos de programação.**
 
+## Agent CLI 0.78.11 — cópia no transcript e continuidade WebChat
+
+O transcript principal voltou a permitir seleção e cópia nativas pelo terminal sem desativar o mouse dos menus e modais. O aviso de `Ctrl+O` agora aparece somente no último bloco de tool/thought que o atalho realmente consegue expandir ou recolher.
+
+Em conjunto com o KITT Reverse Proxy 4.6.8, sessões WebChat novas também recebem o contexto anterior da conversa da API uma única vez, sem reenvio crescente do histórico nos turnos seguintes.
+
 ## Agent CLI 0.78.10 — dependências K.I.T.T. seguindo main
 
 Dependências VCS internas do ecossistema agora seguem `main` dos repositórios irmãos em vez de embutir SHAs cross-repo. O instalador raiz compõe os sources atuais e registra os SHAs efetivamente instalados apenas como proveniência.
