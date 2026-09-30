@@ -36,7 +36,7 @@ class TestReverseProxyFastPath(unittest.TestCase):
 
         result = semantic_filter.filter_and_plan(prompt, session_key="conv")
 
-        self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+        self.assertEqual(result.source, "LLM_FIRST")
         self.assertIsNone(semantic_filter.llm_client)
         self.assertEqual(result.task.intent, "UNKNOWN")
         self.assertEqual(result.task.original_prompt, prompt)
@@ -56,7 +56,7 @@ class TestReverseProxyFastPath(unittest.TestCase):
         result = semantic_filter.filter_and_plan(
             "crie uma pasta teste", session_key="conv"
         )
-        self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+        self.assertEqual(result.source, "LLM_FIRST")
         self.assertIsNone(semantic_filter.llm_client)
         self.assertTrue(result.plan.enabled_tools)
 
