@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+import threading
+import time
+import uuid
+from dataclasses import asdict, dataclass
+from typing import Callable
+
+from kitt_protocol import BudgetLease, ExecutionBudget
+
+
+class ExecutionBudgetExceeded(RuntimeError):
+    pass
+
+
+@dataclass
+class _LeaseState:
+    lease: BudgetLease
+    token_cap: int
+    call_cap: int
+    cost_cap: float
+    tokens_used: int = 0
+    calls_used: int = 0
+    cost_used: float = 0.0
+    settled: bool = False
+
+
+class ExecutionBudgetLedger:
+    """One hard budget shared by every stage participating in a turn.
+
+    Child leases reserve parent capacity up-front, so concurrent subagents cannot
+    overspend a wallet simply because they race one another.
+    """
+
+    def __init__(
+        self,
+        budget: ExecutionBudget,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.budget = budget
+        self._clock = clock
+        self._started = clock()
+        self._lock = threading.RLock()
+        self.model_calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cost = 0.0
+        self.tool_calls = 0
+        self.subagents = 0
+        self._leases: dict[str, _LeaseState] = {}
+
+    def _elapsed_ms(self) -> int:
+        return max(0, int((self._clock() - self._started) * 1000))
+
+    def _outstanding(self) -> tuple[int, int, float]:
+        tokens = calls = 0
+        cost = 0.0
+        for state in self._leases.values():
+            if state.settled:
+                continue
+            tokens += max(0, state.token_cap - state.tokens_used)
+            calls += max(0, state.call_cap - state.calls_used)
+            cost += max(0.0, state.cost_cap - state.cost_used)
+        return tokens, calls, cost
+
+    def _check_duration(self) -> None:
+        if self._elapsed_ms() > max(0, int(self.budget.max_duration_ms)):
+            raise ExecutionBudgetExceeded("execution duration budget exceeded")
+
+    def _check_tokens(self, next_input: int = 0, next_output: int = 0) -> None:
+        reserved_tokens, _, _ = self._outstanding()
+        next_input_total = self.input_tokens + max(0, int(next_input))
+        next_output_total = self.output_tokens + max(0, int(next_output))
+        if next_input_total > self.budget.max_input_tokens:
+            raise ExecutionBudgetExceeded("input token budget exceeded")
+        if next_output_total > self.budget.max_output_tokens:
+            raise ExecutionBudgetExceeded("output token budget exceeded")
+        if next_input_total + next_output_total + reserved_tokens > self.budget.max_total_tokens:
+            raise ExecutionBudgetExceeded("total token budget exceeded")
+
+    def reserve_model_call(
+        self,
+        *,
+        input_tokens: int = 0,
+        cost: float = 0.0,
+        stage: str = "model",
+    ) -> None:
+        del stage
+        with self._lock:
+            self._check_duration()
+            _, reserved_calls, reserved_cost = self._outstanding()
+            if self.model_calls + 1 + reserved_calls > self.budget.max_model_calls:
+                raise ExecutionBudgetExceeded("model call budget exceeded")
+            self._check_tokens(next_input=input_tokens)
+            if self.cost + max(0.0, float(cost)) + reserved_cost > self.budget.max_cost:
+                raise ExecutionBudgetExceeded("execution cost budget exceeded")
+            self.model_calls += 1
+            self.input_tokens += max(0, int(input_tokens))
+            self.cost += max(0.0, float(cost))
+
+    def record_model_output(self, *, output_tokens: int = 0, cost: float = 0.0) -> None:
+        with self._lock:
+            self._check_duration()
+            self._check_tokens(next_output=output_tokens)
+            _, _, reserved_cost = self._outstanding()
+            if self.cost + max(0.0, float(cost)) + reserved_cost > self.budget.max_cost:
+                raise ExecutionBudgetExceeded("execution cost budget exceeded")
+            self.output_tokens += max(0, int(output_tokens))
+            self.cost += max(0.0, float(cost))
+
+    def reserve_tool_call(self) -> None:
+        with self._lock:
+            self._check_duration()
+            if self.tool_calls + 1 > self.budget.max_tool_calls:
+                raise ExecutionBudgetExceeded("tool call budget exceeded")
+            self.tool_calls += 1
+
+    def reserve_subagent(
+        self,
+        child_agent_id: str,
+        *,
+        token_cap: int,
+        call_cap: int,
+        cost_cap: float = 0.0,
+    ) -> BudgetLease:
+        child = str(child_agent_id or "").strip()
+        if not child:
+            raise ValueError("child_agent_id is required")
+        with self._lock:
+            self._check_duration()
+            if self.subagents + 1 > self.budget.max_subagents:
+                raise ExecutionBudgetExceeded("subagent budget exceeded")
+            reserved_tokens, reserved_calls, reserved_cost = self._outstanding()
+            requested_tokens = max(0, int(token_cap))
+            requested_calls = max(0, int(call_cap))
+            requested_cost = max(0.0, float(cost_cap))
+            if (
+                self.input_tokens
+                + self.output_tokens
+                + reserved_tokens
+                + requested_tokens
+                > self.budget.max_total_tokens
+            ):
+                raise ExecutionBudgetExceeded("subagent token lease exceeds parent budget")
+            if self.model_calls + reserved_calls + requested_calls > self.budget.max_model_calls:
+                raise ExecutionBudgetExceeded("subagent call lease exceeds parent budget")
+            if self.cost + reserved_cost + requested_cost > self.budget.max_cost:
+                raise ExecutionBudgetExceeded("subagent cost lease exceeds parent budget")
+            lease = BudgetLease(
+                id=f"lease_{uuid.uuid4().hex}",
+                parent_budget_id=f"turn-budget:{id(self)}",
+                child_agent_id=child,
+                token_cap=requested_tokens,
+                call_cap=requested_calls,
+                cost_cap=requested_cost,
+                reserved={
+                    "tokens": requested_tokens,
+                    "calls": requested_calls,
+                    "cost": requested_cost,
+                },
+                consumed={"tokens": 0, "calls": 0, "cost": 0.0},
+            )
+            self._leases[lease.id] = _LeaseState(
+                lease=lease,
+                token_cap=requested_tokens,
+                call_cap=requested_calls,
+                cost_cap=requested_cost,
+            )
+            self.subagents += 1
+            return lease
+
+    def consume_child(
+        self,
+        lease_id: str,
+        *,
+        tokens: int = 0,
+        calls: int = 0,
+        cost: float = 0.0,
+    ) -> None:
+        with self._lock:
+            self._check_duration()
+            state = self._leases.get(str(lease_id))
+            if state is None or state.settled:
+                raise ExecutionBudgetExceeded("unknown or settled child budget lease")
+            next_tokens = state.tokens_used + max(0, int(tokens))
+            next_calls = state.calls_used + max(0, int(calls))
+            next_cost = state.cost_used + max(0.0, float(cost))
+            if next_tokens > state.token_cap:
+                raise ExecutionBudgetExceeded("child token lease exceeded")
+            if next_calls > state.call_cap:
+                raise ExecutionBudgetExceeded("child call lease exceeded")
+            if next_cost > state.cost_cap:
+                raise ExecutionBudgetExceeded("child cost lease exceeded")
+            state.tokens_used = next_tokens
+            state.calls_used = next_calls
+            state.cost_used = next_cost
+
+    def settle_child(self, lease_id: str) -> dict:
+        with self._lock:
+            state = self._leases.get(str(lease_id))
+            if state is None:
+                raise KeyError(lease_id)
+            state.settled = True
+            return {
+                "lease_id": state.lease.id,
+                "child_agent_id": state.lease.child_agent_id,
+                "tokens_used": state.tokens_used,
+                "calls_used": state.calls_used,
+                "cost_used": state.cost_used,
+            }
+
+    def check(self) -> None:
+        with self._lock:
+            self._check_duration()
+            self._check_tokens()
+            if self.cost > self.budget.max_cost:
+                raise ExecutionBudgetExceeded("execution cost budget exceeded")
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            reserved_tokens, reserved_calls, reserved_cost = self._outstanding()
+            return {
+                "budget": asdict(self.budget),
+                "usage": {
+                    "model_calls": self.model_calls,
+                    "input_tokens": self.input_tokens,
+                    "output_tokens": self.output_tokens,
+                    "total_tokens": self.input_tokens + self.output_tokens,
+                    "cost": self.cost,
+                    "tool_calls": self.tool_calls,
+                    "subagents": self.subagents,
+                    "duration_ms": self._elapsed_ms(),
+                },
+                "reserved": {
+                    "tokens": reserved_tokens,
+                    "calls": reserved_calls,
+                    "cost": reserved_cost,
+                },
+            }
