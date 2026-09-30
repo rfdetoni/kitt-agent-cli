@@ -765,6 +765,22 @@ def _install_tool_execution(processor, registry) -> None:
         if budget is not None:
             budget.reserve_tool_call()
 
+        role_policy = getattr(processor, "_agent_role_policies", {}).get(turn)
+        if role_policy is not None and not role_policy.allows_tool(name, arguments):
+            from kitt.tools.registry_core import ToolResult
+
+            return ToolResult(
+                False,
+                error=(
+                    f"Agent role {role_policy.role} does not allow "
+                    f"{name} for this turn"
+                ),
+                metadata={
+                    "agent_role": str(role_policy.role),
+                    "role_policy_denied": True,
+                },
+            )
+
         security_context = kwargs.get("security_context")
         coordinator = getattr(processor, "run_coordinator", None)
         claimed = False
