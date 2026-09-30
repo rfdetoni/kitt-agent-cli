@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Any, List, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
-from kitt.context_filter.semantic_filter import SemanticFilter, SemanticFilterResult
+from kitt.context_filter.semantic_filter import SemanticFilter, llm_first_filter_result
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_helpers import (
@@ -23,21 +23,6 @@ from kitt.prompts import (
     CONTEXT_SUMMARY_USER_TEMPLATE,
 )
 
-
-_LLM_FIRST_CAPABILITY_TOOLS = (
-    "kitt_runtime",
-    "run_command",
-    "artifact_store",
-    "artifact_read",
-    "child_spawn",
-    "child_ask",
-    "child_inspect",
-    "goal_update",
-    "goal_inspect",
-    "memory_recall",
-    "memory_save",
-    "mcp_call",
-)
 
 
 class TurnContextMixin:
@@ -116,38 +101,25 @@ class TurnContextMixin:
         agent_addressed = self._addresses_kitt(cmd.prompt)
 
         if llm_first_reverse_proxy:
-            # LLM-first execution: preserve the human request verbatim and let the
-            # WebChat model interpret language, intent, scope and constraints.
-            # KITT only exposes governed capabilities and host evidence.
-            task = SemanticTask(
-                original_prompt=cmd.prompt,
-                intent="UNKNOWN",
-                goal="",
-                actions=[],
-                paths=list(cmd.explicit_files or ()),
-                confidence=1.0,
-            )
-            plan = ContextPlan(
-                search_queries=[cmd.prompt],
-                preferred_paths=list(cmd.explicit_files or ()),
-                enabled_tools=list(_LLM_FIRST_CAPABILITY_TOOLS),
-                include_original_prompt=True,
-                confidence=1.0,
-            )
+            filter_res = llm_first_filter_result(cmd.prompt)
+            task, plan = filter_res.task, filter_res.plan
+            if cmd.explicit_files:
+                task = replace(task, paths=list(cmd.explicit_files))
+                plan = replace(
+                    plan,
+                    preferred_paths=list(cmd.explicit_files),
+                )
             if cmd.mode in {"plan", "ask"}:
-                plan.enabled_tools = [
-                    "read_file",
-                    "search",
-                    "repository_map",
-                    "artifact_read",
-                    "memory_recall",
-                ]
-            filter_res = SemanticFilterResult(
-                task=task,
-                plan=plan,
-                source="LLM_FIRST",
-                fallback_reason="reverse_proxy_llm_first",
-            )
+                plan = replace(
+                    plan,
+                    enabled_tools=[
+                        "read_file",
+                        "search",
+                        "repository_map",
+                        "artifact_read",
+                        "memory_recall",
+                    ],
+                )
             self.session_state.last_task = task
             self.session_state.last_plan = plan
             if cmd.explicit_files:
