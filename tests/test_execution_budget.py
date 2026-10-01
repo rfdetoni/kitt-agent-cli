@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from kitt.core.execution_budget import ExecutionBudgetExceeded, ExecutionBudgetLedger
+from kitt.core.agent_runtime import reserve_child_budget, settle_child_budget
 from kitt_protocol import ExecutionBudget
 
 
@@ -209,3 +212,49 @@ def test_concurrent_child_tool_and_cost_leases_cannot_overspend_parent():
             cost_cap=0.3,
             tool_cap=1,
         )
+
+
+def test_child_budget_controller_reserves_tools_cost_and_duration_then_rolls_usage_up():
+    processor = SimpleNamespace(
+        config=SimpleNamespace(
+            max_model_calls_per_turn=8,
+            max_input_tokens_per_turn=100,
+            max_output_tokens_per_turn=100,
+            max_total_tokens_per_turn=100,
+            max_cost_per_turn=1.0,
+            max_turn_duration_seconds=60.0,
+            max_tool_calls_per_turn=6,
+            max_subagents_per_turn=2,
+        ),
+        execution_budgets={},
+        child_budget_leases={},
+    )
+
+    lease = reserve_child_budget(
+        processor,
+        "turn-parent",
+        "child-1",
+        40,
+    )
+
+    assert lease.token_cap == 40
+    assert lease.call_cap > 0
+    assert lease.cost_cap == pytest.approx(0.4)
+    assert lease.reserved["tools"] > 0
+    assert lease.reserved["duration_ms"] > 0
+
+    settle_child_budget(
+        processor,
+        "child-1",
+        tokens_used=12,
+        calls_used=1,
+        cost_used=0.1,
+        tools_used=2,
+    )
+
+    assert "child-1" not in processor.child_budget_leases
+    snapshot = processor.execution_budgets["turn-parent"].snapshot()
+    assert snapshot["usage"]["child_tokens"] == 12
+    assert snapshot["usage"]["child_model_calls"] == 1
+    assert snapshot["usage"]["child_tool_calls"] == 2
+    assert snapshot["usage"]["child_cost"] == pytest.approx(0.1)
