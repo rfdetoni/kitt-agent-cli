@@ -125,6 +125,7 @@ class SemanticFilter:
         *,
         deterministic_only: bool = False,
         attempt_callback=None,
+        usage_callback=None,
     ) -> SemanticFilterResult:
         start_t = time.time()
 
@@ -162,20 +163,37 @@ class SemanticFilter:
             }
             if attempt_callback is not None:
                 kwargs["attempt_callback"] = attempt_callback
+            if usage_callback is not None:
+                kwargs["usage_callback"] = usage_callback
+
+            attempt_forwarded = attempt_callback is None
             try:
                 signature = inspect.signature(self.llm_client.chat)
                 has_var_kwargs = any(
                     parameter.kind == inspect.Parameter.VAR_KEYWORD
                     for parameter in signature.parameters.values()
                 )
-                if not has_var_kwargs:
+                if has_var_kwargs:
+                    attempt_forwarded = True
+                else:
+                    attempt_forwarded = (
+                        attempt_callback is None
+                        or "attempt_callback" in signature.parameters
+                    )
                     kwargs = {
                         key: value
                         for key, value in kwargs.items()
                         if key in signature.parameters
                     }
             except (TypeError, ValueError):
-                pass
+                # Unknown call signatures are treated as accepting the callback;
+                # if they reject it the existing fallback path remains fail-safe.
+                attempt_forwarded = True
+
+            if attempt_callback is not None and not attempt_forwarded:
+                # Injected clients without retry hooks still represent exactly one
+                # real call. Reserve attempt zero immediately before invoking it.
+                attempt_callback(0)
             response_text = self.llm_client.chat(messages, **kwargs)
 
             if len(response_text) > 16384:
