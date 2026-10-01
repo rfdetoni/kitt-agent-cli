@@ -317,7 +317,13 @@ class TestE2EPipeline(unittest.TestCase):
             def chat_stream(self, *args, **kwargs):
                 yield "<think>hidden reasoning</think>Final answer"
 
-        events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
+        events = list(self.processor._stream_execution_response(
+            LfmClient(), [],
+            "",
+            conversation_id="test-e2e",
+            turn_id="test-lfm-hidden",
+            route="chat",
+        ))
         deltas = [ev for _, ev in events if isinstance(ev, TextDelta)]
         self.assertEqual(deltas[0].delta, "Final answer")
         from kitt.core.turn_events import ThinkingCompleted
@@ -336,7 +342,13 @@ class TestE2EPipeline(unittest.TestCase):
             def chat_stream(self, *args, **kwargs):
                 yield "<think>unfinished reasoning"
 
-        events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
+        events = list(self.processor._stream_execution_response(
+            LfmClient(), [],
+            "",
+            conversation_id="test-e2e",
+            turn_id="test-lfm-incomplete",
+            route="chat",
+        ))
         deltas = [ev for _, ev in events if isinstance(ev, TextDelta)]
         self.assertIn("Não recebi uma resposta final", deltas[0].delta)
 
@@ -347,7 +359,13 @@ class TestE2EPipeline(unittest.TestCase):
             def chat_stream(self, *args, **kwargs):
                 yield "<think>reasoning without closing tag\nResposta final: resposta visível"
 
-        events = list(self.processor._stream_execution_response(LfmClient(), [], ""))
+        events = list(self.processor._stream_execution_response(
+            LfmClient(), [],
+            "",
+            conversation_id="test-e2e",
+            turn_id="test-lfm-final-marker",
+            route="chat",
+        ))
         deltas = [ev for _, ev in events if isinstance(ev, TextDelta)]
         self.assertEqual(deltas[0].delta, "resposta visível")
 
