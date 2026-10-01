@@ -205,3 +205,58 @@ def test_history_schema_creates_coordination_wait_queue(tmp_path: Path):
     assert int(version) >= 4
     assert table is not None
     db.close()
+
+
+def test_two_child_worktrees_are_isolated_from_parent_and_each_other(tmp_path: Path):
+    import shutil
+
+    if shutil.which("git") is None:
+        pytest.skip("git unavailable")
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "kitt-test@example.invalid")
+    _git(repo, "config", "user.name", "KITT Test")
+    (repo / ".gitignore").write_text(".kitt/\n", encoding="utf-8")
+    (repo / "a.txt").write_text("parent-a\n", encoding="utf-8")
+    (repo / "b.txt").write_text("parent-b\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore", "a.txt", "b.txt")
+    _git(repo, "commit", "-m", "base")
+
+    db = Db()
+    NativeStateRepository(db, "ws")
+    coordinator = WorkspaceCoordinator(str(repo), str(repo), db, "ws")
+
+    child_a = coordinator.prepare_child("child-a")
+    child_b = coordinator.prepare_child("child-b")
+    path_a = Path(child_a.path)
+    path_b = Path(child_b.path)
+
+    assert child_a.state == "READY"
+    assert child_b.state == "READY"
+    assert path_a != path_b
+    assert path_a != repo.resolve()
+    assert path_b != repo.resolve()
+
+    (path_a / "a.txt").write_text("child-a\n", encoding="utf-8")
+    (path_b / "b.txt").write_text("child-b\n", encoding="utf-8")
+
+    # Neither child can observe the sibling's uncommitted mutation and the
+    # parent remains unchanged until an explicit integration step.
+    assert (path_a / "b.txt").read_text(encoding="utf-8") == "parent-b\n"
+    assert (path_b / "a.txt").read_text(encoding="utf-8") == "parent-a\n"
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "parent-a\n"
+    assert (repo / "b.txt").read_text(encoding="utf-8") == "parent-b\n"
+
+    first = coordinator.integrate_child("child-a", allowed_paths=["a.txt"])
+    assert first.state == "MERGED"
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "child-a\n"
+    assert (repo / "b.txt").read_text(encoding="utf-8") == "parent-b\n"
+
+    # The second child is preserved independently; rebasing/integration brings
+    # in the first child's parent change while keeping its own mutation.
+    second = coordinator.integrate_child("child-b", allowed_paths=["b.txt"])
+    assert second.state == "MERGED"
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "child-a\n"
+    assert (repo / "b.txt").read_text(encoding="utf-8") == "child-b\n"
