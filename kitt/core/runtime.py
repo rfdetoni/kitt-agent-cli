@@ -435,12 +435,13 @@ class KittRuntime:
                 child_id,
                 token_cap,
             ),
-            settler=lambda child_id, tokens_used=0, calls_used=0, cost_used=0.0: settle_child_budget(
+            settler=lambda child_id, tokens_used=0, calls_used=0, cost_used=0.0, tools_used=0: settle_child_budget(
                 processor,
                 child_id,
                 tokens_used,
                 calls_used,
                 cost_used,
+                tools_used,
             ),
         )
 
