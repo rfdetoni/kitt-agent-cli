@@ -845,19 +845,6 @@ def _install_tool_execution(processor, registry) -> None:
         arguments = args if isinstance(args, dict) else {}
         conv = str(kwargs.get("conversation_id") or "")
         turn = str(kwargs.get("turn_id") or "")
-        store = _state_store(processor, conv)
-        digest = _fingerprint(name, arguments) if _is_mutating(name, arguments) else ""
-        replay_key = f"turn:{turn}:mutation:{digest}" if turn and digest else ""
-        if replay_key and store:
-            try:
-                cached = store.get(replay_key)
-                if isinstance(cached, dict) and cached.get("completed"):
-                    from kitt.tools.registry_core import ToolResult
-                    return ToolResult(True, str(cached.get("output", "[durable mutation replay]")),
-                                      metadata={"durable_replay": True, "fingerprint": digest})
-            except Exception:
-                pass
-
         budget = getattr(processor, "execution_budgets", {}).get(turn)
         if budget is not None:
             budget.reserve_tool_call()
@@ -983,22 +970,6 @@ def _install_tool_execution(processor, registry) -> None:
                         paths,
                         kind=inner_operation,
                     )
-            if replay_key and store and getattr(result, "success", False):
-                try:
-                    store.set(
-                        replay_key,
-                        {
-                            "completed": True,
-                            "output": str(
-                                getattr(result, "output", "")
-                            )[:12000],
-                            "paths": paths,
-                            "completed_at": time.time(),
-                        },
-                        ttl_seconds=604800,
-                    )
-                except Exception:
-                    pass
             return result
         finally:
             if claimed and coordinator is not None:
