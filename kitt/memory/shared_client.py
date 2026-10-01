@@ -39,7 +39,11 @@ class KittMemoryUnavailable(RuntimeError):
 
 class KittMemoryClient:
     def __init__(self, address: str | None = None, token_path: str | Path | None = None, timeout: float = 0.75):
-        self.address = address or os.getenv("KITT_MEMORY_ADDR", "127.0.0.1:41829")
+        self.address: str = (
+            address
+            or os.getenv("KITT_MEMORY_ADDR")
+            or "127.0.0.1:41829"
+        )
         if os.name == "nt":
             root = Path(os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming"))
         elif sys.platform == "darwin":
@@ -275,7 +279,8 @@ class KittMemoryClient:
         records = body.get("records") if isinstance(body, dict) else None
         if not isinstance(records, list):
             raise KittMemoryUnavailable("memory.get response missing records")
-        truncated = body.get("truncated_ids") if isinstance(body, dict) else []
+        truncated_raw = body.get("truncated_ids") if isinstance(body, dict) else None
+        truncated = truncated_raw if isinstance(truncated_raw, list) else []
         return (
             [row for row in records if isinstance(row, dict)],
             str(body.get("recall_trace_id") or ""),
