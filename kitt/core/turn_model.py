@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from dataclasses import replace
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.core.turn_command import TurnCommand
@@ -30,6 +30,20 @@ from kitt_protocol import KittRequestMetadata
 class TurnModelMixin:
     """Execution-model routing, streaming and visible-response phase."""
 
+    # Composition contract supplied by TurnProcessor. These annotations create
+    # no runtime attributes; they make the mixin's dependencies explicit.
+    root_path: Any
+    config: Any
+    router: Any
+    routing_policy: Any
+    execution_client: Any
+    execution_budgets: dict[str, Any]
+    _attachment_paths_by_turn: dict[str, Any]
+    _attachment_wire_sent: set[str]
+    _record_latency: Callable[..., Any]
+    _cancel_requested: Callable[..., bool]
+    _routing_capabilities: Callable[..., Any]
+
     @staticmethod
     def _attach_browser_images(messages, images):
         if not images:
@@ -45,7 +59,9 @@ class TurnModelMixin:
                 continue
             content = message.get("content")
             if isinstance(content, str):
-                parts = [{"type": "text", "text": content}]
+                parts: list[dict[str, Any]] = [
+                    {"type": "text", "text": content}
+                ]
             elif isinstance(content, list):
                 parts = list(content)
             else:
