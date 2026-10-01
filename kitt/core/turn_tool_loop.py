@@ -534,7 +534,26 @@ class TurnToolLoopMixin:
                 (time.perf_counter() - model_round_started_at) * 1000,
                 detail={"tool": tool_name, "call": tool_calls},
             )
-            call_id = uuid.uuid4().hex[:8]
+            execution_id, call_id, arguments_digest = _tool_execution_identity(
+                cmd.conversation_id,
+                cmd.turn_id,
+                tool_calls,
+                tool_name,
+                tool_args,
+            )
+            side_effecting = _side_effecting_tool_call(tool_name, tool_args)
+            execution_state = None
+            ledger = getattr(self, "event_ledger", None)
+            if ledger is not None:
+                execution_state = ledger.reserve_tool_execution(
+                    cmd.conversation_id,
+                    cmd.turn_id,
+                    execution_id=execution_id,
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                    arguments_digest=arguments_digest,
+                    side_effecting=side_effecting,
+                )
             if not self.turn_guard.begin(cmd.turn_id):
                 return
             yield ToolStarted(tool_name=tool_name, args=tool_args, call_id=call_id), None, None
