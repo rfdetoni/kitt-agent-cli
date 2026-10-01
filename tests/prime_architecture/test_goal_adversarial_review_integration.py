@@ -317,7 +317,11 @@ diff --git a/unrelated.py b/unrelated.py
         goal = SimpleNamespace(id="goal-review")
         usage = {"tokens": 0, "cost": 0.0, "redactions": 0}
 
+        local_backends = LLMClient.LOCAL_BACKENDS
+
         class FakeClient:
+            LOCAL_BACKENDS = local_backends
+
             def __init__(self, _profile):
                 pass
 
