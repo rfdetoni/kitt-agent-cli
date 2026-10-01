@@ -1041,7 +1041,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 yield TurnCancelled(reason="Turn cancelled before prompt budgeting")
                 return
 
-            exe_client = self.execution_client or LLMClient(exe_profile)
+            client_factory = getattr(self, "provider_client_factory", None)
+            exe_client = self.execution_client or (
+                client_factory(exe_profile)
+                if client_factory is not None
+                else LLMClient(exe_profile)
+            )
             edit_context = infer_edit_strategy_context(
                 workspace_id=workspace_id,
                 provider=str(getattr(exe_profile, "backend", "") or ""),
