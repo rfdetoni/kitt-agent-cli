@@ -44,8 +44,12 @@ class TurnContextMixin:
         return task.intent != "ASK" or any(term in prompt.lower() for term in ("projeto", "project", "repositório", "repository", "código", "codebase"))
 
     def _summarize_project_context(
-        self, client: LLMClient, prompt: str, context_map: str,
+        self,
+        client: LLMClient,
+        prompt: str,
+        context_map: str,
         session_key: Optional[str] = None,
+        turn_id: str | None = None,
     ) -> str:
         if not context_map:
             return ""
@@ -65,6 +69,18 @@ class TurnContextMixin:
             user_content = CONTEXT_SUMMARY_USER_TEMPLATE.format(
                 prompt=prompt, context_map=context_map[:6000]
             )
+            execution_budget = getattr(self, "execution_budgets", {}).get(
+                str(turn_id or "")
+            )
+            estimated_input = (
+                TokenCounter.count_tokens(CONTEXT_SUMMARY_PROMPT)
+                + TokenCounter.count_tokens(user_content)
+            )
+            if execution_budget is not None:
+                execution_budget.reserve_model_call(
+                    input_tokens=estimated_input,
+                    stage="condenser",
+                )
             if profile and "lfm" in profile.model.lower():
                 lfm_profile = replace(
                     profile,
@@ -84,6 +100,11 @@ class TurnContextMixin:
                     session_key=session_key,
                 )
             summary = self._without_thinking(summary)[:6000] or fallback
+            if execution_budget is not None:
+                execution_budget.record_model_output(
+                    output_tokens=TokenCounter.count_tokens(summary),
+                    stage="condenser",
+                )
         except Exception:
             summary = fallback
         with self._cache_lock:
@@ -162,10 +183,21 @@ class TurnContextMixin:
             context_profile=ctx_profile,
             llm_client=self.context_client,
         )
+        execution_budget = getattr(self, "execution_budgets", {}).get(cmd.turn_id)
+        if execution_budget is not None:
+            execution_budget.reserve_model_call(
+                input_tokens=TokenCounter.count_tokens(cmd.prompt) + 256,
+                stage="classifier",
+            )
         filter_res = semantic_filter.filter_and_plan(
             cmd.prompt,
             session_key=self._provider_session_key(ctx_profile, cmd.conversation_id),
         )
+        if execution_budget is not None:
+            execution_budget.record_model_output(
+                output_tokens=TokenCounter.count_tokens(str(filter_res)),
+                stage="classifier",
+            )
         sf_client = semantic_filter.llm_client
         task, plan = filter_res.task, filter_res.plan
 
@@ -285,8 +317,14 @@ class TurnContextMixin:
             # LLM-free so it cannot reopen the reverse-proxy chat we deliberately skipped.
             if sf_client is not None:
                 context_map_str = self._summarize_project_context(
-                    sf_client, cmd.prompt, context_map_str,
-                    session_key=self._provider_session_key(getattr(sf_client, "profile", None), cmd.conversation_id),
+                    sf_client,
+                    cmd.prompt,
+                    context_map_str,
+                    session_key=self._provider_session_key(
+                        getattr(sf_client, "profile", None),
+                        cmd.conversation_id,
+                    ),
+                    turn_id=cmd.turn_id,
                 )
 
         working_context = self.working_set.context(cmd.conversation_id)
