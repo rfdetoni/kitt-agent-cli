@@ -7,7 +7,7 @@ import hashlib
 import logging
 import threading
 import uuid
-from typing import Callable, Dict, Generator, List, Optional
+from typing import Callable, Dict, Generator, List, Optional, TypeAlias
 
 from kitt.domain.entities import ModelProfile
 from kitt.core.logging import TRACE_LEVEL, summarize_trace_messages, summarize_trace_text, trace_event
@@ -72,10 +72,10 @@ class _StreamingTraceSummary:
         }
 
 
-LLMError = ProviderError
-LLMConnectionError = ProviderConnectionError
-LLMTimeoutError = ProviderTimeoutError
-LLMProtocolError = ProviderProtocolError
+LLMError: TypeAlias = ProviderError
+LLMConnectionError: TypeAlias = ProviderConnectionError
+LLMTimeoutError: TypeAlias = ProviderTimeoutError
+LLMProtocolError: TypeAlias = ProviderProtocolError
 
 
 class LLMEmptyResponseError(LLMError):
@@ -480,7 +480,11 @@ class LLMClient:
                 system_prompt=summarize_trace_text(system_prompt),
                 messages=summarize_trace_messages(messages),
                 response_format=response_format,
-                tool_definitions_count=len(tool_definitions or ()),
+                tool_definitions_count=(
+                    len(tool_definitions)
+                    if isinstance(tool_definitions, (list, tuple))
+                    else 0
+                ),
                 context_segments_count=len((context_envelope or {}).get("segments", [])),
                 temperature=self.profile.temperature,
                 context_window=self.profile.context_window,
