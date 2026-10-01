@@ -44,7 +44,7 @@ def _load_pricing_file(path: Path) -> Dict[str, Dict[str, float]]:
         if cache_key in _cached_mtimes and _cached_mtimes[cache_key] == mtime:
             return _cached_prices.get(cache_key, {})
         data = json.loads(path.read_text(encoding="utf-8"))
-        res = {}
+        res: Dict[str, Dict[str, float]] = {}
         if isinstance(data, dict):
             for model, rates in data.items():
                 if isinstance(rates, dict):
