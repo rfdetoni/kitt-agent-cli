@@ -139,12 +139,33 @@ def reserve_child_budget(
     )
     cost_cap = min(available_cost, proportional_cost)
 
+    max_tools = max(0, int(budget_data["max_tool_calls"]))
+    available_tools = max(
+        0,
+        max_tools
+        - int(usage.get("tool_calls", 0) or 0)
+        - int(reserved.get("tools", 0) or 0),
+    )
+    tool_cap = min(4, available_tools)
+    if max_tools > 0 and tool_cap <= 0:
+        raise ExecutionBudgetExceeded("no tool capacity remains for subagent")
+
+    max_duration_ms = max(0, int(budget_data["max_duration_ms"]))
+    remaining_duration_ms = max(
+        0,
+        max_duration_ms - int(usage.get("duration_ms", 0) or 0),
+    )
+    if max_duration_ms > 0 and remaining_duration_ms <= 0:
+        raise ExecutionBudgetExceeded("no duration capacity remains for subagent")
+
     lease = ledger.reserve_subagent(
         child_id,
         token_cap=requested_tokens,
         call_cap=call_cap,
         cost_cap=cost_cap,
+        tool_cap=tool_cap,
     )
+    lease.reserved["duration_ms"] = remaining_duration_ms
     leases = getattr(processor, "child_budget_leases", None)
     if leases is None:
         leases = {}
@@ -155,6 +176,7 @@ def reserve_child_budget(
         "token_cap": lease.token_cap,
         "call_cap": lease.call_cap,
         "cost_cap": lease.cost_cap,
+        "tool_cap": int(lease.reserved.get("tools", 0) or 0),
     }
     return lease
 
@@ -165,6 +187,7 @@ def settle_child_budget(
     tokens_used: int = 0,
     calls_used: int = 0,
     cost_used: float = 0.0,
+    tools_used: int = 0,
 ) -> None:
     leases = getattr(processor, "child_budget_leases", {})
     binding = leases.pop(child_id, None)
@@ -182,6 +205,8 @@ def settle_child_budget(
     reported_tokens = max(0, int(tokens_used))
     reported_calls = max(0, int(calls_used))
     reported_cost = max(0.0, float(cost_used))
+    reported_tools = max(0, int(tools_used))
+    tool_cap = max(0, int(binding.get("tool_cap", 0)))
 
     # A corrupt/overspent child report must never release capacity as if the
     # excess did not happen. Charge the full lease in that case; otherwise
@@ -191,12 +216,14 @@ def settle_child_budget(
     )
     charge_calls = call_cap if reported_calls > call_cap else reported_calls
     charge_cost = cost_cap if reported_cost > cost_cap else reported_cost
+    charge_tools = tool_cap if reported_tools > tool_cap else reported_tools
 
     ledger.consume_child(
         binding["lease_id"],
         tokens=charge_tokens,
         calls=charge_calls,
         cost=charge_cost,
+        tools=charge_tools,
     )
     ledger.settle_child(binding["lease_id"])
 
