@@ -1,5 +1,15 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.81.0 — progressive memory, replay safety and structural-only transport
+
+Agent CLI 0.81.0 completes the current Agent Engineering slice without introducing a second workflow or memory engine. Provider transport is now structural-only: typed `ContextEnvelope`, native tool definitions and `KittRequestMetadata` are the authoritative path, while the old prompt-parsing/injection helpers were removed. Sync, async and recoverable Reverse Proxy retries preserve request metadata and conversation correlation.
+
+Memory context now uses KITT Memory 0.7 progressive retrieval (`memory.search` → `memory.get`, with bounded snippets retained when full hydration exceeds the memory budget) instead of a fixed `recall(limit=8)` path. KITT Memory remains the sole durable semantic-memory authority.
+
+Execution durability is hardened with explicit event replay/idempotency tests, selective workspace snapshot diff/preview/restore, per-conversation runtime lifecycle tests, repeated-reread no-progress coverage and one global stage-aware execution budget. Classifier, condenser, execution model calls, validation tools and child leases all debit the same turn wallet; stage accounting is telemetry, not separate authority.
+
+This release targets KITT Protocol **0.6.0**, KITT Memory **0.7.0**, KITT Reverse Proxy **4.7.4** and Assistant Runtime **0.2.26**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) and [docs/AGENTIC_RUNTIME_ACCEPTANCE.md](docs/AGENTIC_RUNTIME_ACCEPTANCE.md).
+
 ## Agent CLI 0.80.5 — strict structural request identity
 
 Agent CLI 0.80.5 keeps `KittRequestMetadata` strict end to end. The execution-stream boundary now requires explicit `conversation_id`, `turn_id` and structured `route`; the tool-loop boundary likewise rejects execution without an explicit agent route. Production paths pass the real turn identity, while test harnesses use explicit structural fixtures instead of empty strings, placeholder identities or prompt-derived routing.
