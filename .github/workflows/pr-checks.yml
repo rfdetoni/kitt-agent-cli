@@ -85,6 +85,14 @@ jobs:
           python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
       - name: Compile Python sources
         run: python -m compileall -q kitt tests assistant-source/packages/kitt-assistant-runtime/kitt
+      - name: Type check changed agentic boundaries
+        run: |
+          python -m pip install "mypy>=1.18,<2"
+          python -m mypy --python-version 3.14 --ignore-missing-imports --follow-imports=skip --check-untyped-defs \
+            kitt/core/execution_budget.py \
+            kitt/memory/memory_manager.py \
+            kitt/memory/shared_client.py \
+            kitt/runtime/conversation_runtime.py
       - name: Run complete Agent suite
         run: python -m pytest -q
       - name: Clean-room provenance guard
