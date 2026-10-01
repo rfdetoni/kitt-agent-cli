@@ -158,11 +158,25 @@ class WorkspaceSnapshotService:
         *,
         conversation_id: str,
         turn_id: str,
+        paths: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         record = self._load_record(snapshot_id, conversation_id, turn_id)
         entries = record.get("entries")
         if not isinstance(entries, list):
             raise ValueError("invalid workspace snapshot record")
+        selected = None
+        if paths is not None:
+            selected = {self.fs.relative(path) for path in paths}
+            known = {
+                self.fs.relative(str(item.get("path") or ""))
+                for item in entries
+                if isinstance(item, dict)
+            }
+            unknown = sorted(selected - known)
+            if unknown:
+                raise ValueError(
+                    "diff paths are not part of snapshot: " + ", ".join(unknown)
+                )
         changes: list[dict[str, Any]] = []
         for item in entries:
             if not isinstance(item, dict):
@@ -206,6 +220,7 @@ class WorkspaceSnapshotService:
             snapshot_id,
             conversation_id=conversation_id,
             turn_id=turn_id,
+            paths=paths,
         )
         selected = None
         if paths is not None:
@@ -262,6 +277,8 @@ class WorkspaceSnapshotService:
             if not isinstance(item, dict):
                 continue
             rel = self.fs.relative(str(item.get("path") or ""))
+            if selected is not None and rel not in selected:
+                continue
             existed = bool(item.get("existed"))
             if existed:
                 artifact_id = str(item.get("artifact_id") or "")
