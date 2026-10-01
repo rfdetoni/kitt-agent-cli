@@ -867,7 +867,10 @@ def _install_tool_execution(processor, registry) -> None:
 
         security_context = kwargs.get("security_context")
         coordinator = getattr(processor, "run_coordinator", None)
+        resource_coordinator = getattr(processor, "resource_coordinator", None)
         claimed = False
+        resource_claimed = False
+        resource_owner = f"resource:{conv}:{turn}"
         if _is_mutating(name, arguments) and security_context is not None:
             sandbox = getattr(
                 getattr(registry, "process_runner", None),
@@ -900,6 +903,19 @@ def _install_tool_execution(processor, registry) -> None:
                     arguments,
                 )
                 claimed = True
+            if resource_coordinator is not None and conv and turn:
+                resources = resource_coordinator.resources_for_tool(
+                    name,
+                    arguments,
+                    conversation_id=conv,
+                )
+                if resources:
+                    resource_coordinator.acquire_many(
+                        resources,
+                        resource_owner,
+                        intent=f"{name} execution",
+                    )
+                    resource_claimed = True
 
         snapshot_service = getattr(
             processor,
@@ -972,6 +988,8 @@ def _install_tool_execution(processor, registry) -> None:
                     )
             return result
         finally:
+            if resource_claimed and resource_coordinator is not None:
+                resource_coordinator.release_owner(resource_owner)
             if claimed and coordinator is not None:
                 coordinator.release_tool(conv, turn)
 
