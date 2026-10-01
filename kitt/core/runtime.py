@@ -382,6 +382,7 @@ class KittRuntime:
         processor.network_policy = network_policy
         processor.child_manager = children
 
+        from kitt.core.resource_coordinator import ResourceCoordinator
         from kitt.core.run_coordinator import RunCoordinator
         from kitt.core.workspace_snapshot import WorkspaceSnapshotService
         from kitt.evidence.ledger import EventLedger
@@ -391,6 +392,7 @@ class KittRuntime:
             event_ledger,
             workspace_coordinator=native.coordinator,
         )
+        resource_coordinator = ResourceCoordinator(native.coordinator)
         workspace_snapshots = WorkspaceSnapshotService(
             canonical_root,
             workspace_id=identity.id,
@@ -408,6 +410,7 @@ class KittRuntime:
         )
         processor.event_ledger = event_ledger
         processor.run_coordinator = run_coordinator
+        processor.resource_coordinator = resource_coordinator
         processor.workspace_snapshot_service = workspace_snapshots
         processor.execution_budgets = {}
         processor.execution_budget_snapshots = {}
