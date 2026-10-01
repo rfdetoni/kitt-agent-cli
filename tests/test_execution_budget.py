@@ -86,3 +86,40 @@ def test_stage_names_do_not_create_independent_token_budgets():
     ledger.reserve_model_call(input_tokens=30, stage="classifier")
     with pytest.raises(ExecutionBudgetExceeded):
         ledger.reserve_model_call(input_tokens=21, stage="execution")
+
+
+def test_provider_usage_reconciles_preflight_input_cost():
+    ledger = ExecutionBudgetLedger(_budget(max_cost=1.0))
+    ledger.reserve_model_call(
+        input_tokens=60,
+        cost=0.30,
+        stage="execution",
+    )
+    ledger.reconcile_model_input(
+        estimated_tokens=60,
+        actual_tokens=25,
+        estimated_cost=0.30,
+        actual_cost=0.10,
+        stage="execution",
+    )
+    ledger.record_model_output(
+        output_tokens=20,
+        cost=0.20,
+        stage="execution",
+    )
+
+    snapshot = ledger.snapshot()
+    assert snapshot["usage"]["cost"] == pytest.approx(0.30)
+    assert snapshot["stages"]["execution"]["cost"] == pytest.approx(0.30)
+
+
+def test_provider_cost_reconciliation_enforces_hard_limit():
+    ledger = ExecutionBudgetLedger(_budget(max_cost=0.25))
+    ledger.reserve_model_call(input_tokens=10, cost=0.10)
+    with pytest.raises(ExecutionBudgetExceeded):
+        ledger.reconcile_model_input(
+            estimated_tokens=10,
+            actual_tokens=10,
+            estimated_cost=0.10,
+            actual_cost=0.30,
+        )
