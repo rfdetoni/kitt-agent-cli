@@ -10,7 +10,7 @@ Package metadata and continuous integration both target the current ecosystem in
 
 ### Guarantees during Pre-1.0:
 - **Internal APIs**: Subject to breaking changes without deprecation cycles.
-- **Local State Schema**: May be reset across minor pre-1.0 increments. If an incompatible state is detected, run `kitt doctor --reset-state`.
+- **Local State Schema**: Persisted schemas are migrated transactionally when a supported upgrade path exists. `kitt doctor` reports the on-disk/current versions. `--reset-state` is reserved for corrupt, unsupported, or deliberately discarded state and creates a SQLite-consistent backup first.
 - **Daemon & Wire Protocols**: Versioned explicitly via `DAEMON_PROTOCOL_VERSION`. Mismatched clients/daemons fail fast.
 - **Tool Surfaces**: Canonicalized on single model-facing tool runtime (`kitt_runtime`).
 

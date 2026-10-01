@@ -38,7 +38,7 @@ class RuntimeConfig:
     max_search_results: int = 200
     max_search_bytes: int = 262144
     max_search_time_ms: int = 3000
-    max_tool_calls_per_turn: int = 8
+    max_tool_calls_per_turn: int = 24
     max_model_calls_per_turn: int = 24
     max_input_tokens_per_turn: int = 262144
     max_output_tokens_per_turn: int = 131072

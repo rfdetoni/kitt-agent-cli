@@ -12,6 +12,7 @@ from pathlib import Path
 from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.logging import configure_logging, debug_event, get_logger
+from kitt.history.migrations import IncompatibleSchemaError
 from kitt.update_check import notify_if_update_available
 from kitt.ui.capabilities import create_backend
 from kitt.ui.fallback import HeadlessUI
@@ -619,6 +620,9 @@ def main(argv=None) -> int:
 
     try:
         return asyncio.run(async_main(args))
+    except IncompatibleSchemaError as exc:
+        print(f"K.I.T.T. state schema error: {exc}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         return 130
 

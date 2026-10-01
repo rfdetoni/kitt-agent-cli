@@ -1,27 +1,143 @@
 import sqlite3
 
 from kitt.history.database import HistoryDatabase
-from kitt.history.migrations import (
-    IncompatibleSchemaError,
-    MigrationRunner,
-    SCHEMA_V1_STATEMENTS,
-)
+from kitt.history.migrations import CURRENT_SCHEMA_VERSION, MigrationRunner
 from kitt.history.repository import HistoryRepository
 
 
-def test_obsolete_schema_is_rejected_instead_of_upgraded():
+def _legacy_schema_connection(version: int) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
-    for statement in SCHEMA_V1_STATEMENTS:
-        conn.execute(statement)
-    conn.execute("INSERT INTO schema_info (version) VALUES (1)")
+    conn.executescript(
+        """
+        CREATE TABLE schema_info (version INTEGER PRIMARY KEY);
+        CREATE TABLE session_events (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            turn_id TEXT,
+            episode_id TEXT,
+            sequence INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            payload_hash TEXT NOT NULL,
+            model_visible INTEGER NOT NULL DEFAULT 0,
+            replayable INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            UNIQUE(conversation_id, sequence)
+        );
+        CREATE TABLE child_sessions (
+            id TEXT PRIMARY KEY,
+            parent_conversation_id TEXT NOT NULL,
+            parent_turn_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            task TEXT NOT NULL,
+            state TEXT NOT NULL,
+            depth INTEGER NOT NULL,
+            model_profile TEXT NOT NULL,
+            allowed_paths_json TEXT NOT NULL,
+            enabled_tools_json TEXT NOT NULL,
+            token_budget INTEGER NOT NULL,
+            tokens_used INTEGER NOT NULL DEFAULT 0,
+            timeout_seconds INTEGER NOT NULL,
+            result_artifact_id TEXT,
+            error TEXT,
+            created_at REAL NOT NULL,
+            started_at REAL,
+            completed_at REAL,
+            current_task_id TEXT,
+            task_started_at REAL,
+            capabilities_json TEXT DEFAULT '[]',
+            context_summary TEXT DEFAULT '',
+            runtime_conversation_id TEXT,
+            security_context_json TEXT DEFAULT '{}'
+        );
+        CREATE TABLE remembered_approval_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_name TEXT NOT NULL,
+            path_glob TEXT,
+            decision TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        """
+    )
+    if version >= 8:
+        conn.execute("ALTER TABLE session_events ADD COLUMN parent_event_id TEXT")
+        conn.execute(
+            "ALTER TABLE session_events ADD COLUMN source TEXT NOT NULL "
+            "DEFAULT 'kitt-agent-cli'"
+        )
+        conn.execute(
+            "ALTER TABLE session_events ADD COLUMN durability TEXT NOT NULL "
+            "DEFAULT 'DURABLE'"
+        )
+    if version >= 9:
+        conn.execute(
+            "ALTER TABLE child_sessions ADD COLUMN budget_lease_json TEXT DEFAULT '{}'"
+        )
+        conn.execute(
+            "ALTER TABLE child_sessions ADD COLUMN lineage_json TEXT DEFAULT '{}'"
+        )
+    conn.execute("INSERT INTO schema_info(version) VALUES (?)", (version,))
+    conn.execute(
+        """INSERT INTO session_events(
+               id, conversation_id, sequence, event_type, payload_json,
+               payload_hash, created_at
+           ) VALUES ('event-1', 'conv-1', 1, 'test', '{}', 'hash', 1.0)"""
+    )
+    conn.execute(
+        """INSERT INTO child_sessions(
+               id, parent_conversation_id, parent_turn_id, name, task, state,
+               depth, model_profile, allowed_paths_json, enabled_tools_json,
+               token_budget, timeout_seconds, created_at
+           ) VALUES (
+               'child-1', 'conv-1', 'turn-1', 'child', 'task', 'READY',
+               1, 'default', '[]', '[]', 100, 30, 1.0
+           )"""
+    )
+    conn.execute(
+        """INSERT INTO remembered_approval_rules(
+               tool_name, path_glob, decision, created_at
+           ) VALUES ('process.run', '*', 'allow', 1.0)"""
+    )
     conn.commit()
+    return conn
 
-    try:
+
+def test_schema_7_upgrades_to_current_without_discarding_history():
+    conn = _legacy_schema_connection(7)
+    MigrationRunner().migrate(conn)
+
+    assert MigrationRunner().get_current_version(conn) == CURRENT_SCHEMA_VERSION
+    event_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(session_events)")
+    }
+    child_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(child_sessions)")
+    }
+    approval_columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(remembered_approval_rules)")
+    }
+    assert {"parent_event_id", "source", "durability"} <= event_columns
+    assert {"budget_lease_json", "lineage_json"} <= child_columns
+    assert {"workspace_id", "executable_identity"} <= approval_columns
+    assert conn.execute(
+        "SELECT COUNT(*) FROM session_events WHERE id='event-1'"
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM child_sessions WHERE id='child-1'"
+    ).fetchone()[0] == 1
+    # Legacy approvals were global and are intentionally invalidated at v10.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM remembered_approval_rules"
+    ).fetchone()[0] == 0
+
+
+def test_schema_8_and_9_upgrade_idempotently_to_current():
+    for version in (8, 9):
+        conn = _legacy_schema_connection(version)
         MigrationRunner().migrate(conn)
-    except IncompatibleSchemaError:
-        pass
-    else:
-        raise AssertionError("obsolete Agent state must require explicit reset")
+        MigrationRunner().migrate(conn)
+        assert MigrationRunner().get_current_version(conn) == CURRENT_SCHEMA_VERSION
 
 
 def test_tool_gain_prefix_range_keeps_telemetry_semantics():

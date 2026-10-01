@@ -7,6 +7,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from kitt.history.migrations import CURRENT_SCHEMA_VERSION
 from kitt.llm.http_security import secure_urlopen
 
 _STATE_STATUS = {"AUTHENTICATED": "PASS", "CONFIGURED": "PASS", "AVAILABLE": "PASS", "DEGRADED": "WARN", "BLOCKED": "WARN", "UNOBSERVED": "INFO", "UNAVAILABLE": "INFO"}
@@ -34,7 +35,7 @@ class DoctorCheck:
     def run_diagnostics(self) -> list[dict[str, str]]:
         results: list[dict[str, str]] = []
         py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-        results.append(_check("Python Version", "CONFIGURED" if sys.version_info >= (3, 12) else "DEGRADED", f"Python {py_ver}; KITT requires Python >=3.12", status="PASS" if sys.version_info >= (3, 12) else "WARN"))
+        results.append(_check("Python Version", "CONFIGURED" if sys.version_info >= (3, 14) else "DEGRADED", f"Python {py_ver}; KITT requires Python >=3.14", status="PASS" if sys.version_info >= (3, 14) else "FAIL"))
         git_path = shutil.which("git")
         results.append(_check("Git Utility", "AVAILABLE" if git_path else "UNAVAILABLE", git_path or "git binary not found in PATH", status="PASS" if git_path else "FAIL"))
 
@@ -65,8 +66,38 @@ class DoctorCheck:
             try:
                 with sqlite3.connect(str(db_path)) as conn:
                     quick_check = conn.execute("PRAGMA quick_check;").fetchone()
+                    schema_table = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='schema_info' LIMIT 1"
+                    ).fetchone()
+                    schema_row = (
+                        conn.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
+                        if schema_table
+                        else None
+                    )
+                    schema_version = int(schema_row[0]) if schema_row else 0
                 ok = bool(quick_check and quick_check[0] == "ok")
                 results.append(_check("SQLite History Database", "CONFIGURED" if ok else "DEGRADED", f"{db_path.name} integrity: {quick_check[0] if quick_check else 'unknown'}", status="PASS" if ok else "WARN"))
+                schema_current = schema_version == CURRENT_SCHEMA_VERSION
+                schema_upgradeable = 1 <= schema_version < CURRENT_SCHEMA_VERSION
+                schema_detail = (
+                    f"schema {schema_version}/{CURRENT_SCHEMA_VERSION} current"
+                    if schema_current
+                    else (
+                        f"schema {schema_version}/{CURRENT_SCHEMA_VERSION}; "
+                        "transactional upgrade available on next runtime open"
+                        if schema_upgradeable
+                        else f"schema {schema_version}/{CURRENT_SCHEMA_VERSION}; incompatible state"
+                    )
+                )
+                results.append(
+                    _check(
+                        "SQLite State Schema",
+                        "CONFIGURED" if schema_current else "DEGRADED",
+                        schema_detail,
+                        status="PASS" if schema_current else "WARN" if schema_upgradeable else "FAIL",
+                    )
+                )
                 with sqlite3.connect(str(db_path)) as evidence_conn:
                     tables = {
                         row[0]
@@ -181,7 +212,8 @@ class DoctorCheck:
         if db_path.exists():
             if backup:
                 backup_path = db_path.parent / f"history.sqlite3.pre-modernization.{int(time.time())}"
-                shutil.copy2(db_path, backup_path)
+                with sqlite3.connect(str(db_path)) as source, sqlite3.connect(str(backup_path)) as destination:
+                    source.backup(destination)
             for path in (db_path, db_path.with_name("history.sqlite3-wal"), db_path.with_name("history.sqlite3-shm")):
                 if path.exists():
                     path.unlink()

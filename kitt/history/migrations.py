@@ -899,12 +899,38 @@ CURRENT_SCHEMA_STATEMENTS = [
     *SCHEMA_V6_STATEMENTS,
 ]
 
+# Schema 7 moved semantic memory out of the Agent database. Keep this as an
+# incremental migration so existing pre-1.0 workspaces can advance without
+# discarding unrelated history/session state.
+SCHEMA_V7_STATEMENTS = [
+    "DROP TABLE IF EXISTS memory_evidence;",
+    "DROP TABLE IF EXISTS dream_runs;",
+    "DROP TABLE IF EXISTS native_memory_vectors;",
+    "DROP TABLE IF EXISTS knowledge_links;",
+    "DROP TABLE IF EXISTS knowledge_concepts;",
+    "DROP TABLE IF EXISTS correction_memories;",
+    "DROP TABLE IF EXISTS memories;",
+]
+
+SCHEMA_V10_APPROVAL_RULES_STATEMENT = """
+CREATE TABLE IF NOT EXISTS remembered_approval_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    path_glob TEXT,
+    decision TEXT NOT NULL,
+    executable_identity TEXT,
+    created_at REAL NOT NULL
+);
+"""
+
+
 class IncompatibleSchemaError(RuntimeError):
     """Raised when an incompatible database schema is detected."""
 
 
 class MigrationRunner:
-    """Manages SQLite schema creation and validation for K.I.T.T."""
+    """Manage transactional upgrades of the persistent Agent SQLite schema."""
 
     def __init__(self):
         self.target_version = CURRENT_SCHEMA_VERSION
@@ -920,22 +946,198 @@ class MigrationRunner:
         row = cur.fetchone()
         return int(row[0]) if row else 0
 
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1;",
+            (table,),
+        ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        if not MigrationRunner._table_exists(conn, table):
+            return set()
+        return {
+            str(row[1])
+            for row in conn.execute(f'PRAGMA table_info("{table}");').fetchall()
+        }
+
+    @staticmethod
+    def _set_version(conn: sqlite3.Connection, version: int) -> None:
+        conn.execute("DELETE FROM schema_info;")
+        conn.execute("INSERT INTO schema_info (version) VALUES (?);", (version,))
+
+    @classmethod
+    def _add_column_if_missing(
+        cls,
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        definition: str,
+    ) -> None:
+        if column in cls._columns(conn, table):
+            return
+        conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {definition};')
+
+    def _migrate_7_to_8(self, conn: sqlite3.Connection) -> None:
+        # Schema 8 promoted the durable session ledger to a typed event ledger.
+        self._add_column_if_missing(conn, "session_events", "parent_event_id", "TEXT")
+        self._add_column_if_missing(
+            conn,
+            "session_events",
+            "source",
+            "TEXT NOT NULL DEFAULT 'kitt-agent-cli'",
+        )
+        self._add_column_if_missing(
+            conn,
+            "session_events",
+            "durability",
+            "TEXT NOT NULL DEFAULT 'DURABLE'",
+        )
+
+    def _migrate_8_to_9(self, conn: sqlite3.Connection) -> None:
+        self._add_column_if_missing(
+            conn,
+            "child_sessions",
+            "budget_lease_json",
+            "TEXT DEFAULT '{}'",
+        )
+        self._add_column_if_missing(
+            conn,
+            "child_sessions",
+            "lineage_json",
+            "TEXT DEFAULT '{}'",
+        )
+
+    def _migrate_9_to_10(self, conn: sqlite3.Connection) -> None:
+        # Schema 10 scopes remembered approvals by workspace/executable. Legacy
+        # rows were global and cannot be safely assigned to a workspace, so only
+        # that cache is invalidated while all conversation/history state remains.
+        columns = self._columns(conn, "remembered_approval_rules")
+        if not columns:
+            conn.execute(SCHEMA_V10_APPROVAL_RULES_STATEMENT)
+            return
+        if "workspace_id" not in columns:
+            conn.execute("DROP TABLE remembered_approval_rules;")
+            conn.execute(SCHEMA_V10_APPROVAL_RULES_STATEMENT)
+            return
+        self._add_column_if_missing(
+            conn,
+            "remembered_approval_rules",
+            "executable_identity",
+            "TEXT",
+        )
+
     def migrate(self, conn: sqlite3.Connection) -> None:
         current_version = self.get_current_version(conn)
         if current_version == self.target_version:
             return
-        if current_version != 0:
+        if current_version > self.target_version:
             raise IncompatibleSchemaError(
-                f"State schema version {current_version} is obsolete; only schema "
-                f"{self.target_version} is supported. Run: kitt doctor --reset-state"
+                f"Database schema version {current_version} is newer than supported "
+                f"version {self.target_version}. Upgrade K.I.T.T. before opening this state."
+            )
+        if current_version < 0:
+            raise IncompatibleSchemaError(
+                f"Invalid database schema version {current_version}."
             )
 
-        with conn:
-            for statement in CURRENT_SCHEMA_STATEMENTS:
-                conn.execute(statement)
-            conn.execute("DELETE FROM schema_info;")
-            conn.execute(
-                "INSERT INTO schema_info (version) VALUES (?);",
-                (self.target_version,),
+        # Fresh databases are materialized directly from the canonical current
+        # schema. Existing databases follow incremental, idempotent migrations.
+        if current_version == 0:
+            with conn:
+                for statement in CURRENT_SCHEMA_STATEMENTS:
+                    conn.execute(statement)
+                self._set_version(conn, self.target_version)
+            logger.info(
+                "Initialized KITT SQLite schema version %s",
+                self.target_version,
             )
-        logger.info("Initialized KITT SQLite schema version %s", self.target_version)
+            return
+
+        if current_version < 1 or current_version > 9:
+            raise IncompatibleSchemaError(
+                f"State schema version {current_version} is unsupported; supported "
+                f"upgrade range is 1..{self.target_version}."
+            )
+
+        if current_version == 1:
+            with conn:
+                for statement in SCHEMA_V2_STATEMENTS:
+                    conn.execute(statement)
+                self._set_version(conn, 2)
+            current_version = 2
+            logger.info("Migrated KITT SQLite schema to version 2")
+
+        if current_version == 2:
+            with conn:
+                for statement in SCHEMA_V3_STATEMENTS:
+                    conn.execute(statement)
+                self._set_version(conn, 3)
+            current_version = 3
+            logger.info("Migrated KITT SQLite schema to version 3")
+
+        if current_version == 3:
+            with conn:
+                for statement in SCHEMA_V4_STATEMENTS:
+                    conn.execute(statement)
+                self._set_version(conn, 4)
+            current_version = 4
+            logger.info("Migrated KITT SQLite schema to version 4")
+
+        if current_version == 4:
+            with conn:
+                for statement in SCHEMA_V5_STATEMENTS:
+                    conn.execute(statement)
+                self._set_version(conn, 5)
+            current_version = 5
+            logger.info("Migrated KITT SQLite schema to version 5")
+
+        if current_version == 5:
+            with conn:
+                for statement in SCHEMA_V6_STATEMENTS:
+                    conn.execute(statement)
+                self._set_version(conn, 6)
+            current_version = 6
+            logger.info("Migrated KITT SQLite schema to version 6")
+
+        if current_version == 6:
+            with conn:
+                for statement in SCHEMA_V7_STATEMENTS:
+                    conn.execute(statement)
+                self._set_version(conn, 7)
+            current_version = 7
+            logger.info(
+                "Migrated KITT SQLite schema to version 7 (external memory authority)"
+            )
+
+        if current_version == 7:
+            with conn:
+                self._migrate_7_to_8(conn)
+                self._set_version(conn, 8)
+            current_version = 8
+            logger.info("Migrated KITT SQLite schema to version 8")
+
+        if current_version == 8:
+            with conn:
+                self._migrate_8_to_9(conn)
+                self._set_version(conn, 9)
+            current_version = 9
+            logger.info("Migrated KITT SQLite schema to version 9")
+
+        if current_version == 9:
+            with conn:
+                self._migrate_9_to_10(conn)
+                self._set_version(conn, 10)
+            current_version = 10
+            logger.info(
+                "Migrated KITT SQLite schema to version 10; legacy global "
+                "remembered approval rules were invalidated when required"
+            )
+
+        if current_version != self.target_version:
+            raise IncompatibleSchemaError(
+                f"State schema version {current_version} did not reach target "
+                f"{self.target_version}."
+            )

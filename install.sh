@@ -120,11 +120,11 @@ fi
 
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
 PYTHON="${PYTHON:-$(command -v python3 || true)}"
-[[ -n "$PYTHON" ]] || { echo "Python 3.12+ is required" >&2; exit 1; }
+[[ -n "$PYTHON" ]] || { echo "Python 3.14+ is required" >&2; exit 1; }
 "$PYTHON" - <<'PY'
 import sys
-if sys.version_info < (3, 12):
-    raise SystemExit(f"Python 3.12+ required; found {sys.version.split()[0]}")
+if sys.version_info < (3, 14):
+    raise SystemExit(f"Python 3.14+ required; found {sys.version.split()[0]}")
 PY
 
 sync_repo() {
@@ -177,11 +177,20 @@ fi
 ln -sfn "$VENV/bin/kitt" "$LAUNCHER"
 "$LAUNCHER" --help >/dev/null
 "$VPY" - <<'PY'
+from kitt.history.database import HistoryDatabase
+from kitt.history.migrations import CURRENT_SCHEMA_VERSION, MigrationRunner
 import kitt.daemon.client
 import kitt.remote.server
 import kitt.evolution
 import kitt.evals.corpus
-print('KITT companion packages: ok')
+
+db = HistoryDatabase(":memory:", in_memory=True)
+try:
+    if MigrationRunner().get_current_version(db._mem_conn) != CURRENT_SCHEMA_VERSION:
+        raise RuntimeError("KITT state schema smoke check failed")
+finally:
+    db.close()
+print('KITT companion packages and state schema: ok')
 PY
 backend="$($VPY -c "from kitt.native.bridge import NativeCodeEngine; print(NativeCodeEngine('$SRC').status.backend)")"
 echo "K.I.T.T. Agent CLI installed/updated at $INSTALL_ROOT (backend: $backend; native wheel: $installed_native)."

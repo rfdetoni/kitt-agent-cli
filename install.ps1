@@ -77,8 +77,8 @@ if ($Uninstall) {
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'git is required' }
 $Python = Get-Command python -ErrorAction SilentlyContinue
-if (-not $Python) { throw 'Python 3.12+ is required' }
-& $Python.Source -c "import sys; assert sys.version_info >= (3,12), 'Python 3.12+ required'"
+if (-not $Python) { throw 'Python 3.14+ is required' }
+& $Python.Source -c "import sys; assert sys.version_info >= (3,14), 'Python 3.14+ required'"
 
 function Sync-Repo([string]$RepoUrl, [string]$RepoRef, [string]$Dest) {
   if (-not (Test-Path (Join-Path $Dest '.git'))) {
@@ -143,7 +143,7 @@ if ($Parts -notcontains $Bin) {
   $env:Path = "$Bin;$env:Path"
 }
 & $KittExe --help | Out-Null
-& $Vpy -c "import kitt.daemon.client, kitt.remote.server, kitt.evolution, kitt.evals.corpus; print('KITT companion packages: ok')"
+& $Vpy -c "from kitt.history.database import HistoryDatabase; from kitt.history.migrations import CURRENT_SCHEMA_VERSION, MigrationRunner; import kitt.daemon.client, kitt.remote.server, kitt.evolution, kitt.evals.corpus; db=HistoryDatabase(':memory:', in_memory=True); assert MigrationRunner().get_current_version(db._mem_conn)==CURRENT_SCHEMA_VERSION; db.close(); print('KITT companion packages and state schema: ok')"
 if ($LASTEXITCODE -ne 0) { throw 'K.I.T.T. companion package smoke test failed' }
 $Backend = & $Vpy -c "from kitt.native.bridge import NativeCodeEngine; print(NativeCodeEngine(r'$Src').status.backend)"
 Write-Host "K.I.T.T. Agent CLI installed/updated at $Root (backend: $Backend; native wheel: $Native)."
