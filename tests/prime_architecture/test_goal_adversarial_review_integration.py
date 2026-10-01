@@ -7,6 +7,7 @@ from kitt.core.execution_budget import ExecutionBudgetLedger
 from kitt.core.turn_events import MetricsRecorded, ToolCompleted, ToolStarted, TurnCompleted
 from kitt.goals.executor import GoalStepExecutor
 from kitt.goals.review import ADVERSARIAL_REVIEW_PREFIX, AdversarialCodeReviewer
+from kitt.llm.client import LLMClient
 from kitt.tools.registry import ToolResult
 from kitt_protocol import ExecutionBudget
 
