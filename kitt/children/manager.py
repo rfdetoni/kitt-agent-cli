@@ -90,6 +90,13 @@ class ChildAgentManager(_LifecycleChildAgentManager):
                 token.cancel()
             return super().cancel(child_id, conversation_id, workspace_id)
 
+    def close(self):
+        if self._closed:
+            return
+        self.shutdown_all()
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        self._closed = True
+
     def _resolve_agent(self, conversation_id: str, selector: str):
         value = str(selector or "").strip()
         if not value:
