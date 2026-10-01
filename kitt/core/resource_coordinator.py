@@ -60,6 +60,34 @@ class ResourceCoordinator:
     def resource(kind: str, identity: str) -> ExecutionResource:
         return ExecutionResource(kind, identity)
 
+    def resources_for_tool(
+        self,
+        tool_name: str,
+        args: dict,
+        *,
+        conversation_id: str,
+    ) -> list[ExecutionResource]:
+        payload = args if isinstance(args, dict) else {}
+        operation = str(payload.get("operation") or "") if tool_name == "kitt_runtime" else ""
+        inner = payload.get("arguments") if tool_name == "kitt_runtime" else payload
+        inner = inner if isinstance(inner, dict) else {}
+
+        if tool_name == "run_command" or operation.startswith("process."):
+            identity = str(inner.get("process_id") or conversation_id or "default")
+            return [ExecutionResource("terminal", identity)]
+        if operation.startswith("browser."):
+            identity = str(inner.get("session_id") or conversation_id or "default")
+            return [ExecutionResource("browser", identity)]
+        if operation == "mcp.call":
+            identity = str(inner.get("server") or inner.get("server_id") or "default")
+            return [ExecutionResource("mcp", identity)]
+        if tool_name == "artifact_store" or operation == "artifacts.store":
+            identity = str(inner.get("artifact_id") or conversation_id or "store")
+            return [ExecutionResource("artifact", identity)]
+        if operation in {"repo.move", "repo.rename", "repo.delete"}:
+            return [ExecutionResource("workspace", conversation_id or "default")]
+        return []
+
     def acquire(
         self,
         resource: ExecutionResource,
