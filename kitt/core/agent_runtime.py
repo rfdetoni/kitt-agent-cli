@@ -190,7 +190,7 @@ def settle_child_budget(
     tools_used: int = 0,
 ) -> None:
     leases = getattr(processor, "child_budget_leases", {})
-    binding = leases.pop(child_id, None)
+    binding = leases.get(child_id)
     if not binding:
         return
     ledger = getattr(processor, "execution_budgets", {}).get(
@@ -226,6 +226,7 @@ def settle_child_budget(
         tools=charge_tools,
     )
     ledger.settle_child(binding["lease_id"])
+    leases.pop(child_id, None)
 
 
 def _jsonable(value: Any) -> Any:
