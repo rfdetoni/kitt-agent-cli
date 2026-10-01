@@ -118,7 +118,12 @@ class SemanticFilter:
         self.planner = ContextPlanner()
 
     def filter_and_plan(
-        self, prompt: str, session_key: Optional[str] = None, *, deterministic_only: bool = False
+        self,
+        prompt: str,
+        session_key: Optional[str] = None,
+        *,
+        deterministic_only: bool = False,
+        attempt_callback=None,
     ) -> SemanticFilterResult:
         start_t = time.time()
 
@@ -154,6 +159,7 @@ class SemanticFilter:
                 system_prompt=SYSTEM_CONTEXT_FILTER_PROMPT,
                 response_format="json",
                 session_key=session_key,
+                attempt_callback=attempt_callback,
             )
 
             if len(response_text) > 16384:
