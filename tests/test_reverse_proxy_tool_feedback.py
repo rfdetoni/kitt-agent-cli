@@ -3,7 +3,6 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from kitt.llm.agent_contract import TURN_CONTEXT_MARKER, inject_agent_turn_context
 from kitt.llm.domain import ProviderProtocolError
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.providers.kitt_reverse_proxy import (
@@ -39,7 +38,7 @@ class ReverseProxyToolFeedbackRegressionTests(unittest.TestCase):
         self.assertEqual(normalized[1]["name"], "kitt_runtime")
         self.assertEqual(normalized[1]["content"], feedback)
 
-    def test_turn_context_does_not_wrap_tool_feedback_user(self):
+    def test_structural_context_transport_leaves_tool_feedback_message_untouched(self):
         envelope = (
             '<kitt-tool>{"id":"call_list123","name":"kitt_runtime",'
             '"arguments":{"operation":"repo.list","arguments":{"path":"."}}}</kitt-tool>'
@@ -55,16 +54,7 @@ class ReverseProxyToolFeedbackRegressionTests(unittest.TestCase):
             {"role": "user", "content": feedback},
         ]
 
-        injected = inject_agent_turn_context(
-            messages,
-            workspace_context={"files": ["README.md"], "revision": 2},
-            route="code-generation",
-        )
-
-        self.assertTrue(injected[0]["content"].startswith(TURN_CONTEXT_MARKER))
-        self.assertEqual(injected[2]["content"], feedback)
-
-        normalized = normalize_native_tool_messages(injected)
+        normalized = normalize_native_tool_messages(messages)
         self.assertEqual(
             [message["role"] for message in normalized],
             ["user", "assistant", "tool"],
