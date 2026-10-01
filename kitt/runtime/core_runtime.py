@@ -218,6 +218,15 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "children.inspect": RuntimeOperationSpec(
         "children.inspect", CAP_CHILD_INSPECT, sensitive=False
     ),
+    "children.observe": RuntimeOperationSpec(
+        "children.observe", CAP_CHILD_INSPECT, sensitive=False
+    ),
+    "children.passivate": RuntimeOperationSpec(
+        "children.passivate", CAP_CHILD_MESSAGE, sensitive=False
+    ),
+    "children.revive": RuntimeOperationSpec(
+        "children.revive", CAP_CHILD_SPAWN, sensitive=False
+    ),
     "goal.inspect": RuntimeOperationSpec(
         "goal.inspect", CAP_GOAL_MANAGE, sensitive=False
     ),
@@ -836,6 +845,9 @@ class SafeRuntime:
             "children.spawn": lambda: self._op_registry_tool("children.spawn", "child_spawn", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "children.send": lambda: self._op_children_send(args),
             "children.inspect": lambda: self._op_children_inspect(args),
+            "children.observe": lambda: self._op_children_observe(),
+            "children.passivate": lambda: self._op_children_passivate(args),
+            "children.revive": lambda: self._op_children_revive(args),
             "goal.inspect": lambda: self._op_goal_inspect(args),
             "goal.update": lambda: self._op_goal_update(args),
             "memory.query": lambda: self._op_memory_query(args),
@@ -1635,25 +1647,42 @@ class SafeRuntime:
         return SafeRuntimeResult(True, "memory.link", data={"id": link_id})
 
     def _op_children_send(self, args):
-        child_id = str(args.get("child_id", ""))
+        recipient = str(args.get("recipient") or args.get("child_id") or "").strip()
+        sender = str(args.get("sender") or "parent").strip()
         message = args.get("message", "")
-        if not child_id or not message:
-            return SafeRuntimeResult(False, "children.send", error="child_id and message required")
-        if not self.children or not hasattr(self.children, "send_message"):
-            return SafeRuntimeResult(False, "children.send", error="Child messaging not available")
-        message_object = self.children.send_message(
-            conversation_id=self.conversation_id,
-            parent_id=self.conversation_id,
-            child_id=child_id,
-            sender_id=self.conversation_id,
-            recipient_id=child_id,
-            payload=message if isinstance(message, dict) else {"text": str(message)},
+        if not recipient or message in (None, ""):
+            return SafeRuntimeResult(
+                False,
+                "children.send",
+                error="recipient/child_id and message required",
+            )
+        if not self.children or not hasattr(self.children, "send_agent_message"):
+            return SafeRuntimeResult(
+                False,
+                "children.send",
+                error="Agent family messaging not available",
+            )
+        message_object, delivery_mode = self.children.send_agent_message(
+            self.conversation_id,
+            sender=sender,
+            recipient=recipient,
+            message=message,
+            delivery_mode=str(args.get("delivery_mode") or "AUTO"),
+            correlation_id=args.get("correlation_id"),
+            reply_to=args.get("reply_to"),
+            trace_id=args.get("trace_id"),
         )
         return SafeRuntimeResult(
             True,
             "children.send",
-            data={"message_id": getattr(message_object, "id", ""), "status": "SENT"},
-            context_handles=[f"child:{child_id}"],
+            data={
+                "message_id": getattr(message_object, "id", ""),
+                "status": "SENT",
+                "delivery_mode": delivery_mode,
+                "sender": sender,
+                "recipient": recipient,
+            },
+            context_handles=[f"child:{recipient}"],
         )
 
     def _op_children_inspect(self, args):
@@ -1681,6 +1710,65 @@ class SafeRuntime:
                 "error": child.error,
             },
             context_handles=[f"child:{child_id}"],
+        )
+
+    def _op_children_observe(self):
+        if not self.children or not hasattr(self.children, "observe_agents"):
+            return SafeRuntimeResult(
+                False,
+                "children.observe",
+                error="Agent roster not available",
+            )
+        return SafeRuntimeResult(
+            True,
+            "children.observe",
+            data=self.children.observe_agents(self.conversation_id),
+        )
+
+    def _op_children_passivate(self, args):
+        child_id = str(args.get("child_id") or "").strip()
+        if not child_id:
+            return SafeRuntimeResult(
+                False, "children.passivate", error="child_id required"
+            )
+        if not self.children:
+            return SafeRuntimeResult(
+                False, "children.passivate", error="Child manager not attached"
+            )
+        ok = self.children.passivate(
+            child_id,
+            conversation_id=self.conversation_id,
+            workspace_id=self.workspace_id,
+        )
+        return SafeRuntimeResult(
+            ok,
+            "children.passivate",
+            data={"child_id": child_id, "state": "PASSIVATED"} if ok else None,
+            error=None if ok else f"Child {child_id} not found",
+        )
+
+    def _op_children_revive(self, args):
+        child_id = str(args.get("child_id") or "").strip()
+        if not child_id:
+            return SafeRuntimeResult(
+                False, "children.revive", error="child_id required"
+            )
+        if not self.children:
+            return SafeRuntimeResult(
+                False, "children.revive", error="Child manager not attached"
+            )
+        child = self.children.revive(
+            child_id,
+            task=args.get("task"),
+            conversation_id=self.conversation_id,
+            workspace_id=self.workspace_id,
+            timeout_seconds=args.get("timeout_seconds"),
+        )
+        return SafeRuntimeResult(
+            True,
+            "children.revive",
+            data={"child_id": child.id, "state": child.state, "task": child.task},
+            context_handles=[f"child:{child.id}"],
         )
 
     def _op_goal_inspect(self, args):
