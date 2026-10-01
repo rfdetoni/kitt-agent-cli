@@ -554,22 +554,49 @@ class TurnToolLoopMixin:
                     arguments_digest=arguments_digest,
                     side_effecting=side_effecting,
                 )
-            if not self.turn_guard.begin(cmd.turn_id):
-                return
             yield ToolStarted(tool_name=tool_name, args=tool_args, call_id=call_id), None, None
             tool_started_at = time.perf_counter()
-            try:
-                tool_result = self.registry.execute_tool(
-                    tool_name,
-                    tool_args,
-                    turn_id=cmd.turn_id,
-                    conversation_id=cmd.conversation_id,
-                    workspace_id=workspace_id,
-                    enabled_tools=request.enabled_tools,
-                    security_context=security_context,
+            replayed_execution = bool(
+                execution_state is not None
+                and execution_state.get("state") == "COMPLETED"
+            )
+            if replayed_execution:
+                payload = dict(execution_state["event"].payload)
+                tool_result = ToolResult(
+                    success=bool(payload.get("success")),
+                    output=str(payload.get("output") or ""),
+                    error=payload.get("error"),
+                    metadata={
+                        **dict(payload.get("metadata") or {}),
+                        "replayed_execution": True,
+                        "execution_id": execution_id,
+                    },
                 )
-            finally:
-                self.turn_guard.end(cmd.turn_id)
+            elif (
+                execution_state is not None
+                and execution_state.get("state") == "RESERVED"
+                and not execution_state.get("fresh")
+                and side_effecting
+            ):
+                yield TurnBlocked(
+                    reason=f"Unresolved prior execution receipt: {execution_id}"
+                ), None, None
+                return
+            else:
+                if not self.turn_guard.begin(cmd.turn_id):
+                    return
+                try:
+                    tool_result = self.registry.execute_tool(
+                        tool_name,
+                        tool_args,
+                        turn_id=cmd.turn_id,
+                        conversation_id=cmd.conversation_id,
+                        workspace_id=workspace_id,
+                        enabled_tools=request.enabled_tools,
+                        security_context=security_context,
+                    )
+                finally:
+                    self.turn_guard.end(cmd.turn_id)
             self._record_latency(
                 cmd.turn_id,
                 "tool_preflight" if tool_result.requires_approval else "tool_execution",
