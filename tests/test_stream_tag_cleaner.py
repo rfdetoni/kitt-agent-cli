@@ -20,7 +20,13 @@ class TestStreamTagCleaner(unittest.TestCase):
         processor.cancelled_turns = set()
 
         events = []
-        for full_res, ev in processor._stream_execution_response(client, [], ""):
+        for full_res, ev in processor._stream_execution_response(
+            client, [],
+            "",
+            conversation_id="test-stream-tags",
+            turn_id="test-tag-chunked",
+            route="chat",
+        ):
             if ev is not None:
                 events.append(ev)
 
@@ -44,7 +50,13 @@ class TestStreamTagCleaner(unittest.TestCase):
         processor.cancelled_turns = set()
 
         events = []
-        for full_res, ev in processor._stream_execution_response(client, [], ""):
+        for full_res, ev in processor._stream_execution_response(
+            client, [],
+            "",
+            conversation_id="test-stream-tags",
+            turn_id="test-tag-normal",
+            route="chat",
+        ):
             if ev is not None:
                 events.append(ev)
 
