@@ -1,12 +1,12 @@
 # K.I.T.T. Agent CLI
 
-## Agent CLI 0.80.4 — protocol-owned request metadata
+## Agent CLI 0.80.5 — strict structural request identity
 
-Agent CLI 0.80.4 promotes `kitt_meta` to the shared KITT Protocol contract `KittRequestMetadata`. Reverse Proxy execution sends context exclusively as typed `kitt_context`, tools exclusively through structural `tool_definitions`, and route/correlation identity through the protocol-owned metadata value. Textual `[KITT TURN CONTEXT]`, `Available host tools:` and `Tool Contract:` parsing remain removed.
+Agent CLI 0.80.5 keeps `KittRequestMetadata` strict end to end. The execution-stream boundary now requires explicit `conversation_id`, `turn_id` and structured `route`; the tool-loop boundary likewise rejects execution without an explicit agent route. Production paths pass the real turn identity, while test harnesses use explicit structural fixtures instead of empty strings, placeholder identities or prompt-derived routing.
 
-The same request ID is shared between `kitt_meta` and the HTTP request header, while conversation/turn/request correlation remains out of model-visible logical history. Retry/continue retains the typed envelope and usage callback, so WebChat continuity no longer depends on reparsing a generated system prompt.
+The same request ID remains unique per model call and shared through the protocol-owned metadata/header correlation path. Typed `kitt_context`, structural tool definitions, streaming/reasoning cleanup, TTFT telemetry and reverse-proxy session continuity remain unchanged; no textual `Memory:`, `Repo Map:` or `Tool Contract:` parsing was restored.
 
-This patch keeps all 0.80.2 agent-engineering features: durable EventLedger/RunCoordinator state, ContextEpoch/recovery refs, global budgets with child leases, authority snapshots, selective rollback, managed background processes, structural roles, bounded skill/plugin discovery, Memory lifecycle evidence and privacy-safe `kitt learn`. It is paired with KITT Protocol **0.5.2**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.3** and Assistant Runtime **0.2.26**.
+This patch keeps the Agent Engineering ownership model introduced in 0.80.x: durable EventLedger/RunCoordinator state, ContextEpoch/recovery refs, global budgets with child leases, authority snapshots, selective rollback, managed background processes, structural roles, bounded skill/plugin discovery, Memory lifecycle evidence and privacy-safe `kitt learn`. It is paired with KITT Protocol **0.5.2**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.4** and Assistant Runtime **0.2.26**.
 
 ## Agent CLI 0.80.2 — hardened agent engineering runtime
 
