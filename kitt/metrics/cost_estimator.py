@@ -32,7 +32,7 @@ UNMETERED_LOCAL_BACKENDS = frozenset({
 })
 
 _cached_mtimes: Dict[str, float] = {}
-_cached_prices: Dict[str, Dict[str, float]] = {}
+_cached_prices: Dict[str, Dict[str, Dict[str, float]]] = {}
 
 
 def _load_pricing_file(path: Path) -> Dict[str, Dict[str, float]]:
