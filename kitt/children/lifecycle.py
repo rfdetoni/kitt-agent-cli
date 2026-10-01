@@ -312,7 +312,7 @@ class ChildAgentManager:
         timeout = min(float(timeout_seconds), self.max_worker_seconds)
         self._last_spawn_time[parent_conversation_id] = now
         child_id = f"child_{uuid.uuid4().hex}"
-        budget_lease = {}
+        budget_lease: dict[str, object] = {}
         if self._budget_allocator is not None:
             lease = self._budget_allocator(
                 parent_turn_id,
