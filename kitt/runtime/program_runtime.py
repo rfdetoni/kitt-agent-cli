@@ -94,7 +94,12 @@ class BoundedProgramRuntime:
         except (TypeError, ValueError):
             return SafeRuntimeResult(False, "program.execute", error="program limits must be integers")
 
-        scope: dict[str, Any] = {}
+        initial_state = arguments.get("state", {})
+        if initial_state is None:
+            initial_state = {}
+        if not isinstance(initial_state, dict):
+            return SafeRuntimeResult(False, "program.execute", error="state must be an object")
+        scope: dict[str, Any] = dict(initial_state)
         metrics = {"statements": 0, "tool_calls": 0, "intermediate_tokens": 0, "tokens_saved": 0}
         returned = {"set": False, "value": None}
 
@@ -201,16 +206,27 @@ class BoundedProgramRuntime:
         output_tokens = _json_tokens(bounded)
         avoided = max(0, int(metrics["intermediate_tokens"]) - output_tokens)
         saved = int(metrics["tokens_saved"]) + avoided
+        data = {
+            "result": bounded,
+            "tool_calls": metrics["tool_calls"],
+            "statements": metrics["statements"],
+            "intermediate_payloads_hidden": True,
+            "truncated": truncated,
+        }
+        if bool(arguments.get("capture_state", False)):
+            state_value, state_truncated = _bounded(scope, max_tokens)
+            if not isinstance(state_value, dict):
+                return SafeRuntimeResult(
+                    False,
+                    "program.execute",
+                    error="captured state is not an object",
+                )
+            data["state"] = state_value
+            data["state_truncated"] = state_truncated
         return SafeRuntimeResult(
             True,
             "program.execute",
-            data={
-                "result": bounded,
-                "tool_calls": metrics["tool_calls"],
-                "statements": metrics["statements"],
-                "intermediate_payloads_hidden": True,
-                "truncated": truncated,
-            },
+            data=data,
             tokens_saved=saved,
             metadata={
                 "output_family": "bounded_program",

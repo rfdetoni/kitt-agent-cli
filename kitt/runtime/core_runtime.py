@@ -13,6 +13,7 @@ from kitt.runtime.handles import ContextHandleResolver
 from kitt.runtime.operation_registry import RuntimeOperationRegistry
 from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
 from kitt.runtime.program_runtime import BoundedProgramRuntime
+from kitt.runtime.persistent_program import PersistentProgramSessions
 from kitt.runtime.progressive import apply_progressive_search_view
 from kitt.runtime.retrieval_guard import RetrievalGuard
 from kitt.runtime.state import RuntimeStateStore
@@ -110,6 +111,15 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     ),
     "flow.execute": RuntimeOperationSpec("flow.execute", None, sensitive=False),
     "program.execute": RuntimeOperationSpec("program.execute", None, sensitive=False),
+    "program.session.execute": RuntimeOperationSpec(
+        "program.session.execute", CAP_REPO_READ, sensitive=False
+    ),
+    "program.session.get": RuntimeOperationSpec(
+        "program.session.get", CAP_REPO_READ, sensitive=False
+    ),
+    "program.session.clear": RuntimeOperationSpec(
+        "program.session.clear", CAP_REPO_READ, sensitive=False
+    ),
     "repo.edit_symbol": RuntimeOperationSpec(
         "repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=1
     ),
@@ -352,6 +362,7 @@ class SafeRuntime:
         self.retrieval_guard = RetrievalGuard()
         self.programmatic_flow = ProgrammaticToolFlow(self)
         self.program_runtime = BoundedProgramRuntime(self)
+        self.program_sessions = PersistentProgramSessions(self.state, self.program_runtime)
         self.context_map_builder = ContextMapBuilder(
             self.index, self.goals, self.registry
         )
@@ -781,6 +792,11 @@ class SafeRuntime:
             "program.execute": lambda: self._op_program_execute(
                 args, turn_id, origin, capabilities, security_context
             ),
+            "program.session.execute": lambda: self._op_program_session_execute(
+                args, turn_id, origin, capabilities, security_context
+            ),
+            "program.session.get": lambda: self._op_program_session_get(args),
+            "program.session.clear": lambda: self._op_program_session_clear(args),
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context, automatic_budget_reserved=automatic_budget_reserved),
@@ -1236,6 +1252,35 @@ class SafeRuntime:
             origin=origin,
             capabilities=set(capabilities),
             security_context=security_context,
+        )
+
+    def _op_program_session_execute(
+        self, args, turn_id, origin, capabilities, security_context
+    ):
+        name = str(args.get("name") or "default")
+        return self.program_sessions.execute(
+            name,
+            args,
+            turn_id=turn_id,
+            origin=origin,
+            capabilities=capabilities,
+            security_context=security_context,
+        )
+
+    def _op_program_session_get(self, args):
+        name = str(args.get("name") or "default")
+        return SafeRuntimeResult(
+            True,
+            "program.session.get",
+            data=self.program_sessions.snapshot(name),
+        )
+
+    def _op_program_session_clear(self, args):
+        name = str(args.get("name") or "default")
+        return SafeRuntimeResult(
+            True,
+            "program.session.clear",
+            data={"name": name, "cleared": self.program_sessions.clear(name)},
         )
 
     def _op_repo_inspect_symbol(self, args, turn_id, origin, security_context):
