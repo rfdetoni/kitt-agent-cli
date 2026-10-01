@@ -26,6 +26,7 @@ from kitt.context.envelope import (
 )
 from kitt.context.epoch import build_context_epoch, persist_context_epoch
 from kitt.context.recovery import recoverable_text_body
+from kitt.context.reconcile import reconcile_context_envelope
 from kitt_protocol import CacheRegion, ContextKind, ContextStability, ContextTrust, RecoveryMode
 from kitt.llm.client import LLMClient
 from kitt.prompts import (
@@ -716,6 +717,15 @@ class TurnContextMixin:
             lifecycle="session",
         )
         context_envelope = builder.build()
+        reconciliation, cache_plan = reconcile_context_envelope(
+            self,
+            context_envelope,
+            conversation_id=cmd.conversation_id,
+            turn_id=cmd.turn_id,
+            provider_profile=exe_profile,
+        )
+        allocated["context_reconciliation"] = reconciliation
+        allocated["context_cache_plan"] = cache_plan
 
         # Reverse-proxy requests carry the typed envelope as data. Text-only
         # providers receive a deterministic one-way lowering of the same IR.
