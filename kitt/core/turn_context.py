@@ -5,7 +5,7 @@ import inspect
 import re
 from difflib import SequenceMatcher
 from dataclasses import replace
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context_filter.semantic_filter import SemanticFilter, llm_first_filter_result
@@ -40,6 +40,34 @@ from kitt.prompts import (
 
 class TurnContextMixin:
     """Semantic filtering, retrieval and prompt construction phase."""
+
+    # Composition contract supplied by TurnProcessor.
+    root_path: Any
+    config: Any
+    router: Any
+    context_client: Any
+    execution_client: Any
+    context_engine: Any
+    context_resolver: Any
+    deterministic_extractor: Any
+    enable_context_summary: bool
+    execution_budgets: dict[str, Any]
+    session_state: Any
+    working_set: Any
+    skill_discovery: Any
+    skill_loader: Any
+    harness_service: Any
+    history_service: Any
+    memory: Any
+    _cache_lock: Any
+    _context_summary_cache: dict[str, str]
+    _attachment_paths_by_turn: dict[str, Any]
+    _agent_role_policies: dict[str, Any]
+    _provider_session_key: Callable[..., str]
+    _adaptive_retrieval_ratio_fn: Callable[..., float]
+    _tool_definitions: Callable[..., Any]
+    _history_context: Callable[..., Any]
+    _without_thinking: Callable[[str], str]
 
     @staticmethod
     def _needs_project_context(task, prompt: str) -> bool:
