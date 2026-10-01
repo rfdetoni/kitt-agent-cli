@@ -12,7 +12,7 @@ import re
 import time
 from typing import Any, Optional
 
-from kitt.context_filter.prompt_budget import PromptBudget
+from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.core.logging import trace_event
 from kitt.core.turn_command import TurnCommand
 from kitt.domain.entities import ModelProfile, SemanticTask
@@ -264,13 +264,56 @@ class TurnArchitectMixin:
             f"architect:{cmd.conversation_id}:{cmd.turn_id}",
         )
         started = time.perf_counter()
+        execution_budget = getattr(self, "execution_budgets", {}).get(cmd.turn_id)
+        estimated_input = (
+            TokenCounter.count_tokens(_ARCHITECT_SYSTEM_PROMPT)
+            + TokenCounter.count_tokens(prompt)
+        )
+        provider_usage: dict[str, object] = {}
+
+        def observe_usage(usage: dict[str, object]) -> None:
+            provider_usage.clear()
+            provider_usage.update(dict(usage))
+
+        def reserve_retry(attempt: int) -> None:
+            if execution_budget is not None and int(attempt) > 0:
+                execution_budget.reserve_model_call(
+                    input_tokens=estimated_input,
+                    stage="architect",
+                )
+
         try:
+            if execution_budget is not None:
+                execution_budget.reserve_model_call(
+                    input_tokens=estimated_input,
+                    stage="architect",
+                )
             with LLMClient(profile) as client:
                 raw = client.chat(
                     [{"role": "user", "content": prompt}],
                     system_prompt=_ARCHITECT_SYSTEM_PROMPT,
                     session_key=session_key,
                     route="context-gather",
+                    usage_callback=observe_usage,
+                    attempt_callback=reserve_retry,
+                )
+            if execution_budget is not None:
+                actual_input = provider_usage.get("prompt_tokens")
+                actual_output = provider_usage.get("completion_tokens")
+                if isinstance(actual_input, (int, float)) and not isinstance(actual_input, bool):
+                    execution_budget.reconcile_model_input(
+                        estimated_tokens=estimated_input,
+                        actual_tokens=int(actual_input),
+                        stage="architect",
+                    )
+                execution_budget.record_model_output(
+                    output_tokens=(
+                        int(actual_output)
+                        if isinstance(actual_output, (int, float))
+                        and not isinstance(actual_output, bool)
+                        else TokenCounter.count_tokens(raw)
+                    ),
+                    stage="architect",
                 )
         except Exception as exc:
             trace_event(
