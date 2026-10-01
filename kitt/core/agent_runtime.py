@@ -113,6 +113,7 @@ def reserve_child_budget(
         ledger = _new_execution_budget(processor)
         budgets[parent_turn_id] = ledger
 
+    requested_tokens = max(1, int(token_cap))
     call_cap = max(
         1,
         min(
@@ -120,11 +121,29 @@ def reserve_child_budget(
             int(getattr(processor.config, "max_model_calls_per_turn", 24)),
         ),
     )
+    snapshot = ledger.snapshot()
+    budget_data = snapshot["budget"]
+    usage = snapshot["usage"]
+    reserved = snapshot["reserved"]
+    max_total_tokens = max(1, int(budget_data["max_total_tokens"]))
+    max_cost = max(0.0, float(budget_data["max_cost"]))
+    available_cost = max(
+        0.0,
+        max_cost
+        - float(usage.get("cost", 0.0) or 0.0)
+        - float(reserved.get("cost", 0.0) or 0.0),
+    )
+    proportional_cost = max_cost * min(
+        1.0,
+        requested_tokens / max_total_tokens,
+    )
+    cost_cap = min(available_cost, proportional_cost)
+
     lease = ledger.reserve_subagent(
         child_id,
-        token_cap=max(1, int(token_cap)),
+        token_cap=requested_tokens,
         call_cap=call_cap,
-        cost_cap=0.0,
+        cost_cap=cost_cap,
     )
     leases = getattr(processor, "child_budget_leases", None)
     if leases is None:
@@ -134,6 +153,8 @@ def reserve_child_budget(
         "turn_id": parent_turn_id,
         "lease_id": lease.id,
         "token_cap": lease.token_cap,
+        "call_cap": lease.call_cap,
+        "cost_cap": lease.cost_cap,
     }
     return lease
 
@@ -142,6 +163,8 @@ def settle_child_budget(
     processor,
     child_id: str,
     tokens_used: int = 0,
+    calls_used: int = 0,
+    cost_used: float = 0.0,
 ) -> None:
     leases = getattr(processor, "child_budget_leases", {})
     binding = leases.pop(child_id, None)
@@ -152,10 +175,28 @@ def settle_child_budget(
     )
     if ledger is None:
         return
+
     token_cap = max(0, int(binding.get("token_cap", 0)))
+    call_cap = max(0, int(binding.get("call_cap", 0)))
+    cost_cap = max(0.0, float(binding.get("cost_cap", 0.0)))
+    reported_tokens = max(0, int(tokens_used))
+    reported_calls = max(0, int(calls_used))
+    reported_cost = max(0.0, float(cost_used))
+
+    # A corrupt/overspent child report must never release capacity as if the
+    # excess did not happen. Charge the full lease in that case; otherwise
+    # charge the exact reported usage.
+    charge_tokens = (
+        token_cap if reported_tokens > token_cap else reported_tokens
+    )
+    charge_calls = call_cap if reported_calls > call_cap else reported_calls
+    charge_cost = cost_cap if reported_cost > cost_cap else reported_cost
+
     ledger.consume_child(
         binding["lease_id"],
-        tokens=min(max(0, int(tokens_used)), token_cap),
+        tokens=charge_tokens,
+        calls=charge_calls,
+        cost=charge_cost,
     )
     ledger.settle_child(binding["lease_id"])
 
