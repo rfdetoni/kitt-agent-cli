@@ -271,6 +271,17 @@ def build_parser() -> argparse.ArgumentParser:
         remote_parser.add_argument("--tls-cert", default=None, help="PEM certificate path")
         remote_parser.add_argument("--tls-key", default=None, help="PEM private-key path")
 
+    rpc_parser = subparsers.add_parser(
+        "rpc",
+        parents=[common],
+        help="Serve line-oriented JSON-RPC over the host-owned runtime",
+    )
+    rpc_parser.add_argument(
+        "--no-start-services",
+        action="store_true",
+        help="Do not start schedulers/extensions while serving RPC",
+    )
+
     sessions_parser = subparsers.add_parser(
         "sessions",
         parents=[common],
@@ -492,6 +503,24 @@ async def async_main(args) -> int:
     return code
 
 
+async def _run_rpc_mode(args) -> int:
+    config = RuntimeConfig.from_env()
+    if bool(getattr(args, "no_start_services", False)):
+        config = replace(
+            config,
+            scheduler_enabled=False,
+            wake_scheduler_enabled=False,
+            frontend_only=False,
+        )
+    runtime = KittRuntime.build(args.root, config=config)
+    try:
+        await runtime.start()
+        await asyncio.to_thread(runtime.rpc.serve_lines, sys.stdin, sys.stdout)
+        return 0
+    finally:
+        await runtime.aclose()
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -558,6 +587,9 @@ def main(argv=None) -> int:
             tls_cert=args.tls_cert,
             tls_key=args.tls_key,
         )
+
+    if args.subcommand == "rpc":
+        return asyncio.run(_run_rpc_mode(args))
 
     if args.subcommand == "sessions":
         from kitt.cli.commands import handle_sessions_command
