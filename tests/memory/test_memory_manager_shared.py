@@ -24,6 +24,57 @@ class TestMemoryManagerShared(unittest.TestCase):
         relevant = manager.get_relevant_memories("services")
         self.assertEqual([item.text for item in relevant], ["Architecture decision: services"])
 
+    def test_progressive_memory_hydrates_then_keeps_budgeted_snippet(self):
+        class ProgressiveClient:
+            def search(self, workspace_id, query, **kwargs):
+                self.search_args = (workspace_id, query, kwargs)
+                return (
+                    [
+                        {
+                            "id": "mem-1",
+                            "snippet": "short one",
+                            "scope": "workspace",
+                        },
+                        {
+                            "id": "mem-2",
+                            "snippet": "snippet retained under pressure",
+                            "scope": "workspace",
+                        },
+                    ],
+                    "trace-search",
+                )
+
+            def get(self, workspace_id, ids, **kwargs):
+                self.get_args = (workspace_id, list(ids), kwargs)
+                return (
+                    [
+                        {
+                            "record": {
+                                "id": "mem-1",
+                                "scope": "workspace",
+                                "content": "full hydrated memory",
+                                "pinned": True,
+                            },
+                            "provenance": [],
+                        }
+                    ],
+                    "trace-get",
+                    ["mem-2"],
+                )
+
+        client = ProgressiveClient()
+        manager = MemoryManager(shared_client=client, workspace_id="ws1")
+        relevant = manager.get_relevant_memories("services", max_tokens=300)
+
+        self.assertEqual(
+            [item.text for item in relevant],
+            ["full hydrated memory", "snippet retained under pressure"],
+        )
+        self.assertEqual("trace-get", relevant[0].recall_trace_id)
+        self.assertEqual("trace-search", relevant[1].recall_trace_id)
+        self.assertEqual(300, client.get_args[2]["token_budget"])
+        self.assertEqual(150, client.search_args[2]["token_budget"])
+
     def test_clear_archives_in_kitt_memory(self):
         client = MagicMock()
         manager = MemoryManager(shared_client=client, workspace_id="ws1")
