@@ -284,6 +284,68 @@ class SessionLedger:
         self.flush()
         return {"state": "RESERVED", "event": record, "fresh": True}
 
+    def complete_tool_execution(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        *,
+        execution_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments_digest: str,
+        success: bool,
+        output: str,
+        error: str | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> SessionEventRecord:
+        return self.append_event(
+            conversation_id,
+            "ToolExecutionCompleted",
+            {
+                "execution_id": execution_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "arguments_digest": arguments_digest,
+                "success": bool(success),
+                "output": str(output or "")[:262144],
+                "error": None if error is None else str(error)[:16384],
+                "metadata": _jsonable(dict(metadata or {})),
+            },
+            turn_id=turn_id,
+            source="tool-execution",
+            durability="DURABLE",
+            replayable=True,
+            parent_event_id=self._execution_event_id("reserved", execution_id),
+            event_id=self._execution_event_id("done", execution_id),
+        )
+
+    def flush(self) -> None:
+        try:
+            with self.db.get_connection() as conn:
+                conn.commit()
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except Exception:
+            return
+
+    def durability_fence(
+        self,
+        conversation_id: str,
+        *,
+        turn_id: str | None,
+        reason: str,
+    ) -> SessionEventRecord:
+        record = self.append_event(
+            conversation_id,
+            "DurabilityFence",
+            {"reason": str(reason or "sync")[:200]},
+            turn_id=turn_id,
+            source="event-ledger",
+            durability="SYNC",
+            replayable=True,
+        )
+        self.flush()
+        return record
+
     def as_agent_event(self, record: SessionEventRecord):
         if AgentEvent is None:
             return {
