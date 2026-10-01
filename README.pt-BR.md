@@ -2,6 +2,16 @@
 
 [English](README.md)
 
+## Agent CLI 0.81.0 — memória progressiva, replay seguro e transporte apenas estrutural
+
+O Agent CLI 0.81.0 conclui a rodada atual sem criar um segundo workflow engine nem um segundo motor de memória. O transporte para providers passa a ter um único caminho autoritativo: `ContextEnvelope` tipado, definições nativas de tools e `KittRequestMetadata`. Helpers antigos de parsing/injeção por texto foram removidos. Fluxos sync, async e retries recuperáveis do Reverse Proxy preservam a mesma correlação de conversa/turn/request.
+
+O contexto de memória agora usa o KITT Memory 0.7 de forma progressiva (`memory.search` → `memory.get`), mantendo snippets bounded quando a hidratação completa ultrapassa o budget, em vez de depender de `recall(limit=8)`. O KITT Memory continua sendo a única autoridade durável de memória semântica.
+
+Replay/idempotência de tools mutáveis, rollback seletivo de `WorkspaceSnapshot`, lifecycle de runtime por conversa, detecção de reread sem progresso e budget global por estágio receberam regressões específicas. Classifier, condenser, execução, validação e subagentes debitam a mesma carteira do turno; a separação por estágio é somente telemetria.
+
+Compatibilidade desta rodada: KITT Protocol **0.6.0**, KITT Memory **0.7.0**, Reverse Proxy **4.7.4** e Assistant Runtime **0.2.26**.
+
 ## Agent CLI 0.80.5 — identidade estrutural de requisição estrita
 
 O Agent mantém `KittRequestMetadata` estrito de ponta a ponta. O boundary de streaming agora exige `conversation_id`, `turn_id` e `route` estruturados; o boundary do tool loop também rejeita execução sem uma rota explícita. Caminhos de produção passam a identidade real do turno e os testes usam fixtures estruturais explícitos, sem strings vazias, IDs falsos ou inferência de rota pelo texto do prompt.
