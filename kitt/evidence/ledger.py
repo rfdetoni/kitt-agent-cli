@@ -208,6 +208,7 @@ class SessionLedger:
         model_visible: bool = False,
         replayable: bool = True,
         publisher=None,
+        event_id: str | None = None,
     ) -> SessionEventRecord:
         """Persist an event before publishing it to an external observer."""
         record = self.append(
@@ -220,6 +221,7 @@ class SessionLedger:
             parent_event_id=parent_event_id,
             model_visible=model_visible,
             replayable=replayable,
+            event_id=event_id,
         )
         if publisher is not None:
             publisher(event_type, dict(record.payload))
