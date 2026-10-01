@@ -12,7 +12,7 @@ from dataclasses import fields, is_dataclass
 from types import MethodType
 from typing import Any, Iterator
 
-from kitt.core.execution_budget import ExecutionBudgetLedger
+from kitt.core.execution_budget import ExecutionBudgetExceeded, ExecutionBudgetLedger
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import ApprovalRequired, TurnCompleted, TurnFailed
@@ -1037,7 +1037,7 @@ def _install_tool_execution(processor, registry) -> None:
                 result.metadata = dict(getattr(result, "metadata", {}) or {})
                 result.metadata["verification"] = report.as_dict()
                 if not report.ok:
-                    if snapshot is not None:
+                    if snapshot is not None and snapshot_service is not None:
                         restored = snapshot_service.restore(
                             snapshot.snapshot_id,
                             conversation_id=conv,
