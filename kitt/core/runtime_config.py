@@ -103,6 +103,10 @@ class RuntimeConfig:
     retained_agents_enabled: bool = True
     executable_skills_enabled: bool = True
     scheduler_enabled: bool = True
+    wake_scheduler_enabled: bool = True
+    peer_agent_messages_enabled: bool = True
+    provider_failover_enabled: bool = True
+    provider_park_seconds: float = 30.0
     verify_full_enabled: bool = False
 
     @classmethod
@@ -118,6 +122,9 @@ class RuntimeConfig:
             retained_agents_enabled=_env_bool("KITT_RETAINED_AGENTS", values.get("retained_agents_enabled", True)),
             executable_skills_enabled=_env_bool("KITT_EXECUTABLE_SKILLS", values.get("executable_skills_enabled", True)),
             scheduler_enabled=_env_bool("KITT_SCHEDULER", values.get("scheduler_enabled", True)),
+            wake_scheduler_enabled=_env_bool("KITT_WAKE_SCHEDULER", values.get("wake_scheduler_enabled", True)),
+            peer_agent_messages_enabled=_env_bool("KITT_PEER_AGENT_MESSAGES", values.get("peer_agent_messages_enabled", True)),
+            provider_failover_enabled=_env_bool("KITT_PROVIDER_FAILOVER", values.get("provider_failover_enabled", True)),
             verify_full_enabled=verification_full_enabled(bool(values.get("verify_full_enabled", False))),
         )
         return cls(**values)
