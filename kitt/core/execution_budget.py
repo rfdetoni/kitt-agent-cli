@@ -49,6 +49,26 @@ class ExecutionBudgetLedger:
         self.tool_calls = 0
         self.subagents = 0
         self._leases: dict[str, _LeaseState] = {}
+        self._stage_usage: dict[str, dict[str, float | int]] = {}
+
+    @staticmethod
+    def _stage_name(stage: str) -> str:
+        value = str(stage or "model").strip().lower()
+        return value[:64] or "model"
+
+    def _stage(self, stage: str) -> dict[str, float | int]:
+        name = self._stage_name(stage)
+        return self._stage_usage.setdefault(
+            name,
+            {
+                "model_calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost": 0.0,
+                "tool_calls": 0,
+                "subagents": 0,
+            },
+        )
 
     def _elapsed_ms(self) -> int:
         return max(0, int((self._clock() - self._started) * 1000))
@@ -86,7 +106,6 @@ class ExecutionBudgetLedger:
         cost: float = 0.0,
         stage: str = "model",
     ) -> None:
-        del stage
         with self._lock:
             self._check_duration()
             _, reserved_calls, reserved_cost = self._outstanding()
@@ -95,15 +114,22 @@ class ExecutionBudgetLedger:
             self._check_tokens(next_input=input_tokens)
             if self.cost + max(0.0, float(cost)) + reserved_cost > self.budget.max_cost:
                 raise ExecutionBudgetExceeded("execution cost budget exceeded")
+            charged_input = max(0, int(input_tokens))
+            charged_cost = max(0.0, float(cost))
             self.model_calls += 1
-            self.input_tokens += max(0, int(input_tokens))
-            self.cost += max(0.0, float(cost))
+            self.input_tokens += charged_input
+            self.cost += charged_cost
+            bucket = self._stage(stage)
+            bucket["model_calls"] = int(bucket["model_calls"]) + 1
+            bucket["input_tokens"] = int(bucket["input_tokens"]) + charged_input
+            bucket["cost"] = float(bucket["cost"]) + charged_cost
 
     def reconcile_model_input(
         self,
         *,
         estimated_tokens: int,
         actual_tokens: int,
+        stage: str = "model",
     ) -> None:
         """Replace one preflight input estimate with provider-observed usage."""
         estimated = max(0, int(estimated_tokens))
@@ -116,23 +142,41 @@ class ExecutionBudgetLedger:
             if delta > 0:
                 self._check_tokens(next_input=delta)
             self.input_tokens = next_total
+            bucket = self._stage(stage)
+            bucket["input_tokens"] = max(
+                0,
+                int(bucket["input_tokens"]) + (actual - estimated),
+            )
 
-    def record_model_output(self, *, output_tokens: int = 0, cost: float = 0.0) -> None:
+    def record_model_output(
+        self,
+        *,
+        output_tokens: int = 0,
+        cost: float = 0.0,
+        stage: str = "model",
+    ) -> None:
         with self._lock:
             self._check_duration()
             self._check_tokens(next_output=output_tokens)
             _, _, reserved_cost = self._outstanding()
             if self.cost + max(0.0, float(cost)) + reserved_cost > self.budget.max_cost:
                 raise ExecutionBudgetExceeded("execution cost budget exceeded")
-            self.output_tokens += max(0, int(output_tokens))
-            self.cost += max(0.0, float(cost))
+            charged_output = max(0, int(output_tokens))
+            charged_cost = max(0.0, float(cost))
+            self.output_tokens += charged_output
+            self.cost += charged_cost
+            bucket = self._stage(stage)
+            bucket["output_tokens"] = int(bucket["output_tokens"]) + charged_output
+            bucket["cost"] = float(bucket["cost"]) + charged_cost
 
-    def reserve_tool_call(self) -> None:
+    def reserve_tool_call(self, *, stage: str = "tools") -> None:
         with self._lock:
             self._check_duration()
             if self.tool_calls + 1 > self.budget.max_tool_calls:
                 raise ExecutionBudgetExceeded("tool call budget exceeded")
             self.tool_calls += 1
+            bucket = self._stage(stage)
+            bucket["tool_calls"] = int(bucket["tool_calls"]) + 1
 
     def reserve_subagent(
         self,
@@ -186,6 +230,8 @@ class ExecutionBudgetLedger:
                 cost_cap=requested_cost,
             )
             self.subagents += 1
+            bucket = self._stage("subagents")
+            bucket["subagents"] = int(bucket["subagents"]) + 1
             return lease
 
     def consume_child(
@@ -254,5 +300,9 @@ class ExecutionBudgetLedger:
                     "tokens": reserved_tokens,
                     "calls": reserved_calls,
                     "cost": reserved_cost,
+                },
+                "stages": {
+                    name: dict(values)
+                    for name, values in sorted(self._stage_usage.items())
                 },
             }
