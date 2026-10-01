@@ -5,6 +5,9 @@ import json
 import time
 import uuid
 from typing import Any
+import re
+
+from kitt.history.redaction import redact as redact_secret_text
 
 from .models import SessionEventRecord
 
@@ -25,6 +28,27 @@ def _jsonable(value: Any) -> Any:
         if isinstance(value, (list, tuple, set)):
             return [_jsonable(child) for child in value]
         return str(value)
+
+
+_SENSITIVE_KEY = re.compile(
+    r"(authorization|cookie|token|secret|password|passwd|api[-_]?key|credential|csrf|xsrf)",
+    re.IGNORECASE,
+)
+
+
+def _redact_observability(value: Any, key: str = "") -> Any:
+    if key and _SENSITIVE_KEY.search(key):
+        return "[REDACTED]"
+    if isinstance(value, str):
+        return redact_secret_text(value)
+    if isinstance(value, dict):
+        return {
+            str(child_key): _redact_observability(child_value, str(child_key))
+            for child_key, child_value in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_redact_observability(item) for item in value]
+    return value
 
 
 def _canonical(value: Any) -> str:
@@ -87,7 +111,7 @@ class SessionLedger:
     ) -> SessionEventRecord:
         if not conversation_id:
             raise ValueError("conversation_id is required")
-        body = dict(payload or {})
+        body = _redact_observability(dict(payload or {}))
         encoded = _canonical(body)
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         now = time.time()
