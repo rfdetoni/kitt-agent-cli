@@ -2,6 +2,14 @@
 
 [English](README.md)
 
+## Agent CLI 0.80.5 — identidade estrutural de requisição estrita
+
+O Agent mantém `KittRequestMetadata` estrito de ponta a ponta. O boundary de streaming agora exige `conversation_id`, `turn_id` e `route` estruturados; o boundary do tool loop também rejeita execução sem uma rota explícita. Caminhos de produção passam a identidade real do turno e os testes usam fixtures estruturais explícitos, sem strings vazias, IDs falsos ou inferência de rota pelo texto do prompt.
+
+O `request_id` continua único por chamada e correlacionado estruturalmente. `kitt_context` tipado, tools estruturais, limpeza de streaming/reasoning, telemetria TTFT e continuidade da sessão no Reverse Proxy foram preservados. Não foi restaurado parsing textual de `Memory:`, `Repo Map:` ou `Tool Contract:`.
+
+Compatibilidade desta rodada: KITT Protocol **0.5.2**, KITT Memory **0.6.1**, Reverse Proxy **4.7.4** e Assistant Runtime **0.2.26**.
+
 **Control plane local-first para agentes autônomos de programação.**
 
 ## Agent CLI 0.80.2 — roles estruturais, processos gerenciados e aprendizado mensurável
