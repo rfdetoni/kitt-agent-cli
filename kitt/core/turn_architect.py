@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 import json
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.core.logging import trace_event
@@ -158,6 +158,17 @@ class ArchitectPlanner:
 
 class TurnArchitectMixin:
     """Complexity-gated architect phase with an explicit configured profile."""
+
+    # Composition contract supplied by TurnProcessor.
+    root_path: Any
+    config: Any
+    router: Any
+    routing_policy: Any
+    session_state: Any
+    execution_budgets: dict[str, Any]
+    _routing_capabilities: Callable[..., Any]
+    _provider_session_key: Callable[..., str]
+    _record_latency: Callable[..., Any]
 
     def _eligible_architect_profile(
         self,
