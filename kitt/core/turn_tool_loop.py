@@ -162,7 +162,9 @@ class TurnToolLoopMixin:
                            exe_client: LLMClient, workspace_id: str,
                            security_context: ExecutionSecurityContext,
                            agent_route: Optional[str] = None) -> Iterator:
-        effective_agent_route = request.agent_route or agent_route
+        effective_agent_route = str(request.agent_route or agent_route or "").strip()
+        if not effective_agent_route:
+            raise ValueError("agent_route is required for execution")
         attachment_paths = getattr(self, "_attachment_paths_by_turn", {}).get(cmd.turn_id, ())
         if attachment_paths and _reverse_proxy_identity(getattr(exe_client, "profile", None)) is None:
             raise AttachmentError(
