@@ -123,3 +123,89 @@ def test_provider_cost_reconciliation_enforces_hard_limit():
             estimated_cost=0.10,
             actual_cost=0.30,
         )
+
+
+def test_settled_child_usage_remains_in_parent_wallet():
+    ledger = ExecutionBudgetLedger(
+        _budget(
+            max_model_calls=4,
+            max_total_tokens=100,
+            max_tool_calls=4,
+            max_cost=1.0,
+        )
+    )
+    lease = ledger.reserve_subagent(
+        "child",
+        token_cap=60,
+        call_cap=2,
+        cost_cap=0.5,
+        tool_cap=2,
+    )
+    ledger.consume_child(
+        lease.id,
+        tokens=20,
+        calls=1,
+        cost=0.2,
+        tools=1,
+    )
+    ledger.settle_child(lease.id)
+
+    snapshot = ledger.snapshot()
+    assert snapshot["usage"]["child_tokens"] == 20
+    assert snapshot["usage"]["child_model_calls"] == 1
+    assert snapshot["usage"]["child_tool_calls"] == 1
+    assert snapshot["usage"]["child_cost"] == pytest.approx(0.2)
+    assert snapshot["usage"]["total_tokens"] == 20
+    assert snapshot["usage"]["model_calls"] == 1
+    assert snapshot["usage"]["tool_calls"] == 1
+    assert snapshot["usage"]["cost"] == pytest.approx(0.2)
+    assert snapshot["reserved"] == {
+        "tokens": 0,
+        "calls": 0,
+        "cost": 0.0,
+        "tools": 0,
+    }
+
+    # Consumed child capacity remains spent after settlement.
+    with pytest.raises(ExecutionBudgetExceeded):
+        ledger.reserve_subagent(
+            "too-large",
+            token_cap=81,
+            call_cap=1,
+            cost_cap=0.0,
+            tool_cap=1,
+        )
+
+
+def test_concurrent_child_tool_and_cost_leases_cannot_overspend_parent():
+    ledger = ExecutionBudgetLedger(
+        _budget(
+            max_model_calls=4,
+            max_total_tokens=100,
+            max_tool_calls=3,
+            max_cost=0.5,
+        )
+    )
+    ledger.reserve_subagent(
+        "first",
+        token_cap=30,
+        call_cap=1,
+        cost_cap=0.3,
+        tool_cap=2,
+    )
+    with pytest.raises(ExecutionBudgetExceeded):
+        ledger.reserve_subagent(
+            "second-tools",
+            token_cap=10,
+            call_cap=1,
+            cost_cap=0.1,
+            tool_cap=2,
+        )
+    with pytest.raises(ExecutionBudgetExceeded):
+        ledger.reserve_subagent(
+            "second-cost",
+            token_cap=10,
+            call_cap=1,
+            cost_cap=0.3,
+            tool_cap=1,
+        )
