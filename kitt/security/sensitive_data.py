@@ -9,7 +9,7 @@ from typing import Tuple, List
 
 SENSITIVE_PATTERNS = [
     ("PEM_PRIVATE_KEY", re.compile(r'-----BEGIN (?:RSA|EC|OPENSSH|DSA|PRIVATE) KEY-----[a-zA-Z0-9+/=\s]{16,8192}-----END \w+ KEY-----')),
-    ("API_KEY_PREFIX", re.compile(r'\b(?:sk-[a-zA-Z0-9_\-]{16,}|ghp_[a-zA-Z0-9]{36}|xoxb-[a-zA-Z0-9\-]+|glpat-[a-zA-Z0-9\-]{20,})\b')),
+    ("API_KEY_PREFIX", re.compile(r'\b(?:sk[-_][a-zA-Z0-9_\-]{12,}|ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{12,}|xoxb-[a-zA-Z0-9\-]+|glpat-[a-zA-Z0-9\-]{20,})\b')),
     ("AWS_KEY", re.compile(r'\bAKIA[0-9A-Z]{16}\b')),
     ("AUTHORIZATION_HEADER", re.compile(r'(?i)\bBearer\s+[a-zA-Z0-9._\-]{15,}')),
     ("CONNECTION_STRING", re.compile(r'(?i)\b(?:postgres|mysql|mongodb|redis)://[^:\s]+:[^@\s]+@[^/\s]+\b')),
