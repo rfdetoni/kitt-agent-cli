@@ -8,7 +8,7 @@ Memory context now uses KITT Memory 0.7 progressive retrieval (`memory.search` â
 
 Execution durability is hardened with explicit event replay/idempotency tests, selective workspace snapshot diff/preview/restore, per-conversation runtime lifecycle tests, repeated-reread no-progress coverage and one global stage-aware execution budget. Classifier, condenser, execution model calls, validation tools and child leases all debit the same turn wallet; stage accounting is telemetry, not separate authority.
 
-This release targets KITT Protocol **0.6.0**, KITT Memory **0.7.0**, KITT Reverse Proxy **4.7.4** and Assistant Runtime **0.2.26**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) and [docs/AGENTIC_RUNTIME_ACCEPTANCE.md](docs/AGENTIC_RUNTIME_ACCEPTANCE.md).
+This release targets KITT Protocol **0.6.0**, KITT Memory **0.7.0**, KITT Reverse Proxy **4.7.4** and Assistant Runtime **0.2.27**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) and [docs/AGENTIC_RUNTIME_ACCEPTANCE.md](docs/AGENTIC_RUNTIME_ACCEPTANCE.md).
 
 ## Agent CLI 0.80.5 â€” strict structural request identity
 
