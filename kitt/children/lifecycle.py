@@ -96,6 +96,14 @@ class ChildAgentManager:
                 max(0.0, float(cost_used)),
                 max(0, int(tools_used)),
             )
+            child = self.repo.get(child_id)
+            if child is not None:
+                lease = dict(child.budget_lease or {})
+                lease["settled"] = True
+                self.repo.update(
+                    child_id,
+                    budget_lease_json=json.dumps(lease, ensure_ascii=False),
+                )
         except Exception:
             # The child-side lease already enforces the hard cap. Settlement is
             # accounting/release and must not corrupt a completed workspace merge.
@@ -133,6 +141,14 @@ class ChildAgentManager:
             budget_lease_json=json.dumps(lease, ensure_ascii=False),
         )
         return consumed
+
+    def _budget_is_settled(self, child_id: str) -> bool:
+        child = self.repo.get(child_id)
+        return bool(
+            child is not None
+            and isinstance(child.budget_lease, dict)
+            and child.budget_lease.get("settled")
+        )
 
     def _exhaust_budget_usage(self, child_id: str) -> dict[str, float | int]:
         child = self.repo.get(child_id)
@@ -676,14 +692,15 @@ class ChildAgentManager:
                 error=str(exc),
                 completed_at=time.time(),
             )
-            usage = self._exhaust_budget_usage(child_id)
-            self._settle_child_budget(
-                child_id,
-                int(usage["tokens"]),
-                int(usage["calls"]),
-                float(usage["cost"]),
-                int(usage["tools"]),
-            )
+            if not self._budget_is_settled(child_id):
+                usage = self._exhaust_budget_usage(child_id)
+                self._settle_child_budget(
+                    child_id,
+                    int(usage["tokens"]),
+                    int(usage["calls"]),
+                    float(usage["cost"]),
+                    int(usage["tools"]),
+                )
             self._on_event(
                 "ChildAgentFinished",
                 {
@@ -737,6 +754,15 @@ class ChildAgentManager:
                 error=str(exc),
                 completed_at=time.time(),
             )
+            if not self._budget_is_settled(child_id):
+                usage = self._exhaust_budget_usage(child_id)
+                self._settle_child_budget(
+                    child_id,
+                    int(usage["tokens"]),
+                    int(usage["calls"]),
+                    float(usage["cost"]),
+                    int(usage["tools"]),
+                )
             self._on_event(
                 "ChildAgentFinished",
                 {"child_id": child_id, "status": state, "error": str(exc)},
