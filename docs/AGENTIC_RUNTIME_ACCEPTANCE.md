@@ -24,8 +24,8 @@ This matrix mirrors the **30 original mandatory acceptance tests** from the arch
 | 16 | Concurrent subagent wallet cannot overspend | agent | `tests/test_execution_budget.py` | child-agent budget integration | subagent E2E | PENDING | PENDING | PENDING |
 | 17 | Worktree isolation between parent/children | agent | retained-agent lifecycle tests | child/worktree integration | parent + two-child E2E | PENDING | PENDING | PENDING |
 | 18 | Selective rollback | agent | `tests/test_workspace_snapshot_selective.py` | snapshot integration | rollback E2E | PENDING | PENDING | PENDING |
-| 19 | Artifact exact recovery | agent | `tests/test_long_context_lifecycle.py` | artifact-store integration | long-artifact recovery E2E | PENDING | PENDING | PENDING |
-| 20 | Artifact query retrieval | agent | artifact-store tests | artifact query integration | long-artifact recovery E2E | PENDING | PENDING | PENDING |
+| 19 | Artifact exact recovery | agent | `tests/test_artifact_recovery.py` | paged exact-recovery integration | long-artifact recovery E2E | PENDING | PENDING | PENDING |
+| 20 | Artifact query retrieval | agent | `tests/test_artifact_recovery.py` | bounded query integration | long-artifact recovery E2E | PENDING | PENDING | PENDING |
 | 21 | Compaction preserves error/exit code/path/constraint | agent | `tests/test_long_context_lifecycle.py` | compaction invariant integration | long-context E2E | PENDING | PENDING | PENDING |
 | 22 | Stuck detector catches same action/error, alternating loop and monologue | agent | `tests/test_completion_progress_stall.py` | progress-guard integration | stalled-agent E2E | PENDING | PENDING | PENDING |
 | 23 | No-progress from absent mutation/validation | agent | `tests/test_progress_guard_redirect_budget.py` | completion guard integration | no-progress E2E | PENDING | PENDING | PENDING |
