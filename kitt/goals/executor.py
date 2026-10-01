@@ -4,6 +4,7 @@ import re
 import shlex
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
+from typing import Any
 
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.core.turn_command import TurnCommand
@@ -144,7 +145,10 @@ class GoalStepExecutor:
                 pass
         elif tool_name == "kitt_runtime":
             operation = str(args.get("operation") or "")
-            inner = args.get("arguments") if isinstance(args.get("arguments"), dict) else {}
+            raw_inner = args.get("arguments")
+            inner: dict[str, Any] = (
+                dict(raw_inner) if isinstance(raw_inner, dict) else {}
+            )
             if operation == "repo.edit_symbol":
                 path = inner.get("path") or inner.get("file") or cls._resolve_symbol_path(runtime, inner)
                 if path:
@@ -174,7 +178,7 @@ class GoalStepExecutor:
         if not wanted or not diff_text.strip():
             return "", set(), True
         blocks = []
-        current = []
+        current: list[str] = []
         matched_paths = set()
         complete = True
 
@@ -449,7 +453,7 @@ class GoalStepExecutor:
                 backend=str(getattr(profile, "backend", "") or ""),
                 workspace_root=str(runtime.canonical_root),
             ).estimated_usd
-            provider_usage = {}
+            provider_usage: dict[str, object] = {}
 
             def observe_usage(value):
                 provider_usage.clear()
@@ -652,7 +656,7 @@ class GoalStepExecutor:
                 result["review_risk"] = assessment.to_dict()
 
                 if assessment.level != ReviewRisk.LOW and snapshot:
-                    review_usage = {
+                    review_usage: dict[str, Any] = {
                         "tokens": 0,
                         "cost": 0.0,
                         "redactions": 0,
@@ -668,7 +672,7 @@ class GoalStepExecutor:
                             if pass_index == 2
                             else "adversarial-review"
                         )
-                        pass_usage = {
+                        pass_usage: dict[str, Any] = {
                             "tokens": 0,
                             "cost": 0.0,
                             "redactions": 0,
