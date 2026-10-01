@@ -66,6 +66,7 @@ class TurnContextMixin:
     _provider_session_key: Callable[..., str]
     _adaptive_retrieval_ratio_fn: Callable[..., float]
     _tool_definitions: Callable[..., Any]
+    _tool_instructions: Callable[..., str]
     _history_context: Callable[..., Any]
     _without_thinking: Callable[[str], str]
 
