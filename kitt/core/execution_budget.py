@@ -334,7 +334,9 @@ class ExecutionBudgetLedger:
         tools: int = 0,
     ) -> None:
         with self._lock:
-            self._check_duration()
+            # Settlement is accounting, not a new execution action. It must
+            # remain possible after the wall-clock deadline so spent capacity
+            # cannot disappear merely because the child finished late.
             state = self._leases.get(str(lease_id))
             if state is None or state.settled:
                 raise ExecutionBudgetExceeded("unknown or settled child budget lease")
