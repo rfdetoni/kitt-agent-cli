@@ -81,6 +81,14 @@ class TurnContextMixin:
                     input_tokens=estimated_input,
                     stage="condenser",
                 )
+
+            def reserve_condenser_retry(attempt: int) -> None:
+                if execution_budget is not None and int(attempt) > 0:
+                    execution_budget.reserve_model_call(
+                        input_tokens=estimated_input,
+                        stage="condenser",
+                    )
+
             if profile and "lfm" in profile.model.lower():
                 lfm_profile = replace(
                     profile,
@@ -92,12 +100,14 @@ class TurnContextMixin:
                         [{"role": "user", "content": user_content}],
                         system_prompt=CONTEXT_SUMMARY_PROMPT,
                         session_key=session_key,
+                        attempt_callback=reserve_condenser_retry,
                     )
             else:
                 summary = client.chat(
                     [{"role": "user", "content": user_content}],
                     system_prompt=CONTEXT_SUMMARY_PROMPT,
                     session_key=session_key,
+                    attempt_callback=reserve_condenser_retry,
                 )
             summary = self._without_thinking(summary)[:6000] or fallback
             if execution_budget is not None:
@@ -184,14 +194,24 @@ class TurnContextMixin:
             llm_client=self.context_client,
         )
         execution_budget = getattr(self, "execution_budgets", {}).get(cmd.turn_id)
+        classifier_input = TokenCounter.count_tokens(cmd.prompt) + 256
         if execution_budget is not None:
             execution_budget.reserve_model_call(
-                input_tokens=TokenCounter.count_tokens(cmd.prompt) + 256,
+                input_tokens=classifier_input,
                 stage="classifier",
             )
+
+        def reserve_classifier_retry(attempt: int) -> None:
+            if execution_budget is not None and int(attempt) > 0:
+                execution_budget.reserve_model_call(
+                    input_tokens=classifier_input,
+                    stage="classifier",
+                )
+
         filter_res = semantic_filter.filter_and_plan(
             cmd.prompt,
             session_key=self._provider_session_key(ctx_profile, cmd.conversation_id),
+            attempt_callback=reserve_classifier_retry,
         )
         if execution_budget is not None:
             execution_budget.record_model_output(
