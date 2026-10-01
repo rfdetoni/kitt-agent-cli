@@ -15,7 +15,7 @@ class InstallerServiceShutdownTests(unittest.TestCase):
         self.assertIn("kitt-daemon.service", text)
         self.assertIn("com.kitt.daemon", text)
         self.assertIn('"$existing_kitt" daemon stop', text)
-        self.assertIn('[[ "$pid" != "$" && "$pid" != "$PPID" ]]', text)
+        self.assertIn('[[ "$pid" != "$$" && "$pid" != "$PPID" ]]', text)
         self.assertIn("Python 3.14+ is required", text)
         self.assertIn("HistoryDatabase(\":memory:\", in_memory=True)", text)
 
