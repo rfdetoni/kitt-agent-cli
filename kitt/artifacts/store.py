@@ -199,7 +199,10 @@ class ArtifactStore:
         context_chars = max(40, min(int(context_chars), 2000))
 
         if artifact.storage_kind == "INLINE":
-            text = bytes(artifact.inline_content or b"").decode(
+            inline_raw = bytes(artifact.inline_content or b"")
+            if hashlib.sha256(inline_raw).hexdigest() != artifact.content_hash:
+                raise ValueError("Artifact integrity check failed")
+            text = inline_raw.decode(
                 "utf-8",
                 errors="replace",
             )
