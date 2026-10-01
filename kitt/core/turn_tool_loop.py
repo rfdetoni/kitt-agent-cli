@@ -604,6 +604,28 @@ class TurnToolLoopMixin:
                 detail={"tool": tool_name, "requires_approval": bool(tool_result.requires_approval)},
             )
             tool_duration_ms = (time.perf_counter() - tool_started_at) * 1000
+            if (
+                ledger is not None
+                and not replayed_execution
+                and not tool_result.requires_approval
+            ):
+                receipt = ledger.complete_tool_execution(
+                    cmd.conversation_id,
+                    cmd.turn_id,
+                    execution_id=execution_id,
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                    arguments_digest=arguments_digest,
+                    success=bool(tool_result.success),
+                    output=str(tool_result.output or ""),
+                    error=tool_result.error,
+                    metadata=dict(tool_result.metadata or {}),
+                )
+                tool_result.metadata = {
+                    **dict(tool_result.metadata or {}),
+                    "execution_id": execution_id,
+                    "execution_event_id": receipt.id,
+                }
             logger.debug(
                 "host result turn=%s call=%s tool=%s success=%s approval=%s error=%r",
                 cmd.turn_id,
