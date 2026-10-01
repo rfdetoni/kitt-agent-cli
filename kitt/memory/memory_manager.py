@@ -167,9 +167,77 @@ class MemoryManager:
                     result.append(item)
         return result
 
-    def get_relevant_memories(self, prompt: str) -> List[MemoryItem]:
+    def get_relevant_memories(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 400,
+    ) -> List[MemoryItem]:
         if not self.persistence_enabled:
             return []
+        budget = max(32, min(int(max_tokens), 8_192))
+        search = getattr(self.client, "search", None)
+        hydrate = getattr(self.client, "get", None)
+        if callable(search) and callable(hydrate):
+            hits, search_trace_id = search(
+                self.workspace_id,
+                prompt,
+                max_results=24,
+                token_budget=max(32, budget // 2),
+            )
+            ids = [
+                str(hit.get("id") or "")
+                for hit in hits
+                if isinstance(hit, dict) and str(hit.get("id") or "")
+            ]
+            hydrated, get_trace_id, truncated_ids = hydrate(
+                self.workspace_id,
+                ids,
+                token_budget=budget,
+            )
+            result: list[MemoryItem] = []
+            hydrated_ids: set[str] = set()
+            for wrapper in hydrated:
+                if not isinstance(wrapper, dict):
+                    continue
+                record = wrapper.get("record")
+                if not isinstance(record, dict):
+                    continue
+                item = self._item(record, get_trace_id)
+                if item:
+                    hydrated_ids.add(item.memory_id)
+                    result.append(item)
+            # If the full body does not fit the budget, retain the search snippet
+            # rather than silently dropping the memory candidate.
+            truncated = set(str(value) for value in truncated_ids)
+            for hit in hits:
+                if not isinstance(hit, dict):
+                    continue
+                memory_id = str(hit.get("id") or "")
+                if not memory_id or memory_id in hydrated_ids:
+                    continue
+                if memory_id not in truncated and hydrated_ids:
+                    continue
+                snippet = str(hit.get("snippet") or "").strip()
+                if not snippet:
+                    continue
+                scope = (
+                    "GLOBAL"
+                    if str(hit.get("scope") or "").lower() == "global"
+                    else "PROJECT"
+                )
+                result.append(
+                    MemoryItem(
+                        text=snippet,
+                        scope=scope,
+                        priority=2,
+                        memory_id=memory_id,
+                        recall_trace_id=search_trace_id,
+                    )
+                )
+            return result
+
+        # Transitional fallback for a partially upgraded local installation.
         trace_id = ""
         recall_with_trace = getattr(type(self.client), "recall_with_trace", None)
         if callable(recall_with_trace):
@@ -229,7 +297,11 @@ class MemoryManager:
         *,
         turn_id: str = "",
     ) -> str:
-        items = self.get_relevant_memories(prompt) if prompt else self.get_items()
+        items = (
+            self.get_relevant_memories(prompt, max_tokens=max_tokens)
+            if prompt
+            else self.get_items()
+        )
         if not prompt:
             body = "\n".join(f"- {item.text}" for item in items) if items else "(empty)"
             return f"--- Project Memory ---\n{body}"
