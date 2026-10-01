@@ -48,6 +48,36 @@ class ProgressAwareCompletionGuardTests(unittest.TestCase):
         self.assertIn("identical exploration repeated without progress", stall)
         self.assertIn("repo.list", stall)
 
+    def test_identical_file_reread_is_detected_before_third_execution(self):
+        ledger = _ProgressAwareExecutionLedger()
+
+        def read(call_id: str):
+            return ToolStarted(
+                tool_name="kitt_runtime",
+                args={
+                    "operation": "repo.read",
+                    "arguments": {"path": "src/service.py", "start_line": 1, "end_line": 120},
+                },
+                call_id=call_id,
+            )
+
+        for index in (1, 2):
+            call_id = f"read-{index}"
+            self.assertIsNone(ledger.start(read(call_id)))
+            ledger.complete(
+                ToolCompleted(
+                    tool_name="kitt_runtime",
+                    success=True,
+                    output="same file bytes",
+                    call_id=call_id,
+                )
+            )
+
+        stall = ledger.start(read("read-3"))
+        self.assertIsNotNone(stall)
+        self.assertIn("identical exploration repeated without progress", stall)
+        self.assertIn("repo.read", stall)
+
     def test_deterministic_capability_failure_is_not_retried_unchanged(self):
         ledger = _ProgressAwareExecutionLedger()
         first = ToolStarted(
