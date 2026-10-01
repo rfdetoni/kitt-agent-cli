@@ -83,6 +83,7 @@ class SessionLedger:
         source: str = "kitt-agent-cli",
         durability: str = "DURABLE",
         parent_event_id: str | None = None,
+        event_id: str | None = None,
     ) -> SessionEventRecord:
         if not conversation_id:
             raise ValueError("conversation_id is required")
@@ -90,9 +91,24 @@ class SessionLedger:
         encoded = _canonical(body)
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         now = time.time()
-        event_id = f"sev_{uuid.uuid4().hex}"
+        event_id = str(event_id or f"sev_{uuid.uuid4().hex}")
         with self.db.get_connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            prior = conn.execute(
+                "SELECT * FROM session_events WHERE id=?",
+                (event_id,),
+            ).fetchone()
+            if prior is not None:
+                record = self._row(prior)
+                if (
+                    record.conversation_id != conversation_id
+                    or record.turn_id != turn_id
+                    or record.event_type != event_type
+                    or record.payload_hash != digest
+                ):
+                    raise ValueError(f"event_id collision: {event_id}")
+                conn.rollback()
+                return record
             exists = conn.execute(
                 "SELECT 1 FROM conversations WHERE id=?",
                 (conversation_id,),
