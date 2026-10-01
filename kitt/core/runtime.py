@@ -516,8 +516,17 @@ class KittRuntime:
             run_coordinator=run_coordinator,
             workspace_snapshots=workspace_snapshots,
         )
+        from kitt.runtime.conversation_runtime import ConversationRuntimeRegistry
+
         runtime_holder["runtime"] = runtime
         runtime.prime_metrics = prime_metrics
+        runtime.conversation_runtimes = ConversationRuntimeRegistry(
+            canonical_root,
+            identity.id,
+            database,
+            ledger=event_ledger,
+        )
+        processor.conversation_runtimes = runtime.conversation_runtimes
         return runtime
 
     async def start(self) -> None:
