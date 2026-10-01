@@ -19,9 +19,11 @@ class _LeaseState:
     token_cap: int
     call_cap: int
     cost_cap: float
+    tool_cap: int = 0
     tokens_used: int = 0
     calls_used: int = 0
     cost_used: float = 0.0
+    tools_used: int = 0
     settled: bool = False
 
 
@@ -52,6 +54,7 @@ class ExecutionBudgetLedger:
         self.child_tokens = 0
         self.child_model_calls = 0
         self.child_cost = 0.0
+        self.child_tool_calls = 0
         self.tool_calls = 0
         self.subagents = 0
         self._leases: dict[str, _LeaseState] = {}
@@ -89,6 +92,13 @@ class ExecutionBudgetLedger:
             calls += max(0, state.call_cap - state.calls_used)
             cost += max(0.0, state.cost_cap - state.cost_used)
         return tokens, calls, cost
+
+    def _outstanding_tools(self) -> int:
+        return sum(
+            max(0, state.tool_cap - state.tools_used)
+            for state in self._leases.values()
+            if not state.settled
+        )
 
     def _check_duration(self) -> None:
         if self._elapsed_ms() > max(0, int(self.budget.max_duration_ms)):
@@ -221,7 +231,13 @@ class ExecutionBudgetLedger:
     def reserve_tool_call(self, *, stage: str = "tools") -> None:
         with self._lock:
             self._check_duration()
-            if self.tool_calls + 1 > self.budget.max_tool_calls:
+            if (
+                self.tool_calls
+                + self.child_tool_calls
+                + 1
+                + self._outstanding_tools()
+                > self.budget.max_tool_calls
+            ):
                 raise ExecutionBudgetExceeded("tool call budget exceeded")
             self.tool_calls += 1
             bucket = self._stage(stage)
@@ -234,6 +250,7 @@ class ExecutionBudgetLedger:
         token_cap: int,
         call_cap: int,
         cost_cap: float = 0.0,
+        tool_cap: int = 0,
     ) -> BudgetLease:
         child = str(child_agent_id or "").strip()
         if not child:
@@ -246,6 +263,7 @@ class ExecutionBudgetLedger:
             requested_tokens = max(0, int(token_cap))
             requested_calls = max(0, int(call_cap))
             requested_cost = max(0.0, float(cost_cap))
+            requested_tools = max(0, int(tool_cap))
             if (
                 self.input_tokens
                 + self.output_tokens
@@ -271,6 +289,14 @@ class ExecutionBudgetLedger:
                 > self.budget.max_cost
             ):
                 raise ExecutionBudgetExceeded("subagent cost lease exceeds parent budget")
+            if (
+                self.tool_calls
+                + self.child_tool_calls
+                + self._outstanding_tools()
+                + requested_tools
+                > self.budget.max_tool_calls
+            ):
+                raise ExecutionBudgetExceeded("subagent tool lease exceeds parent budget")
             lease = BudgetLease(
                 id=f"lease_{uuid.uuid4().hex}",
                 parent_budget_id=f"turn-budget:{id(self)}",
@@ -282,14 +308,16 @@ class ExecutionBudgetLedger:
                     "tokens": requested_tokens,
                     "calls": requested_calls,
                     "cost": requested_cost,
+                    "tools": requested_tools,
                 },
-                consumed={"tokens": 0, "calls": 0, "cost": 0.0},
+                consumed={"tokens": 0, "calls": 0, "cost": 0.0, "tools": 0},
             )
             self._leases[lease.id] = _LeaseState(
                 lease=lease,
                 token_cap=requested_tokens,
                 call_cap=requested_calls,
                 cost_cap=requested_cost,
+                tool_cap=requested_tools,
             )
             self.subagents += 1
             bucket = self._stage("subagents")
@@ -303,6 +331,7 @@ class ExecutionBudgetLedger:
         tokens: int = 0,
         calls: int = 0,
         cost: float = 0.0,
+        tools: int = 0,
     ) -> None:
         with self._lock:
             self._check_duration()
@@ -312,18 +341,23 @@ class ExecutionBudgetLedger:
             next_tokens = state.tokens_used + max(0, int(tokens))
             next_calls = state.calls_used + max(0, int(calls))
             next_cost = state.cost_used + max(0.0, float(cost))
+            next_tools = state.tools_used + max(0, int(tools))
             if next_tokens > state.token_cap:
                 raise ExecutionBudgetExceeded("child token lease exceeded")
             if next_calls > state.call_cap:
                 raise ExecutionBudgetExceeded("child call lease exceeded")
             if next_cost > state.cost_cap:
                 raise ExecutionBudgetExceeded("child cost lease exceeded")
+            if next_tools > state.tool_cap:
+                raise ExecutionBudgetExceeded("child tool lease exceeded")
             token_delta = next_tokens - state.tokens_used
             call_delta = next_calls - state.calls_used
             cost_delta = next_cost - state.cost_used
+            tool_delta = next_tools - state.tools_used
             state.tokens_used = next_tokens
             state.calls_used = next_calls
             state.cost_used = next_cost
+            state.tools_used = next_tools
 
             # Move consumed lease capacity into global usage immediately. This
             # keeps reserved + consumed capacity invariant even under concurrent
@@ -331,10 +365,12 @@ class ExecutionBudgetLedger:
             self.child_tokens += token_delta
             self.child_model_calls += call_delta
             self.child_cost += cost_delta
+            self.child_tool_calls += tool_delta
             bucket = self._stage("subagents")
             bucket["model_calls"] = int(bucket["model_calls"]) + call_delta
             bucket["input_tokens"] = int(bucket["input_tokens"]) + token_delta
             bucket["cost"] = float(bucket["cost"]) + cost_delta
+            bucket["tool_calls"] = int(bucket["tool_calls"]) + tool_delta
 
     def settle_child(self, lease_id: str) -> dict:
         with self._lock:
@@ -348,6 +384,7 @@ class ExecutionBudgetLedger:
                 "tokens_used": state.tokens_used,
                 "calls_used": state.calls_used,
                 "cost_used": state.cost_used,
+                "tools_used": state.tools_used,
             }
 
     def check(self) -> None:
@@ -360,6 +397,7 @@ class ExecutionBudgetLedger:
     def snapshot(self) -> dict:
         with self._lock:
             reserved_tokens, reserved_calls, reserved_cost = self._outstanding()
+            reserved_tools = self._outstanding_tools()
             return {
                 "budget": asdict(self.budget),
                 "usage": {
@@ -377,7 +415,9 @@ class ExecutionBudgetLedger:
                     "cost": self.cost + self.child_cost,
                     "direct_cost": self.cost,
                     "child_cost": self.child_cost,
-                    "tool_calls": self.tool_calls,
+                    "tool_calls": self.tool_calls + self.child_tool_calls,
+                    "direct_tool_calls": self.tool_calls,
+                    "child_tool_calls": self.child_tool_calls,
                     "subagents": self.subagents,
                     "duration_ms": self._elapsed_ms(),
                 },
@@ -385,6 +425,7 @@ class ExecutionBudgetLedger:
                     "tokens": reserved_tokens,
                     "calls": reserved_calls,
                     "cost": reserved_cost,
+                    "tools": reserved_tools,
                 },
                 "stages": {
                     name: dict(values)
