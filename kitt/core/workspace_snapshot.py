@@ -152,17 +152,110 @@ class WorkspaceSnapshotService:
                 return payload
         raise KeyError(snapshot_id)
 
+    def diff(
+        self,
+        snapshot_id: str,
+        *,
+        conversation_id: str,
+        turn_id: str,
+    ) -> list[dict[str, Any]]:
+        record = self._load_record(snapshot_id, conversation_id, turn_id)
+        entries = record.get("entries")
+        if not isinstance(entries, list):
+            raise ValueError("invalid workspace snapshot record")
+        changes: list[dict[str, Any]] = []
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            rel = self.fs.relative(str(item.get("path") or ""))
+            if selected is not None and rel not in selected:
+                continue
+            existed = bool(item.get("existed"))
+            current_exists = self.fs.exists_regular(rel)
+            current_sha = self.fs.read(rel).sha256 if current_exists else None
+            before_sha = str(item.get("sha256") or "") or None
+            if existed and not current_exists:
+                status = "DELETED"
+            elif not existed and current_exists:
+                status = "ADDED"
+            elif existed and current_exists and current_sha != before_sha:
+                status = "MODIFIED"
+            else:
+                status = "UNCHANGED"
+            changes.append(
+                {
+                    "path": rel,
+                    "status": status,
+                    "before_exists": existed,
+                    "current_exists": current_exists,
+                    "before_sha256": before_sha,
+                    "current_sha256": current_sha,
+                }
+            )
+        return changes
+
+    def preview_restore(
+        self,
+        snapshot_id: str,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        paths: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        changes = self.diff(
+            snapshot_id,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+        )
+        selected = None
+        if paths is not None:
+            selected = {self.fs.relative(path) for path in paths}
+        preview = []
+        for change in changes:
+            if selected is not None and change["path"] not in selected:
+                continue
+            if change["status"] == "UNCHANGED":
+                action = "NOOP"
+            elif change["before_exists"]:
+                action = "RESTORE"
+            else:
+                action = "DELETE_CREATED_FILE"
+            preview.append({**change, "restore_action": action})
+        if selected is not None:
+            known = {item["path"] for item in changes}
+            unknown = sorted(selected - known)
+            if unknown:
+                raise ValueError(
+                    "restore paths are not part of snapshot: " + ", ".join(unknown)
+                )
+        return preview
+
     def restore(
         self,
         snapshot_id: str,
         *,
         conversation_id: str,
         turn_id: str,
+        paths: list[str] | None = None,
     ) -> list[str]:
         record = self._load_record(snapshot_id, conversation_id, turn_id)
         entries = record.get("entries")
         if not isinstance(entries, list):
             raise ValueError("invalid workspace snapshot record")
+
+        selected = None
+        if paths is not None:
+            selected = {self.fs.relative(path) for path in paths}
+            known = {
+                self.fs.relative(str(item.get("path") or ""))
+                for item in entries
+                if isinstance(item, dict)
+            }
+            unknown = sorted(selected - known)
+            if unknown:
+                raise ValueError(
+                    "restore paths are not part of snapshot: " + ", ".join(unknown)
+                )
 
         restored: list[str] = []
         for item in entries:
