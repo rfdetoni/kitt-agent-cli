@@ -185,27 +185,98 @@ class ArtifactStore:
         limit: int = 20,
         context_chars: int = 160,
     ) -> list[dict]:
-        """Search one text artifact without hydrating the entire blob."""
+        """Search text with bounded memory; FILE artifacts are never fully hydrated."""
+        artifact = self.get(artifact_id)
+        if not artifact:
+            raise KeyError(artifact_id)
+        if artifact.expires_at and artifact.expires_at < time.time() and not artifact.pinned:
+            raise KeyError("Artifact expired")
+
         needle = str(query or "").strip().casefold()
         if not needle:
             return []
-        text = self.read_text(artifact_id)
-        folded = text.casefold()
         limit = max(1, min(int(limit), 100))
         context_chars = max(40, min(int(context_chars), 2000))
-        hits: list[dict] = []
-        start = 0
-        content_hash = self.get(artifact_id).content_hash
-        while len(hits) < limit:
-            index = folded.find(needle, start)
-            if index < 0:
-                break
-            left = max(0, index - context_chars)
-            right = min(len(text), index + len(needle) + context_chars)
-            hits.append(
-                {"offset": index, "excerpt": text[left:right], "content_hash": content_hash}
+
+        if artifact.storage_kind == "INLINE":
+            text = bytes(artifact.inline_content or b"").decode(
+                "utf-8",
+                errors="replace",
             )
-            start = index + max(1, len(needle))
+            folded = text.casefold()
+            hits: list[dict] = []
+            start = 0
+            while len(hits) < limit:
+                index = folded.find(needle, start)
+                if index < 0:
+                    break
+                left = max(0, index - context_chars)
+                right = min(len(text), index + len(needle) + context_chars)
+                hits.append(
+                    {
+                        "offset": index,
+                        "excerpt": text[left:right],
+                        "content_hash": artifact.content_hash,
+                    }
+                )
+                start = index + max(1, len(needle))
+            return hits
+
+        path = self.storage / str(artifact.relative_storage_path or "")
+        digest = hashlib.sha256()
+        with path.open("rb") as raw_file:
+            for block in iter(lambda: raw_file.read(64 * 1024), b""):
+                digest.update(block)
+        if digest.hexdigest() != artifact.content_hash:
+            raise ValueError("Artifact integrity check failed")
+
+        # Keep only a bounded rolling window. The retained prefix provides left
+        # context while the unprocessed suffix guarantees enough right context
+        # for any hit emitted from the safe region.
+        chunk_chars = max(4096, context_chars * 4, len(needle) * 4)
+        keep_chars = context_chars + max(1, len(needle))
+        hits: list[dict] = []
+        buffer = ""
+        base_offset = 0
+        next_search_offset = 0
+
+        with path.open("r", encoding="utf-8", errors="replace") as text_file:
+            eof = False
+            while not eof and len(hits) < limit:
+                chunk = text_file.read(chunk_chars)
+                eof = chunk == ""
+                buffer += chunk
+                safe_end = len(buffer) if eof else max(0, len(buffer) - keep_chars)
+                folded = buffer.casefold()
+                local_start = max(0, next_search_offset - base_offset)
+
+                while len(hits) < limit:
+                    index = folded.find(needle, local_start)
+                    if index < 0 or (not eof and index >= safe_end):
+                        break
+                    left = max(0, index - context_chars)
+                    right = min(
+                        len(buffer),
+                        index + len(needle) + context_chars,
+                    )
+                    hits.append(
+                        {
+                            "offset": base_offset + index,
+                            "excerpt": buffer[left:right],
+                            "content_hash": artifact.content_hash,
+                        }
+                    )
+                    local_start = index + max(1, len(needle))
+                    next_search_offset = base_offset + local_start
+
+                if eof:
+                    break
+
+                trim = max(0, safe_end - context_chars)
+                if trim:
+                    buffer = buffer[trim:]
+                    base_offset += trim
+
         return hits
 
     def list(self, conversation_id: Optional[str] = None, limit: int = 20,
