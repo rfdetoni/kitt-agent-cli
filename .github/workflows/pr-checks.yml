@@ -90,6 +90,7 @@ jobs:
           python -m pip install "mypy>=1.18,<2"
           python -m mypy --python-version 3.14 --ignore-missing-imports --follow-imports=skip --check-untyped-defs \
             kitt/children/lifecycle.py \
+            kitt/artifacts/store.py \
             kitt/children/worker.py \
             kitt/context_filter/semantic_filter.py \
             kitt/core/agent_runtime.py \
