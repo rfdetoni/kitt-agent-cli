@@ -49,7 +49,9 @@ class TestLatencyTelemetry(unittest.TestCase):
                 Client(),
                 [{"role": "user", "content": "x"}],
                 "sys",
+                conversation_id="c1",
                 turn_id="t2",
+                route="chat",
                 started_at=time.time(),
                 session_key="c1",
             )
