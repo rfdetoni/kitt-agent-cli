@@ -1,6 +1,6 @@
 import inspect
 import time
-from typing import Optional, Literal
+from typing import Any, Optional, Literal
 from dataclasses import dataclass
 from kitt.domain.entities import SemanticTask, ContextPlan, ModelProfile
 from kitt.llm.client import LLMClient, LLMError
@@ -156,7 +156,7 @@ class SemanticFilter:
             if self.llm_client is None:
                 self.llm_client = LLMClient(self.profile)
             messages = [{"role": "user", "content": prompt}]
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "system_prompt": SYSTEM_CONTEXT_FILTER_PROMPT,
                 "response_format": "json",
                 "session_key": session_key,
