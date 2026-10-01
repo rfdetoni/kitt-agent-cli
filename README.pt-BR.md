@@ -10,7 +10,7 @@ O contexto de memória agora usa o KITT Memory 0.7 de forma progressiva (`memory
 
 Replay/idempotência de tools mutáveis, rollback seletivo de `WorkspaceSnapshot`, lifecycle de runtime por conversa, detecção de reread sem progresso e budget global por estágio receberam regressões específicas. Classifier, condenser, execução, validação e subagentes debitam a mesma carteira do turno; a separação por estágio é somente telemetria.
 
-Compatibilidade desta rodada: KITT Protocol **0.6.0**, KITT Memory **0.7.0**, Reverse Proxy **4.7.4** e Assistant Runtime **0.2.26**.
+Compatibilidade desta rodada: KITT Protocol **0.6.0**, KITT Memory **0.7.0**, Reverse Proxy **4.7.4** e Assistant Runtime **0.2.27**.
 
 ## Agent CLI 0.80.5 — identidade estrutural de requisição estrita
 
