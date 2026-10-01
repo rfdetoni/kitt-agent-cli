@@ -1,3 +1,4 @@
+import inspect
 import time
 from typing import Optional, Literal
 from dataclasses import dataclass
@@ -154,13 +155,28 @@ class SemanticFilter:
             if self.llm_client is None:
                 self.llm_client = LLMClient(self.profile)
             messages = [{"role": "user", "content": prompt}]
-            response_text = self.llm_client.chat(
-                messages,
-                system_prompt=SYSTEM_CONTEXT_FILTER_PROMPT,
-                response_format="json",
-                session_key=session_key,
-                attempt_callback=attempt_callback,
-            )
+            kwargs = {
+                "system_prompt": SYSTEM_CONTEXT_FILTER_PROMPT,
+                "response_format": "json",
+                "session_key": session_key,
+            }
+            if attempt_callback is not None:
+                kwargs["attempt_callback"] = attempt_callback
+            try:
+                signature = inspect.signature(self.llm_client.chat)
+                has_var_kwargs = any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in signature.parameters.values()
+                )
+                if not has_var_kwargs:
+                    kwargs = {
+                        key: value
+                        for key, value in kwargs.items()
+                        if key in signature.parameters
+                    }
+            except (TypeError, ValueError):
+                pass
+            response_text = self.llm_client.chat(messages, **kwargs)
 
             if len(response_text) > 16384:
                 raise ValueError("JSON response exceeded 16 KiB limit.")
