@@ -172,6 +172,7 @@ class TurnModelMixin:
 
         execution_budget = getattr(self, "execution_budgets", {}).get(turn_id)
         estimated_input = 0
+        budget_stage = str(route or "execution")
         if execution_budget is not None:
             estimated_input = TokenCounter.count_tokens(system_prompt or "")
             for message in wire_messages:
@@ -179,10 +180,20 @@ class TurnModelMixin:
                     estimated_input += TokenCounter.count_tokens(
                         str(message.get("content") or "")
                     )
+            # The first attempt is reserved here so injected/fake clients that
+            # do not expose the retry hook remain covered. LLMClient invokes the
+            # callback for every provider attempt; attempts > 0 are retries.
             execution_budget.reserve_model_call(
                 input_tokens=estimated_input,
-                stage=str(route or "execution"),
+                stage=budget_stage,
             )
+
+        def _reserve_retry_attempt(attempt: int) -> None:
+            if execution_budget is not None and int(attempt) > 0:
+                execution_budget.reserve_model_call(
+                    input_tokens=estimated_input,
+                    stage=budget_stage,
+                )
 
         def _invoke_chat_stream(msgs, sys_prompt):
             kwargs = {
@@ -200,6 +211,7 @@ class TurnModelMixin:
                     route=route,
                 ).to_mapping(),
                 "usage_callback": _observe_usage,
+                "attempt_callback": _reserve_retry_attempt,
             }
             try:
                 sig = inspect.signature(client.chat_stream)
