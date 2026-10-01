@@ -269,6 +269,7 @@ class LLMClient:
         context_envelope: Optional[Dict[str, object]] = None,
         request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
+        attempt_callback: Optional[Callable[[int], None]] = None,
     ) -> str:
         full_text = "".join(
             self.chat_stream(
@@ -282,6 +283,7 @@ class LLMClient:
                 context_envelope=context_envelope,
                 request_metadata=request_metadata,
                 usage_callback=usage_callback,
+                attempt_callback=attempt_callback,
             )
         )
         if not full_text.strip():
@@ -300,6 +302,7 @@ class LLMClient:
         context_envelope: Optional[Dict[str, object]] = None,
         request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
+        attempt_callback: Optional[Callable[[int], None]] = None,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
@@ -319,6 +322,7 @@ class LLMClient:
                     context_envelope=context_envelope,
                     request_metadata=request_metadata,
                     usage_callback=usage_callback,
+                    attempt_callback=attempt_callback,
                 ):
                     if stop.is_set():
                         break
@@ -364,6 +368,7 @@ class LLMClient:
         context_envelope: Optional[Dict[str, object]] = None,
         request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
+        attempt_callback: Optional[Callable[[int], None]] = None,
     ) -> Generator[str, None, None]:
         system_prompt = normalize_execution_system_prompt(system_prompt)
 
@@ -487,7 +492,8 @@ class LLMClient:
 
         try:
             for chunk in self.retry_policy.execute_with_retry(
-                lambda: adapter.stream(request)
+                lambda: adapter.stream(request),
+                on_attempt=attempt_callback,
             ):
                 if trace_summary is not None:
                     trace_summary.update(chunk)
