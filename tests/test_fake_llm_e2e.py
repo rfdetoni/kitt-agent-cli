@@ -148,6 +148,7 @@ def hello(): return 'hello K.I.T.T.'
             system_prompt=processor._tool_instructions(["kitt_runtime"]),
             messages=[{"role": "user", "content": cmd.prompt}],
             enabled_tools=["kitt_runtime"],
+            agent_route="code-edit",
         )
         profile = ModelProfile("fake", "fake", supports_tools=True)
         context = ExecutionSecurityContext.create_user_context(
