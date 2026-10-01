@@ -129,11 +129,15 @@ class ExecutionBudgetLedger:
         *,
         estimated_tokens: int,
         actual_tokens: int,
+        estimated_cost: float = 0.0,
+        actual_cost: float = 0.0,
         stage: str = "model",
     ) -> None:
         """Replace one preflight input estimate with provider-observed usage."""
         estimated = max(0, int(estimated_tokens))
         actual = max(0, int(actual_tokens))
+        estimated_usd = max(0.0, float(estimated_cost))
+        actual_usd = max(0.0, float(actual_cost))
         with self._lock:
             self._check_duration()
             current_without_estimate = max(0, self.input_tokens - estimated)
@@ -141,11 +145,26 @@ class ExecutionBudgetLedger:
             delta = next_total - self.input_tokens
             if delta > 0:
                 self._check_tokens(next_input=delta)
+
+            current_cost_without_estimate = max(
+                0.0,
+                self.cost - estimated_usd,
+            )
+            next_cost = current_cost_without_estimate + actual_usd
+            _, _, reserved_cost = self._outstanding()
+            if next_cost + reserved_cost > self.budget.max_cost:
+                raise ExecutionBudgetExceeded("execution cost budget exceeded")
+
             self.input_tokens = next_total
+            self.cost = next_cost
             bucket = self._stage(stage)
             bucket["input_tokens"] = max(
                 0,
                 int(bucket["input_tokens"]) + (actual - estimated),
+            )
+            bucket["cost"] = max(
+                0.0,
+                float(bucket["cost"]) + (actual_usd - estimated_usd),
             )
 
     def record_model_output(
