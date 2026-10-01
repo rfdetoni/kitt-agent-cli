@@ -27,6 +27,9 @@ The table documents authority metadata. Operation-specific argument validation r
 | browser.screenshot | browser.read | - | no | 0 | - | - |
 | browser.type | browser.write | browser.type | yes | 1 | - | - |
 | children.inspect | child.inspect | - | no | 0 | - | - |
+| children.observe | child.inspect | - | no | 0 | - | - |
+| children.passivate | child.message | - | no | 0 | - | - |
+| children.revive | child.spawn | - | no | 0 | - | - |
 | children.send | child.message | - | no | 0 | - | - |
 | children.spawn | child.spawn | child_spawn | yes | 2 | - | child_spawn |
 | flow.execute | - | - | no | 0 | - | - |
@@ -53,6 +56,9 @@ The table documents authority metadata. Operation-specific argument validation r
 | process.stdin | process.run | - | yes | 0 | - | - |
 | process.stop | process.run | - | yes | 0 | - | - |
 | program.execute | - | - | no | 0 | - | - |
+| program.session.clear | repo.read | - | no | 0 | - | - |
+| program.session.execute | repo.read | - | no | 0 | - | - |
+| program.session.get | repo.read | - | no | 0 | - | - |
 | repo.ast_search | repo.search | search | no | 0 | - | - |
 | repo.call_hierarchy | repo.search | search | no | 0 | - | - |
 | repo.context_map | repo.search | search | no | 0 | - | - |

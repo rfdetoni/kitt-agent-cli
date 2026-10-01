@@ -1,5 +1,19 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.82.2 — durable continuous-agent runtime
+
+Agent CLI 0.82.2 adds durable agent-family messaging, passivation/revival, a
+reviewable continual-harness refinement pipeline, persistent heartbeats and
+schedules, bounded program-session state, provider parking/failover and a
+line-oriented \`kitt rpc\` headless surface. These features extend the existing
+host-owned runtime; no arbitrary model \`eval\`/\`exec\`, second memory store or
+parallel workflow engine was introduced.
+
+The implementation reuses existing child/session ledgers, \`scheduled_tasks\`,
+\`RuntimeStateStore\`, SafeRuntime capabilities, session branching/export and
+Models.dev freshness/runtime discovery. See
+[docs/CONTINUOUS_AGENT_RUNTIME.md](docs/CONTINUOUS_AGENT_RUNTIME.md).
+
 
 ## Agent CLI 0.82.0 — host-owned plans, evidence and child containment
 
@@ -108,7 +122,7 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - Provider/model routing for local and remote models.
 - SQLite/FTS5 repository intelligence and history.
 - Compact, policy-governed `kitt_runtime` tool surface.
-- Child agents, retained agents and bounded concurrent execution with atomic mutation fencing and fair contention handling.
+- Child agents, retained/passivated agents, scoped agent-family messaging and bounded concurrent execution with atomic mutation fencing and fair contention handling.
 - Stable per-child reverse-proxy sessions: each child gets its own browser conversation, while a retained child reuses that same session across reassigned tasks.
 - Workspace capability policy and single-use approvals.
 - MCP servers/tools, plugins, hooks and external integrations.
@@ -118,7 +132,8 @@ The Agent remains portable Python. Deterministic CPU/data-heavy work can be acce
 - Consumed tool-result receipts reclaim model context without mutating browser-backed conversation identity.
 - Token-pressure history compaction and dependency-aware parallel read-only programmatic flows.
 - Durable model-input ledger, Task Episodes, evidence states, sparse session projections and deterministic replay fingerprints.
-- Bounded read-only `program.execute` for loops/branching without arbitrary code execution or approval bypass.
+- Bounded read-only `program.execute` plus durable `program.session.*` state for loops/branching without arbitrary code execution or approval bypass.
+- Durable schedules/heartbeats that re-enter the existing follow-up queue, plus pre-output provider parking/failover and headless JSON-RPC.
 - Harness snapshots/materialization receipts plus evidence-backed intervention tracking for controlled self-improvement.
 - Quality gates, evidence-led completion, risk-aware adversarial review and self-evolution integration.
 - Portable Python fallback plus optional native Rust acceleration.

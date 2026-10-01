@@ -29,11 +29,12 @@ To explicitly avoid native acceleration, use `--no-native` on POSIX or `-NoNativ
 
 ## 3. Verify the installation
 
-```bash
+\`\`\`bash
 kitt --version
 kitt doctor
 kitt models
-```
+kitt rpc --help
+\`\`\`
 
 The current supported interpreter policy is documented in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
@@ -94,7 +95,20 @@ python packaging/verify_cleanroom.py
 
 See [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md).
 
-## 9. Next reading
+## 9. Long-running/headless workflows
+
+For automation that needs a structured stdin/stdout boundary:
+
+\`\`\`bash
+kitt rpc --root /path/to/project
+\`\`\`
+
+The RPC process uses the same KittRuntime as the interactive Agent. Durable
+heartbeats and schedules re-enter the normal follow-up queue rather than running
+a hidden bypass loop. See
+[docs/CONTINUOUS_AGENT_RUNTIME.md](docs/CONTINUOUS_AGENT_RUNTIME.md).
+
+## 10. Next reading
 
 - [README.md](README.md) — project overview
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution workflow
