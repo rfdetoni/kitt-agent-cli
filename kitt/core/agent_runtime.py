@@ -847,7 +847,17 @@ def _install_tool_execution(processor, registry) -> None:
         turn = str(kwargs.get("turn_id") or "")
         budget = getattr(processor, "execution_budgets", {}).get(turn)
         if budget is not None:
-            budget.reserve_tool_call()
+            operation = (
+                str(arguments.get("operation") or "")
+                if name == "kitt_runtime" and isinstance(arguments, dict)
+                else ""
+            )
+            stage = (
+                "validator"
+                if name == "run_command" or operation == "process.run"
+                else "tools"
+            )
+            budget.reserve_tool_call(stage=stage)
 
         role_policy = getattr(processor, "_agent_role_policies", {}).get(turn)
         if role_policy is not None and not role_policy.allows_tool(name, arguments):
