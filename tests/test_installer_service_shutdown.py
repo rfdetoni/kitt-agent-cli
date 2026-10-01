@@ -15,7 +15,9 @@ class InstallerServiceShutdownTests(unittest.TestCase):
         self.assertIn("kitt-daemon.service", text)
         self.assertIn("com.kitt.daemon", text)
         self.assertIn('"$existing_kitt" daemon stop', text)
-        self.assertIn('[[ "$pid" != "$$" && "$pid" != "$PPID" ]]', text)
+        self.assertIn('[[ "$pid" != "$" && "$pid" != "$PPID" ]]', text)
+        self.assertIn("Python 3.14+ is required", text)
+        self.assertIn("HistoryDatabase(\":memory:\", in_memory=True)", text)
 
     def test_windows_installer_stops_daemon_before_mutating_install_tree(self):
         text = (ROOT / "install.ps1").read_text(encoding="utf-8")
@@ -27,6 +29,8 @@ class InstallerServiceShutdownTests(unittest.TestCase):
         self.assertIn("& $ExistingKitt daemon stop", text)
         self.assertIn("Get-Service", text)
         self.assertIn("Stop-Process", text)
+        self.assertIn("Python 3.14+ is required", text)
+        self.assertIn("HistoryDatabase(':memory:', in_memory=True)", text)
 
 
 if __name__ == "__main__":
