@@ -317,6 +317,7 @@ class LLMClient:
                     route=route,
                     loop_action_budget=loop_action_budget,
                     context_envelope=context_envelope,
+                    request_metadata=request_metadata,
                     usage_callback=usage_callback,
                 ):
                     if stop.is_set():
