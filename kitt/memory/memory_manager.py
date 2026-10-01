@@ -176,10 +176,10 @@ class MemoryManager:
         if not self.persistence_enabled:
             return []
         budget = max(32, min(int(max_tokens), 8_192))
-        search = getattr(self.client, "search", None)
-        hydrate = getattr(self.client, "get", None)
+        search = getattr(type(self.client), "search", None)
+        hydrate = getattr(type(self.client), "get", None)
         if callable(search) and callable(hydrate):
-            hits, search_trace_id = search(
+            hits, search_trace_id = self.client.search(
                 self.workspace_id,
                 prompt,
                 max_results=24,
@@ -190,7 +190,7 @@ class MemoryManager:
                 for hit in hits
                 if isinstance(hit, dict) and str(hit.get("id") or "")
             ]
-            hydrated, get_trace_id, truncated_ids = hydrate(
+            hydrated, get_trace_id, truncated_ids = self.client.get(
                 self.workspace_id,
                 ids,
                 token_budget=budget,
