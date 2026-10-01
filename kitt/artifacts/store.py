@@ -84,7 +84,9 @@ class ArtifactStore:
             raise ValueError("Artifact exceeds size limit")
         digest = hashlib.sha256(raw).hexdigest()
         aid = f"art_{uuid.uuid4().hex}"
-        kind, rel, inline = "INLINE", None, raw
+        kind = "INLINE"
+        rel: Optional[str] = None
+        inline: Optional[bytes] = raw
         staged_tmp: Optional[Path] = None
         if len(raw) > self.inline_limit:
             kind, rel, inline = "FILE", f"{digest[:2]}/{digest}.bin", None
@@ -113,6 +115,8 @@ class ArtifactStore:
             raise
         # Commit the staged blob only after the row exists.
         if staged_tmp is not None:
+            if rel is None:
+                raise RuntimeError("staged artifact is missing storage path")
             target = self.storage / rel
             try:
                 os.replace(staged_tmp, target)
@@ -166,7 +170,10 @@ class ArtifactStore:
     def read_text_page(self, artifact_id: str, offset: int = 0,
                        max_bytes: Optional[int] = None) -> dict:
         raw = self.read_page(artifact_id, offset, max_bytes)
-        total = self.get(artifact_id).size_bytes
+        artifact = self.get(artifact_id)
+        if artifact is None:
+            raise KeyError(artifact_id)
+        total = artifact.size_bytes
         has_more = offset + len(raw) < total
         return {
             "content": raw.decode("utf-8", errors="replace"),
@@ -174,7 +181,7 @@ class ArtifactStore:
             "bytes_returned": len(raw),
             "total_bytes": total,
             "has_more": has_more,
-            "content_hash": self.get(artifact_id).content_hash,
+            "content_hash": artifact.content_hash,
         }
 
     def search_text(
@@ -198,6 +205,7 @@ class ArtifactStore:
         limit = max(1, min(int(limit), 100))
         context_chars = max(40, min(int(context_chars), 2000))
 
+        hits: list[dict] = []
         if artifact.storage_kind == "INLINE":
             inline_raw = bytes(artifact.inline_content or b"")
             if hashlib.sha256(inline_raw).hexdigest() != artifact.content_hash:
@@ -207,7 +215,6 @@ class ArtifactStore:
                 errors="replace",
             )
             folded = text.casefold()
-            hits: list[dict] = []
             start = 0
             while len(hits) < limit:
                 index = folded.find(needle, start)
@@ -238,7 +245,6 @@ class ArtifactStore:
         # for any hit emitted from the safe region.
         chunk_chars = max(4096, context_chars * 4, len(needle) * 4)
         keep_chars = context_chars + max(1, len(needle))
-        hits: list[dict] = []
         buffer = ""
         base_offset = 0
         next_search_offset = 0
@@ -284,8 +290,8 @@ class ArtifactStore:
 
     def list(self, conversation_id: Optional[str] = None, limit: int = 20,
              offset: int = 0, workspace_id: Optional[str] = None) -> List[Artifact]:
-        conditions = []
-        args = []
+        conditions: list[str] = []
+        args: list[object] = []
         if workspace_id:
             conditions.append("workspace_id=?")
             args.append(workspace_id)
