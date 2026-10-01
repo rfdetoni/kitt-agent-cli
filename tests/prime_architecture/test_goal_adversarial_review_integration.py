@@ -3,10 +3,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from kitt.core.execution_budget import ExecutionBudgetLedger
 from kitt.core.turn_events import MetricsRecorded, ToolCompleted, ToolStarted, TurnCompleted
 from kitt.goals.executor import GoalStepExecutor
 from kitt.goals.review import ADVERSARIAL_REVIEW_PREFIX, AdversarialCodeReviewer
 from kitt.tools.registry import ToolResult
+from kitt_protocol import ExecutionBudget
 
 
 ALL_AREAS = [
@@ -273,6 +275,105 @@ diff --git a/unrelated.py b/unrelated.py
         self.assertEqual((name, profile), ("execute", execute_profile))
         self.assertEqual(calls, ["code-generation"])
 
+
+    def test_real_reviewer_debits_same_turn_budget(self):
+        profile = SimpleNamespace(
+            backend="ollama",
+            model="review-model",
+            base_url="http://127.0.0.1:11434",
+        )
+        execute_profile = SimpleNamespace(
+            backend="ollama",
+            model="execute-model",
+            base_url="http://127.0.0.1:11434",
+        )
+        ledger = ExecutionBudgetLedger(
+            ExecutionBudget(
+                max_model_calls=4,
+                max_input_tokens=20_000,
+                max_output_tokens=8_000,
+                max_total_tokens=24_000,
+                max_cost=10.0,
+                max_duration_ms=60_000,
+                max_tool_calls=8,
+                max_subagents=2,
+            )
+        )
+        processor = SimpleNamespace(
+            router=SimpleNamespace(
+                config=SimpleNamespace(
+                    routing={"adversarial-review": "review"},
+                    profiles={"review": profile},
+                ),
+                resolve_profile_for_task=lambda _task: ("execute", execute_profile),
+            ),
+            execution_budgets={"turn-review": ledger},
+        )
+        runtime = SimpleNamespace(
+            processor=processor,
+            workspace_id="ws",
+            canonical_root=".",
+        )
+        goal = SimpleNamespace(id="goal-review")
+        usage = {"tokens": 0, "cost": 0.0, "redactions": 0}
+
+        class FakeClient:
+            def __init__(self, _profile):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def chat(self, _messages, **kwargs):
+                kwargs["attempt_callback"](0)
+                kwargs["usage_callback"](
+                    {"prompt_tokens": 17, "completion_tokens": 5}
+                )
+                payload = {
+                    "status": "APPROVED",
+                    "summary": "review complete",
+                    "reviewed_areas": ALL_AREAS,
+                    "findings": [],
+                    "approval_evidence": (
+                        "Checked correctness, security, tests and compatibility "
+                        "against the supplied snapshot."
+                    ),
+                }
+                return f"{ADVERSARIAL_REVIEW_PREFIX} {json.dumps(payload)}"
+
+        executor = GoalStepExecutor(lambda: runtime)
+        with patch("kitt.goals.executor.LLMClient", FakeClient):
+            reviewer = executor._build_reviewer(
+                runtime,
+                goal,
+                {},
+                usage,
+                route="adversarial-review",
+                turn_id="turn-review",
+            )
+            review = reviewer.review(
+                objective="Review service",
+                success_criteria=[],
+                verification=SimpleNamespace(checks=[]),
+                change_snapshot="def service():\n    return True\n",
+                risk_level="HIGH",
+            )
+
+        self.assertTrue(review.approved)
+        snapshot = ledger.snapshot()
+        self.assertEqual(snapshot["usage"]["model_calls"], 1)
+        self.assertEqual(
+            snapshot["stages"]["adversarial-review"]["model_calls"], 1
+        )
+        self.assertEqual(
+            snapshot["stages"]["adversarial-review"]["input_tokens"], 17
+        )
+        self.assertEqual(
+            snapshot["stages"]["adversarial-review"]["output_tokens"], 5
+        )
 
     def test_review_context_ranges_are_bounded_to_changed_hunks(self):
         diff = """diff --git a/service.py b/service.py
