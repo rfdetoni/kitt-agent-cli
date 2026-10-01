@@ -143,7 +143,11 @@ class MemoryManager:
         text = str(record.get("content") or "").strip()
         if not text:
             return None
-        scope = "GLOBAL" if str(record.get("scope") or "").lower() == "global" else "PROJECT"
+        scope: Literal["GLOBAL", "PROJECT"] = (
+            "GLOBAL"
+            if str(record.get("scope") or "").lower() == "global"
+            else "PROJECT"
+        )
         priority = 3 if record.get("pinned") else 2
         return MemoryItem(
             text=text,
@@ -218,7 +222,7 @@ class MemoryManager:
             snippet = str(hit.get("snippet") or "").strip()
             if not snippet:
                 continue
-            scope = (
+            scope: Literal["GLOBAL", "PROJECT"] = (
                 "GLOBAL"
                 if str(hit.get("scope") or "").lower() == "global"
                 else "PROJECT"
