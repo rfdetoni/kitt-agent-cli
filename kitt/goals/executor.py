@@ -26,7 +26,7 @@ from kitt.goals.evidence import EvidenceLedger
 from kitt.goals.risk import ReviewRisk, classify_review_risk
 from kitt.goals.review import AdversarialCodeReviewer, combine_adversarial_reviews
 from kitt.llm.client import LLMClient
-from kitt.metrics.cost_estimator import estimate_cost
+from kitt.metrics.cost_estimator import estimate_cost, estimate_execution_cost
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.context import ExecutionSecurityContext
 
@@ -442,6 +442,13 @@ class GoalStepExecutor:
             execution_budget = getattr(
                 runtime.processor, "execution_budgets", {}
             ).get(str(turn_id or ""))
+            estimated_input_cost = estimate_execution_cost(
+                str(getattr(profile, "model", "") or ""),
+                input_tokens,
+                0,
+                backend=str(getattr(profile, "backend", "") or ""),
+                workspace_root=str(runtime.canonical_root),
+            ).estimated_usd
             provider_usage = {}
 
             def observe_usage(value):
@@ -452,12 +459,14 @@ class GoalStepExecutor:
                 if execution_budget is not None and int(attempt) > 0:
                     execution_budget.reserve_model_call(
                         input_tokens=input_tokens,
+                        cost=estimated_input_cost,
                         stage=route,
                     )
 
             if execution_budget is not None:
                 execution_budget.reserve_model_call(
                     input_tokens=input_tokens,
+                    cost=estimated_input_cost,
                     stage=route,
                 )
 
@@ -471,31 +480,54 @@ class GoalStepExecutor:
                 )
 
             output_tokens = TokenCounter.count_tokens(response)
+            actual_input = provider_usage.get("prompt_tokens")
+            actual_output = provider_usage.get("completion_tokens")
+            actual_input_tokens = (
+                int(actual_input)
+                if isinstance(actual_input, (int, float))
+                and not isinstance(actual_input, bool)
+                else input_tokens
+            )
+            actual_output_tokens = (
+                int(actual_output)
+                if isinstance(actual_output, (int, float))
+                and not isinstance(actual_output, bool)
+                else output_tokens
+            )
             if execution_budget is not None:
-                actual_input = provider_usage.get("prompt_tokens")
-                actual_output = provider_usage.get("completion_tokens")
-                if isinstance(actual_input, (int, float)) and not isinstance(actual_input, bool):
-                    execution_budget.reconcile_model_input(
-                        estimated_tokens=input_tokens,
-                        actual_tokens=int(actual_input),
-                        stage=route,
-                    )
+                actual_input_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    actual_input_tokens,
+                    0,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(runtime.canonical_root),
+                ).estimated_usd
+                output_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    0,
+                    actual_output_tokens,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(runtime.canonical_root),
+                ).estimated_usd
+                execution_budget.reconcile_model_input(
+                    estimated_tokens=input_tokens,
+                    actual_tokens=actual_input_tokens,
+                    estimated_cost=estimated_input_cost,
+                    actual_cost=actual_input_cost,
+                    stage=route,
+                )
                 execution_budget.record_model_output(
-                    output_tokens=(
-                        int(actual_output)
-                        if isinstance(actual_output, (int, float))
-                        and not isinstance(actual_output, bool)
-                        else output_tokens
-                    ),
+                    output_tokens=actual_output_tokens,
+                    cost=output_cost,
                     stage=route,
                 )
             cost = estimate_cost(
                 str(getattr(profile, "model", "") or ""),
-                input_tokens,
-                output_tokens,
+                actual_input_tokens,
+                actual_output_tokens,
                 workspace_root=str(runtime.canonical_root),
             )
-            usage["tokens"] += input_tokens + output_tokens
+            usage["tokens"] += actual_input_tokens + actual_output_tokens
             usage["cost"] += float(cost.estimated_usd)
             usage["profile"] = profile_name
             usage["model"] = str(getattr(profile, "model", "") or "")
