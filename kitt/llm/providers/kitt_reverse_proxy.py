@@ -466,6 +466,11 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                             if request.context_envelope
                             else None
                         ),
+                        request_metadata=(
+                            dict(request.request_metadata)
+                            if request.request_metadata
+                            else None
+                        ),
                         usage_callback=request.usage_callback,
                         temperature=request.temperature,
                         context_window=request.context_window,

@@ -119,6 +119,19 @@ jobs:
             exit 1
           fi
 
+          if [[ "$relation" == "equal" ]]; then
+            tag="v$current"
+            tagged="$(git rev-list -n1 "$tag" 2>/dev/null || true)"
+            if [[ -z "$tagged" ]]; then
+              echo "Latest release reports $tag but the immutable tag is missing locally." >&2
+              exit 1
+            fi
+            if [[ "$tagged" != "$head" ]]; then
+              echo "Candidate $current equals latest release, but $tag points to $tagged instead of validated main $head. Bump the version; never move the published tag." >&2
+              exit 1
+            fi
+          fi
+
       - name: No release required
         if: steps.state.outputs.stale != 'true' && steps.state.outputs.relation == 'equal'
         run: echo "Validated main already matches v${{ steps.state.outputs.current }}; no release required."

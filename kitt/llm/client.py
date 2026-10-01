@@ -7,7 +7,7 @@ import hashlib
 import logging
 import threading
 import uuid
-from typing import Callable, Dict, Generator, List, Optional
+from typing import Callable, Dict, Generator, List, Optional, TypeAlias
 
 from kitt.domain.entities import ModelProfile
 from kitt.core.logging import TRACE_LEVEL, summarize_trace_messages, summarize_trace_text, trace_event
@@ -72,10 +72,10 @@ class _StreamingTraceSummary:
         }
 
 
-LLMError = ProviderError
-LLMConnectionError = ProviderConnectionError
-LLMTimeoutError = ProviderTimeoutError
-LLMProtocolError = ProviderProtocolError
+LLMError: TypeAlias = ProviderError
+LLMConnectionError: TypeAlias = ProviderConnectionError
+LLMTimeoutError: TypeAlias = ProviderTimeoutError
+LLMProtocolError: TypeAlias = ProviderProtocolError
 
 
 class LLMEmptyResponseError(LLMError):
@@ -269,6 +269,7 @@ class LLMClient:
         context_envelope: Optional[Dict[str, object]] = None,
         request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
+        attempt_callback: Optional[Callable[[int], None]] = None,
     ) -> str:
         full_text = "".join(
             self.chat_stream(
@@ -282,6 +283,7 @@ class LLMClient:
                 context_envelope=context_envelope,
                 request_metadata=request_metadata,
                 usage_callback=usage_callback,
+                attempt_callback=attempt_callback,
             )
         )
         if not full_text.strip():
@@ -300,6 +302,7 @@ class LLMClient:
         context_envelope: Optional[Dict[str, object]] = None,
         request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
+        attempt_callback: Optional[Callable[[int], None]] = None,
     ):
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         loop = asyncio.get_running_loop()
@@ -317,7 +320,9 @@ class LLMClient:
                     route=route,
                     loop_action_budget=loop_action_budget,
                     context_envelope=context_envelope,
+                    request_metadata=request_metadata,
                     usage_callback=usage_callback,
+                    attempt_callback=attempt_callback,
                 ):
                     if stop.is_set():
                         break
@@ -363,6 +368,7 @@ class LLMClient:
         context_envelope: Optional[Dict[str, object]] = None,
         request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
+        attempt_callback: Optional[Callable[[int], None]] = None,
     ) -> Generator[str, None, None]:
         system_prompt = normalize_execution_system_prompt(system_prompt)
 
@@ -474,8 +480,19 @@ class LLMClient:
                 system_prompt=summarize_trace_text(system_prompt),
                 messages=summarize_trace_messages(messages),
                 response_format=response_format,
-                tool_definitions_count=len(tool_definitions or ()),
-                context_segments_count=len((context_envelope or {}).get("segments", [])),
+                tool_definitions_count=(
+                    len(tool_definitions)
+                    if isinstance(tool_definitions, (list, tuple))
+                    else 0
+                ),
+                context_segments_count=(
+                    len(segments)
+                    if isinstance(
+                        (segments := (context_envelope or {}).get("segments")),
+                        (list, tuple),
+                    )
+                    else 0
+                ),
                 temperature=self.profile.temperature,
                 context_window=self.profile.context_window,
                 max_output_tokens=self.profile.max_output_tokens,
@@ -486,7 +503,8 @@ class LLMClient:
 
         try:
             for chunk in self.retry_policy.execute_with_retry(
-                lambda: adapter.stream(request)
+                lambda: adapter.stream(request),
+                on_attempt=attempt_callback,
             ):
                 if trace_summary is not None:
                     trace_summary.update(chunk)

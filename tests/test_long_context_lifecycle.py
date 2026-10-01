@@ -44,12 +44,14 @@ def test_large_tool_output_is_externalized_before_receipt_compaction():
 
 def test_structured_working_state_preserves_execution_signals():
     state = CompactionService._working_state(
-        "Goal: migrate API\nDecision: use typed IR\nERROR parser failed\n"
+        "Goal: migrate API\nDecision: use typed IR\n"
+        "ERROR process exited with exit code 17 while compiling\n"
         "TODO rerun tests\nsrc/api/service.py changed\npytest passed",
         "Migration in progress",
         ["Must keep compatibility"],
     )
     assert "Must keep compatibility" in state.constraints_and_decisions
     assert any("ERROR" in item for item in state.errors_and_corrections)
+    assert any("exit code 17" in item for item in state.errors_and_corrections)
     assert any("pytest" in item for item in state.validation_state)
     assert "src/api/service.py" in state.affected_artifacts

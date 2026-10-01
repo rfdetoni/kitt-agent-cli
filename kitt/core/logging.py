@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
+from kitt.history.redaction import redact as redact_secret_text
+
 
 TRACE_LEVEL = 5
 logging.addLevelName(TRACE_LEVEL, "TRACE")
@@ -48,9 +50,10 @@ def _sanitize_url(raw: str) -> str:
 
 
 def sanitize_message(value: str) -> str:
+    text = redact_secret_text(str(value))
     text = _DATA_BASE64_URI.sub(
         lambda match: f"data:{match.group(1)};base64,[REDACTED]",
-        str(value),
+        text,
     )
     return _URL.sub(lambda match: _sanitize_url(match.group(0)), text)
 

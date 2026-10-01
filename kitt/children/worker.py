@@ -60,15 +60,72 @@ def _bind_child_proxy_session(runtime: KittRuntime, request: dict) -> str:
     return scope
 
 
+def _turn_budget_usage(
+    runtime: KittRuntime,
+    turn_id: str,
+    *,
+    fallback_tokens: int = 0,
+    fallback_cost: float = 0.0,
+) -> dict[str, Any]:
+    ledger = getattr(runtime.processor, "execution_budgets", {}).get(turn_id)
+    if ledger is not None:
+        try:
+            usage = ledger.snapshot().get("usage", {})
+            return {
+                "tokens_used": max(0, int(usage.get("total_tokens", 0) or 0)),
+                "calls_used": max(0, int(usage.get("model_calls", 0) or 0)),
+                "cost_used": max(0.0, float(usage.get("cost", 0.0) or 0.0)),
+                "tools_used": max(0, int(usage.get("tool_calls", 0) or 0)),
+            }
+        except Exception:
+            pass
+    return {
+        "tokens_used": max(0, int(fallback_tokens)),
+        "calls_used": 0,
+        "cost_used": max(0.0, float(fallback_cost)),
+        "tools_used": 0,
+    }
+
+
 def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
     child_conversation = request["runtime_conversation_id"]
     _validate_child_conversation(runtime, child_conversation)
 
     lease = request.get("budget_lease")
     if isinstance(lease, dict) and lease:
-        token_cap = max(1, int(lease.get("token_cap", 1) or 1))
-        call_cap = max(1, int(lease.get("call_cap", 1) or 1))
-        cost_cap = max(0.0, float(lease.get("cost_cap", 0.0) or 0.0))
+        consumed = (
+            dict(lease.get("consumed") or {})
+            if isinstance(lease.get("consumed"), dict)
+            else {}
+        )
+        reserved = (
+            dict(lease.get("reserved") or {})
+            if isinstance(lease.get("reserved"), dict)
+            else {}
+        )
+        token_cap = max(
+            0,
+            int(lease.get("token_cap", 0) or 0)
+            - int(consumed.get("tokens", 0) or 0),
+        )
+        call_cap = max(
+            0,
+            int(lease.get("call_cap", 0) or 0)
+            - int(consumed.get("calls", 0) or 0),
+        )
+        cost_cap = max(
+            0.0,
+            float(lease.get("cost_cap", 0.0) or 0.0)
+            - float(consumed.get("cost", 0.0) or 0.0),
+        )
+        tool_cap = max(
+            0,
+            int(reserved.get("tools", 0) or 0)
+            - int(consumed.get("tools", 0) or 0),
+        )
+        duration_ms = max(0, int(reserved.get("duration_ms", 0) or 0))
+        if token_cap <= 0 or call_cap <= 0:
+            raise RuntimeError("Child execution budget exhausted")
         current = runtime.processor.config
         runtime.processor.config = replace(
             current,
@@ -91,9 +148,23 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
             max_cost_per_turn=min(
                 float(getattr(current, "max_cost_per_turn", cost_cap)),
                 cost_cap,
+            ),
+            max_tool_calls_per_turn=min(
+                int(getattr(current, "max_tool_calls_per_turn", tool_cap)),
+                tool_cap,
+            ),
+            max_turn_duration_seconds=min(
+                float(
+                    getattr(
+                        current,
+                        "max_turn_duration_seconds",
+                        duration_ms / 1000.0 if duration_ms else 0.0,
+                    )
+                ),
+                duration_ms / 1000.0,
             )
-            if cost_cap > 0
-            else float(getattr(current, "max_cost_per_turn", 50.0)),
+            if duration_ms > 0
+            else float(getattr(current, "max_turn_duration_seconds", 1800.0)),
             max_subagents_per_turn=0,
         )
 
@@ -137,11 +208,13 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
     chunks: list[str] = []
     final = ""
     tokens = 0
+    cost = 0.0
     for event in runtime.processor.run_turn(command):
         if isinstance(event, TextDelta):
             chunks.append(event.delta)
         elif isinstance(event, MetricsRecorded):
             tokens += int(event.input_tokens) + int(event.output_tokens)
+            cost += float(event.estimated_usd or 0.0)
         elif isinstance(event, TurnCompleted):
             final = event.response or "".join(chunks)
             if final:
@@ -156,7 +229,12 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
                 "approval_id": event.approval_request_id,
                 "action_hash": event.action_hash,
                 "turn_id": command.turn_id,
-                "tokens_used": tokens,
+                **_turn_budget_usage(
+                    runtime,
+                    command.turn_id,
+                    fallback_tokens=tokens,
+                    fallback_cost=cost,
+                ),
             }
         elif isinstance(event, (TurnFailed, TurnBlocked)):
             return {
@@ -166,7 +244,12 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
                     event, "error", getattr(event, "reason", "child failed")
                 ),
                 "turn_id": command.turn_id,
-                "tokens_used": tokens,
+                **_turn_budget_usage(
+                    runtime,
+                    command.turn_id,
+                    fallback_tokens=tokens,
+                    fallback_cost=cost,
+                ),
             }
 
     if not final and not chunks:
@@ -175,14 +258,24 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
             "state": "FAILED",
             "error": "Child turn ended without a completion event",
             "turn_id": command.turn_id,
-            "tokens_used": tokens,
+            **_turn_budget_usage(
+                runtime,
+                command.turn_id,
+                fallback_tokens=tokens,
+                fallback_cost=cost,
+            ),
         }
     return {
         "success": True,
         "state": "COMPLETED",
         "output": final or "".join(chunks),
         "turn_id": command.turn_id,
-        "tokens_used": tokens,
+        **_turn_budget_usage(
+            runtime,
+            command.turn_id,
+            fallback_tokens=tokens,
+            fallback_cost=cost,
+        ),
     }
 
 
@@ -207,6 +300,9 @@ def _continue_turn(runtime: KittRuntime, request: dict) -> dict:
                 "action_hash": event.action_hash,
                 "turn_id": turn_id,
                 "tokens_used": 0,
+                "calls_used": 0,
+                "cost_used": 0.0,
+                "tools_used": 0,
             }
         elif isinstance(event, (TurnFailed, TurnBlocked)):
             return {
@@ -217,6 +313,9 @@ def _continue_turn(runtime: KittRuntime, request: dict) -> dict:
                 ),
                 "turn_id": turn_id,
                 "tokens_used": 0,
+                "calls_used": 0,
+                "cost_used": 0.0,
+                "tools_used": 0,
             }
     if not final:
         return {
@@ -225,6 +324,9 @@ def _continue_turn(runtime: KittRuntime, request: dict) -> dict:
             "error": "Child approval resume ended without completion",
             "turn_id": turn_id,
             "tokens_used": 0,
+            "calls_used": 0,
+            "cost_used": 0.0,
+            "tools_used": 0,
         }
     return {
         "success": True,

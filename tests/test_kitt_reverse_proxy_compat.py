@@ -674,10 +674,17 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             "epoch": "ctx-test",
             "segments": [],
         }
+        request_metadata = {
+            "conversation_id": "conv-1",
+            "turn_id": "turn-1",
+            "request_id": "req-1",
+            "route": "agent-loop",
+        }
         request = LLMRequest(
             model="chatgpt-web",
             messages=[{"role": "user", "content": "inspect"}],
             context_envelope=envelope,
+            request_metadata=request_metadata,
             tool_definitions=[{
                 "name": "kitt_runtime",
                 "args": {
@@ -700,6 +707,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         for call in calls:
             body = json.loads(call.data.decode("utf-8"))
             self.assertEqual(body["kitt_context"], envelope)
+            self.assertEqual(body["kitt_meta"], request_metadata)
 
     def test_read_error_body_caches_on_repeated_reads(self):
         from kitt.llm.http_security import read_error_body

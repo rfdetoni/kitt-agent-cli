@@ -78,15 +78,100 @@ class ChildAgentManager:
         self._budget_allocator = allocator
         self._budget_settler = settler
 
-    def _settle_child_budget(self, child_id: str, tokens_used: int = 0) -> None:
+    def _settle_child_budget(
+        self,
+        child_id: str,
+        tokens_used: int = 0,
+        calls_used: int = 0,
+        cost_used: float = 0.0,
+        tools_used: int = 0,
+    ) -> None:
         if self._budget_settler is None:
             return
         try:
-            self._budget_settler(child_id, max(0, int(tokens_used)))
+            self._budget_settler(
+                child_id,
+                max(0, int(tokens_used)),
+                max(0, int(calls_used)),
+                max(0.0, float(cost_used)),
+                max(0, int(tools_used)),
+            )
+            child = self.repo.get(child_id)
+            if child is not None:
+                lease = dict(child.budget_lease or {})
+                lease["settled"] = True
+                self.repo.update(
+                    child_id,
+                    budget_lease_json=json.dumps(lease, ensure_ascii=False),
+                )
         except Exception:
             # The child-side lease already enforces the hard cap. Settlement is
             # accounting/release and must not corrupt a completed workspace merge.
             return
+
+    def _accumulate_budget_usage(
+        self,
+        child_id: str,
+        result: dict,
+    ) -> dict[str, float | int]:
+        child = self.repo.get(child_id)
+        if child is None:
+            return {"tokens": 0, "calls": 0, "cost": 0.0, "tools": 0}
+        lease = dict(child.budget_lease or {})
+        consumed = (
+            dict(lease.get("consumed") or {})
+            if isinstance(lease.get("consumed"), dict)
+            else {}
+        )
+        consumed["tokens"] = max(0, int(consumed.get("tokens", 0) or 0)) + max(
+            0, int(result.get("tokens_used", 0) or 0)
+        )
+        consumed["calls"] = max(0, int(consumed.get("calls", 0) or 0)) + max(
+            0, int(result.get("calls_used", 0) or 0)
+        )
+        consumed["cost"] = max(
+            0.0, float(consumed.get("cost", 0.0) or 0.0)
+        ) + max(0.0, float(result.get("cost_used", 0.0) or 0.0))
+        consumed["tools"] = max(0, int(consumed.get("tools", 0) or 0)) + max(
+            0, int(result.get("tools_used", 0) or 0)
+        )
+        lease["consumed"] = consumed
+        self.repo.update(
+            child_id,
+            budget_lease_json=json.dumps(lease, ensure_ascii=False),
+        )
+        return consumed
+
+    def _budget_is_settled(self, child_id: str) -> bool:
+        child = self.repo.get(child_id)
+        return bool(
+            child is not None
+            and isinstance(child.budget_lease, dict)
+            and child.budget_lease.get("settled")
+        )
+
+    def _exhaust_budget_usage(self, child_id: str) -> dict[str, float | int]:
+        child = self.repo.get(child_id)
+        if child is None:
+            return {"tokens": 0, "calls": 0, "cost": 0.0, "tools": 0}
+        lease = dict(child.budget_lease or {})
+        reserved = (
+            dict(lease.get("reserved") or {})
+            if isinstance(lease.get("reserved"), dict)
+            else {}
+        )
+        consumed = {
+            "tokens": max(0, int(lease.get("token_cap", 0) or 0)),
+            "calls": max(0, int(lease.get("call_cap", 0) or 0)),
+            "cost": max(0.0, float(lease.get("cost_cap", 0.0) or 0.0)),
+            "tools": max(0, int(reserved.get("tools", 0) or 0)),
+        }
+        lease["consumed"] = consumed
+        self.repo.update(
+            child_id,
+            budget_lease_json=json.dumps(lease, ensure_ascii=False),
+        )
+        return consumed
 
     def attach_coordinator(self, coordinator) -> None:
         self.coordinator = coordinator
@@ -227,7 +312,7 @@ class ChildAgentManager:
         timeout = min(float(timeout_seconds), self.max_worker_seconds)
         self._last_spawn_time[parent_conversation_id] = now
         child_id = f"child_{uuid.uuid4().hex}"
-        budget_lease = {}
+        budget_lease: dict[str, object] = {}
         if self._budget_allocator is not None:
             lease = self._budget_allocator(
                 parent_turn_id,
@@ -480,6 +565,7 @@ class ChildAgentManager:
         if not turn_id:
             raise RuntimeError("WAITING_APPROVAL result is missing turn_id")
         self._accumulate_tokens(child_id, int(result.get("tokens_used", 0) or 0))
+        self._accumulate_budget_usage(child_id, result)
         self.repo.update(
             child_id,
             state="WAITING_APPROVAL",
@@ -508,16 +594,30 @@ class ChildAgentManager:
         # single-use approval.
         if child.state == "COMPLETED" and child.result_artifact_id:
             return
+        total_tokens = self._accumulate_tokens(
+            child_id, int(result.get("tokens_used", 0) or 0)
+        )
+        usage = self._accumulate_budget_usage(child_id, result)
         if not result.get("success"):
+            self._settle_child_budget(
+                child_id,
+                int(usage["tokens"]),
+                int(usage["calls"]),
+                float(usage["cost"]),
+                int(usage["tools"]),
+            )
             raise RuntimeError(result.get("error", "child worker failed"))
 
         output = str(result.get("output", ""))
         if self.coordinator is not None:
             self.coordinator.integrate_child(child_id, allowed_paths=child.allowed_paths)
-        total_tokens = self._accumulate_tokens(
-            child_id, int(result.get("tokens_used", 0) or 0)
+        self._settle_child_budget(
+            child_id,
+            int(usage["tokens"]),
+            int(usage["calls"]),
+            float(usage["cost"]),
+            int(usage["tools"]),
         )
-        self._settle_child_budget(child_id, total_tokens)
         artifact = self.artifacts.put(
             workspace_id,
             output,
@@ -592,10 +692,15 @@ class ChildAgentManager:
                 error=str(exc),
                 completed_at=time.time(),
             )
-            self._settle_child_budget(
-                child_id,
-                int(getattr(child, "tokens_used", 0) or 0) if child else 0,
-            )
+            if not self._budget_is_settled(child_id):
+                usage = self._exhaust_budget_usage(child_id)
+                self._settle_child_budget(
+                    child_id,
+                    int(usage["tokens"]),
+                    int(usage["calls"]),
+                    float(usage["cost"]),
+                    int(usage["tools"]),
+                )
             self._on_event(
                 "ChildAgentFinished",
                 {
@@ -649,6 +754,15 @@ class ChildAgentManager:
                 error=str(exc),
                 completed_at=time.time(),
             )
+            if not self._budget_is_settled(child_id):
+                usage = self._exhaust_budget_usage(child_id)
+                self._settle_child_budget(
+                    child_id,
+                    int(usage["tokens"]),
+                    int(usage["calls"]),
+                    float(usage["cost"]),
+                    int(usage["tools"]),
+                )
             self._on_event(
                 "ChildAgentFinished",
                 {"child_id": child_id, "status": state, "error": str(exc)},
@@ -708,9 +822,13 @@ class ChildAgentManager:
             error="cancelled by user",
             completed_at=time.time(),
         )
+        usage = self._exhaust_budget_usage(child_id)
         self._settle_child_budget(
             child_id,
-            int(getattr(child, "tokens_used", 0) or 0),
+            int(usage["tokens"]),
+            int(usage["calls"]),
+            float(usage["cost"]),
+            int(usage["tools"]),
         )
         with self._execution_lock:
             process = self._processes.get(child_id)

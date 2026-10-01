@@ -1,8 +1,9 @@
 # Agent Engineering Architecture
 
-K.I.T.T. Agent CLI 0.80.5 keeps model reasoning flexible while moving execution
+K.I.T.T. Agent CLI 0.81.0 keeps model reasoning flexible while moving execution
 authority, durability, recovery and measurement into deterministic host-owned
-contracts.
+contracts. Protocol 0.6 and Memory 0.7 complete the progressive context/replay
+contracts used by this runtime.
 
 ## Runtime ownership
 
@@ -45,6 +46,19 @@ Mutating tools are fenced by workspace leases. The lease remains held through
 post-edit verification and rollback, closing the race between mutation and
 validation.
 
+## Conversation runtimes and replay
+
+Runtime ownership is per conversation, not process-global. LOCAL, DOCKER, PODMAN,
+KUBERNETES and REMOTE drivers are bound through `ConversationRuntimeManager`;
+bindings/config digests persist in runtime state, secrets are sanitized, and
+pause/terminate create durability fences before lifecycle transitions.
+
+Tool execution has a stable execution identity in the EventLedger. Reservation
+is persisted and flushed before side effects; a completed receipt is reused after
+reconnect/replay instead of executing the same mutation again. Event publication
+occurs only after persistence, and reconnect cursors use monotonically ordered
+ledger sequence numbers.
+
 ## Context epochs and exact recovery
 
 Every model envelope receives a content-derived `ContextEpoch` rather than a
@@ -68,7 +82,9 @@ persists a structured `CompactionCheckpoint`.
 ## Budgets and subagents
 
 A turn has one global budget across model calls, input/output tokens, tool calls,
-duration, cost and subagent count. A retained child receives a `BudgetLease`
+duration, cost and subagent count. Classifier, condenser, execution-model and
+validator activity is attributed by stage inside that same ledger; stage labels
+never create independent wallets. A retained child receives a `BudgetLease`
 from that parent wallet; the child worker caps its own runtime to the lease and
 cannot create a fresh independent budget.
 
@@ -110,16 +126,20 @@ declared set.
 ## Workspace snapshots and rollback
 
 Before a concrete file mutation, the runtime may capture exact pre-mutation bytes
-into ArtifactStore and persist a `WorkspaceSnapshot`. If post-edit verification
-fails, the snapshot is restored while the mutation lease is still held. Files
-that did not exist before the mutation are removed during restoration.
+into ArtifactStore and persist a `WorkspaceSnapshot`. Diff, preview and restore
+accept an explicit path subset and reject paths that were not part of the
+snapshot, so rollback cannot overwrite unrelated concurrent work. If post-edit
+verification fails, the selected snapshot paths are restored while the mutation
+lease is still held. Files that did not exist before the mutation are removed.
 
 ## Memory evidence and durable jobs
 
-Memory recall creates a durable `RecallTrace`. The Agent propagates the trace ID
-and records `MemoryConsumptionReceipt` rows for memories actually presented to
-the model. Presentation is not falsely promoted to `referenced` or
-`used_for_action`.
+Memory retrieval is progressive. The Agent first calls `memory.search` for
+token-bounded snippets/provenance, then hydrates selected IDs with `memory.get`
+under a second explicit budget. If a full body does not fit, the bounded search
+snippet remains usable instead of silently disappearing. Both stages return
+durable recall trace IDs; consumption receipts still distinguish presentation,
+reference and action use.
 
 Memory background work uses durable `MemoryJob` rows with idempotency keys,
 leases, attempts and retry timestamps.

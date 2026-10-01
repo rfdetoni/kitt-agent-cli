@@ -4,6 +4,7 @@ import re
 import shlex
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
+from typing import Any
 
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.core.turn_command import TurnCommand
@@ -26,7 +27,7 @@ from kitt.goals.evidence import EvidenceLedger
 from kitt.goals.risk import ReviewRisk, classify_review_risk
 from kitt.goals.review import AdversarialCodeReviewer, combine_adversarial_reviews
 from kitt.llm.client import LLMClient
-from kitt.metrics.cost_estimator import estimate_cost
+from kitt.metrics.cost_estimator import estimate_cost, estimate_execution_cost
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.context import ExecutionSecurityContext
 
@@ -144,7 +145,10 @@ class GoalStepExecutor:
                 pass
         elif tool_name == "kitt_runtime":
             operation = str(args.get("operation") or "")
-            inner = args.get("arguments") if isinstance(args.get("arguments"), dict) else {}
+            raw_inner = args.get("arguments")
+            inner: dict[str, Any] = (
+                dict(raw_inner) if isinstance(raw_inner, dict) else {}
+            )
             if operation == "repo.edit_symbol":
                 path = inner.get("path") or inner.get("file") or cls._resolve_symbol_path(runtime, inner)
                 if path:
@@ -174,7 +178,7 @@ class GoalStepExecutor:
         if not wanted or not diff_text.strip():
             return "", set(), True
         blocks = []
-        current = []
+        current: list[str] = []
         matched_paths = set()
         complete = True
 
@@ -377,6 +381,7 @@ class GoalStepExecutor:
         *,
         route="adversarial-review",
         pass_index=1,
+        turn_id="",
     ):
         if self.reviewer_factory is not None:
             return self.reviewer_factory(runtime, goal, completion_state, usage)
@@ -415,12 +420,15 @@ class GoalStepExecutor:
             loopback = host in {None, "", "localhost", "127.0.0.1", "::1"}
             is_local = backend in LLMClient.LOCAL_BACKENDS and loopback
 
+            input_tokens = (
+                TokenCounter.count_tokens(clean_system)
+                + TokenCounter.count_tokens(clean_user)
+            )
             if not is_local:
                 policy = getattr(runtime, "egress_policy", None)
                 if policy is None:
                     raise PermissionError("Remote adversarial review requires EgressPolicy")
                 host = host or backend or "remote-provider"
-                input_tokens = TokenCounter.count_tokens(clean_system) + TokenCounter.count_tokens(clean_user)
                 allowed, _manifest, reason = policy.evaluate_egress(
                     host=host,
                     is_local=False,
@@ -435,22 +443,95 @@ class GoalStepExecutor:
                 if not allowed:
                     raise PermissionError(reason)
 
+            execution_budget = getattr(
+                runtime.processor, "execution_budgets", {}
+            ).get(str(turn_id or ""))
+            estimated_input_cost = estimate_execution_cost(
+                str(getattr(profile, "model", "") or ""),
+                input_tokens,
+                0,
+                backend=str(getattr(profile, "backend", "") or ""),
+                workspace_root=str(runtime.canonical_root),
+            ).estimated_usd
+            provider_usage: dict[str, object] = {}
+
+            def observe_usage(value):
+                provider_usage.clear()
+                provider_usage.update(dict(value or {}))
+
+            def reserve_retry(attempt):
+                if execution_budget is not None and int(attempt) > 0:
+                    execution_budget.reserve_model_call(
+                        input_tokens=input_tokens,
+                        cost=estimated_input_cost,
+                        stage=route,
+                    )
+
+            if execution_budget is not None:
+                execution_budget.reserve_model_call(
+                    input_tokens=input_tokens,
+                    cost=estimated_input_cost,
+                    stage=route,
+                )
+
             with LLMClient(profile) as client:
                 response = client.chat(
                     [{"role": "user", "content": clean_user}],
                     system_prompt=clean_system,
                     session_key=f"goal-review:{goal.id}:{iteration}:{route}:{pass_index}",
+                    usage_callback=observe_usage,
+                    attempt_callback=reserve_retry,
                 )
 
-            input_tokens = TokenCounter.count_tokens(clean_system) + TokenCounter.count_tokens(clean_user)
             output_tokens = TokenCounter.count_tokens(response)
+            actual_input = provider_usage.get("prompt_tokens")
+            actual_output = provider_usage.get("completion_tokens")
+            actual_input_tokens = (
+                int(actual_input)
+                if isinstance(actual_input, (int, float))
+                and not isinstance(actual_input, bool)
+                else input_tokens
+            )
+            actual_output_tokens = (
+                int(actual_output)
+                if isinstance(actual_output, (int, float))
+                and not isinstance(actual_output, bool)
+                else output_tokens
+            )
+            if execution_budget is not None:
+                actual_input_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    actual_input_tokens,
+                    0,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(runtime.canonical_root),
+                ).estimated_usd
+                output_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    0,
+                    actual_output_tokens,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(runtime.canonical_root),
+                ).estimated_usd
+                execution_budget.reconcile_model_input(
+                    estimated_tokens=input_tokens,
+                    actual_tokens=actual_input_tokens,
+                    estimated_cost=estimated_input_cost,
+                    actual_cost=actual_input_cost,
+                    stage=route,
+                )
+                execution_budget.record_model_output(
+                    output_tokens=actual_output_tokens,
+                    cost=output_cost,
+                    stage=route,
+                )
             cost = estimate_cost(
                 str(getattr(profile, "model", "") or ""),
-                input_tokens,
-                output_tokens,
+                actual_input_tokens,
+                actual_output_tokens,
                 workspace_root=str(runtime.canonical_root),
             )
-            usage["tokens"] += input_tokens + output_tokens
+            usage["tokens"] += actual_input_tokens + actual_output_tokens
             usage["cost"] += float(cost.estimated_usd)
             usage["profile"] = profile_name
             usage["model"] = str(getattr(profile, "model", "") or "")
@@ -575,7 +656,7 @@ class GoalStepExecutor:
                 result["review_risk"] = assessment.to_dict()
 
                 if assessment.level != ReviewRisk.LOW and snapshot:
-                    review_usage = {
+                    review_usage: dict[str, Any] = {
                         "tokens": 0,
                         "cost": 0.0,
                         "redactions": 0,
@@ -591,7 +672,7 @@ class GoalStepExecutor:
                             if pass_index == 2
                             else "adversarial-review"
                         )
-                        pass_usage = {
+                        pass_usage: dict[str, Any] = {
                             "tokens": 0,
                             "cost": 0.0,
                             "redactions": 0,
@@ -603,6 +684,7 @@ class GoalStepExecutor:
                             pass_usage,
                             route=route,
                             pass_index=pass_index,
+                            turn_id=command.turn_id,
                         )
                         review = reviewer.review(
                             objective=goal.objective,
@@ -647,6 +729,19 @@ class GoalStepExecutor:
                         review_usage.get("cost", 0.0) or 0.0
                     )
                     result["review_usage"] = review_usage
+                    budget = getattr(
+                        runtime.processor, "execution_budgets", {}
+                    ).get(command.turn_id)
+                    if budget is not None:
+                        snapshots = getattr(
+                            runtime.processor,
+                            "execution_budget_snapshots",
+                            None,
+                        )
+                        if snapshots is None:
+                            snapshots = {}
+                            runtime.processor.execution_budget_snapshots = snapshots
+                        snapshots[command.turn_id] = budget.snapshot()
                     verification = completion.include_adversarial_review(
                         verification,
                         review,

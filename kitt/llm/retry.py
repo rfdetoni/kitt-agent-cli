@@ -87,8 +87,15 @@ class RetryPolicy:
     def execute_with_retry(
         self,
         fn: Callable[[], Generator[T, None, None]],
+        *,
+        on_attempt: Callable[[int], None] | None = None,
     ) -> Generator[T, None, None]:
         for attempt in range(self.config.max_retries + 1):
+            # Callers use this hook to reserve one global-budget model call per
+            # actual provider attempt. A rejected reservation must stop before
+            # any network/provider side effect is started.
+            if on_attempt is not None:
+                on_attempt(attempt)
             emitted = False
             try:
                 for item in fn():

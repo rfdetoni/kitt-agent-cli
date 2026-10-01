@@ -19,8 +19,12 @@ from kitt_protocol import (
     MEMORY_FORGET_RESPONSE,
     MEMORY_MANAGE_REQUEST,
     MEMORY_MANAGE_RESPONSE,
-    MEMORY_RECALL_REQUEST,
-    MEMORY_RECALL_RESPONSE,
+    MEMORY_SEARCH_REQUEST,
+    MEMORY_SEARCH_RESPONSE,
+    MEMORY_TIMELINE_REQUEST,
+    MEMORY_TIMELINE_RESPONSE,
+    MEMORY_GET_REQUEST,
+    MEMORY_GET_RESPONSE,
     MEMORY_REMEMBER_REQUEST,
     MEMORY_REMEMBER_RESPONSE,
     SYSTEM_ERROR,
@@ -35,7 +39,11 @@ class KittMemoryUnavailable(RuntimeError):
 
 class KittMemoryClient:
     def __init__(self, address: str | None = None, token_path: str | Path | None = None, timeout: float = 0.75):
-        self.address = address or os.getenv("KITT_MEMORY_ADDR", "127.0.0.1:41829")
+        self.address: str = (
+            address
+            or os.getenv("KITT_MEMORY_ADDR")
+            or "127.0.0.1:41829"
+        )
         if os.name == "nt":
             root = Path(os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming"))
         elif sys.platform == "darwin":
@@ -208,12 +216,13 @@ class KittMemoryClient:
             raise KittMemoryUnavailable("memory.remember response missing id")
         return memory_id
 
-    def recall_with_trace(
+    def search(
         self,
         workspace_id: str,
         query: str,
-        limit: int = 8,
         *,
+        max_results: int = 24,
+        token_budget: int = 1200,
         namespace: str = "agent-cli",
         scope_key: str | None = None,
         as_of: int | None = None,
@@ -221,51 +230,99 @@ class KittMemoryClient:
         allow_secret: bool = False,
     ) -> tuple[list[dict[str, Any]], str]:
         body = self._call(
-            MEMORY_RECALL_REQUEST,
+            MEMORY_SEARCH_REQUEST,
             {
                 "namespace": namespace,
                 "workspace_id": workspace_id,
                 "scope_key": scope_key,
                 "query": query,
-                "limit": max(0, min(int(limit), 50)),
+                "max_results": max(1, min(int(max_results), 128)),
+                "token_budget": max(1, min(int(token_budget), 65_536)),
                 "as_of": as_of,
                 "allow_private": bool(allow_private),
                 "allow_secret": bool(allow_secret),
             },
-            MEMORY_RECALL_RESPONSE,
+            MEMORY_SEARCH_RESPONSE,
         )
-        rows = body.get("records") if isinstance(body, dict) else None
-        if not isinstance(rows, list):
-            raise KittMemoryUnavailable("memory.recall response missing records")
-        trace_id = body.get("recall_trace_id") if isinstance(body, dict) else ""
+        hits = body.get("hits") if isinstance(body, dict) else None
+        if not isinstance(hits, list):
+            raise KittMemoryUnavailable("memory.search response missing hits")
         return (
-            [row for row in rows if isinstance(row, dict)],
-            str(trace_id or ""),
+            [row for row in hits if isinstance(row, dict)],
+            str(body.get("recall_trace_id") or ""),
         )
 
-    def recall(
+    def get(
         self,
         workspace_id: str,
-        query: str,
-        limit: int = 8,
+        ids: list[str] | tuple[str, ...],
         *,
+        token_budget: int = 2400,
         namespace: str = "agent-cli",
         scope_key: str | None = None,
-        as_of: int | None = None,
         allow_private: bool = True,
         allow_secret: bool = False,
-    ) -> list[dict[str, Any]]:
-        rows, _trace_id = self.recall_with_trace(
-            workspace_id,
-            query,
-            limit,
-            namespace=namespace,
-            scope_key=scope_key,
-            as_of=as_of,
-            allow_private=allow_private,
-            allow_secret=allow_secret,
+    ) -> tuple[list[dict[str, Any]], str, list[str]]:
+        body = self._call(
+            MEMORY_GET_REQUEST,
+            {
+                "namespace": namespace,
+                "workspace_id": workspace_id,
+                "scope_key": scope_key,
+                "ids": [str(value) for value in ids if str(value).strip()][:128],
+                "token_budget": max(1, min(int(token_budget), 65_536)),
+                "allow_private": bool(allow_private),
+                "allow_secret": bool(allow_secret),
+            },
+            MEMORY_GET_RESPONSE,
         )
-        return rows
+        records = body.get("records") if isinstance(body, dict) else None
+        if not isinstance(records, list):
+            raise KittMemoryUnavailable("memory.get response missing records")
+        truncated_raw = body.get("truncated_ids") if isinstance(body, dict) else None
+        truncated = truncated_raw if isinstance(truncated_raw, list) else []
+        return (
+            [row for row in records if isinstance(row, dict)],
+            str(body.get("recall_trace_id") or ""),
+            [str(value) for value in truncated if isinstance(value, str)],
+        )
+
+    def timeline(
+        self,
+        workspace_id: str,
+        *,
+        source_id: str | None = None,
+        scope_key: str | None = None,
+        around: int | None = None,
+        limit: int = 24,
+        token_budget: int = 1200,
+        namespace: str = "agent-cli",
+        allow_private: bool = True,
+        allow_secret: bool = False,
+    ) -> tuple[list[dict[str, Any]], str]:
+        body = self._call(
+            MEMORY_TIMELINE_REQUEST,
+            {
+                "namespace": namespace,
+                "workspace_id": workspace_id,
+                "source_id": source_id,
+                "scope_key": scope_key,
+                "around": around,
+                "limit": max(1, min(int(limit), 128)),
+                "token_budget": max(1, min(int(token_budget), 65_536)),
+                "allow_private": bool(allow_private),
+                "allow_secret": bool(allow_secret),
+            },
+            MEMORY_TIMELINE_RESPONSE,
+        )
+        hits = body.get("hits") if isinstance(body, dict) else None
+        if not isinstance(hits, list):
+            raise KittMemoryUnavailable("memory.timeline response missing hits")
+        return (
+            [row for row in hits if isinstance(row, dict)],
+            str(body.get("recall_trace_id") or ""),
+        )
+
 
     def lifecycle(
         self,

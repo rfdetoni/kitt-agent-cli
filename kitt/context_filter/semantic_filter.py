@@ -1,5 +1,6 @@
+import inspect
 import time
-from typing import Optional, Literal
+from typing import Any, Optional, Literal
 from dataclasses import dataclass
 from kitt.domain.entities import SemanticTask, ContextPlan, ModelProfile
 from kitt.llm.client import LLMClient, LLMError
@@ -118,7 +119,13 @@ class SemanticFilter:
         self.planner = ContextPlanner()
 
     def filter_and_plan(
-        self, prompt: str, session_key: Optional[str] = None, *, deterministic_only: bool = False
+        self,
+        prompt: str,
+        session_key: Optional[str] = None,
+        *,
+        deterministic_only: bool = False,
+        attempt_callback=None,
+        usage_callback=None,
     ) -> SemanticFilterResult:
         start_t = time.time()
 
@@ -149,12 +156,45 @@ class SemanticFilter:
             if self.llm_client is None:
                 self.llm_client = LLMClient(self.profile)
             messages = [{"role": "user", "content": prompt}]
-            response_text = self.llm_client.chat(
-                messages,
-                system_prompt=SYSTEM_CONTEXT_FILTER_PROMPT,
-                response_format="json",
-                session_key=session_key,
-            )
+            kwargs: dict[str, Any] = {
+                "system_prompt": SYSTEM_CONTEXT_FILTER_PROMPT,
+                "response_format": "json",
+                "session_key": session_key,
+            }
+            if attempt_callback is not None:
+                kwargs["attempt_callback"] = attempt_callback
+            if usage_callback is not None:
+                kwargs["usage_callback"] = usage_callback
+
+            attempt_forwarded = attempt_callback is None
+            try:
+                signature = inspect.signature(self.llm_client.chat)
+                has_var_kwargs = any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in signature.parameters.values()
+                )
+                if has_var_kwargs:
+                    attempt_forwarded = True
+                else:
+                    attempt_forwarded = (
+                        attempt_callback is None
+                        or "attempt_callback" in signature.parameters
+                    )
+                    kwargs = {
+                        key: value
+                        for key, value in kwargs.items()
+                        if key in signature.parameters
+                    }
+            except (TypeError, ValueError):
+                # Unknown call signatures are treated as accepting the callback;
+                # if they reject it the existing fallback path remains fail-safe.
+                attempt_forwarded = True
+
+            if attempt_callback is not None and not attempt_forwarded:
+                # Injected clients without retry hooks still represent exactly one
+                # real call. Reserve attempt zero immediately before invoking it.
+                attempt_callback(0)
+            response_text = self.llm_client.chat(messages, **kwargs)
 
             if len(response_text) > 16384:
                 raise ValueError("JSON response exceeded 16 KiB limit.")

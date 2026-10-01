@@ -10,13 +10,14 @@ from dataclasses import dataclass, replace
 import json
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
-from kitt.context_filter.prompt_budget import PromptBudget
+from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.core.logging import trace_event
 from kitt.core.turn_command import TurnCommand
 from kitt.domain.entities import ModelProfile, SemanticTask
 from kitt.llm.client import LLMClient
+from kitt.metrics.cost_estimator import estimate_execution_cost
 from kitt.router.features import TaskFeatureExtractor
 from kitt.router.models import TaskFeatures
 
@@ -158,6 +159,17 @@ class ArchitectPlanner:
 class TurnArchitectMixin:
     """Complexity-gated architect phase with an explicit configured profile."""
 
+    # Composition contract supplied by TurnProcessor.
+    root_path: Any
+    config: Any
+    router: Any
+    routing_policy: Any
+    session_state: Any
+    execution_budgets: dict[str, Any]
+    _routing_capabilities: Callable[..., Any]
+    _provider_session_key: Callable[..., str]
+    _record_latency: Callable[..., Any]
+
     def _eligible_architect_profile(
         self,
         features: TaskFeatures,
@@ -264,13 +276,88 @@ class TurnArchitectMixin:
             f"architect:{cmd.conversation_id}:{cmd.turn_id}",
         )
         started = time.perf_counter()
+        execution_budget = getattr(self, "execution_budgets", {}).get(cmd.turn_id)
+        estimated_input = (
+            TokenCounter.count_tokens(_ARCHITECT_SYSTEM_PROMPT)
+            + TokenCounter.count_tokens(prompt)
+        )
+        estimated_input_cost = estimate_execution_cost(
+            str(getattr(profile, "model", "") or ""),
+            estimated_input,
+            0,
+            backend=str(getattr(profile, "backend", "") or ""),
+            workspace_root=str(self.root_path),
+        ).estimated_usd
+        provider_usage: dict[str, object] = {}
+
+        def observe_usage(usage: dict[str, object]) -> None:
+            provider_usage.clear()
+            provider_usage.update(dict(usage))
+
+        def reserve_retry(attempt: int) -> None:
+            if execution_budget is not None and int(attempt) > 0:
+                execution_budget.reserve_model_call(
+                    input_tokens=estimated_input,
+                    cost=estimated_input_cost,
+                    stage="architect",
+                )
+
         try:
+            if execution_budget is not None:
+                execution_budget.reserve_model_call(
+                    input_tokens=estimated_input,
+                    cost=estimated_input_cost,
+                    stage="architect",
+                )
             with LLMClient(profile) as client:
                 raw = client.chat(
                     [{"role": "user", "content": prompt}],
                     system_prompt=_ARCHITECT_SYSTEM_PROMPT,
                     session_key=session_key,
                     route="context-gather",
+                    usage_callback=observe_usage,
+                    attempt_callback=reserve_retry,
+                )
+            if execution_budget is not None:
+                actual_input = provider_usage.get("prompt_tokens")
+                actual_output = provider_usage.get("completion_tokens")
+                actual_input_tokens = (
+                    int(actual_input)
+                    if isinstance(actual_input, (int, float))
+                    and not isinstance(actual_input, bool)
+                    else estimated_input
+                )
+                actual_output_tokens = (
+                    int(actual_output)
+                    if isinstance(actual_output, (int, float))
+                    and not isinstance(actual_output, bool)
+                    else TokenCounter.count_tokens(raw)
+                )
+                actual_input_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    actual_input_tokens,
+                    0,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd
+                output_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    0,
+                    actual_output_tokens,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd
+                execution_budget.reconcile_model_input(
+                    estimated_tokens=estimated_input,
+                    actual_tokens=actual_input_tokens,
+                    estimated_cost=estimated_input_cost,
+                    actual_cost=actual_input_cost,
+                    stage="architect",
+                )
+                execution_budget.record_model_output(
+                    output_tokens=actual_output_tokens,
+                    cost=output_cost,
+                    stage="architect",
                 )
         except Exception as exc:
             trace_event(

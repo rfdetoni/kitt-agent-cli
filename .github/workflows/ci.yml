@@ -81,6 +81,26 @@ jobs:
         run: python -m pytest -q
       - name: Compile package
         run: python -m compileall -q kitt
+      - name: Type check changed agentic boundaries
+        run: |
+          python -m pip install "mypy>=1.18,<2"
+          python -m mypy --python-version 3.14 --ignore-missing-imports --follow-imports=skip --check-untyped-defs \
+            kitt/children/lifecycle.py \
+            kitt/artifacts/store.py \
+            kitt/children/worker.py \
+            kitt/context_filter/semantic_filter.py \
+            kitt/core/agent_runtime.py \
+            kitt/core/execution_budget.py \
+            kitt/core/turn_architect.py \
+            kitt/core/turn_context.py \
+            kitt/core/turn_model.py \
+            kitt/goals/executor.py \
+            kitt/llm/client.py \
+            kitt/llm/retry.py \
+            kitt/memory/memory_manager.py \
+            kitt/memory/shared_client.py \
+            kitt/metrics/cost_estimator.py \
+            kitt/runtime/conversation_runtime.py
       - name: Static critical checks
         run: |
           python -m pip install ruff

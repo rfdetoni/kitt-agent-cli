@@ -5,6 +5,9 @@ import json
 import time
 import uuid
 from typing import Any
+import re
+
+from kitt.history.redaction import redact as redact_secret_text
 
 from .models import SessionEventRecord
 
@@ -25,6 +28,27 @@ def _jsonable(value: Any) -> Any:
         if isinstance(value, (list, tuple, set)):
             return [_jsonable(child) for child in value]
         return str(value)
+
+
+_SENSITIVE_KEY = re.compile(
+    r"(authorization|cookie|token|secret|password|passwd|api[-_]?key|credential|csrf|xsrf)",
+    re.IGNORECASE,
+)
+
+
+def _redact_observability(value: Any, key: str = "") -> Any:
+    if key and _SENSITIVE_KEY.search(key):
+        return "[REDACTED]"
+    if isinstance(value, str):
+        return redact_secret_text(value)
+    if isinstance(value, dict):
+        return {
+            str(child_key): _redact_observability(child_value, str(child_key))
+            for child_key, child_value in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_redact_observability(item) for item in value]
+    return value
 
 
 def _canonical(value: Any) -> str:
@@ -83,16 +107,32 @@ class SessionLedger:
         source: str = "kitt-agent-cli",
         durability: str = "DURABLE",
         parent_event_id: str | None = None,
+        event_id: str | None = None,
     ) -> SessionEventRecord:
         if not conversation_id:
             raise ValueError("conversation_id is required")
-        body = dict(payload or {})
+        body = _redact_observability(dict(payload or {}))
         encoded = _canonical(body)
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         now = time.time()
-        event_id = f"sev_{uuid.uuid4().hex}"
+        event_id = str(event_id or f"sev_{uuid.uuid4().hex}")
         with self.db.get_connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            prior = conn.execute(
+                "SELECT * FROM session_events WHERE id=?",
+                (event_id,),
+            ).fetchone()
+            if prior is not None:
+                record = self._row(prior)
+                if (
+                    record.conversation_id != conversation_id
+                    or record.turn_id != turn_id
+                    or record.event_type != event_type
+                    or record.payload_hash != digest
+                ):
+                    raise ValueError(f"event_id collision: {event_id}")
+                conn.rollback()
+                return record
             exists = conn.execute(
                 "SELECT 1 FROM conversations WHERE id=?",
                 (conversation_id,),
@@ -192,6 +232,7 @@ class SessionLedger:
         model_visible: bool = False,
         replayable: bool = True,
         publisher=None,
+        event_id: str | None = None,
     ) -> SessionEventRecord:
         """Persist an event before publishing it to an external observer."""
         record = self.append(
@@ -204,9 +245,129 @@ class SessionLedger:
             parent_event_id=parent_event_id,
             model_visible=model_visible,
             replayable=replayable,
+            event_id=event_id,
         )
         if publisher is not None:
             publisher(event_type, dict(record.payload))
+        return record
+
+    def event_by_id(self, event_id: str) -> SessionEventRecord | None:
+        if not str(event_id or "").strip():
+            return None
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM session_events WHERE id=?",
+                (str(event_id),),
+            ).fetchone()
+        return self._row(row) if row is not None else None
+
+    @staticmethod
+    def _execution_event_id(prefix: str, execution_id: str) -> str:
+        digest = hashlib.sha256(str(execution_id).encode("utf-8")).hexdigest()[:40]
+        return f"sev_exec_{prefix}_{digest}"
+
+    def tool_execution(self, execution_id: str) -> dict[str, Any] | None:
+        completed = self.event_by_id(self._execution_event_id("done", execution_id))
+        if completed is not None:
+            return {"state": "COMPLETED", "event": completed}
+        reserved = self.event_by_id(self._execution_event_id("reserved", execution_id))
+        if reserved is not None:
+            return {"state": "RESERVED", "event": reserved}
+        return None
+
+    def reserve_tool_execution(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        *,
+        execution_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments_digest: str,
+        side_effecting: bool,
+    ) -> dict[str, Any]:
+        existing = self.tool_execution(execution_id)
+        if existing is not None:
+            return existing
+        record = self.append_event(
+            conversation_id,
+            "ToolExecutionReserved",
+            {
+                "execution_id": execution_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "arguments_digest": arguments_digest,
+                "side_effecting": bool(side_effecting),
+            },
+            turn_id=turn_id,
+            source="tool-execution",
+            durability="SYNC",
+            replayable=True,
+            event_id=self._execution_event_id("reserved", execution_id),
+        )
+        self.flush()
+        return {"state": "RESERVED", "event": record, "fresh": True}
+
+    def complete_tool_execution(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        *,
+        execution_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments_digest: str,
+        success: bool,
+        output: str,
+        error: str | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> SessionEventRecord:
+        return self.append_event(
+            conversation_id,
+            "ToolExecutionCompleted",
+            {
+                "execution_id": execution_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "arguments_digest": arguments_digest,
+                "success": bool(success),
+                "output": str(output or "")[:262144],
+                "error": None if error is None else str(error)[:16384],
+                "metadata": _jsonable(dict(metadata or {})),
+            },
+            turn_id=turn_id,
+            source="tool-execution",
+            durability="DURABLE",
+            replayable=True,
+            parent_event_id=self._execution_event_id("reserved", execution_id),
+            event_id=self._execution_event_id("done", execution_id),
+        )
+
+    def flush(self) -> None:
+        try:
+            with self.db.get_connection() as conn:
+                conn.commit()
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except Exception:
+            return
+
+    def durability_fence(
+        self,
+        conversation_id: str,
+        *,
+        turn_id: str | None,
+        reason: str,
+    ) -> SessionEventRecord:
+        record = self.append_event(
+            conversation_id,
+            "DurabilityFence",
+            {"reason": str(reason or "sync")[:200]},
+            turn_id=turn_id,
+            source="event-ledger",
+            durability="SYNC",
+            replayable=True,
+        )
+        self.flush()
         return record
 
     def as_agent_event(self, record: SessionEventRecord):

@@ -12,11 +12,27 @@ class TestContextSources(unittest.TestCase):
     def test_memory_context_uses_relevant_items_only(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             shared = MagicMock()
-            shared.recall.return_value = [{
-                "content": "Prefer pytest for payment service tests.",
-                "scope": "workspace",
-                "pinned": True,
-            }]
+            shared.search.return_value = (
+                [{
+                    "id": "mem-payment",
+                    "snippet": "Prefer pytest for payment service tests.",
+                    "scope": "workspace",
+                }],
+                "trace-search",
+            )
+            shared.get.return_value = (
+                [{
+                    "record": {
+                        "id": "mem-payment",
+                        "content": "Prefer pytest for payment service tests.",
+                        "scope": "workspace",
+                        "pinned": True,
+                    },
+                    "provenance": [],
+                }],
+                "trace-get",
+                [],
+            )
             memory = MemoryManager(
                 tmpdir,
                 persistence_enabled=True,

@@ -382,6 +382,7 @@ class KittRuntime:
         processor.network_policy = network_policy
         processor.child_manager = children
 
+        from kitt.core.resource_coordinator import ResourceCoordinator
         from kitt.core.run_coordinator import RunCoordinator
         from kitt.core.workspace_snapshot import WorkspaceSnapshotService
         from kitt.evidence.ledger import EventLedger
@@ -391,6 +392,7 @@ class KittRuntime:
             event_ledger,
             workspace_coordinator=native.coordinator,
         )
+        resource_coordinator = ResourceCoordinator(native.coordinator)
         workspace_snapshots = WorkspaceSnapshotService(
             canonical_root,
             workspace_id=identity.id,
@@ -408,6 +410,7 @@ class KittRuntime:
         )
         processor.event_ledger = event_ledger
         processor.run_coordinator = run_coordinator
+        processor.resource_coordinator = resource_coordinator
         processor.workspace_snapshot_service = workspace_snapshots
         processor.execution_budgets = {}
         processor.execution_budget_snapshots = {}
@@ -432,10 +435,13 @@ class KittRuntime:
                 child_id,
                 token_cap,
             ),
-            settler=lambda child_id, tokens_used=0: settle_child_budget(
+            settler=lambda child_id, tokens_used=0, calls_used=0, cost_used=0.0, tools_used=0: settle_child_budget(
                 processor,
                 child_id,
                 tokens_used,
+                calls_used,
+                cost_used,
+                tools_used,
             ),
         )
 
@@ -513,8 +519,17 @@ class KittRuntime:
             run_coordinator=run_coordinator,
             workspace_snapshots=workspace_snapshots,
         )
+        from kitt.runtime.conversation_runtime import ConversationRuntimeRegistry
+
         runtime_holder["runtime"] = runtime
         runtime.prime_metrics = prime_metrics
+        runtime.conversation_runtimes = ConversationRuntimeRegistry(
+            canonical_root,
+            identity.id,
+            database,
+            ledger=event_ledger,
+        )
+        processor.conversation_runtimes = runtime.conversation_runtimes
         return runtime
 
     async def start(self) -> None:

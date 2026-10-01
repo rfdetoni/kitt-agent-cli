@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from kitt.context_filter.prompt_budget import TokenCounter
+from kitt.history.redaction import redact as redact_secret_text
 
 
 _HOST_RESULT_MARKER = " result from the host."
@@ -49,28 +50,41 @@ def externalize_large_tool_results(
         if marker_at <= 0:
             continue
         tool_name = first_line[:marker_at].strip() or "host_tool"
+        redacted_content = redact_secret_text(content)
+        redacted_first_line, redacted_separator, redacted_remainder = (
+            redacted_content.partition("\n")
+        )
+        redaction_applied = redacted_content != content
         try:
             artifact = store.put(
                 workspace_id,
-                content,
+                redacted_content,
                 "TOOL_RESULT",
                 f"Consumed output from {tool_name}",
                 conversation_id=conversation_id,
                 turn_id=turn_id,
-                sensitivity="NORMAL",
+                sensitivity="REDACTED" if redaction_applied else "NORMAL",
                 metadata={
                     "tool": tool_name,
                     "sha256": hashlib.sha256(
-                        content.encode("utf-8", errors="replace")
+                        redacted_content.encode("utf-8", errors="replace")
                     ).hexdigest(),
                     "rehydratable": True,
+                    "redacted": redaction_applied,
                 },
             )
         except Exception:
             continue
         suffix = f"Artifact ID {artifact.id}"
         message["content"] = (
-            first_line + "\n" + suffix + ("\n" + remainder if separator else "")
+            redacted_first_line
+            + "\n"
+            + suffix
+            + (
+                "\n" + redacted_remainder
+                if redacted_separator
+                else ""
+            )
         )
         externalized += 1
     return externalized

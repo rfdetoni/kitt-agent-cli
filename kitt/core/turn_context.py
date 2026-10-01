@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import re
 from difflib import SequenceMatcher
 from dataclasses import replace
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
 from kitt.context_filter.semantic_filter import SemanticFilter, llm_first_filter_result
@@ -26,8 +27,10 @@ from kitt.context.envelope import (
 )
 from kitt.context.epoch import build_context_epoch, persist_context_epoch
 from kitt.context.recovery import recoverable_text_body
+from kitt.context.reconcile import reconcile_context_envelope
 from kitt_protocol import CacheRegion, ContextKind, ContextStability, ContextTrust, RecoveryMode
 from kitt.llm.client import LLMClient
+from kitt.metrics.cost_estimator import estimate_execution_cost
 from kitt.prompts import (
     CONTEXT_SUMMARY_SYSTEM as CONTEXT_SUMMARY_PROMPT,
     CONTEXT_SUMMARY_USER_TEMPLATE,
@@ -38,13 +41,46 @@ from kitt.prompts import (
 class TurnContextMixin:
     """Semantic filtering, retrieval and prompt construction phase."""
 
+    # Composition contract supplied by TurnProcessor.
+    root_path: Any
+    config: Any
+    router: Any
+    context_client: Any
+    execution_client: Any
+    context_engine: Any
+    context_resolver: Any
+    deterministic_extractor: Any
+    enable_context_summary: bool
+    execution_budgets: dict[str, Any]
+    session_state: Any
+    working_set: Any
+    skill_discovery: Any
+    skill_loader: Any
+    harness_service: Any
+    history_service: Any
+    memory: Any
+    _cache_lock: Any
+    _context_summary_cache: dict[str, str]
+    _attachment_paths_by_turn: dict[str, Any]
+    _agent_role_policies: dict[str, Any]
+    _provider_session_key: Callable[..., str]
+    _adaptive_retrieval_ratio_fn: Callable[..., float]
+    _tool_definitions: Callable[..., Any]
+    _tool_instructions: Callable[..., str]
+    _history_context: Callable[..., Any]
+    _without_thinking: Callable[[str], str]
+
     @staticmethod
     def _needs_project_context(task, prompt: str) -> bool:
         return task.intent != "ASK" or any(term in prompt.lower() for term in ("projeto", "project", "repositório", "repository", "código", "codebase"))
 
     def _summarize_project_context(
-        self, client: LLMClient, prompt: str, context_map: str,
+        self,
+        client: LLMClient,
+        prompt: str,
+        context_map: str,
         session_key: Optional[str] = None,
+        turn_id: str | None = None,
     ) -> str:
         if not context_map:
             return ""
@@ -64,25 +100,123 @@ class TurnContextMixin:
             user_content = CONTEXT_SUMMARY_USER_TEMPLATE.format(
                 prompt=prompt, context_map=context_map[:6000]
             )
+            execution_budget = getattr(self, "execution_budgets", {}).get(
+                str(turn_id or "")
+            )
+            estimated_input = (
+                TokenCounter.count_tokens(CONTEXT_SUMMARY_PROMPT)
+                + TokenCounter.count_tokens(user_content)
+            )
+            provider_usage: dict[str, object] = {}
+
+            def observe_usage(usage: dict[str, object]) -> None:
+                provider_usage.clear()
+                provider_usage.update(dict(usage or {}))
+
+            summary_profile = profile
             if profile and "lfm" in profile.model.lower():
-                lfm_profile = replace(
+                summary_profile = replace(
                     profile,
                     max_output_tokens=max(128, profile.max_output_tokens),
                     request_timeout_seconds=profile.request_timeout_seconds,
                 )
-                with LLMClient(lfm_profile) as summary_client:
-                    summary = summary_client.chat(
-                        [{"role": "user", "content": user_content}],
-                        system_prompt=CONTEXT_SUMMARY_PROMPT,
-                        session_key=session_key,
-                    )
-            else:
-                summary = client.chat(
-                    [{"role": "user", "content": user_content}],
-                    system_prompt=CONTEXT_SUMMARY_PROMPT,
-                    session_key=session_key,
+
+            estimated_input_cost = estimate_execution_cost(
+                str(getattr(summary_profile, "model", "") or ""),
+                estimated_input,
+                0,
+                backend=str(getattr(summary_profile, "backend", "") or ""),
+                workspace_root=str(self.root_path),
+            ).estimated_usd
+            if execution_budget is not None:
+                execution_budget.reserve_model_call(
+                    input_tokens=estimated_input,
+                    cost=estimated_input_cost,
+                    stage="condenser",
                 )
+
+            def reserve_condenser_retry(attempt: int) -> None:
+                if execution_budget is not None and int(attempt) > 0:
+                    execution_budget.reserve_model_call(
+                        input_tokens=estimated_input,
+                        cost=estimated_input_cost,
+                        stage="condenser",
+                    )
+
+            def call_summary(target_client) -> str:
+                kwargs = {
+                    "system_prompt": CONTEXT_SUMMARY_PROMPT,
+                    "session_key": session_key,
+                    "attempt_callback": reserve_condenser_retry,
+                    "usage_callback": observe_usage,
+                }
+                try:
+                    signature = inspect.signature(target_client.chat)
+                    has_var_kwargs = any(
+                        parameter.kind == inspect.Parameter.VAR_KEYWORD
+                        for parameter in signature.parameters.values()
+                    )
+                    if not has_var_kwargs:
+                        kwargs = {
+                            key: value
+                            for key, value in kwargs.items()
+                            if key in signature.parameters
+                        }
+                except (TypeError, ValueError):
+                    pass
+                return target_client.chat(
+                    [{"role": "user", "content": user_content}],
+                    **kwargs,
+                )
+
+            if summary_profile is not profile:
+                with LLMClient(summary_profile) as summary_client:
+                    summary = call_summary(summary_client)
+            else:
+                summary = call_summary(client)
+
             summary = self._without_thinking(summary)[:6000] or fallback
+            if execution_budget is not None:
+                actual_input_raw = provider_usage.get("prompt_tokens")
+                actual_output_raw = provider_usage.get("completion_tokens")
+                actual_input_tokens = (
+                    int(actual_input_raw)
+                    if isinstance(actual_input_raw, (int, float))
+                    and not isinstance(actual_input_raw, bool)
+                    else estimated_input
+                )
+                actual_output_tokens = (
+                    int(actual_output_raw)
+                    if isinstance(actual_output_raw, (int, float))
+                    and not isinstance(actual_output_raw, bool)
+                    else TokenCounter.count_tokens(summary)
+                )
+                actual_input_cost = estimate_execution_cost(
+                    str(getattr(summary_profile, "model", "") or ""),
+                    actual_input_tokens,
+                    0,
+                    backend=str(getattr(summary_profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd
+                output_cost = estimate_execution_cost(
+                    str(getattr(summary_profile, "model", "") or ""),
+                    0,
+                    actual_output_tokens,
+                    backend=str(getattr(summary_profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd
+                execution_budget.reconcile_model_input(
+                    estimated_tokens=estimated_input,
+                    actual_tokens=actual_input_tokens,
+                    estimated_cost=estimated_input_cost,
+                    actual_cost=actual_input_cost,
+                    stage="condenser",
+                )
+                execution_budget.record_model_output(
+                    output_tokens=actual_output_tokens,
+                    cost=output_cost,
+                    stage="condenser",
+                )
         except Exception:
             summary = fallback
         with self._cache_lock:
@@ -161,10 +295,90 @@ class TurnContextMixin:
             context_profile=ctx_profile,
             llm_client=self.context_client,
         )
+        execution_budget = getattr(self, "execution_budgets", {}).get(cmd.turn_id)
+        classifier_input = TokenCounter.count_tokens(cmd.prompt) + 256
+        classifier_input_cost = estimate_execution_cost(
+            str(getattr(ctx_profile, "model", "") or ""),
+            classifier_input,
+            0,
+            backend=str(getattr(ctx_profile, "backend", "") or ""),
+            workspace_root=str(self.root_path),
+        ).estimated_usd
+        classifier_usage: dict[str, object] = {}
+
+        def observe_classifier_usage(usage: dict[str, object]) -> None:
+            classifier_usage.clear()
+            classifier_usage.update(dict(usage or {}))
+
+        def reserve_classifier_attempt(_attempt: int) -> None:
+            if execution_budget is not None:
+                execution_budget.reserve_model_call(
+                    input_tokens=classifier_input,
+                    cost=classifier_input_cost,
+                    stage="classifier",
+                )
+
         filter_res = semantic_filter.filter_and_plan(
             cmd.prompt,
             session_key=self._provider_session_key(ctx_profile, cmd.conversation_id),
+            attempt_callback=reserve_classifier_attempt,
+            usage_callback=observe_classifier_usage,
         )
+        if execution_budget is not None and classifier_usage:
+            actual_input_raw = classifier_usage.get("prompt_tokens")
+            actual_output_raw = classifier_usage.get("completion_tokens")
+            actual_input_tokens = (
+                int(actual_input_raw)
+                if isinstance(actual_input_raw, (int, float))
+                and not isinstance(actual_input_raw, bool)
+                else classifier_input
+            )
+            actual_output_tokens = (
+                int(actual_output_raw)
+                if isinstance(actual_output_raw, (int, float))
+                and not isinstance(actual_output_raw, bool)
+                else TokenCounter.count_tokens(str(filter_res))
+            )
+            actual_input_cost = estimate_execution_cost(
+                str(getattr(ctx_profile, "model", "") or ""),
+                actual_input_tokens,
+                0,
+                backend=str(getattr(ctx_profile, "backend", "") or ""),
+                workspace_root=str(self.root_path),
+            ).estimated_usd
+            output_cost = estimate_execution_cost(
+                str(getattr(ctx_profile, "model", "") or ""),
+                0,
+                actual_output_tokens,
+                backend=str(getattr(ctx_profile, "backend", "") or ""),
+                workspace_root=str(self.root_path),
+            ).estimated_usd
+            execution_budget.reconcile_model_input(
+                estimated_tokens=classifier_input,
+                actual_tokens=actual_input_tokens,
+                estimated_cost=classifier_input_cost,
+                actual_cost=actual_input_cost,
+                stage="classifier",
+            )
+            execution_budget.record_model_output(
+                output_tokens=actual_output_tokens,
+                cost=output_cost,
+                stage="classifier",
+            )
+        elif execution_budget is not None and getattr(filter_res, "source", "") == "LLM":
+            # Injected clients may not report usage. The attempt callback still
+            # reserved the call; conservatively charge the observed result text.
+            execution_budget.record_model_output(
+                output_tokens=TokenCounter.count_tokens(str(filter_res)),
+                cost=estimate_execution_cost(
+                    str(getattr(ctx_profile, "model", "") or ""),
+                    0,
+                    TokenCounter.count_tokens(str(filter_res)),
+                    backend=str(getattr(ctx_profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd,
+                stage="classifier",
+            )
         sf_client = semantic_filter.llm_client
         task, plan = filter_res.task, filter_res.plan
 
@@ -284,8 +498,14 @@ class TurnContextMixin:
             # LLM-free so it cannot reopen the reverse-proxy chat we deliberately skipped.
             if sf_client is not None:
                 context_map_str = self._summarize_project_context(
-                    sf_client, cmd.prompt, context_map_str,
-                    session_key=self._provider_session_key(getattr(sf_client, "profile", None), cmd.conversation_id),
+                    sf_client,
+                    cmd.prompt,
+                    context_map_str,
+                    session_key=self._provider_session_key(
+                        getattr(sf_client, "profile", None),
+                        cmd.conversation_id,
+                    ),
+                    turn_id=cmd.turn_id,
                 )
 
         working_context = self.working_set.context(cmd.conversation_id)
@@ -716,6 +936,15 @@ class TurnContextMixin:
             lifecycle="session",
         )
         context_envelope = builder.build()
+        reconciliation, cache_plan = reconcile_context_envelope(
+            self,
+            context_envelope,
+            conversation_id=cmd.conversation_id,
+            turn_id=cmd.turn_id,
+            provider_profile=exe_profile,
+        )
+        allocated["context_reconciliation"] = reconciliation
+        allocated["context_cache_plan"] = cache_plan
 
         # Reverse-proxy requests carry the typed envelope as data. Text-only
         # providers receive a deterministic one-way lowering of the same IR.

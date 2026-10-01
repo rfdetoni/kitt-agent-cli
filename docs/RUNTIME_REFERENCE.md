@@ -14,6 +14,7 @@ The table documents authority metadata. Operation-specific argument validation r
 | --- | --- | --- | ---: | ---: | --- | --- |
 | artifacts.hydrate | artifact.read | - | no | 0 | - | - |
 | artifacts.read | artifact.read | artifact_read | no | 0 | - | - |
+| artifacts.retrieve | artifact.read | - | no | 0 | - | - |
 | artifacts.search | artifact.read | - | no | 0 | - | - |
 | artifacts.store | artifact.write | artifact_store | yes | 1 | - | artifact_store |
 | backend.compile | repo.read | - | no | 0 | - | - |

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,6 +120,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     ),
     "artifacts.search": RuntimeOperationSpec("artifacts.search", CAP_ARTIFACT_READ),
     "artifacts.hydrate": RuntimeOperationSpec("artifacts.hydrate", CAP_ARTIFACT_READ),
+    "artifacts.retrieve": RuntimeOperationSpec("artifacts.retrieve", CAP_ARTIFACT_READ),
     "surface.capabilities": RuntimeOperationSpec("surface.capabilities", None),
     "surface.publish": RuntimeOperationSpec("surface.publish", None),
     "surface.patch": RuntimeOperationSpec("surface.patch", None),
@@ -777,6 +780,7 @@ class SafeRuntime:
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context, automatic_budget_reserved=automatic_budget_reserved),
             "artifacts.search": lambda: self._op_artifacts_search(args),
             "artifacts.hydrate": lambda: self._op_artifacts_hydrate(args),
+            "artifacts.retrieve": lambda: self._op_artifacts_retrieve(args),
             "surface.capabilities": lambda: self._op_surface_capabilities(),
             "surface.publish": lambda: self._op_surface_publish(args),
             "surface.patch": lambda: self._op_surface_patch(args),
@@ -1663,6 +1667,76 @@ class SafeRuntime:
         except Exception as exc:
             return SafeRuntimeResult(False, "artifacts.hydrate", error=str(exc))
         return SafeRuntimeResult(True, "artifacts.hydrate", data=page, context_handles=[f"artifact:{artifact_id}"])
+
+    def _op_artifacts_retrieve(self, args):
+        artifact_id = str(args.get("artifact_id") or "").strip()
+        if not artifact_id:
+            return SafeRuntimeResult(
+                False,
+                "artifacts.retrieve",
+                error="artifact_id is required",
+            )
+        max_tokens = _runtime_token_budget(args, 1200)
+        requested_bytes = _runtime_int(
+            args.get("max_bytes", max_tokens * 4),
+            max_tokens * 4,
+            256,
+            32768,
+        )
+        max_bytes = min(requested_bytes, max_tokens * 4, 32768)
+        offset = _runtime_int(args.get("offset", 0), 0, 0, 2_147_483_647)
+        query = str(args.get("query") or "").strip()
+        try:
+            self._scoped_artifact(artifact_id)
+            if query:
+                hits = self.artifacts.search_text(
+                    artifact_id,
+                    query,
+                    limit=_runtime_int(args.get("limit", 20), 20, 1, 100),
+                    context_chars=_runtime_int(
+                        args.get("context_chars", 160),
+                        160,
+                        40,
+                        min(2000, max_bytes),
+                    ),
+                )
+                encoded = json.dumps(
+                    hits,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    default=str,
+                )
+                bounded = _truncate_utf8(encoded, max_bytes)
+                data = {
+                    "artifact_id": artifact_id,
+                    "query": query,
+                    "hits_json": bounded,
+                    "truncated": len(bounded.encode("utf-8")) < len(encoded.encode("utf-8")),
+                }
+            else:
+                page = self.artifacts.read_text_page(
+                    artifact_id,
+                    offset=offset,
+                    max_bytes=max_bytes,
+                )
+                data = {
+                    **page,
+                    "artifact_id": artifact_id,
+                    "max_tokens": max_tokens,
+                }
+        except Exception as exc:
+            return SafeRuntimeResult(False, "artifacts.retrieve", error=str(exc))
+        return SafeRuntimeResult(
+            True,
+            "artifacts.retrieve",
+            data=data,
+            context_handles=[f"artifact:{artifact_id}"],
+            metadata={
+                "max_tokens": max_tokens,
+                "max_bytes": max_bytes,
+                "query_mode": bool(query),
+            },
+        )
 
     def _op_surface_capabilities(self):
         if not self.surfaces:

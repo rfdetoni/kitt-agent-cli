@@ -12,7 +12,7 @@ from dataclasses import fields, is_dataclass
 from types import MethodType
 from typing import Any, Iterator
 
-from kitt.core.execution_budget import ExecutionBudgetLedger
+from kitt.core.execution_budget import ExecutionBudgetExceeded, ExecutionBudgetLedger
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import ApprovalRequired, TurnCompleted, TurnFailed
@@ -113,6 +113,7 @@ def reserve_child_budget(
         ledger = _new_execution_budget(processor)
         budgets[parent_turn_id] = ledger
 
+    requested_tokens = max(1, int(token_cap))
     call_cap = max(
         1,
         min(
@@ -120,12 +121,51 @@ def reserve_child_budget(
             int(getattr(processor.config, "max_model_calls_per_turn", 24)),
         ),
     )
+    snapshot = ledger.snapshot()
+    budget_data = snapshot["budget"]
+    usage = snapshot["usage"]
+    reserved = snapshot["reserved"]
+    max_total_tokens = max(1, int(budget_data["max_total_tokens"]))
+    max_cost = max(0.0, float(budget_data["max_cost"]))
+    available_cost = max(
+        0.0,
+        max_cost
+        - float(usage.get("cost", 0.0) or 0.0)
+        - float(reserved.get("cost", 0.0) or 0.0),
+    )
+    proportional_cost = max_cost * min(
+        1.0,
+        requested_tokens / max_total_tokens,
+    )
+    cost_cap = min(available_cost, proportional_cost)
+
+    max_tools = max(0, int(budget_data["max_tool_calls"]))
+    available_tools = max(
+        0,
+        max_tools
+        - int(usage.get("tool_calls", 0) or 0)
+        - int(reserved.get("tools", 0) or 0),
+    )
+    tool_cap = min(4, available_tools)
+    if max_tools > 0 and tool_cap <= 0:
+        raise ExecutionBudgetExceeded("no tool capacity remains for subagent")
+
+    max_duration_ms = max(0, int(budget_data["max_duration_ms"]))
+    remaining_duration_ms = max(
+        0,
+        max_duration_ms - int(usage.get("duration_ms", 0) or 0),
+    )
+    if max_duration_ms > 0 and remaining_duration_ms <= 0:
+        raise ExecutionBudgetExceeded("no duration capacity remains for subagent")
+
     lease = ledger.reserve_subagent(
         child_id,
-        token_cap=max(1, int(token_cap)),
+        token_cap=requested_tokens,
         call_cap=call_cap,
-        cost_cap=0.0,
+        cost_cap=cost_cap,
+        tool_cap=tool_cap,
     )
+    lease.reserved["duration_ms"] = remaining_duration_ms
     leases = getattr(processor, "child_budget_leases", None)
     if leases is None:
         leases = {}
@@ -134,6 +174,9 @@ def reserve_child_budget(
         "turn_id": parent_turn_id,
         "lease_id": lease.id,
         "token_cap": lease.token_cap,
+        "call_cap": lease.call_cap,
+        "cost_cap": lease.cost_cap,
+        "tool_cap": int(lease.reserved.get("tools", 0) or 0),
     }
     return lease
 
@@ -142,9 +185,12 @@ def settle_child_budget(
     processor,
     child_id: str,
     tokens_used: int = 0,
+    calls_used: int = 0,
+    cost_used: float = 0.0,
+    tools_used: int = 0,
 ) -> None:
     leases = getattr(processor, "child_budget_leases", {})
-    binding = leases.pop(child_id, None)
+    binding = leases.get(child_id)
     if not binding:
         return
     ledger = getattr(processor, "execution_budgets", {}).get(
@@ -152,12 +198,35 @@ def settle_child_budget(
     )
     if ledger is None:
         return
+
     token_cap = max(0, int(binding.get("token_cap", 0)))
+    call_cap = max(0, int(binding.get("call_cap", 0)))
+    cost_cap = max(0.0, float(binding.get("cost_cap", 0.0)))
+    reported_tokens = max(0, int(tokens_used))
+    reported_calls = max(0, int(calls_used))
+    reported_cost = max(0.0, float(cost_used))
+    reported_tools = max(0, int(tools_used))
+    tool_cap = max(0, int(binding.get("tool_cap", 0)))
+
+    # A corrupt/overspent child report must never release capacity as if the
+    # excess did not happen. Charge the full lease in that case; otherwise
+    # charge the exact reported usage.
+    charge_tokens = (
+        token_cap if reported_tokens > token_cap else reported_tokens
+    )
+    charge_calls = call_cap if reported_calls > call_cap else reported_calls
+    charge_cost = cost_cap if reported_cost > cost_cap else reported_cost
+    charge_tools = tool_cap if reported_tools > tool_cap else reported_tools
+
     ledger.consume_child(
         binding["lease_id"],
-        tokens=min(max(0, int(tokens_used)), token_cap),
+        tokens=charge_tokens,
+        calls=charge_calls,
+        cost=charge_cost,
+        tools=charge_tools,
     )
     ledger.settle_child(binding["lease_id"])
+    leases.pop(child_id, None)
 
 
 def _jsonable(value: Any) -> Any:
@@ -845,22 +914,19 @@ def _install_tool_execution(processor, registry) -> None:
         arguments = args if isinstance(args, dict) else {}
         conv = str(kwargs.get("conversation_id") or "")
         turn = str(kwargs.get("turn_id") or "")
-        store = _state_store(processor, conv)
-        digest = _fingerprint(name, arguments) if _is_mutating(name, arguments) else ""
-        replay_key = f"turn:{turn}:mutation:{digest}" if turn and digest else ""
-        if replay_key and store:
-            try:
-                cached = store.get(replay_key)
-                if isinstance(cached, dict) and cached.get("completed"):
-                    from kitt.tools.registry_core import ToolResult
-                    return ToolResult(True, str(cached.get("output", "[durable mutation replay]")),
-                                      metadata={"durable_replay": True, "fingerprint": digest})
-            except Exception:
-                pass
-
         budget = getattr(processor, "execution_budgets", {}).get(turn)
         if budget is not None:
-            budget.reserve_tool_call()
+            operation = (
+                str(arguments.get("operation") or "")
+                if name == "kitt_runtime" and isinstance(arguments, dict)
+                else ""
+            )
+            stage = (
+                "validator"
+                if name == "run_command" or operation == "process.run"
+                else "tools"
+            )
+            budget.reserve_tool_call(stage=stage)
 
         role_policy = getattr(processor, "_agent_role_policies", {}).get(turn)
         if role_policy is not None and not role_policy.allows_tool(name, arguments):
@@ -880,7 +946,10 @@ def _install_tool_execution(processor, registry) -> None:
 
         security_context = kwargs.get("security_context")
         coordinator = getattr(processor, "run_coordinator", None)
+        resource_coordinator = getattr(processor, "resource_coordinator", None)
         claimed = False
+        resource_claimed = False
+        resource_owner = f"resource:{conv}:{turn}"
         if _is_mutating(name, arguments) and security_context is not None:
             sandbox = getattr(
                 getattr(registry, "process_runner", None),
@@ -913,6 +982,19 @@ def _install_tool_execution(processor, registry) -> None:
                     arguments,
                 )
                 claimed = True
+            if resource_coordinator is not None and conv and turn:
+                resources = resource_coordinator.resources_for_tool(
+                    name,
+                    arguments,
+                    conversation_id=conv,
+                )
+                if resources:
+                    resource_coordinator.acquire_many(
+                        resources,
+                        resource_owner,
+                        intent=f"{name} execution",
+                    )
+                    resource_claimed = True
 
         snapshot_service = getattr(
             processor,
@@ -955,7 +1037,7 @@ def _install_tool_execution(processor, registry) -> None:
                 result.metadata = dict(getattr(result, "metadata", {}) or {})
                 result.metadata["verification"] = report.as_dict()
                 if not report.ok:
-                    if snapshot is not None:
+                    if snapshot is not None and snapshot_service is not None:
                         restored = snapshot_service.restore(
                             snapshot.snapshot_id,
                             conversation_id=conv,
@@ -983,24 +1065,10 @@ def _install_tool_execution(processor, registry) -> None:
                         paths,
                         kind=inner_operation,
                     )
-            if replay_key and store and getattr(result, "success", False):
-                try:
-                    store.set(
-                        replay_key,
-                        {
-                            "completed": True,
-                            "output": str(
-                                getattr(result, "output", "")
-                            )[:12000],
-                            "paths": paths,
-                            "completed_at": time.time(),
-                        },
-                        ttl_seconds=604800,
-                    )
-                except Exception:
-                    pass
             return result
         finally:
+            if resource_claimed and resource_coordinator is not None:
+                resource_coordinator.release_owner(resource_owner)
             if claimed and coordinator is not None:
                 coordinator.release_tool(conv, turn)
 

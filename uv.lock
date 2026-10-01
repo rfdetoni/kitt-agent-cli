@@ -52,12 +52,12 @@ wheels = [
 
 [[package]]
 name = "kitt-protocol"
-version = "0.5.2"
-source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=main#7dc6043b2faad998c7f362b015610e9da9d78011" }
+version = "0.6.0"
+source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=main#0f6227abeb93554231af6ea620fab75876090320" }
 
 [[package]]
 name = "kitt-agent-cli"
-version = "0.80.5"
+version = "0.81.0"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },
