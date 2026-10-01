@@ -219,6 +219,7 @@ class TurnModelMixin:
                     execution_budget.reconcile_model_input(
                         estimated_tokens=estimated_input,
                         actual_tokens=int(actual_input),
+                        stage=str(route or "execution"),
                     )
                 execution_budget.record_model_output(
                     output_tokens=(
@@ -227,6 +228,7 @@ class TurnModelMixin:
                         and not isinstance(actual_output, bool)
                         else TokenCounter.count_tokens(raw_text)
                     ),
+                    stage=str(route or "execution"),
                 )
             thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
             thought_text = thought_match.group(1).strip() if thought_match else ""
@@ -367,6 +369,7 @@ class TurnModelMixin:
                 execution_budget.reconcile_model_input(
                     estimated_tokens=estimated_input,
                     actual_tokens=int(actual_input),
+                    stage=str(route or "execution"),
                 )
             execution_budget.record_model_output(
                 output_tokens=(
@@ -375,6 +378,7 @@ class TurnModelMixin:
                     and not isinstance(actual_output, bool)
                     else TokenCounter.count_tokens(full_response)
                 ),
+                stage=str(route or "execution"),
             )
         yield full_response, None
 
