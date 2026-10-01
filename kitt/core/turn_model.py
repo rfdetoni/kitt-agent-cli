@@ -107,16 +107,27 @@ class TurnModelMixin:
         client: LLMClient,
         messages: List[Dict[str, str]],
         system_prompt: str,
-        turn_id: str = "",
+        *,
+        conversation_id: str,
+        turn_id: str,
+        route: str,
         started_at: float = 0.0,
         session_key: str = "",
-        route: Optional[str] = None,
-        conversation_id: str = "",
         tool_definitions: Optional[List[Dict[str, object]]] = None,
         loop_action_budget: int = 4,
         context_envelope: Optional[Dict[str, object]] = None,
     ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
+        conversation_id = str(conversation_id or "").strip()
+        turn_id = str(turn_id or "").strip()
+        route = str(route or "").strip()
+        if not conversation_id:
+            raise ValueError("conversation_id is required")
+        if not turn_id:
+            raise ValueError("turn_id is required")
+        if not route:
+            raise ValueError("route is required")
+
         profile = getattr(client, "profile", None)
         wire_messages = messages
         attachment_paths = getattr(self, "_attachment_paths_by_turn", {}).get(turn_id)
@@ -131,8 +142,9 @@ class TurnModelMixin:
                 attachment_paths,
             )
             attachment_wire_sent.add(turn_id)
-        if conversation_id and hasattr(self.registry, "drain_browser_images"):
-            browser_images = self.registry.drain_browser_images(conversation_id)
+        registry = getattr(self, "registry", None)
+        if conversation_id and registry is not None and hasattr(registry, "drain_browser_images"):
+            browser_images = registry.drain_browser_images(conversation_id)
             if browser_images:
                 wire_messages = self._attach_browser_images(
                     list(wire_messages), browser_images
@@ -185,7 +197,7 @@ class TurnModelMixin:
                     conversation_id=conversation_id,
                     turn_id=turn_id,
                     request_id=uuid.uuid4().hex,
-                    route=str(route or "chat"),
+                    route=route,
                 ).to_mapping(),
                 "usage_callback": _observe_usage,
             }
