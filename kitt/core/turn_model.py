@@ -19,6 +19,7 @@ from kitt.core.turn_events import (
 from kitt.domain.entities import SemanticTask
 from kitt.llm.attachments import attach_to_first_user_message
 from kitt.llm.client import LLMClient
+from kitt.metrics.cost_estimator import estimate_execution_cost
 from kitt.router.features import TaskFeatureExtractor
 from kitt.router.models import RoutingDecision
 from kitt.tools.protocol import TOOL_CALL_OPEN
@@ -172,6 +173,7 @@ class TurnModelMixin:
 
         execution_budget = getattr(self, "execution_budgets", {}).get(turn_id)
         estimated_input = 0
+        estimated_input_cost = 0.0
         budget_stage = str(route or "execution")
         if execution_budget is not None:
             estimated_input = TokenCounter.count_tokens(system_prompt or "")
@@ -180,11 +182,19 @@ class TurnModelMixin:
                     estimated_input += TokenCounter.count_tokens(
                         str(message.get("content") or "")
                     )
+            estimated_input_cost = estimate_execution_cost(
+                str(getattr(profile, "model", "") or ""),
+                estimated_input,
+                0,
+                backend=str(getattr(profile, "backend", "") or ""),
+                workspace_root=str(self.root_path),
+            ).estimated_usd
             # The first attempt is reserved here so injected/fake clients that
             # do not expose the retry hook remain covered. LLMClient invokes the
             # callback for every provider attempt; attempts > 0 are retries.
             execution_budget.reserve_model_call(
                 input_tokens=estimated_input,
+                cost=estimated_input_cost,
                 stage=budget_stage,
             )
 
@@ -192,6 +202,7 @@ class TurnModelMixin:
             if execution_budget is not None and int(attempt) > 0:
                 execution_budget.reserve_model_call(
                     input_tokens=estimated_input,
+                    cost=estimated_input_cost,
                     stage=budget_stage,
                 )
 
@@ -227,20 +238,43 @@ class TurnModelMixin:
             if execution_budget is not None:
                 actual_input = provider_usage.get("prompt_tokens")
                 actual_output = provider_usage.get("completion_tokens")
-                if isinstance(actual_input, (int, float)) and not isinstance(actual_input, bool):
-                    execution_budget.reconcile_model_input(
-                        estimated_tokens=estimated_input,
-                        actual_tokens=int(actual_input),
-                        stage=str(route or "execution"),
-                    )
+                actual_input_tokens = (
+                    int(actual_input)
+                    if isinstance(actual_input, (int, float))
+                    and not isinstance(actual_input, bool)
+                    else estimated_input
+                )
+                actual_output_tokens = (
+                    int(actual_output)
+                    if isinstance(actual_output, (int, float))
+                    and not isinstance(actual_output, bool)
+                    else TokenCounter.count_tokens(raw_text)
+                )
+                actual_input_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    actual_input_tokens,
+                    0,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd
+                output_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    0,
+                    actual_output_tokens,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd
+                execution_budget.reconcile_model_input(
+                    estimated_tokens=estimated_input,
+                    actual_tokens=actual_input_tokens,
+                    estimated_cost=estimated_input_cost,
+                    actual_cost=actual_input_cost,
+                    stage=budget_stage,
+                )
                 execution_budget.record_model_output(
-                    output_tokens=(
-                        int(actual_output)
-                        if isinstance(actual_output, (int, float))
-                        and not isinstance(actual_output, bool)
-                        else TokenCounter.count_tokens(raw_text)
-                    ),
-                    stage=str(route or "execution"),
+                    output_tokens=actual_output_tokens,
+                    cost=output_cost,
+                    stage=budget_stage,
                 )
             thought_match = re.search(r"<think>(.*?)(?:</think>|$)", raw_text, re.DOTALL)
             thought_text = thought_match.group(1).strip() if thought_match else ""
@@ -377,20 +411,43 @@ class TurnModelMixin:
         if execution_budget is not None:
             actual_input = provider_usage.get("prompt_tokens")
             actual_output = provider_usage.get("completion_tokens")
-            if isinstance(actual_input, (int, float)) and not isinstance(actual_input, bool):
-                execution_budget.reconcile_model_input(
-                    estimated_tokens=estimated_input,
-                    actual_tokens=int(actual_input),
-                    stage=str(route or "execution"),
-                )
+            actual_input_tokens = (
+                int(actual_input)
+                if isinstance(actual_input, (int, float))
+                and not isinstance(actual_input, bool)
+                else estimated_input
+            )
+            actual_output_tokens = (
+                int(actual_output)
+                if isinstance(actual_output, (int, float))
+                and not isinstance(actual_output, bool)
+                else TokenCounter.count_tokens(full_response)
+            )
+            actual_input_cost = estimate_execution_cost(
+                str(getattr(profile, "model", "") or ""),
+                actual_input_tokens,
+                0,
+                backend=str(getattr(profile, "backend", "") or ""),
+                workspace_root=str(self.root_path),
+            ).estimated_usd
+            output_cost = estimate_execution_cost(
+                str(getattr(profile, "model", "") or ""),
+                0,
+                actual_output_tokens,
+                backend=str(getattr(profile, "backend", "") or ""),
+                workspace_root=str(self.root_path),
+            ).estimated_usd
+            execution_budget.reconcile_model_input(
+                estimated_tokens=estimated_input,
+                actual_tokens=actual_input_tokens,
+                estimated_cost=estimated_input_cost,
+                actual_cost=actual_input_cost,
+                stage=budget_stage,
+            )
             execution_budget.record_model_output(
-                output_tokens=(
-                    int(actual_output)
-                    if isinstance(actual_output, (int, float))
-                    and not isinstance(actual_output, bool)
-                    else TokenCounter.count_tokens(full_response)
-                ),
-                stage=str(route or "execution"),
+                output_tokens=actual_output_tokens,
+                cost=output_cost,
+                stage=budget_stage,
             )
         yield full_response, None
 
