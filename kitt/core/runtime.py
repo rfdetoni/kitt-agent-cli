@@ -22,6 +22,7 @@ from kitt.dreaming.service import DreamingService
 from kitt.goals.scheduler import GoalScheduler
 from kitt.goals.service import GoalService
 from kitt.harness.repository import HarnessRepository
+from kitt.harness.refiner import HarnessRefiner
 from kitt.harness.service import HarnessService
 from kitt.history.database import HistoryDatabase
 from kitt.history.repository import HistoryRepository, resolve_workspace_identity
@@ -30,6 +31,7 @@ from kitt.history.session_tree import SessionTreeRepository
 from kitt.index.repository import RepositoryIndex
 from kitt.llm.client import LLMClient
 from kitt.llm.retry import RetryConfig, RetryPolicy
+from kitt.llm.failover import ProviderCircuitPool
 from kitt.memory.memory_manager import MemoryManager
 from kitt.memory.shared_client import KittMemoryClient
 from kitt.prompts import COMPACTION_SUMMARY_SYSTEM, COMPACTION_SUMMARY_USER_TEMPLATE
@@ -42,6 +44,7 @@ from kitt.security.network_policy import NetworkPolicy
 from kitt.security.path_policy import PathPolicy
 from kitt.security.sensitive_data import SensitiveDataScanner
 from kitt.skills.skill_manager import SkillManager
+from kitt.scheduling.service import PersistentWakeScheduler
 from kitt.surfaces.service import SurfaceService
 from kitt.backend_ir.service import BackendService
 from kitt.tools.approval import ApprovalManager
@@ -176,6 +179,10 @@ class KittRuntime:
     event_ledger: Optional[Any] = None
     run_coordinator: Optional[Any] = None
     workspace_snapshots: Optional[Any] = None
+    refiner: Optional[Any] = None
+    wake_scheduler: Optional[Any] = None
+    provider_pool: Optional[Any] = None
+    rpc: Optional[Any] = None
 
     def __post_init__(self):
         self._closed = False
@@ -262,6 +269,7 @@ class KittRuntime:
         metrics = MetricsCollector(history.repo)
         registry.metrics_collector = metrics
         harness = HarnessService(HarnessRepository(database))
+        refiner = HarnessRefiner(harness.repo)
         goals = GoalService(database)
         queue = InputQueueService(InputQueueRepository(database))
         task_router = TaskRouter(root_dir=canonical_root)
@@ -296,6 +304,7 @@ class KittRuntime:
             workspace_id=identity.id,
             max_worker_seconds=config.child_timeout_seconds,
             event_callback=lambda name, payload: events.publish(name, payload),
+            allow_peer_agent_messages=config.peer_agent_messages_enabled,
             enabled=config.retained_agents_enabled,
         )
 
@@ -471,6 +480,27 @@ class KittRuntime:
             runtime_step_executor=GoalStepExecutor(lambda: runtime_holder["runtime"]),
             event_callback=lambda name, payload: events.publish(name, payload),
         )
+        wake_scheduler = PersistentWakeScheduler(
+            database,
+            lambda conversation_id, prompt, metadata: (
+                queue.follow_up(conversation_id, prompt),
+                events.publish(
+                    "ScheduledWakeQueued",
+                    {**metadata, "conversation_id": conversation_id},
+                ),
+            ),
+            event_callback=lambda name, payload: events.publish(name, payload),
+        )
+        provider_pool = ProviderCircuitPool(config.provider_park_seconds)
+        if config.provider_failover_enabled:
+            processor.provider_client_factory = lambda primary: provider_pool.wrap(
+                primary,
+                [
+                    profile
+                    for profile in processor.router.config.profiles.values()
+                    if _profile_identity(profile) != _profile_identity(primary)
+                ],
+            )
 
         from kitt.extensions.manager import ExtensionManager
 
@@ -518,6 +548,9 @@ class KittRuntime:
             event_ledger=event_ledger,
             run_coordinator=run_coordinator,
             workspace_snapshots=workspace_snapshots,
+            refiner=refiner,
+            wake_scheduler=wake_scheduler,
+            provider_pool=provider_pool,
         )
         from kitt.runtime.conversation_runtime import ConversationRuntimeRegistry
 
@@ -530,6 +563,8 @@ class KittRuntime:
             ledger=event_ledger,
         )
         processor.conversation_runtimes = runtime.conversation_runtimes
+        from kitt.runtime.rpc import RuntimeRPC
+        runtime.rpc = RuntimeRPC(runtime)
         return runtime
 
     async def start(self) -> None:
@@ -551,6 +586,7 @@ class KittRuntime:
             return
 
         started_goal_scheduler = False
+        started_wake_scheduler = False
         try:
             if self.extensions is not None:
                 await self.extensions.start()
@@ -748,10 +784,18 @@ class KittRuntime:
             if self.config.scheduler_enabled and self.goal_scheduler is not None:
                 self.goal_scheduler.start(interval_seconds=1.0)
                 started_goal_scheduler = True
+            if self.config.wake_scheduler_enabled and self.wake_scheduler is not None:
+                self.wake_scheduler.start()
+                started_wake_scheduler = True
             with self._close_lock:
                 self._started = True
         except Exception as startup_exc:
             errors = []
+            if started_wake_scheduler and self.wake_scheduler is not None:
+                try:
+                    self.wake_scheduler.stop()
+                except Exception as exc:
+                    errors.append(f"wake_scheduler: {exc}")
             if started_goal_scheduler and self.goal_scheduler is not None:
                 try:
                     self.goal_scheduler.stop()
@@ -820,6 +864,7 @@ class KittRuntime:
                     None,
                 ),
             ),
+            ("wake_scheduler", None, getattr(self.wake_scheduler, "stop", None)),
             ("goal_scheduler", None, getattr(self.goal_scheduler, "stop", None)),
             ("dream_scheduler", None, getattr(self.dream_scheduler, "close", None)),
             ("extensions", getattr(self.extensions, "stop", None), None),
@@ -869,6 +914,7 @@ class KittRuntime:
                     None,
                 ),
             ),
+            ("wake_scheduler", getattr(self.wake_scheduler, "stop", None)),
             ("goal_scheduler", getattr(self.goal_scheduler, "stop", None)),
             ("dream_scheduler", getattr(self.dream_scheduler, "close", None)),
             ("children", getattr(self.children, "close", None)),
