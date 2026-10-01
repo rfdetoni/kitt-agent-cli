@@ -46,6 +46,12 @@ class ExecutionBudgetLedger:
         self.input_tokens = 0
         self.output_tokens = 0
         self.cost = 0.0
+        # Child usage is tracked separately from direct input/output so parent
+        # input/output caps retain their meaning while max_total/max_calls/cost
+        # still cover the entire turn tree.
+        self.child_tokens = 0
+        self.child_model_calls = 0
+        self.child_cost = 0.0
         self.tool_calls = 0
         self.subagents = 0
         self._leases: dict[str, _LeaseState] = {}
@@ -96,7 +102,13 @@ class ExecutionBudgetLedger:
             raise ExecutionBudgetExceeded("input token budget exceeded")
         if next_output_total > self.budget.max_output_tokens:
             raise ExecutionBudgetExceeded("output token budget exceeded")
-        if next_input_total + next_output_total + reserved_tokens > self.budget.max_total_tokens:
+        if (
+            next_input_total
+            + next_output_total
+            + self.child_tokens
+            + reserved_tokens
+            > self.budget.max_total_tokens
+        ):
             raise ExecutionBudgetExceeded("total token budget exceeded")
 
     def reserve_model_call(
@@ -109,10 +121,22 @@ class ExecutionBudgetLedger:
         with self._lock:
             self._check_duration()
             _, reserved_calls, reserved_cost = self._outstanding()
-            if self.model_calls + 1 + reserved_calls > self.budget.max_model_calls:
+            if (
+                self.model_calls
+                + self.child_model_calls
+                + 1
+                + reserved_calls
+                > self.budget.max_model_calls
+            ):
                 raise ExecutionBudgetExceeded("model call budget exceeded")
             self._check_tokens(next_input=input_tokens)
-            if self.cost + max(0.0, float(cost)) + reserved_cost > self.budget.max_cost:
+            if (
+                self.cost
+                + self.child_cost
+                + max(0.0, float(cost))
+                + reserved_cost
+                > self.budget.max_cost
+            ):
                 raise ExecutionBudgetExceeded("execution cost budget exceeded")
             charged_input = max(0, int(input_tokens))
             charged_cost = max(0.0, float(cost))
@@ -152,7 +176,7 @@ class ExecutionBudgetLedger:
             )
             next_cost = current_cost_without_estimate + actual_usd
             _, _, reserved_cost = self._outstanding()
-            if next_cost + reserved_cost > self.budget.max_cost:
+            if next_cost + self.child_cost + reserved_cost > self.budget.max_cost:
                 raise ExecutionBudgetExceeded("execution cost budget exceeded")
 
             self.input_tokens = next_total
@@ -178,7 +202,13 @@ class ExecutionBudgetLedger:
             self._check_duration()
             self._check_tokens(next_output=output_tokens)
             _, _, reserved_cost = self._outstanding()
-            if self.cost + max(0.0, float(cost)) + reserved_cost > self.budget.max_cost:
+            if (
+                self.cost
+                + self.child_cost
+                + max(0.0, float(cost))
+                + reserved_cost
+                > self.budget.max_cost
+            ):
                 raise ExecutionBudgetExceeded("execution cost budget exceeded")
             charged_output = max(0, int(output_tokens))
             charged_cost = max(0.0, float(cost))
@@ -219,14 +249,27 @@ class ExecutionBudgetLedger:
             if (
                 self.input_tokens
                 + self.output_tokens
+                + self.child_tokens
                 + reserved_tokens
                 + requested_tokens
                 > self.budget.max_total_tokens
             ):
                 raise ExecutionBudgetExceeded("subagent token lease exceeds parent budget")
-            if self.model_calls + reserved_calls + requested_calls > self.budget.max_model_calls:
+            if (
+                self.model_calls
+                + self.child_model_calls
+                + reserved_calls
+                + requested_calls
+                > self.budget.max_model_calls
+            ):
                 raise ExecutionBudgetExceeded("subagent call lease exceeds parent budget")
-            if self.cost + reserved_cost + requested_cost > self.budget.max_cost:
+            if (
+                self.cost
+                + self.child_cost
+                + reserved_cost
+                + requested_cost
+                > self.budget.max_cost
+            ):
                 raise ExecutionBudgetExceeded("subagent cost lease exceeds parent budget")
             lease = BudgetLease(
                 id=f"lease_{uuid.uuid4().hex}",
@@ -275,9 +318,23 @@ class ExecutionBudgetLedger:
                 raise ExecutionBudgetExceeded("child call lease exceeded")
             if next_cost > state.cost_cap:
                 raise ExecutionBudgetExceeded("child cost lease exceeded")
+            token_delta = next_tokens - state.tokens_used
+            call_delta = next_calls - state.calls_used
+            cost_delta = next_cost - state.cost_used
             state.tokens_used = next_tokens
             state.calls_used = next_calls
             state.cost_used = next_cost
+
+            # Move consumed lease capacity into global usage immediately. This
+            # keeps reserved + consumed capacity invariant even under concurrent
+            # parent/child execution.
+            self.child_tokens += token_delta
+            self.child_model_calls += call_delta
+            self.child_cost += cost_delta
+            bucket = self._stage("subagents")
+            bucket["model_calls"] = int(bucket["model_calls"]) + call_delta
+            bucket["input_tokens"] = int(bucket["input_tokens"]) + token_delta
+            bucket["cost"] = float(bucket["cost"]) + cost_delta
 
     def settle_child(self, lease_id: str) -> dict:
         with self._lock:
@@ -297,7 +354,7 @@ class ExecutionBudgetLedger:
         with self._lock:
             self._check_duration()
             self._check_tokens()
-            if self.cost > self.budget.max_cost:
+            if self.cost + self.child_cost > self.budget.max_cost:
                 raise ExecutionBudgetExceeded("execution cost budget exceeded")
 
     def snapshot(self) -> dict:
@@ -306,11 +363,20 @@ class ExecutionBudgetLedger:
             return {
                 "budget": asdict(self.budget),
                 "usage": {
-                    "model_calls": self.model_calls,
+                    "model_calls": self.model_calls + self.child_model_calls,
+                    "direct_model_calls": self.model_calls,
+                    "child_model_calls": self.child_model_calls,
                     "input_tokens": self.input_tokens,
                     "output_tokens": self.output_tokens,
-                    "total_tokens": self.input_tokens + self.output_tokens,
-                    "cost": self.cost,
+                    "child_tokens": self.child_tokens,
+                    "total_tokens": (
+                        self.input_tokens
+                        + self.output_tokens
+                        + self.child_tokens
+                    ),
+                    "cost": self.cost + self.child_cost,
+                    "direct_cost": self.cost,
+                    "child_cost": self.child_cost,
                     "tool_calls": self.tool_calls,
                     "subagents": self.subagents,
                     "duration_ms": self._elapsed_ms(),
