@@ -17,6 +17,7 @@ from kitt.core.logging import trace_event
 from kitt.core.turn_command import TurnCommand
 from kitt.domain.entities import ModelProfile, SemanticTask
 from kitt.llm.client import LLMClient
+from kitt.metrics.cost_estimator import estimate_execution_cost
 from kitt.router.features import TaskFeatureExtractor
 from kitt.router.models import TaskFeatures
 
@@ -269,6 +270,13 @@ class TurnArchitectMixin:
             TokenCounter.count_tokens(_ARCHITECT_SYSTEM_PROMPT)
             + TokenCounter.count_tokens(prompt)
         )
+        estimated_input_cost = estimate_execution_cost(
+            str(getattr(profile, "model", "") or ""),
+            estimated_input,
+            0,
+            backend=str(getattr(profile, "backend", "") or ""),
+            workspace_root=str(self.root_path),
+        ).estimated_usd
         provider_usage: dict[str, object] = {}
 
         def observe_usage(usage: dict[str, object]) -> None:
@@ -279,6 +287,7 @@ class TurnArchitectMixin:
             if execution_budget is not None and int(attempt) > 0:
                 execution_budget.reserve_model_call(
                     input_tokens=estimated_input,
+                    cost=estimated_input_cost,
                     stage="architect",
                 )
 
@@ -286,6 +295,7 @@ class TurnArchitectMixin:
             if execution_budget is not None:
                 execution_budget.reserve_model_call(
                     input_tokens=estimated_input,
+                    cost=estimated_input_cost,
                     stage="architect",
                 )
             with LLMClient(profile) as client:
@@ -300,19 +310,42 @@ class TurnArchitectMixin:
             if execution_budget is not None:
                 actual_input = provider_usage.get("prompt_tokens")
                 actual_output = provider_usage.get("completion_tokens")
-                if isinstance(actual_input, (int, float)) and not isinstance(actual_input, bool):
-                    execution_budget.reconcile_model_input(
-                        estimated_tokens=estimated_input,
-                        actual_tokens=int(actual_input),
-                        stage="architect",
-                    )
+                actual_input_tokens = (
+                    int(actual_input)
+                    if isinstance(actual_input, (int, float))
+                    and not isinstance(actual_input, bool)
+                    else estimated_input
+                )
+                actual_output_tokens = (
+                    int(actual_output)
+                    if isinstance(actual_output, (int, float))
+                    and not isinstance(actual_output, bool)
+                    else TokenCounter.count_tokens(raw)
+                )
+                actual_input_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    actual_input_tokens,
+                    0,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd
+                output_cost = estimate_execution_cost(
+                    str(getattr(profile, "model", "") or ""),
+                    0,
+                    actual_output_tokens,
+                    backend=str(getattr(profile, "backend", "") or ""),
+                    workspace_root=str(self.root_path),
+                ).estimated_usd
+                execution_budget.reconcile_model_input(
+                    estimated_tokens=estimated_input,
+                    actual_tokens=actual_input_tokens,
+                    estimated_cost=estimated_input_cost,
+                    actual_cost=actual_input_cost,
+                    stage="architect",
+                )
                 execution_budget.record_model_output(
-                    output_tokens=(
-                        int(actual_output)
-                        if isinstance(actual_output, (int, float))
-                        and not isinstance(actual_output, bool)
-                        else TokenCounter.count_tokens(raw)
-                    ),
+                    output_tokens=actual_output_tokens,
+                    cost=output_cost,
                     stage="architect",
                 )
         except Exception as exc:
