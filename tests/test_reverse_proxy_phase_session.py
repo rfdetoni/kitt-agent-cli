@@ -19,6 +19,7 @@ class _CapturingStreamClient:
     def __init__(self):
         self.profile = SimpleNamespace(model="chatgpt-web")
         self.routes = []
+        self.request_metadata = []
 
     def chat_stream(
         self,
@@ -29,8 +30,10 @@ class _CapturingStreamClient:
         reasoning_effort=None,
         route=None,
         loop_action_budget=4,
+        request_metadata=None,
     ):
         self.routes.append((route, loop_action_budget))
+        self.request_metadata.append(dict(request_metadata or {}))
         yield '{"action":"final_response","tool":null,"tool_input":null,"content":"ok","reasoning_summary":""}'
 
 
@@ -66,11 +69,20 @@ class TestReverseProxyPhaseSession(unittest.TestCase):
                 client,
                 [{"role": "user", "content": "任意の言語の要求"}],
                 "system",
+                conversation_id="conversation-structured",
+                turn_id="turn-structured",
                 route="agent-loop",
                 loop_action_budget=5,
             )
         )
         self.assertEqual(client.routes, [("agent-loop", 5)])
+        self.assertEqual(
+            client.request_metadata[0]["conversation_id"],
+            "conversation-structured",
+        )
+        self.assertEqual(client.request_metadata[0]["turn_id"], "turn-structured")
+        self.assertEqual(client.request_metadata[0]["route"], "agent-loop")
+        self.assertTrue(client.request_metadata[0]["request_id"])
 
 
     def test_reverse_proxy_execution_bypasses_semantic_compilation_and_model_routing(self):
