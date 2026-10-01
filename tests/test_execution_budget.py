@@ -59,3 +59,30 @@ def test_provider_usage_reconciliation_still_enforces_hard_limit():
     ledger.reserve_model_call(input_tokens=40)
     with pytest.raises(ExecutionBudgetExceeded):
         ledger.reconcile_model_input(estimated_tokens=40, actual_tokens=60)
+
+
+def test_stage_usage_rolls_up_to_one_global_wallet():
+    ledger = ExecutionBudgetLedger(
+        _budget(max_model_calls=3, max_total_tokens=120, max_tool_calls=2)
+    )
+    ledger.reserve_model_call(input_tokens=20, stage="classifier")
+    ledger.record_model_output(output_tokens=10, stage="classifier")
+    ledger.reserve_model_call(input_tokens=30, stage="condenser")
+    ledger.record_model_output(output_tokens=10, stage="condenser")
+    ledger.reserve_tool_call(stage="validator")
+
+    snapshot = ledger.snapshot()
+    assert snapshot["usage"]["model_calls"] == 2
+    assert snapshot["usage"]["total_tokens"] == 70
+    assert snapshot["usage"]["tool_calls"] == 1
+    assert snapshot["stages"]["classifier"]["input_tokens"] == 20
+    assert snapshot["stages"]["classifier"]["output_tokens"] == 10
+    assert snapshot["stages"]["condenser"]["input_tokens"] == 30
+    assert snapshot["stages"]["validator"]["tool_calls"] == 1
+
+
+def test_stage_names_do_not_create_independent_token_budgets():
+    ledger = ExecutionBudgetLedger(_budget(max_total_tokens=50, max_input_tokens=50))
+    ledger.reserve_model_call(input_tokens=30, stage="classifier")
+    with pytest.raises(ExecutionBudgetExceeded):
+        ledger.reserve_model_call(input_tokens=21, stage="execution")
