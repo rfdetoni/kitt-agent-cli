@@ -485,7 +485,14 @@ class LLMClient:
                     if isinstance(tool_definitions, (list, tuple))
                     else 0
                 ),
-                context_segments_count=len((context_envelope or {}).get("segments", [])),
+                context_segments_count=(
+                    len(segments)
+                    if isinstance(
+                        (segments := (context_envelope or {}).get("segments")),
+                        (list, tuple),
+                    )
+                    else 0
+                ),
                 temperature=self.profile.temperature,
                 context_window=self.profile.context_window,
                 max_output_tokens=self.profile.max_output_tokens,
