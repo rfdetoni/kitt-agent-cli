@@ -58,6 +58,9 @@ class TestReasoningEffortToggle(unittest.TestCase):
             client,
             [{"role": "user", "content": "inspect"}],
             "system",
+            conversation_id="test-reasoning",
+            turn_id="test-reasoning-forwarding",
+            route="chat",
         ))
 
         self.assertEqual(client.values, [80])
