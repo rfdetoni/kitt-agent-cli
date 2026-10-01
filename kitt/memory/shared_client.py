@@ -25,8 +25,6 @@ from kitt_protocol import (
     MEMORY_TIMELINE_RESPONSE,
     MEMORY_GET_REQUEST,
     MEMORY_GET_RESPONSE,
-    MEMORY_RECALL_REQUEST,
-    MEMORY_RECALL_RESPONSE,
     MEMORY_REMEMBER_REQUEST,
     MEMORY_REMEMBER_RESPONSE,
     SYSTEM_ERROR,
@@ -320,64 +318,6 @@ class KittMemoryClient:
             str(body.get("recall_trace_id") or ""),
         )
 
-    def recall_with_trace(
-        self,
-        workspace_id: str,
-        query: str,
-        limit: int = 8,
-        *,
-        namespace: str = "agent-cli",
-        scope_key: str | None = None,
-        as_of: int | None = None,
-        allow_private: bool = True,
-        allow_secret: bool = False,
-    ) -> tuple[list[dict[str, Any]], str]:
-        body = self._call(
-            MEMORY_RECALL_REQUEST,
-            {
-                "namespace": namespace,
-                "workspace_id": workspace_id,
-                "scope_key": scope_key,
-                "query": query,
-                "limit": max(0, min(int(limit), 50)),
-                "as_of": as_of,
-                "allow_private": bool(allow_private),
-                "allow_secret": bool(allow_secret),
-            },
-            MEMORY_RECALL_RESPONSE,
-        )
-        rows = body.get("records") if isinstance(body, dict) else None
-        if not isinstance(rows, list):
-            raise KittMemoryUnavailable("memory.recall response missing records")
-        trace_id = body.get("recall_trace_id") if isinstance(body, dict) else ""
-        return (
-            [row for row in rows if isinstance(row, dict)],
-            str(trace_id or ""),
-        )
-
-    def recall(
-        self,
-        workspace_id: str,
-        query: str,
-        limit: int = 8,
-        *,
-        namespace: str = "agent-cli",
-        scope_key: str | None = None,
-        as_of: int | None = None,
-        allow_private: bool = True,
-        allow_secret: bool = False,
-    ) -> list[dict[str, Any]]:
-        rows, _trace_id = self.recall_with_trace(
-            workspace_id,
-            query,
-            limit,
-            namespace=namespace,
-            scope_key=scope_key,
-            as_of=as_of,
-            allow_private=allow_private,
-            allow_secret=allow_secret,
-        )
-        return rows
 
     def lifecycle(
         self,
