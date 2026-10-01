@@ -1,5 +1,14 @@
 # K.I.T.T. Agent CLI
 
+
+## Agent CLI 0.81.1 — migração segura de estado e bounded loops consistentes
+
+O Agent CLI 0.81.1 restaura upgrades transacionais do estado persistido até o schema 10. Workspaces em schemas 7, 8 ou 9 deixam de falhar na inicialização depois de uma atualização. Na migração de segurança para v10 somente regras antigas de aprovação global, que não podem ser associadas com segurança a um workspace, são invalidadas; histórico de conversas, event ledger e estado de child sessions são preservados. O `kitt doctor` agora mostra explicitamente a compatibilidade do schema, o reset usa a API de backup do SQLite para capturar corretamente bancos em WAL e incompatibilidades previsíveis passam a gerar erro conciso em vez de traceback bruto.
+
+O `agent_loop_action_budget` passa a representar a cadência de checkpoint de cada bounded loop, não um limite total de tools do turno. O teto independente contra runaway continua existindo e passa a permitir até 24 chamadas de tool por turno por padrão. Os instaladores agora exigem Python **3.14+**, em acordo com o pacote, e executam um smoke test do schema instalado.
+
+Esta versão é pareada com o KITT Reverse Proxy **4.7.5**, que transporta contadores explícitos de loop/ação entre round trips e impede que o checkpoint desapareça depois da ação de fronteira.
+
 [English](README.md)
 
 ## Agent CLI 0.81.0 — memória progressiva, replay seguro e transporte apenas estrutural
