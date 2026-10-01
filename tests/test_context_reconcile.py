@@ -34,7 +34,7 @@ def _segment(
     digest,
     *,
     source="repo",
-    kind=ContextKind.REPOSITORY_EVIDENCE,
+    kind=ContextKind.REPOSITORY_MAP,
     region=CacheRegion.LIVE_ZONE,
     sensitivity="private",
 ):
