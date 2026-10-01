@@ -9,6 +9,9 @@ import threading
 import time
 import uuid
 from dataclasses import asdict
+from functools import wraps
+import math
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
@@ -26,6 +29,14 @@ from kitt.security.context import ExecutionSecurityContext
 
 TERMINAL_CHILD_STATES = {"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}
 REUSABLE_CHILD_STATES = {"RETAINED", "COMPLETED", "IDLE"}
+
+
+def _serialized(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._execution_lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class ChildAgentManager:
@@ -105,6 +116,7 @@ class ChildAgentManager:
                     budget_lease_json=json.dumps(lease, ensure_ascii=False),
                 )
         except Exception:
+            logging.getLogger(__name__).exception("Child budget settlement failed for %s", child_id)
             # The child-side lease already enforces the hard cap. Settlement is
             # accounting/release and must not corrupt a completed workspace merge.
             return
@@ -233,6 +245,7 @@ class ChildAgentManager:
         if keeper is not None:
             keeper[0].set()
 
+    @_serialized
     def spawn(
         self,
         parent_conversation_id,
@@ -250,7 +263,12 @@ class ChildAgentManager:
         timeout_seconds=120,
         security_context: Optional[ExecutionSecurityContext] = None,
         parent_capabilities=None,
+        task_id: str | None = None,
+        parent_request_id: str | None = None,
+        agent_role: str | None = None,
     ):
+        if security_context is not None and security_context.principal_type == "CHILD":
+            raise PermissionError("Leaf child agents cannot spawn subagents")
         if self._closed:
             raise RuntimeError("ChildAgentManager is closed")
         if not self.enabled:
@@ -297,7 +315,12 @@ class ChildAgentManager:
                 else DEFAULT_CHILD_CAPABILITIES
             )
         )
-        effective_caps = compute_child_privileges(tools, parent_caps, parent_caps)
+        policy_caps = set(parent_caps)
+        if agent_role is not None:
+            from kitt.core.roles import POLICIES
+            from kitt_protocol import AgentRole
+            policy_caps &= set(POLICIES[AgentRole(agent_role)].capabilities)
+        effective_caps = compute_child_privileges(tools, parent_caps, policy_caps)
         parent_path_scope = (
             None
             if security_context is None or security_context.path_scope is None
@@ -309,7 +332,21 @@ class ChildAgentManager:
             parent_path_scope,
         )
 
-        timeout = min(float(timeout_seconds), self.max_worker_seconds)
+        child_security_context = (
+            security_context.derive_child_context(
+                child_id="pending",
+                requested_capabilities=effective_caps,
+                turn_id=parent_turn_id,
+                workspace_policy_caps=effective_caps,
+                allowed_paths=paths,
+            )
+            if security_context is not None
+            else None
+        )
+        requested_timeout = float(timeout_seconds)
+        if not math.isfinite(requested_timeout) or requested_timeout <= 0:
+            raise ValueError("Child timeout must be positive and finite")
+        timeout = min(requested_timeout, self.max_worker_seconds)
         self._last_spawn_time[parent_conversation_id] = now
         child_id = f"child_{uuid.uuid4().hex}"
         budget_lease: dict[str, object] = {}
@@ -320,6 +357,10 @@ class ChildAgentManager:
                 max(1, int(token_budget)),
             )
             budget_lease = asdict(lease) if hasattr(lease, "__dataclass_fields__") else dict(lease)
+            reserved = budget_lease.get("reserved")
+            remaining_ms = float(reserved.get("duration_ms", 0) or 0) if isinstance(reserved, dict) else 0.0
+            if remaining_ms > 0:
+                timeout = min(timeout, remaining_ms / 1000.0)
 
         isolation_mode = "SHARED"
         if self.coordinator is not None:
@@ -347,8 +388,10 @@ class ChildAgentManager:
             "parent_agent_id": parent_agent_id,
             "parent_turn_id": parent_turn_id,
             "root_task_id": parent_turn_id,
+            "task_id": task_id,
+            "parent_request_id": parent_request_id,
             "generation": int(depth),
-            "role": "IMPLEMENT",
+            "role": agent_role or "IMPLEMENT",
             "backend": backend_name,
             "model": str(model_profile),
             "context_fork_mode": "narrowed",
@@ -356,66 +399,58 @@ class ChildAgentManager:
             "budget_lease_id": str(budget_lease.get("id") or ""),
         }
 
-        child_security_context = (
-            security_context.derive_child_context(
-                child_id="pending",
-                requested_capabilities=effective_caps,
-                turn_id=parent_turn_id,
-                workspace_policy_caps=effective_caps,
-                allowed_paths=paths,
+        try:
+            child = self.repo.create(
+                parent_conversation_id,
+                parent_turn_id,
+                name,
+                task,
+                depth,
+                model_profile,
+                paths,
+                tools,
+                max(1, int(token_budget)),
+                timeout,
+                capabilities=effective_caps,
+                security_context=(
+                    None if child_security_context is None else child_security_context.to_dict()
+                ),
+                budget_lease=budget_lease,
+                lineage=lineage,
+                child_id=child_id,
             )
-            if security_context is not None
-            else None
-        )
-        child = self.repo.create(
-            parent_conversation_id,
-            parent_turn_id,
-            name,
-            task,
-            depth,
-            model_profile,
-            paths,
-            tools,
-            max(1, int(token_budget)),
-            timeout,
-            capabilities=effective_caps,
-            security_context=(
-                None if child_security_context is None else child_security_context.to_dict()
-            ),
-            budget_lease=budget_lease,
-            lineage=lineage,
-            child_id=child_id,
-        )
-        if child_security_context is not None:
-            child_security_context = child_security_context.with_turn(parent_turn_id)
-            payload = child_security_context.to_dict()
-            payload["principal_id"] = child.id
-            self.repo.update(
-                child.id,
-                security_context_json=json.dumps(payload, ensure_ascii=False),
+        except BaseException:
+            self._settle_child_budget(child_id)
+            raise
+        try:
+            if child_security_context is not None:
+                child_security_context = child_security_context.with_turn(parent_turn_id)
+                payload = child_security_context.to_dict()
+                payload["principal_id"] = child.id
+                self.repo.update(
+                    child.id,
+                    security_context_json=json.dumps(payload, ensure_ascii=False),
+                )
+                child = self.repo.get(child.id)
+            self.repo.update(child.id, state="QUEUED", started_at=time.time())
+            queued_child = self.repo.get(child.id)
+            self._on_event(
+                "ChildAgentSpawned",
+                {
+                    "child_id": child.id,
+                    "name": name,
+                    "task": task,
+                    "budget_lease_id": str(budget_lease.get("id") or ""),
+                    "lineage": lineage,
+                },
             )
-            child = self.repo.get(child.id)
-        self.repo.update(child.id, state="QUEUED", started_at=time.time())
-        queued_child = self.repo.get(child.id)
-        self._on_event(
-            "ChildAgentSpawned",
-            {
-                "child_id": child.id,
-                "name": name,
-                "task": task,
-                "budget_lease_id": str(budget_lease.get("id") or ""),
-                "lineage": lineage,
-            },
-        )
-        self._ensure_lease_keeper(child.id)
-        self._pool.submit(
-            self._run_child,
-            child.id,
-            task,
-            workspace,
-            timeout,
-            worker,
-        )
+            self._ensure_lease_keeper(child.id)
+            self._pool.submit(self._run_child, child.id, task, workspace, timeout, worker)
+        except BaseException:
+            self.repo.update(child.id, state="FAILED", error="worker admission failed", completed_at=time.time())
+            self._stop_lease_keeper(child.id)
+            self._settle_child_budget(child.id)
+            raise
         return queued_child
 
     def _child_security_context(self, child) -> ExecutionSecurityContext:
@@ -494,16 +529,17 @@ class ChildAgentManager:
         }
 
     def _invoke_worker(self, child_id: str, payload: dict, timeout_seconds: float) -> dict:
-        process = subprocess.Popen(
-            [sys.executable, "-m", "kitt.children.worker"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(self.root),
-            start_new_session=(sys.platform != "win32"),
-        )
         with self._execution_lock:
+            child = self.repo.get(child_id)
+            if child is None or child.state in TERMINAL_CHILD_STATES:
+                raise RuntimeError("Child was cancelled before subprocess admission")
+            process = subprocess.Popen(
+                [sys.executable, "-m", "kitt.children.worker"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, cwd=str(self.root),
+                env={**os.environ, "KITT_CHILD_PARENT_PID": str(os.getpid())},
+                start_new_session=(sys.platform != "win32"),
+            )
             self._processes[child_id] = process
         try:
             try:
@@ -560,7 +596,11 @@ class ChildAgentManager:
         self.repo.update(child_id, tokens_used=total)
         return total
 
+    @_serialized
     def _mark_waiting_approval(self, child_id: str, result: dict) -> None:
+        child = self.repo.get(child_id)
+        if child is None or child.state in TERMINAL_CHILD_STATES:
+            return
         turn_id = str(result.get("turn_id") or "")
         if not turn_id:
             raise RuntimeError("WAITING_APPROVAL result is missing turn_id")
@@ -584,9 +624,10 @@ class ChildAgentManager:
             },
         )
 
+    @_serialized
     def _complete_child(self, child_id: str, workspace_id: str, result: dict) -> None:
         child = self.repo.get(child_id)
-        if not child or child.state == "CANCELLED":
+        if not child or child.state in {"CANCELLED", "TIMED_OUT", "FAILED"}:
             return
         # A normal parent/daemon approval resume may already have completed the
         # retained child through ToolRegistry.on_approved_action_executed().
@@ -658,7 +699,11 @@ class ChildAgentManager:
         timeout_seconds: float,
         worker=None,
     ) -> None:
-        self.repo.update(child_id, state="RUNNING", task_started_at=time.time())
+        with self._execution_lock:
+            child = self.repo.get(child_id)
+            if child is None or child.state in TERMINAL_CHILD_STATES:
+                return
+            self.repo.update(child_id, state="RUNNING", task_started_at=time.time())
         self._on_event(
             "ChildAgentProgress",
             {
@@ -679,44 +724,32 @@ class ChildAgentManager:
                 return
             self._complete_child(child_id, workspace_id, result)
         except Exception as exc:
-            child = self.repo.get(child_id)
-            if child and child.state == "CANCELLED":
-                return
-            state = "TIMED_OUT" if isinstance(exc, TimeoutError) else "FAILED"
-            if self.coordinator is not None:
-                self.coordinator.abandon_child(child_id, preserve_worktree=True)
-            self._stop_lease_keeper(child_id)
-            self.repo.update(
-                child_id,
-                state=state,
-                error=str(exc),
-                completed_at=time.time(),
-            )
-            if not self._budget_is_settled(child_id):
-                usage = self._exhaust_budget_usage(child_id)
-                self._settle_child_budget(
-                    child_id,
-                    int(usage["tokens"]),
-                    int(usage["calls"]),
-                    float(usage["cost"]),
-                    int(usage["tools"]),
-                )
-            self._on_event(
-                "ChildAgentFinished",
-                {
-                    "child_id": child_id,
-                    "status": state,
-                    "error": str(exc),
-                    "tokens_used": int(getattr(child, "tokens_used", 0) or 0)
-                    if child
-                    else 0,
-                },
-            )
+            self._fail_child(child_id, exc)
+
+    @_serialized
+    def _fail_child(self, child_id: str, exc: Exception) -> None:
+        child = self.repo.get(child_id)
+        if child is None or child.state in TERMINAL_CHILD_STATES:
+            return
+        state = "TIMED_OUT" if isinstance(exc, TimeoutError) else "FAILED"
+        if self.coordinator is not None:
+            self.coordinator.abandon_child(child_id, preserve_worktree=True)
+        self._stop_lease_keeper(child_id)
+        self.repo.update(child_id, state=state, error=str(exc), completed_at=time.time())
+        if not self._budget_is_settled(child_id):
+            usage = self._exhaust_budget_usage(child_id)
+            self._settle_child_budget(child_id, int(usage["tokens"]), int(usage["calls"]),
+                                      float(usage["cost"]), int(usage["tools"]))
+        self._on_event("ChildAgentFinished", {"child_id": child_id, "status": state,
+                      "error": str(exc), "tokens_used": int(child.tokens_used)})
 
     def _resume_child(self, child_id: str, workspace_id: str, grant, timeout_seconds: float) -> None:
-        child = self.repo.get(child_id)
-        pending_turn_id = child.current_task_id if child else None
-        self.repo.update(child_id, state="RUNNING", error=None)
+        with self._execution_lock:
+            child = self.repo.get(child_id)
+            if child is None or child.state in TERMINAL_CHILD_STATES:
+                return
+            pending_turn_id = child.current_task_id
+            self.repo.update(child_id, state="RUNNING", error=None)
         try:
             result = self._continue_worker(child_id, grant, timeout_seconds)
             if result.get("state") == "WAITING_APPROVAL":
@@ -730,43 +763,18 @@ class ChildAgentManager:
             # TurnProcessor.continue_turn executes the approved host action.
             # The retained agent still needs a normal model turn to consume that
             # result and finish the remainder of its task.
-            self.repo.update(
-                child_id,
-                state="WAITING_APPROVAL",
-                current_task_id=pending_turn_id,
-                error=None,
-            )
+            with self._execution_lock:
+                child = self.repo.get(child_id)
+                if child is None or child.state in TERMINAL_CHILD_STATES:
+                    return
+                self.repo.update(child_id, state="WAITING_APPROVAL", current_task_id=pending_turn_id, error=None)
             self.on_approved_action_executed(
                 child_id,
                 pending_turn_id,
                 str(result.get("output", "")),
             )
         except Exception as exc:
-            child = self.repo.get(child_id)
-            if child and child.state == "CANCELLED":
-                return
-            state = "TIMED_OUT" if isinstance(exc, TimeoutError) else "FAILED"
-            if self.coordinator is not None:
-                self.coordinator.abandon_child(child_id, preserve_worktree=True)
-            self.repo.update(
-                child_id,
-                state=state,
-                error=str(exc),
-                completed_at=time.time(),
-            )
-            if not self._budget_is_settled(child_id):
-                usage = self._exhaust_budget_usage(child_id)
-                self._settle_child_budget(
-                    child_id,
-                    int(usage["tokens"]),
-                    int(usage["calls"]),
-                    float(usage["cost"]),
-                    int(usage["tools"]),
-                )
-            self._on_event(
-                "ChildAgentFinished",
-                {"child_id": child_id, "status": state, "error": str(exc)},
-            )
+            self._fail_child(child_id, exc)
 
     @staticmethod
     def _kill_tree(process) -> None:
@@ -812,6 +820,7 @@ class ChildAgentManager:
     def list(self, parent_conversation_id, limit=20):
         return self.repo.list(parent_conversation_id, limit)
 
+    @_serialized
     def cancel(self, child_id, conversation_id=None, workspace_id=None):
         child = self.inspect(child_id, conversation_id, workspace_id)
         if not child or child.state in TERMINAL_CHILD_STATES:
@@ -837,6 +846,7 @@ class ChildAgentManager:
         if self.coordinator is not None:
             self.coordinator.abandon_child(child_id, preserve_worktree=True)
         self._stop_lease_keeper(child_id)
+        self._on_event("ChildAgentFinished", {"child_id": child_id, "status": "CANCELLED", "error": "cancelled by user"})
         return True
 
     def cancel_for_turn(
@@ -880,6 +890,7 @@ class ChildAgentManager:
         )
         return True
 
+    @_serialized
     def assign_task(
         self,
         child_id,

@@ -172,6 +172,7 @@ def build_session_report(
                         "age": _human_age(age_seconds),
                         "input_tokens": int(usage[0] if usage else 0),
                         "output_tokens": int(usage[1] if usage else 0),
+                        "agentic": _agentic_metrics(conn, sid),
                     }
                 )
         return rows
@@ -346,3 +347,32 @@ def render_incident_report(
             f"{item['event']}{subject} - {item['detail']}"
         )
     return "\n".join(lines)
+
+
+def _agentic_metrics(conn, conversation_id):
+    """Bounded aggregates from durable host events, without tool stdout/prompts."""
+    counts = dict(conn.execute(
+        "SELECT event_type,COUNT(*) FROM session_events WHERE conversation_id=? "
+        "AND event_type IN ('AgentLoopCheckpoint','TaskPlanCheckpoint','SubagentReport','ChildAgentSpawned') GROUP BY event_type",
+        (conversation_id,),
+    ).fetchall())
+    row = conn.execute("SELECT payload_json FROM session_events WHERE conversation_id=? "
+                       "AND event_type='TaskPlanUpdated' ORDER BY sequence DESC LIMIT 1", (conversation_id,)).fetchone()
+    plan = json.loads(row[0]) if row else {}
+    tasks = plan.get("tasks", [])
+    depth = {}
+    remaining = list(tasks)
+    while remaining:
+        ready = [t for t in remaining if all(d in depth for d in t["depends_on"])]
+        if not ready:
+            break
+        for task in ready:
+            depth[task["local_id"]] = 1 + max((depth[d] for d in task["depends_on"]), default=0)
+            remaining.remove(task)
+    return {"plan_revision": plan.get("revision"), "task_count": len(tasks),
+            "verified_task_count": sum(t["status"] == "VERIFIED" for t in tasks),
+            "decomposition_depth": max(depth.values(), default=0),
+            "checkpoint_triggered_count": counts.get("AgentLoopCheckpoint", 0) + counts.get("TaskPlanCheckpoint", 0),
+            "subagent_spawn_count": counts.get("ChildAgentSpawned", 0),
+            "subagent_report_count": counts.get("SubagentReport", 0),
+            "maker_checker_iterations": {t["task_id"]: t["attempts"] for t in tasks}}

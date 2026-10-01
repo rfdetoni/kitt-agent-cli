@@ -246,6 +246,8 @@ class RunCommandHandler:
                 cwd=cwd,
                 sandbox_profile=sandbox_profile,
                 require_strong_sandbox=automatic and not autonomous_command,
+                **({"cancellation": ctx.registry.cancellation_registry.token(ctx.turn_id)}
+                   if getattr(ctx.registry, "cancellation_registry", None) is not None and ctx.turn_id else {}),
             )
         except FileNotFoundError:
             return ToolResult(False, "", f"Executable or cwd not found for process.run: {argv[0]}")
@@ -258,6 +260,9 @@ class RunCommandHandler:
         )
         metadata = {
             **metadata,
+            "returncode": result.returncode,
+            "timed_out": result.timed_out,
+            "cancelled": result.cancelled,
             "sandbox": {
                 "profile": result.sandbox_profile,
                 "backend": result.sandbox_backend,

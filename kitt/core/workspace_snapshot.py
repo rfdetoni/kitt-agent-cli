@@ -252,6 +252,7 @@ class WorkspaceSnapshotService:
         conversation_id: str,
         turn_id: str,
         paths: list[str] | None = None,
+        expected_current: dict[str, str | None] | None = None,
     ) -> list[str]:
         record = self._load_record(snapshot_id, conversation_id, turn_id)
         entries = record.get("entries")
@@ -272,6 +273,12 @@ class WorkspaceSnapshotService:
                     "restore paths are not part of snapshot: " + ", ".join(unknown)
                 )
 
+        if expected_current is not None:
+            current = self.diff(snapshot_id, conversation_id=conversation_id, turn_id=turn_id, paths=paths)
+            for item in current:
+                path = item["path"]
+                if path not in expected_current or item["current_sha256"] != expected_current[path]:
+                    raise ValueError(f"Rollback conflict: {path} changed after this mutation")
         restored: list[str] = []
         for item in entries:
             if not isinstance(item, dict):
@@ -288,10 +295,13 @@ class WorkspaceSnapshotService:
                 expected = str(item.get("sha256") or "")
                 if hashlib.sha256(raw).hexdigest() != expected:
                     raise ValueError(f"snapshot artifact digest mismatch for {rel}")
-                self.fs.atomic_write(rel, raw)
+                guard = {} if expected_current is None else {
+                    "expected_sha256": expected_current[rel], "expected_exists": expected_current[rel] is not None,
+                }
+                self.fs.atomic_write(rel, raw, **guard)
                 restored.append(rel)
             elif self.fs.exists_regular(rel):
-                self.fs.unlink(rel)
+                self.fs.unlink(rel, expected_sha256=None if expected_current is None else expected_current[rel])
                 restored.append(rel)
 
         if self.ledger is not None and conversation_id:

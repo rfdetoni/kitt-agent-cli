@@ -169,10 +169,8 @@ class ProviderCatalogService:
                 return
             except Exception:
                 pass
-        try:
-            self.refresh(force=True)
-        except Exception:
-            pass
+        # Construction uses local data only. Network refresh is an explicit
+        # operator action, avoiding startup egress and repeated timeout latency.
 
     def _parse_and_merge_catalog(self, raw_data: Dict[str, Any]) -> None:
         """Parses Models.dev json or cached catalog into descriptors."""

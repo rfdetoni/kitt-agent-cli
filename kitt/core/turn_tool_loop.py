@@ -254,6 +254,8 @@ class TurnToolLoopMixin:
         thinking_completed = False
         yield ThinkingStarted(), None, None
 
+        completion_recoveries = 0
+        failed_evidence = []
         while True:
             if cmd.turn_id in self.cancelled_turns:
                 self.cancelled_turns.discard(cmd.turn_id)
@@ -271,7 +273,11 @@ class TurnToolLoopMixin:
                 "conversation_id": cmd.conversation_id,
                 "tool_definitions": request.tool_definitions,
                 "loop_action_budget": request.loop_action_budget,
-                "context_envelope": request.context_envelope,
+                "context_envelope": (
+                    self.task_plans.context(request.context_envelope, cmd.conversation_id, cmd.turn_id)
+                    if effective_agent_route in {"agent-loop", "code-generation", "code-edit", "validate-diff"} and getattr(self, "task_plans", None) is not None
+                    else request.context_envelope
+                ),
             }
             try:
                 signature = inspect.signature(self._stream_execution_response)
@@ -374,7 +380,7 @@ class TurnToolLoopMixin:
                         {"role": "user", "content": f"The host tool call is invalid ({exc}). Return one valid complete tool envelope, or answer directly."},
                     ])
                     continue
-                if general_call is None:
+                if general_call is None and effective_agent_route != "agent-loop":
                     # Fallback 1: check if user asked to edit a specific file and model returned a markdown code block
                     candidate_files = list(cmd.explicit_files) if cmd.explicit_files else []
                     if not candidate_files:
@@ -394,7 +400,7 @@ class TurnToolLoopMixin:
                     candidate_files = list(cmd.explicit_files) if cmd.explicit_files else []
                     if not candidate_files:
                         candidate_files = re.findall(r'\b([a-zA-Z0-9_\-./\\]+\.(?:html|htm|py|js|ts|jsx|tsx|css|json|md|txt|sh|bash|toml|yaml|yml|rs|go|sql))\b', cmd.prompt)
-                    if tool_calls == 0 and malformed_calls == 0 and candidate_files and cmd.mode == "code" and ("write_file" in request.enabled_tools or "apply_patch" in request.enabled_tools):
+                    if effective_agent_route != "agent-loop" and tool_calls == 0 and malformed_calls == 0 and candidate_files and cmd.mode == "code" and ("write_file" in request.enabled_tools or "apply_patch" in request.enabled_tools):
                         malformed_calls += 1
                         execution_messages.extend([
                             {"role": "assistant", "content": full_response},
@@ -404,6 +410,20 @@ class TurnToolLoopMixin:
                     if limit_msg:
                         yield TurnFailed(error=f"Limite do chat atingido: {limit_msg}"), None, None
                         return
+                    plans = getattr(self, "task_plans", None)
+                    if effective_agent_route == "agent-loop" and plans is not None:
+                        host = plans.host_state(cmd.conversation_id, cmd.turn_id)
+                        if not host["completion_ready"]:
+                            completion_recoveries += 1
+                            if completion_recoveries > 2:
+                                yield TurnBlocked(reason="Host evidence does not satisfy pending tasks or verification"), None, None
+                                return
+                            execution_messages.extend([
+                                {"role": "assistant", "content": full_response},
+                                {"role": "user", "content": json.dumps({"host_completion": "BLOCKED", "host_execution": host,
+                                    "next_action": "Inspect the plan and run registered verification; report blockers if execution cannot continue."})},
+                            ])
+                            continue
                     break
 
             enforce_limits = getattr(exe_profile, "enforce_local_limits", True)
@@ -625,6 +645,14 @@ class TurnToolLoopMixin:
                     "execution_id": execution_id,
                     "execution_event_id": receipt.id,
                 }
+            plans = getattr(self, "task_plans", None)
+            if plans is not None and effective_agent_route in {"agent-loop", "code-generation", "code-edit", "validate-diff"}:
+                from kitt.core.agent_runtime import _is_mutating
+                operation = str(tool_args.get("operation", tool_name))
+                plans.observe_tool(cmd.conversation_id, cmd.turn_id, execution_id,
+                    tool_name, tool_args, tool_result, _is_mutating(tool_name, tool_args),
+                    operation in {"repo.read", "repo.list", "repo.search", "repo.inspect_symbol", "repo.read_symbol",
+                                  "read_file", "list_files", "search", "repository_map"})
             logger.debug(
                 "host result turn=%s call=%s tool=%s success=%s approval=%s error=%r",
                 cmd.turn_id,
@@ -657,6 +685,25 @@ class TurnToolLoopMixin:
                 error=None if browser_trace_result is not None else tool_result.error,
                 metadata=browser_trace_result if browser_trace_result is not None else tool_result.metadata,
             )
+            if effective_agent_route == "agent-loop" and not tool_result.requires_approval:
+                if tool_result.success:
+                    failed_evidence.clear()
+                else:
+                    fingerprint = hashlib.sha256((_canonical_tool_args(tool_args) + str(tool_result.error)).encode()).hexdigest()
+                    failed_evidence.append(fingerprint)
+                    failed_evidence = failed_evidence[-4:]
+                    if (len(failed_evidence) >= 3 and len(set(failed_evidence[-3:])) == 1) or (
+                        len(failed_evidence) == 4 and failed_evidence[:2] == failed_evidence[2:]
+                    ):
+                        yield TurnBlocked(reason="No progress: repeated host failures; reconcile evidence before retrying"), None, None
+                        return
+                cadence = max(1, (request.loop_action_budget + 1) // 2)
+                if plans is not None and tool_calls % cadence == 0 and plans.ledger is not None:
+                    host = plans.host_state(cmd.conversation_id, cmd.turn_id)
+                    plans.ledger.append_event(cmd.conversation_id, "AgentLoopCheckpoint", {
+                        "tool_call_count": host["tool_call_count"], "completion_ready": host["completion_ready"],
+                        "mutation_count": host["mutation_count"], "verified_mutation_count": host["verified_mutation_count"],
+                    }, turn_id=cmd.turn_id, source="host-execution", event_id=f"loop-checkpoint:{execution_id}")
             observed_strategy = strategy_for_tool_call(tool_name, tool_args)
             if (
                 observed_strategy is not None

@@ -117,7 +117,17 @@ class ChildSpawnHandler:
             token_budget=int(args.get("token_budget", 4000)),
             timeout_seconds=float(args.get("timeout_seconds", 60.0)),
             security_context=ctx.security_context,
+            task_id=str(args["plan_task_id"]) if args.get("plan_task_id") else None,
+            parent_request_id=getattr(ctx.registry, "logical_request_ids", {}).get(ctx.turn_id),
+            agent_role=str(args["agent_role"]) if args.get("agent_role") else None,
         )
+        plans = getattr(ctx.registry, "task_plans", None)
+        if plans is not None and args.get("plan_task_id"):
+            try:
+                plans.bind_child(ctx.conversation_id, ctx.turn_id, str(args["plan_task_id"]), child.id)
+            except Exception:
+                mgr.cancel(child.id)
+                raise
         return ToolResult(True, f"Child task spawned with ID {child.id}.", metadata={"child_id": child.id, "child": child})
 
 

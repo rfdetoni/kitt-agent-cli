@@ -88,8 +88,10 @@ jobs:
             kitt/children/lifecycle.py \
             kitt/artifacts/store.py \
             kitt/children/worker.py \
+            kitt/children/supervision.py \
             kitt/context_filter/semantic_filter.py \
             kitt/core/agent_runtime.py \
+            kitt/core/task_plan.py \
             kitt/core/execution_budget.py \
             kitt/core/turn_architect.py \
             kitt/core/turn_context.py \

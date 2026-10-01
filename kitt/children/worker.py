@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import replace
 from typing import Any
@@ -200,8 +201,11 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
         mode="auto",
         explicit_files=set(request.get("allowed_paths", [])),
         security_context=security_context,
+        agent_role=dict(request.get("lineage") or {}).get("role"),
     )
 
+    runtime.processor._request_parent_ids = {command.turn_id: dict(request.get("lineage") or {}).get("parent_request_id")}
+    runtime.processor._request_task_ids = {command.turn_id: dict(request.get("lineage") or {}).get("task_id")}
     runtime.history.repo.save_message(
         child_conversation, command.turn_id, "user", request["task"]
     )
@@ -339,7 +343,18 @@ def _continue_turn(runtime: KittRuntime, request: dict) -> dict:
 
 def main() -> None:
     runtime = None
+    guard = None
     try:
+        expected_parent = os.environ.get("KITT_CHILD_PARENT_PID")
+        if expected_parent and os.name == "posix":
+            from kitt.children.supervision import ParentProcessGuard
+            def cancel_active():
+                if runtime is not None:
+                    runtime.processor.cancellation_registry.cancel_all()
+                    manager = getattr(runtime.registry, "process_manager", None)
+                    if manager is not None:
+                        manager.close()
+            guard = ParentProcessGuard(int(expected_parent), cancel_active)
         request = json.loads(sys.stdin.read())
         runtime = KittRuntime.build(request["root"], state_root_dir=request.get("state_root"))
         _bind_child_proxy_session(runtime, request)
@@ -354,6 +369,8 @@ def main() -> None:
     except Exception as exc:
         _emit({"success": False, "state": "FAILED", "error": str(exc)})
     finally:
+        if guard is not None:
+            guard.close()
         if runtime is not None:
             runtime.close()
 

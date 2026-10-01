@@ -79,4 +79,4 @@ After every code implementation/edit:
 
 ## Domain Boundaries
 
-Use [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md) as the strategic architecture contract. Apply DDD only where a domain consistency boundary exists; do not wrap UI, provider or persistence helpers in ceremonial domain abstractions. Cross-repository contracts belong in `kitt-protocol`, and the root `rfdetoni/kitt` lock is the compatibility composition boundary.
+Use [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md) as the strategic architecture contract. Apply DDD only where a domain consistency boundary exists; do not wrap UI, provider or persistence helpers in ceremonial domain abstractions. Cross-repository contracts belong in `kitt-protocol`, and the root `rfdetoni/kitt` main-first installer and per-run SHA resolution are the compatibility composition boundary.

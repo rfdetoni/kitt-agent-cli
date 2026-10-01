@@ -56,6 +56,17 @@ def test_selective_snapshot_diff_preview_and_restore_leave_other_paths_untouched
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "A0"
     assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "B1"
 
+    # Automatic rollback must preserve a newer edit by another actor.
+    newer = service.capture(conversation_id=conversation["id"], turn_id="turn-snapshot", paths=["a.txt"])
+    (tmp_path / "a.txt").write_text("agent edit", encoding="utf-8")
+    guard = {"a.txt": service.fs.read("a.txt").sha256}
+    (tmp_path / "a.txt").write_text("user edit", encoding="utf-8")
+    import pytest
+    with pytest.raises(ValueError, match="Rollback conflict"):
+        service.restore(newer.snapshot_id, conversation_id=conversation["id"],
+                        turn_id="turn-snapshot", expected_current=guard)
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "user edit"
+
     artifacts.close()
     db.close()
 

@@ -92,6 +92,12 @@ class RuntimeOperationSpec:
 
 
 OPERATION_REGISTRY = RuntimeOperationRegistry({
+    "plan.submit": RuntimeOperationSpec("plan.submit", CAP_REPO_READ),
+    "plan.inspect": RuntimeOperationSpec("plan.inspect", CAP_REPO_READ),
+    "plan.next": RuntimeOperationSpec("plan.next", CAP_REPO_READ),
+    "plan.checkpoint": RuntimeOperationSpec("plan.checkpoint", CAP_REPO_READ),
+    "plan.dispatch": RuntimeOperationSpec("plan.dispatch", CAP_CHILD_SPAWN),
+    "plan.verify": RuntimeOperationSpec("plan.verify", CAP_PROCESS_RUN),
     "repo.read": RuntimeOperationSpec("repo.read", CAP_REPO_READ, "read_file"),
     "repo.search": RuntimeOperationSpec("repo.search", CAP_REPO_SEARCH, "search"),
     "repo.inspect_symbol": RuntimeOperationSpec(
@@ -836,7 +842,58 @@ class SafeRuntime:
             "state.list": lambda: self._op_state_list(),
             "handles.resolve": lambda: self._op_handles_resolve(args, security_context),
         }
+        if op.startswith("plan."):
+            return self._op_plan(op, args, turn_id, origin, security_context, grant, expected_approval_id)
         return handlers[op]()
+
+    def _op_plan(self, operation, args, turn_id, origin, security_context, grant, approval_id):
+        plans = getattr(self.registry, "task_plans", None)
+        if plans is None or security_context is None:
+            raise RuntimeError("Durable task planning is unavailable")
+        conv = self.conversation_id
+        if operation == "plan.submit":
+            data = plans.submit(conv, turn_id, args.get("proposal"), security_context)
+        elif operation == "plan.inspect":
+            data = plans.inspect(conv, turn_id)
+        elif operation == "plan.next":
+            data = plans.next(conv, turn_id)
+        elif operation == "plan.checkpoint":
+            data = plans.next(conv, turn_id)
+            plans.ledger.append_event(conv, "TaskPlanCheckpoint", {
+                "revision": (data["plan"] or {}).get("revision"), "ready": data["ready"],
+                "verified": sum(t["status"] == "VERIFIED" for t in (data["plan"] or {}).get("tasks", [])),
+            }, turn_id=turn_id, source="task-plan")
+        elif operation == "plan.dispatch":
+            payload = plans.prepare_dispatch(conv, turn_id, args, security_context)
+            return self._op_registry_tool(operation, "child_spawn", payload, turn_id, origin,
+                                          security_context, grant, approval_id)
+        else:
+            task, steps, digest = plans.verification_steps(conv, turn_id, args.get("task_id"), security_context)
+            checks = dict(task["checks"])
+            for step in steps:
+                if checks.get(step.name, {}).get("status") == "PASS" and checks[step.name].get("digest") == digest:
+                    continue
+                result = self._op_registry_tool(operation, "run_command", {
+                    "argv": step.argv, "timeout_seconds": step.timeout_seconds,
+                }, turn_id, origin, security_context, grant, approval_id)
+                if result.requires_approval:
+                    return result
+                checks[step.name] = {"status": "PASS" if result.success and result.metadata.get("returncode") == 0
+                                     and not result.metadata.get("cancelled") and not result.metadata.get("timed_out") else "FAIL",
+                                     "digest": digest, "returncode": result.metadata.get("returncode")}
+                if checks[step.name]["status"] != "PASS":
+                    break
+            # Syntax remains required even when no registered project check applies.
+            from kitt.validation.post_edit import PostEditValidator
+            syntax = PostEditValidator(self.root, getattr(self.registry, "process_runner", None)).validate_paths(task["paths"])
+            ok = syntax.ok and all(checks.get(c, {}).get("status") == "PASS" for c in task["check_ids"])
+            data = plans.record_verification(conv, turn_id, task["task_id"], digest, checks, ok)
+            ok = next(t for t in data["tasks"] if t["task_id"] == task["task_id"])["status"] == "VERIFIED"
+            return SafeRuntimeResult(ok, operation, data=data, error=None if ok else "Task verification failed",
+                                     metadata={"verification": {"ok": ok, "status": "PASS" if ok else "FAIL",
+                                         "checked_paths": task["paths"],
+                                         "workspace_verified": bool(ok and any(step.scope == "workspace" for step in steps))}})
+        return SafeRuntimeResult(True, operation, data=data)
 
     def _managed_processes(self):
         manager = self.process_manager

@@ -18,6 +18,7 @@ class TurnCommand:
     security_context: Optional[Any] = None
     turn_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     attachments: Set[str] = field(default_factory=set)
+    agent_role: Optional[str] = None
 
     def __post_init__(self) -> None:
         explicit = set(self.explicit_files or ())

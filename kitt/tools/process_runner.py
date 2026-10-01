@@ -272,6 +272,8 @@ class ProcessRunner:
     ) -> ProcessResult:
         if not argv or not all(isinstance(x, str) and x for x in argv):
             raise ValueError("argv must be a non-empty string list")
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         timeout_seconds = max(1, min(int(timeout_seconds), 3600))
         started = time.monotonic()
         resolved_cwd = self._resolve_cwd(cwd)
@@ -308,6 +310,8 @@ class ProcessRunner:
         timed_out = False
         cancelled = False
         try:
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
             proc = subprocess.Popen(plan.argv, **kwargs)
             out_thread = threading.Thread(
                 target=out_cap.consume, args=(proc.stdout,), daemon=True

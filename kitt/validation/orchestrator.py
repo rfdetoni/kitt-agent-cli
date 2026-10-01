@@ -24,6 +24,7 @@ class VerificationStepResult:
     passed: bool
     returncode: int | None = None
     output: str = ""
+    status: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -31,6 +32,7 @@ class VerificationStepResult:
             "kind": self.kind,
             "argv": list(self.argv),
             "passed": self.passed,
+            "status": self.status or ("PASS" if self.passed else "FAIL"),
             "returncode": self.returncode,
             "output": self.output[:4000],
         }
@@ -45,10 +47,20 @@ class VerificationReport:
     command_output: str = ""
     full_verification: bool = False
     steps: list[VerificationStepResult] = field(default_factory=list)
+    status: str = ""
+    checked_paths: list[str] = field(default_factory=list)
+    workspace_verified: bool = False
+
+    def __post_init__(self):
+        if not self.status:
+            self.status = "PASS" if self.ok else "FAIL"
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
+            "status": self.status,
+            "checked_paths": list(self.checked_paths),
+            "workspace_verified": self.workspace_verified,
             "diagnostics": [
                 {
                     "path": item.path,
@@ -107,9 +119,10 @@ class VerificationOrchestrator:
         planned = self.detector.plan_verification(paths, full=full)
         return self.contracts.apply_plan(planned)
 
-    def verify(self, paths: Iterable[str]) -> VerificationReport:
+    def verify(self, paths: Iterable[str], *, check_ids: Iterable[str] | None = None, cancellation=None) -> VerificationReport:
         unique = list(dict.fromkeys(str(path) for path in paths if path))[:64]
-        full = self._full_enabled()
+        required = set(check_ids or ())
+        full = self._full_enabled() or bool(required)
         syntax = self.validator.validate_paths(unique)
         diagnostics = list(syntax.diagnostics)
         if not syntax.ok:
@@ -120,13 +133,18 @@ class VerificationOrchestrator:
             )
 
         plan = self._plan(unique, full)
-        if not plan or self.process_runner is None:
-            return VerificationReport(
-                True,
-                diagnostics=diagnostics,
-                command=plan[0].argv if plan else None,
-                full_verification=full,
-            )
+        if required:
+            plan = [step for step in plan if step.name in required]
+            missing = required - {step.name for step in plan}
+            if missing:
+                return VerificationReport(False, diagnostics=diagnostics, full_verification=full, status="UNAVAILABLE",
+                    command_output="Unavailable verification steps: " + ", ".join(sorted(missing)))
+        if not plan:
+            status = "SKIPPED" if not full and self._plan(unique, True) else "NOT_APPLICABLE"
+            return VerificationReport(True, diagnostics=diagnostics, full_verification=full, status=status)
+        if self.process_runner is None:
+            return VerificationReport(False, diagnostics=diagnostics, command=plan[0].argv,
+                full_verification=full, status="UNAVAILABLE", command_output="Verification executor is unavailable")
 
         step_results: list[VerificationStepResult] = []
         for step in plan:
@@ -134,6 +152,7 @@ class VerificationOrchestrator:
                 result = self.process_runner.run(
                     step.argv,
                     timeout_seconds=step.timeout_seconds,
+                    **({"cancellation": cancellation} if cancellation is not None else {}),
                 )
                 returncode = int(getattr(result, "returncode", 1))
                 timed_out = bool(getattr(result, "timed_out", False))
@@ -142,9 +161,11 @@ class VerificationOrchestrator:
                 stdout = str(getattr(result, "stdout", "") or "")
                 stderr = str(getattr(result, "stderr", "") or "")
                 output = (stderr or stdout or "").strip()[:4000]
+                status = "TIMED_OUT" if timed_out else ("CANCELLED" if cancelled else ("PASS" if passed else "FAIL"))
             except Exception as exc:
                 returncode = None
                 passed = False
+                status = "UNAVAILABLE"
                 output = f"{type(exc).__name__}: {exc}"[:4000]
 
             step_result = VerificationStepResult(
@@ -154,6 +175,7 @@ class VerificationOrchestrator:
                 passed,
                 returncode,
                 output,
+                status,
             )
             step_results.append(step_result)
             if not passed:
@@ -173,6 +195,7 @@ class VerificationOrchestrator:
                     command_output=output,
                     full_verification=full,
                     steps=step_results,
+                    status=status,
                 )
 
         last = step_results[-1] if step_results else None
@@ -184,4 +207,6 @@ class VerificationOrchestrator:
             command_output=last.output if last else "",
             full_verification=full,
             steps=step_results,
+            checked_paths=unique,
+            workspace_verified=any(step.scope == "workspace" for step in plan),
         )

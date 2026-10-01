@@ -48,8 +48,13 @@ class ChildAgentManager(_LifecycleChildAgentManager):
 
         payload = self._build_run_payload(child, task)
         token = CancellationToken()
-        with self._external_cancellation_lock:
-            self._external_cancellations[child_id] = token
+        with self._execution_lock:
+            current = self.repo.get(child_id)
+            if current is None or current.state in {"CANCELLED", "FAILED", "TIMED_OUT"}:
+                token.cancel()
+                raise RuntimeError("Child cancelled before external backend admission")
+            with self._external_cancellation_lock:
+                self._external_cancellations[child_id] = token
         try:
             result = self.external_backends.run(
                 backend_name,
@@ -73,8 +78,9 @@ class ChildAgentManager(_LifecycleChildAgentManager):
         }
 
     def cancel(self, child_id, conversation_id=None, workspace_id=None):
-        with self._external_cancellation_lock:
-            token = self._external_cancellations.get(child_id)
-        if token is not None:
-            token.cancel()
-        return super().cancel(child_id, conversation_id, workspace_id)
+        with self._execution_lock:
+            with self._external_cancellation_lock:
+                token = self._external_cancellations.get(child_id)
+            if token is not None:
+                token.cancel()
+            return super().cancel(child_id, conversation_id, workspace_id)

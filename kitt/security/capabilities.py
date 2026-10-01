@@ -147,4 +147,4 @@ def compute_child_privileges(
         if policy_allowed is not None
         else set(parent_caps)
     )
-    return requested_caps & parent_caps & policy_caps
+    return (requested_caps & parent_caps & policy_caps) - {CAP_CHILD_SPAWN}

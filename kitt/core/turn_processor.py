@@ -597,6 +597,7 @@ class TurnProcessor(
             "repo.read", "repo.list", "repo.search", "repo.inspect_symbol",
             "repo.read_symbol", "repo.references",
             "flow.execute", "program.execute",
+            "plan.submit", "plan.inspect", "plan.next", "plan.dispatch", "plan.verify", "plan.checkpoint",
             *edits,
             "process.run", "artifacts.store", "artifacts.read",
             "children.spawn", "children.send", "children.inspect",
@@ -1365,6 +1366,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         reason: str,
         conversation_id: Optional[str] = None,
     ) -> Iterator[TurnEvent]:
+        cancellation = getattr(self, "cancellation_registry", None)
+        if cancellation is not None:
+            cancellation.cancel(turn_id)
         had_inflight = self._mark_cancelled(turn_id)
         # Do not tear down a pending action that already crossed the execution
         # barrier. Its in-flight path owns consumption/cleanup. Waiting
@@ -1390,5 +1394,5 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     workspace_id=self.workspace_id,
                 )
             except Exception:
-                pass
+                logger.exception("Child cancellation cleanup failed for turn %s", turn_id)
         yield TurnCancelled(reason=reason)

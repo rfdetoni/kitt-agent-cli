@@ -776,6 +776,9 @@ class DurableTurnJournal:
 
     def observe(self, cmd: TurnCommand, event: Any) -> None:
         name = type(event).__name__
+        budget = getattr(self.processor, "execution_budgets", {}).get(cmd.turn_id)
+        if budget is not None and name == "ApprovalRequired":
+            budget.pause()
         state = EVENT_STATE.get(name)
         event_record = None
         episode_id = self._episode_for_turn(cmd.turn_id)
@@ -923,7 +926,7 @@ def _install_tool_execution(processor, registry) -> None:
             )
             stage = (
                 "validator"
-                if name == "run_command" or operation == "process.run"
+                if operation == "plan.verify"
                 else "tools"
             )
             budget.reserve_tool_call(stage=stage)
@@ -1022,7 +1025,11 @@ def _install_tool_execution(processor, registry) -> None:
                         paths=planned_paths,
                     )
 
+            plans = getattr(processor, "task_plans", None)
+            check_binding = plans.registered_check(conv, turn, name, arguments) if plans and conv and turn else []
             result = original(name, args, *pos, **kwargs)
+            if plans and check_binding:
+                plans.record_check(conv, turn, check_binding, result)
             paths = _affected_paths(processor, name, arguments, result)
             if snapshot is not None:
                 result.metadata = dict(getattr(result, "metadata", {}) or {})
@@ -1033,18 +1040,25 @@ def _install_tool_execution(processor, registry) -> None:
                 and _file_mutation(name, arguments)
                 and paths
             ):
-                report = verifier.verify(paths)
+                rollback_guard = None
+                if snapshot is not None and snapshot_service is not None:
+                    rollback_guard = {item["path"]: item["current_sha256"] for item in snapshot_service.diff(
+                        snapshot.snapshot_id, conversation_id=conv, turn_id=turn,
+                    )}
+                tokens = getattr(processor, "cancellation_registry", None)
+                report = verifier.verify(paths, cancellation=tokens.token(turn) if tokens is not None and turn else None)
                 result.metadata = dict(getattr(result, "metadata", {}) or {})
                 result.metadata["verification"] = report.as_dict()
                 if not report.ok:
                     if snapshot is not None and snapshot_service is not None:
-                        restored = snapshot_service.restore(
-                            snapshot.snapshot_id,
-                            conversation_id=conv,
-                            turn_id=turn,
-                        )
-                        result.metadata["post_edit_rolled_back"] = True
-                        result.metadata["rollback_paths"] = restored
+                        try:
+                            restored = snapshot_service.restore(snapshot.snapshot_id, conversation_id=conv,
+                                turn_id=turn, expected_current=rollback_guard)
+                            result.metadata["post_edit_rolled_back"] = True
+                            result.metadata["rollback_paths"] = restored
+                        except ValueError as exc:
+                            result.metadata["post_edit_rollback_failed"] = True
+                            result.metadata["rollback_conflict"] = str(exc)
                     result.success = False
                     result.error = (
                         "Post-edit verification failed:\n"
@@ -1085,6 +1099,16 @@ def install_agent_engineering(processor, registry) -> None:
     processor.turn_journal = journal
     processor._record_model_request = journal.record_model_request
     processor.session_ledger = journal.ledger
+    from kitt.core.task_plan import TaskPlanCoordinator
+    processor.task_plans = TaskPlanCoordinator(journal.ledger, registry.root_path,
+                                               getattr(registry, "child_tools", None) or getattr(registry, "child_manager", None),
+                                               max_iterations=min(3, int(getattr(processor.config, "max_correction_cycles", 2)) + 1))
+    registry.task_plans = processor.task_plans
+    processor._logical_request_ids = {}
+    registry.logical_request_ids = processor._logical_request_ids
+    from kitt.core.cancellation import CancellationRegistry
+    processor.cancellation_registry = CancellationRegistry()
+    registry.cancellation_registry = processor.cancellation_registry
     processor.session_projections = journal.ledger.projections if journal.ledger else None
     processor.task_episodes = journal.episodes
     processor.runtime_invariants = journal.invariants
@@ -1152,6 +1176,9 @@ def install_agent_engineering(processor, registry) -> None:
                 "RUNNING",
                 reason="approval-resume",
             )
+        budget = getattr(self, "execution_budgets", {}).get(turn_id)
+        if budget is not None:
+            budget.resume()
         journal.state(cmd, "EXECUTING")
         try:
             for event in original_continue(turn_id, grant):

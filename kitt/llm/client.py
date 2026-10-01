@@ -418,6 +418,8 @@ class LLMClient:
                 timeout=min(1.0, max(0.2, float(self.profile.request_timeout_seconds))),
             )
             self._last_kitt_proxy_capabilities = discovered
+            if contract_route == "agent-loop" and discovered.discovered and "host_execution_state_v1" not in discovered.agentic_features:
+                raise ValueError("Reverse Proxy lacks host_execution_state_v1; update Agent CLI and Reverse Proxy together")
 
             session_id = self._kitt_proxy_session_id(session_key)
 

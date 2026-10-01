@@ -45,6 +45,23 @@ def test_model_and_tool_limits_are_hard():
         ledger.reserve_tool_call()
 
 
+def test_approval_wait_pauses_duration_without_resetting_usage():
+    now = [0.0]
+    ledger = ExecutionBudgetLedger(_budget(max_duration_ms=1000), clock=lambda: now[0])
+    ledger.reserve_tool_call()
+    now[0] = 0.2
+    ledger.pause()
+    now[0] = 3600.0
+    assert ledger.snapshot()["usage"]["duration_ms"] == 200
+    ledger.resume()
+    now[0] = 3600.5
+    ledger.reserve_tool_call()
+    assert ledger.snapshot()["usage"]["tool_calls"] == 2
+    now[0] = 3601.0
+    with pytest.raises(ExecutionBudgetExceeded):
+        ledger.reserve_tool_call()
+
+
 def test_provider_usage_reconciles_preflight_input_estimate():
     ledger = ExecutionBudgetLedger(_budget(max_input_tokens=100, max_total_tokens=160))
     ledger.reserve_model_call(input_tokens=60)

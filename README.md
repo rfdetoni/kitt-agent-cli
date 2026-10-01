@@ -1,7 +1,15 @@
 # K.I.T.T. Agent CLI
 
 
-## Agent CLI 0.81.1 — safe state upgrades and bounded-loop hardening
+## Agent CLI 0.82.0 — host-owned plans, evidence and child containment
+
+Agent CLI 0.82.0 adds optional bounded task DAGs to the existing `kitt_runtime` pipeline. The host assigns IDs, selects dependency-ready tasks, delegates through the existing child manager and approves completion from current verification evidence. Required checks use exact registered argv through normal policy, approval, sandbox and budget controls. A child report or stdout success marker cannot approve completion.
+
+This release pairs with Protocol **0.7.0** and Reverse Proxy **4.8.0**. Typed host state is refreshed before each model round trip; incompatible proxy capabilities produce an actionable error. Child spawn is serialized, leaf workers cannot delegate, late results cannot resurrect cancelled children, active tool commands receive cancellation, and POSIX child workers supervise loss of their parent. Approval waits pause active duration without resetting usage. Automatic rollback checks current content before restoring an earlier snapshot.
+
+See [docs/AGENTIC_PLANNING.md](docs/AGENTIC_PLANNING.md) for operations, limits, verification semantics and remaining E2E gates. The 30 acceptance requirements still need the release-SHA evidence prescribed by [docs/AGENTIC_RUNTIME_ACCEPTANCE.md](docs/AGENTIC_RUNTIME_ACCEPTANCE.md).
+
+## Previous release: Agent CLI 0.81.1 — safe state upgrades and bounded-loop hardening
 
 Agent CLI 0.81.1 restores transactional upgrades for persisted Agent state through schema 10, so workspaces on schemas 7, 8 or 9 no longer fail at startup after an update. The v10 security migration invalidates only legacy global remembered-approval rules that cannot be safely assigned to a workspace; conversation history, event ledger and child-session state are preserved. `kitt doctor` now reports state-schema compatibility explicitly, reset backups use SQLite's backup API so WAL-backed state is captured safely, and predictable schema failures are rendered as concise CLI errors instead of raw tracebacks.
 
@@ -17,7 +25,7 @@ Memory context now uses KITT Memory 0.7 progressive retrieval (`memory.search` �
 
 Execution durability is hardened with explicit event replay/idempotency tests, selective workspace snapshot diff/preview/restore, per-conversation runtime lifecycle tests, repeated-reread no-progress coverage and one global stage-aware execution budget. Classifier, condenser, execution model calls, validation tools and child leases all debit the same turn wallet; stage accounting is telemetry, not separate authority.
 
-This release targets KITT Protocol **0.6.0**, KITT Memory **0.7.0**, KITT Reverse Proxy **4.7.4** and Assistant Runtime **0.2.27**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) and [docs/AGENTIC_RUNTIME_ACCEPTANCE.md](docs/AGENTIC_RUNTIME_ACCEPTANCE.md).
+The earlier engineering baseline targeted KITT Protocol **0.6.0**, KITT Memory **0.7.0**, KITT Reverse Proxy **4.7.4** and Assistant Runtime **0.2.27**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) and [docs/AGENTIC_RUNTIME_ACCEPTANCE.md](docs/AGENTIC_RUNTIME_ACCEPTANCE.md).
 
 ## Agent CLI 0.80.5 — strict structural request identity
 

@@ -65,6 +65,8 @@ class AgentRolePolicy:
             }
         payload = args if isinstance(args, dict) else {}
         operation = str(payload.get("operation") or "")
+        if self.role == AgentRole.VERIFY and operation in {"process.run", "plan.verify"}:
+            return True
         return operation not in {
             "repo.write_file",
             "repo.edit_symbol",
@@ -83,6 +85,7 @@ class AgentRolePolicy:
             "program.execute",
             "state.set",
             "children.spawn",
+            "plan.dispatch",
             "goal.update",
             "memory.correct",
             "memory.concept",
@@ -163,6 +166,9 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
 
 
 def resolve_agent_role(cmd: Any, task: Any) -> AgentRolePolicy:
+    explicit_role = getattr(cmd, "agent_role", None)
+    if explicit_role is not None:
+        return POLICIES[AgentRole(explicit_role)]
     mode = str(getattr(cmd, "mode", "") or "").lower()
     raw_intent = getattr(task, "intent", "")
     intent = str(getattr(raw_intent, "value", raw_intent) or "").upper()

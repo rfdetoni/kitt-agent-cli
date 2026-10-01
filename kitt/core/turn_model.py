@@ -223,6 +223,10 @@ class TurnModelMixin:
                 )
 
         def _invoke_chat_stream(msgs, sys_prompt):
+            request_id = uuid.uuid4().hex
+            logical_ids = getattr(self, "_logical_request_ids", None)
+            if logical_ids is not None:
+                logical_ids[turn_id] = request_id
             kwargs = {
                 "system_prompt": sys_prompt,
                 "session_key": session_key or None,
@@ -234,8 +238,11 @@ class TurnModelMixin:
                 "request_metadata": KittRequestMetadata(
                     conversation_id=conversation_id,
                     turn_id=turn_id,
-                    request_id=uuid.uuid4().hex,
+                    request_id=request_id,
                     route=route,
+                    parent_request_id=getattr(self, "_request_parent_ids", {}).get(turn_id),
+                    task_id=getattr(self, "_request_task_ids", {}).get(turn_id),
+                    agent_role=str(getattr(getattr(self, "_agent_role_policies", {}).get(turn_id), "role", "IMPLEMENT")),
                 ).to_mapping(),
                 "usage_callback": _observe_usage,
                 "attempt_callback": _reserve_retry_attempt,

@@ -14,6 +14,7 @@ class VerificationStep:
     argv: list[str]
     timeout_seconds: int = 120
     kind: str = "test"
+    scope: str = "workspace"
 
 
 class BuildDetector:
@@ -46,6 +47,7 @@ class BuildDetector:
                 "python.targeted-tests",
                 ["python3", "-m", "pytest", "-q", *paired],
                 120,
+                scope="paths",
             )
         ]
 
@@ -111,6 +113,7 @@ class BuildDetector:
                         ["ruff", "check", *py_files],
                         90,
                         "lint",
+                        scope="paths",
                     )
                 )
             if (self.root_path / "tests").exists():

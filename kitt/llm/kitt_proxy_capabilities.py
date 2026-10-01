@@ -25,6 +25,15 @@ class KittProxyCapabilities:
     raw: Dict[str, Any] = field(default_factory=dict)
 
     @property
+    def agentic_features(self) -> tuple[str, ...]:
+        contract = self.raw.get("kitt_agent_cli")
+        if not isinstance(contract, dict):
+            contract = self.raw.get("capabilities", {}).get("kitt_agent_cli", {}) if isinstance(self.raw.get("capabilities"), dict) else {}
+        agent = contract.get("agent_contract", {}) if isinstance(contract, dict) else {}
+        features = agent.get("features", []) if isinstance(agent, dict) else []
+        return tuple(f for f in features if isinstance(f, str)) if isinstance(features, list) else ()
+
+    @property
     def provider(self) -> Optional[str]:
         value = self.session_management.get("provider")
         return str(value).strip().lower() if isinstance(value, str) and value.strip() else None

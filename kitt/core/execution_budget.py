@@ -43,6 +43,8 @@ class ExecutionBudgetLedger:
         self.budget = budget
         self._clock = clock
         self._started = clock()
+        self._paused_at: float | None = None
+        self._paused_seconds = 0.0
         self._lock = threading.RLock()
         self.model_calls = 0
         self.input_tokens = 0
@@ -79,8 +81,20 @@ class ExecutionBudgetLedger:
             },
         )
 
+    def pause(self) -> None:
+        with self._lock:
+            if self._paused_at is None:
+                self._paused_at = self._clock()
+
+    def resume(self) -> None:
+        with self._lock:
+            if self._paused_at is not None:
+                self._paused_seconds += self._clock() - self._paused_at
+                self._paused_at = None
+
     def _elapsed_ms(self) -> int:
-        return max(0, int((self._clock() - self._started) * 1000))
+        now = self._paused_at if self._paused_at is not None else self._clock()
+        return max(0, int((now - self._started - self._paused_seconds) * 1000))
 
     def _outstanding(self) -> tuple[int, int, float]:
         tokens = calls = 0

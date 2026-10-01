@@ -14,7 +14,7 @@ KITT uses domain-driven boundaries where they clarify ownership. It does **not**
 | AI/Evaluation Workers | `kitt-ai-workers` | isolated eval/evolution/heavy AI workers | interactive Agent authority |
 | Provider Gateway | `kitt-reverse-proxy` | authorized provider/API/web sessions and transport normalization | workspace mutation policy |
 
-The root `rfdetoni/kitt` repository is the composition boundary: installers and `ecosystem.lock.json` freeze compatible revisions.
+The root `rfdetoni/kitt` repository is the composition boundary: main-first installers resolve compatible component revisions; CI records immutable SHAs per run.
 
 ## Strategic rules
 
@@ -72,7 +72,7 @@ Refactoring toward these boundaries must preserve:
 - Python fallback semantics when native acceleration is absent;
 - existing CLI/TUI behavior unless the change is explicitly user-facing.
 
-Cross-repository migrations require a compatibility window or an atomic ecosystem-lock promotion after all affected repositories pass their own gates.
+Cross-repository migrations require a compatibility window or a coordinated main-first component promotion after all affected repositories pass their own gates.
 
 ## Architecture test principle
 
