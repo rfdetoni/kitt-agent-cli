@@ -18,6 +18,19 @@ DEFAULT_PRICE_TABLE: Dict[str, Dict[str, float]] = {
 
 PRICE_TABLE = DEFAULT_PRICE_TABLE
 
+# These backends execute through local/subscription infrastructure where KITT
+# cannot infer a per-token API charge. They still consume token/call/time
+# budgets, but their monetary debit is conservatively zero unless the provider
+# is represented by a metered backend.
+UNMETERED_LOCAL_BACKENDS = frozenset({
+    "ollama",
+    "lmstudio",
+    "antigravity",
+    "local",
+    "kitt-reverse-proxy",
+    "kitt-proxy",
+})
+
 _cached_mtimes: Dict[str, float] = {}
 _cached_prices: Dict[str, Dict[str, float]] = {}
 
@@ -69,3 +82,28 @@ def estimate_cost(model: str, input_tokens: int, output_tokens: int, workspace_r
     prices = pricing.get(model, pricing.get("default", DEFAULT_PRICE_TABLE["default"]))
     cost = (input_tokens * prices["input"] + output_tokens * prices["output"]) / 1_000_000
     return TurnCost(model=model, input_tokens=input_tokens, output_tokens=output_tokens, estimated_usd=cost)
+
+
+def estimate_execution_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    backend: str = "",
+    workspace_root: Optional[str] = None,
+) -> TurnCost:
+    """Estimate monetary spend only when KITT owns a metered provider call."""
+    normalized_backend = str(backend or "").strip().lower()
+    if normalized_backend in UNMETERED_LOCAL_BACKENDS:
+        return TurnCost(
+            model=model,
+            input_tokens=max(0, int(input_tokens)),
+            output_tokens=max(0, int(output_tokens)),
+            estimated_usd=0.0,
+        )
+    return estimate_cost(
+        model,
+        max(0, int(input_tokens)),
+        max(0, int(output_tokens)),
+        workspace_root=workspace_root,
+    )
