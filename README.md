@@ -1,5 +1,14 @@
 # K.I.T.T. Agent CLI
 
+
+## Agent CLI 0.81.1 — safe state upgrades and bounded-loop hardening
+
+Agent CLI 0.81.1 restores transactional upgrades for persisted Agent state through schema 10, so workspaces on schemas 7, 8 or 9 no longer fail at startup after an update. The v10 security migration invalidates only legacy global remembered-approval rules that cannot be safely assigned to a workspace; conversation history, event ledger and child-session state are preserved. `kitt doctor` now reports state-schema compatibility explicitly, reset backups use SQLite's backup API so WAL-backed state is captured safely, and predictable schema failures are rendered as concise CLI errors instead of raw tracebacks.
+
+The Agent now treats `agent_loop_action_budget` as a bounded-loop checkpoint cadence rather than a total per-turn tool limit. The independent runaway ceiling remains a turn-level safety budget and defaults to 24 tool calls. Installers require the same Python **3.14+** floor declared by the package and perform an installed state-schema smoke check.
+
+This release is paired with KITT Reverse Proxy **4.7.5**, which carries explicit loop epoch/action counters across tool round trips and prevents checkpoint state from disappearing after the boundary action.
+
 ## Agent CLI 0.81.0 — progressive memory, replay safety and structural-only transport
 
 Agent CLI 0.81.0 completes the current Agent Engineering slice without introducing a second workflow or memory engine. Provider transport is now structural-only: typed `ContextEnvelope`, native tool definitions and `KittRequestMetadata` are the authoritative path, while the old prompt-parsing/injection helpers were removed. Sync, async and recoverable Reverse Proxy retries preserve request metadata and conversation correlation.
