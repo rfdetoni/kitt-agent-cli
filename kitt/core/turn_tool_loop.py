@@ -6,7 +6,6 @@ import json
 import logging
 import re
 import time
-import uuid
 from typing import Iterator, Optional
 from urllib.parse import urlsplit
 
