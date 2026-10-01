@@ -28,7 +28,7 @@ from kitt.security.context import ExecutionSecurityContext
 
 
 TERMINAL_CHILD_STATES = {"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}
-REUSABLE_CHILD_STATES = {"RETAINED", "COMPLETED", "IDLE"}
+REUSABLE_CHILD_STATES = {"RETAINED", "COMPLETED", "IDLE", "PASSIVATED"}
 
 
 def _serialized(method):
