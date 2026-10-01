@@ -53,7 +53,7 @@ def sanitize_message(value: str) -> str:
     text = redact_secret_text(str(value))
     text = _DATA_BASE64_URI.sub(
         lambda match: f"data:{match.group(1)};base64,[REDACTED]",
-        str(value),
+        text,
     )
     return _URL.sub(lambda match: _sanitize_url(match.group(0)), text)
 
