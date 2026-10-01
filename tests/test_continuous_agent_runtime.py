@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -125,9 +126,9 @@ class ContinuousAgentRuntimeTests(unittest.TestCase):
             workspace_id=self.identity.id,
             conversation_id=self.conversation["id"],
             prompt="continue",
-            run_at=1.0,
+            run_at=time.time() - 1.0,
         )
-        self.assertEqual(scheduler.run_due_once(now=2.0), 1)
+        self.assertEqual(scheduler.run_due_once(now=time.time() + 1.0), 1)
         self.assertEqual(fired[0][1], "continue")
         scheduled = next(item for item in scheduler.list() if item["id"] == schedule_id)
         self.assertEqual(scheduled["state"], "COMPLETED")
