@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from kitt.core.execution_budget import ExecutionBudgetLedger
 from kitt.core.turn_architect import (
     ArchitectPlanner,
     parse_architect_handoff,
@@ -10,6 +11,7 @@ from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_processor import TurnProcessor
 from kitt.domain.entities import ModelProfile, SemanticTask
 from kitt.router.models import TaskFeatures
+from kitt_protocol import ExecutionBudget
 
 
 def _features(**overrides):
@@ -124,6 +126,20 @@ def test_explicit_architect_profile_builds_separate_advisory_handoff(tmp_path: P
         "refatore vários módulos",
         turn_id="turn-architect",
     )
+    processor.execution_budgets = {
+        cmd.turn_id: ExecutionBudgetLedger(
+            ExecutionBudget(
+                max_model_calls=4,
+                max_input_tokens=20_000,
+                max_output_tokens=8_000,
+                max_total_tokens=24_000,
+                max_cost=10.0,
+                max_duration_ms=60_000,
+                max_tool_calls=8,
+                max_subagents=2,
+            )
+        )
+    }
     calls = {}
 
     class FakeClient:
@@ -158,6 +174,10 @@ def test_explicit_architect_profile_builds_separate_advisory_handoff(tmp_path: P
         assert calls["session_key"] == "architect:conv:turn-architect"
         assert processor.session_state.architect_used is True
         assert processor.session_state.architect_profile == "architect-model"
+        snapshot = processor.execution_budgets[cmd.turn_id].snapshot()
+        assert snapshot["usage"]["model_calls"] == 1
+        assert snapshot["stages"]["architect"]["model_calls"] == 1
+        assert snapshot["stages"]["architect"]["output_tokens"] > 0
         wire = calls["messages"][0]["content"]
         assert "<untrusted_workspace_context>" in wire
         assert "Repository map evidence" in wire
