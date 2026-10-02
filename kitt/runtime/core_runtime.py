@@ -233,6 +233,18 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "goal.update": RuntimeOperationSpec(
         "goal.update", CAP_GOAL_MANAGE, "goal_update", sensitive=True
     ),
+    "schedule.create": RuntimeOperationSpec(
+        "schedule.create", CAP_GOAL_MANAGE, "goal_update", sensitive=True
+    ),
+    "schedule.list": RuntimeOperationSpec(
+        "schedule.list", CAP_GOAL_MANAGE, sensitive=False
+    ),
+    "schedule.cancel": RuntimeOperationSpec(
+        "schedule.cancel", CAP_GOAL_MANAGE, "goal_update", sensitive=True
+    ),
+    "heartbeat.set": RuntimeOperationSpec(
+        "heartbeat.set", CAP_GOAL_MANAGE, "goal_update", sensitive=True
+    ),
     "memory.query": RuntimeOperationSpec(
         "memory.query", CAP_MEMORY_READ, sensitive=False
     ),
@@ -242,6 +254,15 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "memory.correct": RuntimeOperationSpec("memory.correct", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
     "memory.concept": RuntimeOperationSpec("memory.concept", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
     "memory.link": RuntimeOperationSpec("memory.link", CAP_MEMORY_WRITE, "memory_save", sensitive=True),
+    "harness.refine.prepare": RuntimeOperationSpec(
+        "harness.refine.prepare", CAP_MEMORY_WRITE, "memory_save", sensitive=True
+    ),
+    "harness.refine.apply": RuntimeOperationSpec(
+        "harness.refine.apply", CAP_MEMORY_WRITE, "memory_save", sensitive=True
+    ),
+    "harness.refine.rollback": RuntimeOperationSpec(
+        "harness.refine.rollback", CAP_MEMORY_WRITE, "memory_save", sensitive=True
+    ),
     "skill.call": RuntimeOperationSpec("skill.call", CAP_REPO_READ, sensitive=False),
     "mcp.call": RuntimeOperationSpec(
         "mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True
@@ -339,6 +360,8 @@ class SafeRuntime:
         surface_service=None,
         backend_service=None,
         process_manager=None,
+        wake_scheduler=None,
+        harness_refiner=None,
         state_store: Optional[RuntimeStateStore] = None,
         db=None,
     ):
@@ -355,6 +378,8 @@ class SafeRuntime:
         self.surfaces = surface_service
         self.backend = backend_service
         self.process_manager = process_manager
+        self.scheduler = wake_scheduler
+        self.refiner = harness_refiner
         self.db = db
         self.state = state_store or (
             RuntimeStateStore(db, workspace_id, conversation_id) if db else None
@@ -850,11 +875,18 @@ class SafeRuntime:
             "children.revive": lambda: self._op_children_revive(args),
             "goal.inspect": lambda: self._op_goal_inspect(args),
             "goal.update": lambda: self._op_goal_update(args),
+            "schedule.create": lambda: self._op_schedule_create(args),
+            "schedule.list": lambda: self._op_schedule_list(args),
+            "schedule.cancel": lambda: self._op_schedule_cancel(args),
+            "heartbeat.set": lambda: self._op_heartbeat_set(args),
             "memory.query": lambda: self._op_memory_query(args),
             "session.search": lambda: self._op_session_search(args),
             "memory.correct": lambda: self._op_memory_correct(args),
             "memory.concept": lambda: self._op_memory_concept(args),
             "memory.link": lambda: self._op_memory_link(args),
+            "harness.refine.prepare": lambda: self._op_harness_refine_prepare(args),
+            "harness.refine.apply": lambda: self._op_harness_refine_apply(args),
+            "harness.refine.rollback": lambda: self._op_harness_refine_rollback(args),
             "skill.call": lambda: self._op_skill_call(args, security_context),
             "mcp.call": lambda: self._op_mcp_call(
                 args, turn_id, security_context, automatic_budget_reserved
@@ -2028,6 +2060,76 @@ class SafeRuntime:
             error=None if data.get("ok") else "backend validation failed",
         )
 
+    def _op_schedule_create(self, args):
+        if self.scheduler is None:
+            return SafeRuntimeResult(
+                False, "schedule.create", error="Persistent scheduler not attached"
+            )
+        prompt = str(args.get("prompt") or "").strip()
+        if not prompt:
+            return SafeRuntimeResult(False, "schedule.create", error="prompt required")
+        schedule_id = self.scheduler.schedule(
+            workspace_id=self.workspace_id,
+            conversation_id=self.conversation_id,
+            prompt=prompt,
+            run_at=args.get("run_at"),
+            interval_seconds=args.get("interval_seconds"),
+            cron_expr=args.get("cron_expr"),
+        )
+        return SafeRuntimeResult(
+            True, "schedule.create", data={"id": schedule_id}
+        )
+
+    def _op_schedule_list(self, args):
+        if self.scheduler is None:
+            return SafeRuntimeResult(
+                False, "schedule.list", error="Persistent scheduler not attached"
+            )
+        return SafeRuntimeResult(
+            True,
+            "schedule.list",
+            data=self.scheduler.list(
+                self.conversation_id,
+                limit=int(args.get("limit", 100) or 100),
+            ),
+        )
+
+    def _op_schedule_cancel(self, args):
+        if self.scheduler is None:
+            return SafeRuntimeResult(
+                False, "schedule.cancel", error="Persistent scheduler not attached"
+            )
+        schedule_id = str(args.get("id") or "").strip()
+        if not schedule_id:
+            return SafeRuntimeResult(False, "schedule.cancel", error="id required")
+        return SafeRuntimeResult(
+            True,
+            "schedule.cancel",
+            data={"id": schedule_id, "cancelled": self.scheduler.cancel(schedule_id)},
+        )
+
+    def _op_heartbeat_set(self, args):
+        if self.scheduler is None:
+            return SafeRuntimeResult(
+                False, "heartbeat.set", error="Persistent scheduler not attached"
+            )
+        prompt = str(
+            args.get("prompt")
+            or "Continue the active goal from current evidence."
+        ).strip()
+        interval = float(args.get("interval_seconds", 60) or 60)
+        schedule_id = self.scheduler.set_heartbeat(
+            workspace_id=self.workspace_id,
+            conversation_id=self.conversation_id,
+            prompt=prompt,
+            interval_seconds=interval,
+        )
+        return SafeRuntimeResult(
+            True,
+            "heartbeat.set",
+            data={"id": schedule_id, "interval_seconds": max(5.0, interval)},
+        )
+
     def _op_memory_query(self, args):
         if not self.memory:
             return SafeRuntimeResult(False, "memory.query", error="Memory service not attached")
@@ -2163,6 +2265,61 @@ class SafeRuntime:
                 "truncated": truncated,
                 "workspace_scoped": True,
             },
+        )
+
+    def _op_harness_refine_prepare(self, args):
+        if self.refiner is None:
+            return SafeRuntimeResult(
+                False,
+                "harness.refine.prepare",
+                error="Harness refiner not attached",
+            )
+        proposal = args.get("proposal")
+        if not isinstance(proposal, dict):
+            return SafeRuntimeResult(
+                False, "harness.refine.prepare", error="proposal object required"
+            )
+        refinement_id, preview = self.refiner.prepare(
+            proposal,
+            workspace_id=self.workspace_id,
+            conversation_id=self.conversation_id,
+        )
+        return SafeRuntimeResult(
+            True,
+            "harness.refine.prepare",
+            data={"id": refinement_id, "preview": preview},
+        )
+
+    def _op_harness_refine_apply(self, args):
+        if self.refiner is None:
+            return SafeRuntimeResult(
+                False, "harness.refine.apply", error="Harness refiner not attached"
+            )
+        refinement_id = str(args.get("id") or "").strip()
+        if not refinement_id:
+            return SafeRuntimeResult(
+                False, "harness.refine.apply", error="id required"
+            )
+        return SafeRuntimeResult(
+            True,
+            "harness.refine.apply",
+            data=self.refiner.apply(refinement_id),
+        )
+
+    def _op_harness_refine_rollback(self, args):
+        if self.refiner is None:
+            return SafeRuntimeResult(
+                False, "harness.refine.rollback", error="Harness refiner not attached"
+            )
+        refinement_id = str(args.get("id") or "").strip()
+        if not refinement_id:
+            return SafeRuntimeResult(
+                False, "harness.refine.rollback", error="id required"
+            )
+        return SafeRuntimeResult(
+            True,
+            "harness.refine.rollback",
+            data={"id": refinement_id, "rolled_back": self.refiner.rollback(refinement_id)},
         )
 
     def _op_skill_call(self, args, security_context):

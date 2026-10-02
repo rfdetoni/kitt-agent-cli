@@ -491,6 +491,8 @@ class KittRuntime:
             ),
             event_callback=lambda name, payload: events.publish(name, payload),
         )
+        registry.wake_scheduler = wake_scheduler
+        registry.harness_refiner = refiner
         provider_pool = ProviderCircuitPool(config.provider_park_seconds)
         if config.provider_failover_enabled:
             processor.provider_client_factory = lambda primary: provider_pool.wrap(
