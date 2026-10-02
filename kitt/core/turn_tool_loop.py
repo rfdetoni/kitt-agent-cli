@@ -575,6 +575,11 @@ class TurnToolLoopMixin:
                 )
             yield ToolStarted(tool_name=tool_name, args=tool_args, call_id=call_id), None, None
             tool_started_at = time.perf_counter()
+            attempt_id = (
+                str(execution_state.get("attempt_id") or "")
+                if execution_state is not None
+                else ""
+            )
             replayed_execution = bool(
                 execution_state is not None
                 and execution_state.get("state") == "COMPLETED"
@@ -589,6 +594,8 @@ class TurnToolLoopMixin:
                         **dict(payload.get("metadata") or {}),
                         "replayed_execution": True,
                         "execution_id": execution_id,
+                        "operation_id": execution_id,
+                        "attempt_id": attempt_id,
                     },
                 )
             elif (
@@ -632,6 +639,7 @@ class TurnToolLoopMixin:
                     cmd.conversation_id,
                     cmd.turn_id,
                     execution_id=execution_id,
+                    attempt_id=attempt_id,
                     tool_call_id=call_id,
                     tool_name=tool_name,
                     arguments_digest=arguments_digest,
@@ -643,6 +651,8 @@ class TurnToolLoopMixin:
                 tool_result.metadata = {
                     **dict(tool_result.metadata or {}),
                     "execution_id": execution_id,
+                    "operation_id": execution_id,
+                    "attempt_id": attempt_id,
                     "execution_event_id": receipt.id,
                 }
             plans = getattr(self, "task_plans", None)
