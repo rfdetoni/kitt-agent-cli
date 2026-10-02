@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.5 — alinhamento com Memory 0.9
+
+O Agent CLI agora resolve o KITT Protocol **0.9.0** e alinha o cliente de memória compartilhada ao KITT Memory **0.9.0**. A hidratação progressiva deixa de solicitar provenance que o Agent não utiliza; a busca passa a expor controles limitados de exclusão/context hints; e o cliente suporta baseline determinístico com ETag sem alterar o loop agêntico nem criar uma segunda autoridade de memória.
+
+Veja [as notas da versão](docs/RELEASE_0.83.5.md).
+
 ## Agent CLI 0.83.4 — checkpoint limitado do journal de modelo
 
 O envio ao modelo não força mais checkpoint de todas as projeções derivadas do event ledger antes da requisição ao provider. `ModelRequestPrepared` continua durável no ledger append-only; os checkpoints voltam à cadência esparsa normal e, quando necessários, são gravados em uma única transação SQLite. Isso remove aquisições redundantes de write lock do caminho Agent → Reverse Proxy sem enfraquecer o replay. A versão também remove um import duplicado de `concurrent.futures`.
