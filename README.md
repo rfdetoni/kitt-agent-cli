@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.4 — bounded model-journal checkpointing
+
+Model dispatch no longer forces every derived event-ledger projection to checkpoint before the provider request. `ModelRequestPrepared` remains durable in the append-only ledger, while projection checkpoints keep their normal sparse cadence and periodic checkpoints are written in one SQLite transaction. This removes redundant write-lock acquisitions from the Agent → Reverse Proxy critical path without weakening replay durability. The release also removes a duplicate `concurrent.futures` import.
+
+See [release notes](docs/RELEASE_0.83.4.md) for the failure analysis and regression coverage.
+
 ## Agent CLI 0.83.3 — gateway hardening and host surface actions
 
 An OpenAI-compatible local backend needs an explicit loopback endpoint to count as local. Only the Ollama protocol has a known implicit loopback default.
