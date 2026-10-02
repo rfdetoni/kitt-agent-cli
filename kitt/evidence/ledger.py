@@ -268,13 +268,42 @@ class SessionLedger:
         digest = hashlib.sha256(str(execution_id).encode("utf-8")).hexdigest()[:40]
         return f"sev_exec_{prefix}_{digest}"
 
+    @staticmethod
+    def _attempt_id(execution_id: str, attempt_number: int) -> str:
+        digest = hashlib.sha256(
+            f"{execution_id}:{int(attempt_number)}".encode("utf-8")
+        ).hexdigest()[:40]
+        return f"attempt_{digest}"
+
     def tool_execution(self, execution_id: str) -> dict[str, Any] | None:
         completed = self.event_by_id(self._execution_event_id("done", execution_id))
         if completed is not None:
-            return {"state": "COMPLETED", "event": completed}
+            return {
+                "state": "COMPLETED",
+                "outcome": "SUCCEEDED" if completed.payload.get("success") else "FAILED",
+                "event": completed,
+                "operation_id": execution_id,
+                "attempt_id": str(
+                    completed.payload.get("attempt_id")
+                    or self._attempt_id(execution_id, 1)
+                ),
+            }
         reserved = self.event_by_id(self._execution_event_id("reserved", execution_id))
         if reserved is not None:
-            return {"state": "RESERVED", "event": reserved}
+            return {
+                "state": "RESERVED",
+                "outcome": (
+                    "UNCERTAIN"
+                    if reserved.payload.get("side_effecting")
+                    else "PENDING"
+                ),
+                "event": reserved,
+                "operation_id": execution_id,
+                "attempt_id": str(
+                    reserved.payload.get("attempt_id")
+                    or self._attempt_id(execution_id, 1)
+                ),
+            }
         return None
 
     def reserve_tool_execution(
@@ -283,6 +312,7 @@ class SessionLedger:
         turn_id: str,
         *,
         execution_id: str,
+        attempt_id: str,
         tool_call_id: str,
         tool_name: str,
         arguments_digest: str,
@@ -290,12 +320,56 @@ class SessionLedger:
     ) -> dict[str, Any]:
         existing = self.tool_execution(execution_id)
         if existing is not None:
+            if existing["state"] == "RESERVED" and not side_effecting:
+                parent_id = self._execution_event_id("reserved", execution_id)
+                with self.db.get_connection() as conn:
+                    retries = int(
+                        conn.execute(
+                            """SELECT COUNT(*) FROM session_events
+                               WHERE parent_event_id=? AND event_type='ToolExecutionRetry'""",
+                            (parent_id,),
+                        ).fetchone()[0]
+                    )
+                attempt_number = retries + 2
+                attempt_id = self._attempt_id(execution_id, attempt_number)
+                self.append_event(
+                    conversation_id,
+                    "ToolExecutionRetry",
+                    {
+                        "execution_id": execution_id,
+                        "operation_id": execution_id,
+                        "attempt_id": attempt_id,
+                        "attempt_number": attempt_number,
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "arguments_digest": arguments_digest,
+                    },
+                    turn_id=turn_id,
+                    source="tool-execution",
+                    durability="SYNC",
+                    replayable=True,
+                    parent_event_id=parent_id,
+                    event_id=self._execution_event_id(
+                        f"retry-{attempt_number}", execution_id
+                    ),
+                )
+                self.flush()
+                return {
+                    **existing,
+                    "outcome": "PENDING",
+                    "attempt_id": attempt_id,
+                }
             return existing
+
+        attempt_id = self._attempt_id(execution_id, 1)
         record = self.append_event(
             conversation_id,
             "ToolExecutionReserved",
             {
                 "execution_id": execution_id,
+                "operation_id": execution_id,
+                "attempt_id": attempt_id,
+                "attempt_number": 1,
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "arguments_digest": arguments_digest,
@@ -308,7 +382,14 @@ class SessionLedger:
             event_id=self._execution_event_id("reserved", execution_id),
         )
         self.flush()
-        return {"state": "RESERVED", "event": record, "fresh": True}
+        return {
+            "state": "RESERVED",
+            "outcome": "PENDING",
+            "event": record,
+            "fresh": True,
+            "operation_id": execution_id,
+            "attempt_id": attempt_id,
+        }
 
     def complete_tool_execution(
         self,
@@ -329,6 +410,8 @@ class SessionLedger:
             "ToolExecutionCompleted",
             {
                 "execution_id": execution_id,
+                "operation_id": execution_id,
+                "attempt_id": attempt_id,
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "arguments_digest": arguments_digest,
