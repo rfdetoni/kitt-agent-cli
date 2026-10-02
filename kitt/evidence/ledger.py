@@ -269,15 +269,30 @@ class SessionLedger:
         return f"sev_exec_{prefix}_{digest}"
 
     @staticmethod
-    def _initial_attempt_id(execution_id: str) -> str:
+    def _attempt_id(execution_id: str, attempt_number: int) -> str:
         digest = hashlib.sha256(
-            f"{execution_id}:initial".encode("utf-8")
+            f"{execution_id}:attempt:{max(1, int(attempt_number))}".encode("utf-8")
         ).hexdigest()[:40]
         return f"attempt_{digest}"
+
+    def _latest_retry(self, reserved: SessionEventRecord) -> dict[str, Any] | None:
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                """SELECT payload_json FROM session_events
+                   WHERE conversation_id=? AND event_type='ToolExecutionRetry'
+                     AND parent_event_id=?
+                   ORDER BY sequence DESC LIMIT 1""",
+                (reserved.conversation_id, reserved.id),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"] or "{}")
+        return payload if isinstance(payload, dict) else None
 
     def tool_execution(self, execution_id: str) -> dict[str, Any] | None:
         completed = self.event_by_id(self._execution_event_id("done", execution_id))
         if completed is not None:
+            attempt_number = max(1, int(completed.payload.get("attempt_number") or 1))
             return {
                 "state": "COMPLETED",
                 "outcome": "SUCCEEDED" if completed.payload.get("success") else "FAILED",
@@ -285,11 +300,26 @@ class SessionLedger:
                 "operation_id": execution_id,
                 "attempt_id": str(
                     completed.payload.get("attempt_id")
-                    or self._initial_attempt_id(execution_id)
+                    or self._attempt_id(execution_id, attempt_number)
                 ),
+                "attempt_number": attempt_number,
             }
         reserved = self.event_by_id(self._execution_event_id("reserved", execution_id))
         if reserved is not None:
+            retry = self._latest_retry(reserved)
+            attempt_number = max(
+                1,
+                int(
+                    (retry or {}).get("attempt_number")
+                    or reserved.payload.get("attempt_number")
+                    or 1
+                ),
+            )
+            attempt_id = str(
+                (retry or {}).get("attempt_id")
+                or reserved.payload.get("attempt_id")
+                or self._attempt_id(execution_id, attempt_number)
+            )
             return {
                 "state": "RESERVED",
                 "outcome": (
@@ -299,10 +329,8 @@ class SessionLedger:
                 ),
                 "event": reserved,
                 "operation_id": execution_id,
-                "attempt_id": str(
-                    reserved.payload.get("attempt_id")
-                    or self._initial_attempt_id(execution_id)
-                ),
+                "attempt_id": attempt_id,
+                "attempt_number": attempt_number,
             }
         return None
 
@@ -321,7 +349,8 @@ class SessionLedger:
         if existing is not None:
             if existing["state"] == "RESERVED" and not side_effecting:
                 parent_id = self._execution_event_id("reserved", execution_id)
-                attempt_id = f"attempt_{uuid.uuid4().hex}"
+                attempt_number = max(1, int(existing.get("attempt_number") or 1)) + 1
+                attempt_id = self._attempt_id(execution_id, attempt_number)
                 self.append_event(
                     conversation_id,
                     "ToolExecutionRetry",
@@ -329,6 +358,7 @@ class SessionLedger:
                         "execution_id": execution_id,
                         "operation_id": execution_id,
                         "attempt_id": attempt_id,
+                        "attempt_number": attempt_number,
                         "tool_call_id": tool_call_id,
                         "tool_name": tool_name,
                         "arguments_digest": arguments_digest,
@@ -338,16 +368,21 @@ class SessionLedger:
                     durability="SYNC",
                     replayable=True,
                     parent_event_id=parent_id,
+                    event_id=self._execution_event_id(
+                        f"retry-{attempt_number}", execution_id
+                    ),
                 )
                 self.flush()
                 return {
                     **existing,
                     "outcome": "PENDING",
                     "attempt_id": attempt_id,
+                    "attempt_number": attempt_number,
                 }
             return existing
 
-        attempt_id = self._initial_attempt_id(execution_id)
+        attempt_number = 1
+        attempt_id = self._attempt_id(execution_id, attempt_number)
         record = self.append_event(
             conversation_id,
             "ToolExecutionReserved",
@@ -375,6 +410,7 @@ class SessionLedger:
             "fresh": True,
             "operation_id": execution_id,
             "attempt_id": attempt_id,
+            "attempt_number": attempt_number,
         }
 
     def complete_tool_execution(
@@ -392,6 +428,13 @@ class SessionLedger:
         error: str | None,
         metadata: dict[str, Any] | None = None,
     ) -> SessionEventRecord:
+        current = self.tool_execution(execution_id)
+        attempt_number = max(1, int((current or {}).get("attempt_number") or 1))
+        current_attempt_id = str((current or {}).get("attempt_id") or attempt_id)
+        if current is not None and current_attempt_id != attempt_id:
+            raise ValueError(
+                f"stale attempt_id for {execution_id}: {attempt_id}"
+            )
         return self.append_event(
             conversation_id,
             "ToolExecutionCompleted",
@@ -399,6 +442,7 @@ class SessionLedger:
                 "execution_id": execution_id,
                 "operation_id": execution_id,
                 "attempt_id": attempt_id,
+                "attempt_number": attempt_number,
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "arguments_digest": arguments_digest,
