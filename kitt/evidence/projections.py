@@ -98,6 +98,8 @@ class SessionProjectionRegistry:
         return sequence, state
 
     def observe(self, event: SessionEventRecord, *, force_checkpoint: bool = False) -> None:
+        checkpoints: list[tuple[Any, ...]] = []
+        checkpoint_time = time.time()
         for definition in self._definitions.values():
             cache_key = (event.conversation_id, definition.key, definition.version)
             sequence, state = self._memory.get(cache_key, (0, None))
@@ -113,26 +115,31 @@ class SessionProjectionRegistry:
                 continue
             if not force_checkpoint and sequence % self.checkpoint_interval:
                 continue
-            state_json = _canonical(state)
-            with self.db.get_connection() as conn:
-                conn.execute(
-                    """INSERT INTO session_projection_cache(
-                           conversation_id,projection_key,projection_version,sequence,
-                           state_json,state_hash,updated_at
-                       ) VALUES(?,?,?,?,?,?,?)
-                       ON CONFLICT(conversation_id,projection_key,projection_version)
-                       DO UPDATE SET sequence=excluded.sequence,state_json=excluded.state_json,
-                           state_hash=excluded.state_hash,updated_at=excluded.updated_at""",
-                    (
-                        event.conversation_id,
-                        definition.key,
-                        definition.version,
-                        sequence,
-                        state_json,
-                        _digest(state),
-                        time.time(),
-                    ),
+            checkpoints.append(
+                (
+                    event.conversation_id,
+                    definition.key,
+                    definition.version,
+                    sequence,
+                    _canonical(state),
+                    _digest(state),
+                    checkpoint_time,
                 )
+            )
+
+        if self.db is None or not checkpoints:
+            return
+        with self.db.get_connection() as conn:
+            conn.executemany(
+                """INSERT INTO session_projection_cache(
+                       conversation_id,projection_key,projection_version,sequence,
+                       state_json,state_hash,updated_at
+                   ) VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(conversation_id,projection_key,projection_version)
+                   DO UPDATE SET sequence=excluded.sequence,state_json=excluded.state_json,
+                       state_hash=excluded.state_hash,updated_at=excluded.updated_at""",
+                checkpoints,
+            )
 
     def snapshot(self, conversation_id: str, key: str) -> Any:
         definition = self._definitions[key]
