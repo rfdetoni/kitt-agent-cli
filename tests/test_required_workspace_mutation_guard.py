@@ -7,6 +7,7 @@ from kitt.core.completion_guard import (
     install_completion_guard,
     is_deferred_implementation_response,
     requires_workspace_mutation,
+    run_completion_guard,
 )
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.runtime import KittRuntime
@@ -53,6 +54,44 @@ class _Processor:
         self._write("frontend/src/app/app.component.ts", "export class AppComponent {}")
 
     def _execute_tool_loop(
+        self,
+        cmd,
+        request,
+        exe_profile,
+        exe_client,
+        workspace_id,
+        security_context,
+        agent_route=None,
+        **loop_kwargs,
+    ):
+        if getattr(self, "_completion_guard_installed", False):
+            yield from run_completion_guard(
+                self,
+                self._completion_guard_registry,
+                self._execute_tool_loop_core,
+                cmd,
+                request,
+                exe_profile,
+                exe_client,
+                workspace_id,
+                security_context,
+                max_retries=self._completion_guard_max_retries,
+                agent_route=agent_route,
+                **loop_kwargs,
+            )
+            return
+        yield from self._execute_tool_loop_core(
+            cmd,
+            request,
+            exe_profile,
+            exe_client,
+            workspace_id,
+            security_context,
+            agent_route=agent_route,
+            **loop_kwargs,
+        )
+
+    def _execute_tool_loop_core(
         self,
         cmd,
         request,

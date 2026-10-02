@@ -84,7 +84,7 @@ class ToolRegistry(_core.ToolRegistry):
         return tools
 
     def execute_tool(self, tool_name, args=None, *positional, **kwargs):
-        """Enforce process argv DENY decisions before approval can be requested."""
+        """Run one canonical policy-governed tool execution path."""
         normalized_args = args or {}
         if tool_name == "run_command":
             if self.policy.evaluate_argv(normalized_args.get("argv")) == "DENY":
@@ -93,7 +93,29 @@ class ToolRegistry(_core.ToolRegistry):
                     "",
                     "Execution denied by PolicyEngine for tool 'run_command'.",
                 )
-        return super().execute_tool(tool_name, normalized_args, *positional, **kwargs)
+
+        processor = getattr(self, "_processor", None)
+        if (
+            processor is not None
+            and getattr(processor, "_agent_engineering_installed", False)
+        ):
+            from kitt.core.agent_runtime import execute_tool_with_engineering
+
+            return execute_tool_with_engineering(
+                processor,
+                self,
+                super().execute_tool,
+                tool_name,
+                normalized_args,
+                *positional,
+                **kwargs,
+            )
+        return super().execute_tool(
+            tool_name,
+            normalized_args,
+            *positional,
+            **kwargs,
+        )
 
 
 def __getattr__(name: str):

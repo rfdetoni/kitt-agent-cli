@@ -14,7 +14,6 @@ import re
 import shlex
 from dataclasses import dataclass, replace
 from pathlib import Path
-from types import MethodType
 from typing import Any, Iterator
 
 from kitt.context_filter.fallback import is_workspace_creation_request
@@ -729,271 +728,281 @@ def _failed_mutation_retry_message(failed_mutations: dict[str, str]) -> str:
     )
 
 
-def install_completion_guard(processor: Any, registry: Any, *, max_retries: int = 1) -> None:
-    """Install a bounded completion guard with result-aware stall recovery."""
-    if getattr(processor, "_completion_guard_installed", False):
+def run_completion_guard(
+    processor: Any,
+    registry: Any,
+    original_loop,
+    cmd,
+    request,
+    exe_profile,
+    exe_client,
+    workspace_id,
+    security_context,
+    *,
+    max_retries: int = 1,
+    agent_route=None,
+    **loop_kwargs,
+) -> Iterator:
+    """Apply bounded completion validation around the native tool loop."""
+    retries_allowed = max(0, int(max_retries))
+    current_request = request
+    legacy_route = agent_route or loop_kwargs.pop("agent_route", None)
+    if legacy_route and not getattr(current_request, "agent_route", None):
+        current_request = replace(current_request, agent_route=legacy_route)
+
+    if getattr(current_request, "agent_route", None) == "agent-loop":
+        # agent-contract v2 delegates natural-language scope/completion
+        # decisions to WebChat. The host still enforces tool policy,
+        # approvals, execution status and proxy validation gates, so the
+        # legacy lexical completion guard must not reinterpret the prompt.
+        yield from original_loop(
+            cmd,
+            current_request,
+            exe_profile,
+            exe_client,
+            workspace_id,
+            security_context,
+            **loop_kwargs,
+        )
         return
 
-    original_loop = processor._execute_tool_loop
-    retries_allowed = max(0, int(max_retries))
+    recoveries = 0
+    stall_redirects = 0
+    monologue_redirects = 0
+    last_recovery_revision = 0
+    ledger = _ProgressAwareExecutionLedger()
+    failed_mutations: dict[str, str] = {}
+    mutation_required = requires_workspace_mutation(processor, cmd)
+    task = getattr(getattr(processor, "session_state", None), "last_task", None)
+    contract = build_completion_contract(
+        str(getattr(cmd, "prompt", "") or ""),
+        task,
+    )
 
-    def guarded_tool_loop(
-        self,
-        cmd,
-        request,
-        exe_profile,
-        exe_client,
-        workspace_id,
-        security_context,
-        agent_route=None,
-        **loop_kwargs,
-    ) -> Iterator:
-        current_request = request
-        legacy_route = agent_route or loop_kwargs.pop("agent_route", None)
-        if legacy_route and not getattr(current_request, "agent_route", None):
-            current_request = replace(current_request, agent_route=legacy_route)
+    while True:
+        terminal: tuple[str, list] | None = None
+        restart_for_stall: str | None = None
+        tool_events_this_pass = 0
+        stream = original_loop(
+            cmd,
+            current_request,
+            exe_profile,
+            exe_client,
+            workspace_id,
+            security_context,
+            **loop_kwargs,
+        )
+        try:
+            for event, response, messages in stream:
+                if event is None and response is not None and messages is not None:
+                    terminal = (response, messages)
+                    continue
 
-        if getattr(current_request, "agent_route", None) == "agent-loop":
-            # agent-contract v2 delegates natural-language scope/completion
-            # decisions to WebChat. The host still enforces tool policy,
-            # approvals, execution status and proxy validation gates, so the
-            # legacy lexical completion guard must not reinterpret the prompt.
-            yield from original_loop(
-                cmd,
-                current_request,
-                exe_profile,
-                exe_client,
-                workspace_id,
-                security_context,
-                **loop_kwargs,
+                if isinstance(event, ToolStarted):
+                    tool_events_this_pass += 1
+                    stall = ledger.start(event)
+                    if stall and mutation_required:
+                        if stall_redirects < _MAX_STALL_REDIRECTS:
+                            stall_redirects += 1
+                            restart_for_stall = stall
+                            break
+                        yield TurnFailed(
+                            error=(
+                                "Execution stalled: "
+                                + stall
+                                + ". The implementation requires forward progress; "
+                                "repeated read/list/search calls cannot complete it."
+                            )
+                        ), None, None
+                        return
+                elif isinstance(event, ToolCompleted):
+                    was_mutation = (
+                        event.call_id in ledger.pending_mutations
+                        or event.tool_name in _MUTATION_TOOLS
+                    )
+                    new_mutation, _ = ledger.complete(event)
+                    if new_mutation:
+                        stall_redirects = 0
+                    if was_mutation:
+                        if event.success:
+                            failed_mutations.pop(event.tool_name, None)
+                        else:
+                            failed_mutations[event.tool_name] = (
+                                event.error or "resultado sem detalhes"
+                            )
+                yield event, response, messages
+        finally:
+            if restart_for_stall is not None and hasattr(stream, "close"):
+                stream.close()
+
+        if restart_for_stall is not None:
+            # Restart from the latest host-confirmed execution history, not the
+            # original request. Rewinding a named reverse-proxy session would
+            # make the browser transport correctly reject the request as a
+            # conversation_state_conflict.
+            ledger.renew_exploration_budget()
+            snapshots = getattr(processor, "_execution_message_snapshots", {})
+            snapshot = snapshots.get(getattr(cmd, "turn_id", ""))
+            retry_messages = list(snapshot or current_request.messages)
+            retry_messages.append(
+                {
+                    "role": "user",
+                    "content": _forward_progress_retry_message(restart_for_stall),
+                }
             )
+            current_request = replace(
+                current_request,
+                messages=retry_messages,
+            )
+            continue
+
+        if terminal is None:
             return
 
-        recoveries = 0
-        stall_redirects = 0
-        monologue_redirects = 0
-        last_recovery_revision = 0
-        ledger = _ProgressAwareExecutionLedger()
-        failed_mutations: dict[str, str] = {}
-        mutation_required = requires_workspace_mutation(self, cmd)
-        task = getattr(getattr(self, "session_state", None), "last_task", None)
-        contract = build_completion_contract(
-            str(getattr(cmd, "prompt", "") or ""),
-            task,
-        )
-
-        while True:
-            terminal: tuple[str, list] | None = None
-            restart_for_stall: str | None = None
-            tool_events_this_pass = 0
-            stream = original_loop(
-                cmd,
-                current_request,
-                exe_profile,
-                exe_client,
-                workspace_id,
-                security_context,
-                **loop_kwargs,
+        response, messages = terminal
+        if (
+            mutation_required
+            and not ledger.successful_mutations
+            and tool_events_this_pass == 0
+        ):
+            stall = (
+                "model returned a prose-only implementation attempt "
+                "without any host tool action"
             )
-            try:
-                for event, response, messages in stream:
-                    if event is None and response is not None and messages is not None:
-                        terminal = (response, messages)
-                        continue
-
-                    if isinstance(event, ToolStarted):
-                        tool_events_this_pass += 1
-                        stall = ledger.start(event)
-                        if stall and mutation_required:
-                            if stall_redirects < _MAX_STALL_REDIRECTS:
-                                stall_redirects += 1
-                                restart_for_stall = stall
-                                break
-                            yield TurnFailed(
-                                error=(
-                                    "Execution stalled: "
-                                    + stall
-                                    + ". The implementation requires forward progress; "
-                                    "repeated read/list/search calls cannot complete it."
-                                )
-                            ), None, None
-                            return
-                    elif isinstance(event, ToolCompleted):
-                        was_mutation = (
-                            event.call_id in ledger.pending_mutations
-                            or event.tool_name in _MUTATION_TOOLS
-                        )
-                        new_mutation, _ = ledger.complete(event)
-                        if new_mutation:
-                            stall_redirects = 0
-                        if was_mutation:
-                            if event.success:
-                                failed_mutations.pop(event.tool_name, None)
-                            else:
-                                failed_mutations[event.tool_name] = (
-                                    event.error or "resultado sem detalhes"
-                                )
-                    yield event, response, messages
-            finally:
-                if restart_for_stall is not None and hasattr(stream, "close"):
-                    stream.close()
-
-            if restart_for_stall is not None:
-                # Restart from the latest host-confirmed execution history, not the
-                # original request. Rewinding a named reverse-proxy session would
-                # make the browser transport correctly reject the request as a
-                # conversation_state_conflict.
-                ledger.renew_exploration_budget()
-                snapshots = getattr(self, "_execution_message_snapshots", {})
-                snapshot = snapshots.get(getattr(cmd, "turn_id", ""))
-                retry_messages = list(snapshot or current_request.messages)
-                retry_messages.append(
-                    {
-                        "role": "user",
-                        "content": _forward_progress_retry_message(restart_for_stall),
-                    }
+            if monologue_redirects < _MAX_STALL_REDIRECTS:
+                monologue_redirects += 1
+                retry_messages = list(messages)
+                retry_messages.extend(
+                    [
+                        {"role": "assistant", "content": response},
+                        {
+                            "role": "user",
+                            "content": _forward_progress_retry_message(stall),
+                        },
+                    ]
                 )
                 current_request = replace(
                     current_request,
                     messages=retry_messages,
                 )
                 continue
-
-            if terminal is None:
-                return
-
-            response, messages = terminal
-            if (
-                mutation_required
-                and not ledger.successful_mutations
-                and tool_events_this_pass == 0
-            ):
-                stall = (
-                    "model returned a prose-only implementation attempt "
-                    "without any host tool action"
+            yield TurnFailed(
+                error=(
+                    "Execution stalled: "
+                    + stall
+                    + ". The requested mutation was never attempted."
                 )
-                if monologue_redirects < _MAX_STALL_REDIRECTS:
-                    monologue_redirects += 1
-                    retry_messages = list(messages)
-                    retry_messages.extend(
-                        [
-                            {"role": "assistant", "content": response},
-                            {
-                                "role": "user",
-                                "content": _forward_progress_retry_message(stall),
-                            },
-                        ]
-                    )
-                    current_request = replace(
-                        current_request,
-                        messages=retry_messages,
-                    )
-                    continue
-                yield TurnFailed(
-                    error=(
-                        "Execution stalled: "
-                        + stall
-                        + ". The requested mutation was never attempted."
-                    )
-                ), None, None
-                return
+            ), None, None
+            return
 
-            missing = missing_claimed_workspace_files(
+        missing = missing_claimed_workspace_files(
+            registry.root_path,
+            response,
+        )
+        mutation_missing = mutation_required and not ledger.successful_mutations
+        deferred_implementation = (
+            mutation_required
+            and is_deferred_implementation_response(response)
+        )
+        contract_issues = (
+            contract.evaluate(
                 registry.root_path,
-                response,
+                validation_succeeded=ledger.validation_succeeded,
+                validated_scopes=ledger.validated_scopes,
             )
-            mutation_missing = mutation_required and not ledger.successful_mutations
-            deferred_implementation = (
-                mutation_required
-                and is_deferred_implementation_response(response)
-            )
-            contract_issues = (
-                contract.evaluate(
-                    registry.root_path,
-                    validation_succeeded=ledger.validation_succeeded,
-                    validated_scopes=ledger.validated_scopes,
+            if mutation_required and contract.enabled
+            else []
+        )
+
+        if (
+            not missing
+            and not failed_mutations
+            and not mutation_missing
+            and not deferred_implementation
+            and not contract_issues
+        ):
+            yield None, response, messages
+            return
+
+        progress_since_recovery = ledger.revision > last_recovery_revision
+        normal_budget_exhausted = recoveries >= retries_allowed
+        progress_budget_exhausted = recoveries >= _MAX_PROGRESS_RECOVERIES
+        if progress_budget_exhausted or (
+            normal_budget_exhausted and not progress_since_recovery
+        ):
+            reasons: list[str] = []
+            if mutation_missing:
+                reasons.append(
+                    "the task required a workspace mutation but no mutation tool succeeded"
                 )
-                if mutation_required and contract.enabled
-                else []
-            )
-
-            if (
-                not missing
-                and not failed_mutations
-                and not mutation_missing
-                and not deferred_implementation
-                and not contract_issues
-            ):
-                yield None, response, messages
-                return
-
-            progress_since_recovery = ledger.revision > last_recovery_revision
-            normal_budget_exhausted = recoveries >= retries_allowed
-            progress_budget_exhausted = recoveries >= _MAX_PROGRESS_RECOVERIES
-            if progress_budget_exhausted or (
-                normal_budget_exhausted and not progress_since_recovery
-            ):
-                reasons: list[str] = []
-                if mutation_missing:
-                    reasons.append(
-                        "the task required a workspace mutation but no mutation tool succeeded"
-                    )
-                if deferred_implementation:
-                    reasons.append(
-                        "the response deferred required implementation work back to the user"
-                    )
-                if contract_issues:
-                    reasons.append(
-                        "completion contract remains unsatisfied: "
-                        + "; ".join(contract_issues)
-                    )
-                if missing:
-                    reasons.append(
-                        "claimed files are still missing after recovery: "
-                        + ", ".join(missing)
-                    )
-                if failed_mutations:
-                    reasons.append(
-                        "mutation tool failures remain: "
-                        + "; ".join(
-                            f"{name}: {error}"
-                            for name, error in failed_mutations.items()
-                        )
-                    )
-                yield TurnFailed(
-                    error="Completion verification failed: " + "; ".join(reasons)
-                ), None, None
-                return
-
-            recoveries += 1
-            last_recovery_revision = ledger.revision
-            retry_messages = list(messages)
-            recovery_parts: list[str] = []
-            if mutation_missing or deferred_implementation:
-                recovery_parts.append(_required_mutation_retry_message())
+            if deferred_implementation:
+                reasons.append(
+                    "the response deferred required implementation work back to the user"
+                )
             if contract_issues:
-                recovery_parts.append(_contract_retry_message(contract_issues))
-            if missing:
-                recovery_parts.append(_claimed_files_retry_message(missing))
-            if failed_mutations:
-                recovery_parts.append(
-                    _failed_mutation_retry_message(failed_mutations)
+                reasons.append(
+                    "completion contract remains unsatisfied: "
+                    + "; ".join(contract_issues)
                 )
-            retry_messages.extend(
-                [
-                    {"role": "assistant", "content": response},
-                    {"role": "user", "content": "\n\n".join(recovery_parts)},
-                ]
-            )
-            current_request = replace(current_request, messages=retry_messages)
+            if missing:
+                reasons.append(
+                    "claimed files are still missing after recovery: "
+                    + ", ".join(missing)
+                )
+            if failed_mutations:
+                reasons.append(
+                    "mutation tool failures remain: "
+                    + "; ".join(
+                        f"{name}: {error}"
+                        for name, error in failed_mutations.items()
+                    )
+                )
+            yield TurnFailed(
+                error="Completion verification failed: " + "; ".join(reasons)
+            ), None, None
+            return
 
-    processor._execute_tool_loop = MethodType(guarded_tool_loop, processor)
+        recoveries += 1
+        last_recovery_revision = ledger.revision
+        retry_messages = list(messages)
+        recovery_parts: list[str] = []
+        if mutation_missing or deferred_implementation:
+            recovery_parts.append(_required_mutation_retry_message())
+        if contract_issues:
+            recovery_parts.append(_contract_retry_message(contract_issues))
+        if missing:
+            recovery_parts.append(_claimed_files_retry_message(missing))
+        if failed_mutations:
+            recovery_parts.append(
+                _failed_mutation_retry_message(failed_mutations)
+            )
+        retry_messages.extend(
+            [
+                {"role": "assistant", "content": response},
+                {"role": "user", "content": "\n\n".join(recovery_parts)},
+            ]
+        )
+        current_request = replace(current_request, messages=retry_messages)
+
+
+def install_completion_guard(
+    processor: Any,
+    registry: Any,
+    *,
+    max_retries: int = 1,
+) -> None:
+    """Enable the native TurnToolLoop completion guard without replacing methods."""
+    if getattr(processor, "_completion_guard_installed", False):
+        return
+    processor._completion_guard_registry = registry
+    processor._completion_guard_max_retries = max(0, int(max_retries))
     processor._completion_guard_installed = True
 
 __all__ = [
     "CompletionContract",
     "build_completion_contract",
     "install_completion_guard",
+    "run_completion_guard",
     "is_deferred_implementation_response",
     "missing_claimed_workspace_files",
     "requires_workspace_mutation",
