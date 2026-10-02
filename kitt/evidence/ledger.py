@@ -428,6 +428,13 @@ class SessionLedger:
         error: str | None,
         metadata: dict[str, Any] | None = None,
     ) -> SessionEventRecord:
+        current = self.tool_execution(execution_id)
+        attempt_number = max(1, int((current or {}).get("attempt_number") or 1))
+        current_attempt_id = str((current or {}).get("attempt_id") or attempt_id)
+        if current is not None and current_attempt_id != attempt_id:
+            raise ValueError(
+                f"stale attempt_id for {execution_id}: {attempt_id}"
+            )
         return self.append_event(
             conversation_id,
             "ToolExecutionCompleted",
@@ -435,6 +442,7 @@ class SessionLedger:
                 "execution_id": execution_id,
                 "operation_id": execution_id,
                 "attempt_id": attempt_id,
+                "attempt_number": attempt_number,
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "arguments_digest": arguments_digest,
