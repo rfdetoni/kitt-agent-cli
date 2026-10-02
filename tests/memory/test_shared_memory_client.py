@@ -9,6 +9,7 @@ from pathlib import Path
 
 from kitt_protocol import (
     Envelope,
+    MEMORY_BASELINE_RESPONSE,
     MEMORY_GET_RESPONSE,
     MEMORY_SEARCH_RESPONSE,
     MEMORY_TIMELINE_RESPONSE,
@@ -75,6 +76,8 @@ class SharedClientTest(unittest.TestCase):
                 token_budget=333,
                 scope_key="conv-1",
                 as_of=1_700_000_000,
+                exclude_ids=("mem-old",),
+                include_context_hints=True,
             )
         self.assertEqual("trace-search", trace_id)
         self.assertEqual("mem-1", hits[0]["id"])
@@ -82,6 +85,9 @@ class SharedClientTest(unittest.TestCase):
         self.assertEqual(333, seen["token_budget"])
         self.assertEqual("conv-1", seen["scope_key"])
         self.assertEqual(1_700_000_000, seen["as_of"])
+        self.assertEqual(["mem-old"], seen["exclude_ids"])
+        self.assertTrue(seen["include_context_hints"])
+        self.assertFalse(seen["include_provenance"])
 
     def test_progressive_get_and_timeline_preserve_correlation(self):
         responses = [
@@ -145,6 +151,37 @@ class SharedClientTest(unittest.TestCase):
                     )
                     self.assertEqual("trace-timeline", trace_id)
                     self.assertEqual("mem-1", hits[0]["id"])
+
+    def test_baseline_supports_etag_reuse(self):
+        seen = {}
+
+        def response(frame):
+            request = frame["envelope"]
+            self.assertEqual("memory.baseline.request", request["kind"])
+            seen.update(request["payload"])
+            return Envelope(
+                kind=MEMORY_BASELINE_RESPONSE,
+                correlation_id=request["id"],
+                payload={
+                    "not_modified": True,
+                    "etag": "etag-2",
+                    "baseline_revision": 7,
+                    "entries": [],
+                    "estimated_tokens": 0,
+                },
+            )
+
+        host, port = self._server(response)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            token = Path(tmp) / "token"
+            token.write_text("a" * 64)
+            client = SharedMemoryClient(f"{host}:{port}", token, 1.0)
+            body = client.baseline("ws", max_tokens=512, if_none_match="etag-1")
+
+        self.assertTrue(body["not_modified"])
+        self.assertEqual("etag-2", body["etag"])
+        self.assertEqual(512, seen["max_tokens"])
+        self.assertEqual("etag-1", seen["if_none_match"])
 
     def test_legacy_recall_surface_is_not_exposed(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
