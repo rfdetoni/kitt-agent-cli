@@ -9,8 +9,7 @@ import hashlib
 import json
 import time
 from dataclasses import fields, is_dataclass
-from types import MethodType
-from typing import Any, Iterator
+from typing import Any
 
 from kitt.core.execution_budget import ExecutionBudgetExceeded, ExecutionBudgetLedger
 from kitt.core.runtime_config import RuntimeConfig
@@ -523,6 +522,10 @@ class DurableTurnJournal:
             )
             self.invariants = RuntimeInvariantService(self.db)
 
+    def turn_record(self, turn_id: str) -> dict[str, Any] | None:
+        """Return the persisted turn row used by native TurnProcessor lifecycle hooks."""
+        return _turn(self.processor, turn_id)
+
     def _episode_for_turn(self, turn_id: str) -> str | None:
         cached = self.episode_ids.get(turn_id)
         if cached:
@@ -907,191 +910,280 @@ class DurableTurnJournal:
 
 
 
-def _install_tool_execution(processor, registry) -> None:
-    if getattr(registry, "_agent_engineering_execute_installed", False):
-        return
-    original = registry.execute_tool
-    verifier = VerificationOrchestrator(registry.root_path, registry.process_runner)
+def execute_tool_with_engineering(
+    processor,
+    registry,
+    base_execute,
+    name,
+    args,
+    *pos,
+    **kwargs,
+):
+    """Apply Agent-owned execution controls around the registry's canonical executor."""
+    arguments = args if isinstance(args, dict) else {}
+    conv = str(kwargs.get("conversation_id") or "")
+    turn = str(kwargs.get("turn_id") or "")
+    budget = getattr(processor, "execution_budgets", {}).get(turn)
+    if budget is not None:
+        operation = (
+            str(arguments.get("operation") or "")
+            if name == "kitt_runtime" and isinstance(arguments, dict)
+            else ""
+        )
+        stage = "validator" if operation == "plan.verify" else "tools"
+        budget.reserve_tool_call(stage=stage)
 
-    def execute_tool(name, args, *pos, **kwargs):
-        arguments = args if isinstance(args, dict) else {}
-        conv = str(kwargs.get("conversation_id") or "")
-        turn = str(kwargs.get("turn_id") or "")
-        budget = getattr(processor, "execution_budgets", {}).get(turn)
-        if budget is not None:
-            operation = (
-                str(arguments.get("operation") or "")
-                if name == "kitt_runtime" and isinstance(arguments, dict)
-                else ""
-            )
-            stage = (
-                "validator"
-                if operation == "plan.verify"
-                else "tools"
-            )
-            budget.reserve_tool_call(stage=stage)
+    role_policy = getattr(processor, "_agent_role_policies", {}).get(turn)
+    if role_policy is not None and not role_policy.allows_tool(name, arguments):
+        from kitt.tools.registry_core import ToolResult
 
-        role_policy = getattr(processor, "_agent_role_policies", {}).get(turn)
-        if role_policy is not None and not role_policy.allows_tool(name, arguments):
-            from kitt.tools.registry_core import ToolResult
+        return ToolResult(
+            False,
+            "",
+            error=(
+                f"Agent role {role_policy.role} does not allow "
+                f"{name} for this turn"
+            ),
+            metadata={
+                "agent_role": str(role_policy.role),
+                "role_policy_denied": True,
+            },
+        )
 
-            return ToolResult(
-                False,
-                error=(
-                    f"Agent role {role_policy.role} does not allow "
-                    f"{name} for this turn"
-                ),
-                metadata={
-                    "agent_role": str(role_policy.role),
-                    "role_policy_denied": True,
-                },
-            )
-
-        security_context = kwargs.get("security_context")
-        coordinator = getattr(processor, "run_coordinator", None)
-        resource_coordinator = getattr(processor, "resource_coordinator", None)
-        claimed = False
-        resource_claimed = False
-        resource_owner = f"resource:{conv}:{turn}"
-        if _is_mutating(name, arguments) and security_context is not None:
-            sandbox = getattr(
-                getattr(registry, "process_runner", None),
-                "sandbox",
-                None,
-            )
-            sandbox_profile = str(
-                getattr(sandbox, "default_profile", "workspace-write")
-            )
-            authority = capture_authority_snapshot(
-                security_context,
-                policy=registry.policy,
-                autonomy=registry.policy.autonomy,
-                approval_manager=registry.approval_manager,
-                sandbox_profile=sandbox_profile,
-            )
-            validate_authority_snapshot(
-                authority,
-                security_context,
-                policy=registry.policy,
-                autonomy=registry.policy.autonomy,
-                approval_manager=registry.approval_manager,
-                sandbox_profile=sandbox_profile,
-            )
-            if coordinator is not None and conv and turn:
-                coordinator.claim_tool(
-                    conv,
-                    turn,
-                    name,
-                    arguments,
-                )
-                claimed = True
-            if resource_coordinator is not None and conv and turn:
-                resources = resource_coordinator.resources_for_tool(
-                    name,
-                    arguments,
-                    conversation_id=conv,
-                )
-                if resources:
-                    resource_coordinator.acquire_many(
-                        resources,
-                        resource_owner,
-                        intent=f"{name} execution",
-                    )
-                    resource_claimed = True
-
-        snapshot_service = getattr(
-            processor,
-            "workspace_snapshot_service",
+    security_context = kwargs.get("security_context")
+    coordinator = getattr(processor, "run_coordinator", None)
+    resource_coordinator = getattr(processor, "resource_coordinator", None)
+    claimed = False
+    resource_claimed = False
+    resource_owner = f"resource:{conv}:{turn}"
+    if _is_mutating(name, arguments) and security_context is not None:
+        sandbox = getattr(
+            getattr(registry, "process_runner", None),
+            "sandbox",
             None,
         )
-        snapshot = None
-        try:
+        sandbox_profile = str(
+            getattr(sandbox, "default_profile", "workspace-write")
+        )
+        authority = capture_authority_snapshot(
+            security_context,
+            policy=registry.policy,
+            autonomy=registry.policy.autonomy,
+            approval_manager=registry.approval_manager,
+            sandbox_profile=sandbox_profile,
+        )
+        validate_authority_snapshot(
+            authority,
+            security_context,
+            policy=registry.policy,
+            autonomy=registry.policy.autonomy,
+            approval_manager=registry.approval_manager,
+            sandbox_profile=sandbox_profile,
+        )
+        if coordinator is not None and conv and turn:
+            coordinator.claim_tool(
+                conv,
+                turn,
+                name,
+                arguments,
+            )
+            claimed = True
+        if resource_coordinator is not None and conv and turn:
+            resources = resource_coordinator.resources_for_tool(
+                name,
+                arguments,
+                conversation_id=conv,
+            )
+            if resources:
+                resource_coordinator.acquire_many(
+                    resources,
+                    resource_owner,
+                    intent=f"{name} execution",
+                )
+                resource_claimed = True
+
+    snapshot_service = getattr(
+        processor,
+        "workspace_snapshot_service",
+        None,
+    )
+    snapshot = None
+    try:
+        if (
+            snapshot_service is not None
+            and coordinator is not None
+            and conv
+            and turn
+            and _file_mutation(name, arguments)
+        ):
+            planned_paths = coordinator.mutation_paths(name, arguments)
             if (
-                snapshot_service is not None
-                and coordinator is not None
-                and conv
-                and turn
-                and _file_mutation(name, arguments)
+                planned_paths
+                and "." not in planned_paths
+                and all(path for path in planned_paths)
             ):
-                planned_paths = coordinator.mutation_paths(name, arguments)
-                if (
-                    planned_paths
-                    and "." not in planned_paths
-                    and all(path for path in planned_paths)
-                ):
-                    snapshot = snapshot_service.capture(
+                snapshot = snapshot_service.capture(
+                    conversation_id=conv,
+                    turn_id=turn,
+                    paths=planned_paths,
+                )
+
+        plans = getattr(processor, "task_plans", None)
+        check_binding = (
+            plans.registered_check(conv, turn, name, arguments)
+            if plans and conv and turn
+            else []
+        )
+        result = base_execute(name, args, *pos, **kwargs)
+        if plans and check_binding:
+            plans.record_check(conv, turn, check_binding, result)
+        paths = _affected_paths(processor, name, arguments, result)
+        if snapshot is not None:
+            result.metadata = dict(getattr(result, "metadata", {}) or {})
+            result.metadata["workspace_snapshot_id"] = snapshot.snapshot_id
+
+        if (
+            getattr(result, "success", False)
+            and _file_mutation(name, arguments)
+            and paths
+        ):
+            rollback_guard = None
+            if snapshot is not None and snapshot_service is not None:
+                rollback_guard = {
+                    item["path"]: item["current_sha256"]
+                    for item in snapshot_service.diff(
+                        snapshot.snapshot_id,
                         conversation_id=conv,
                         turn_id=turn,
-                        paths=planned_paths,
                     )
-
-            plans = getattr(processor, "task_plans", None)
-            check_binding = plans.registered_check(conv, turn, name, arguments) if plans and conv and turn else []
-            result = original(name, args, *pos, **kwargs)
-            if plans and check_binding:
-                plans.record_check(conv, turn, check_binding, result)
-            paths = _affected_paths(processor, name, arguments, result)
-            if snapshot is not None:
-                result.metadata = dict(getattr(result, "metadata", {}) or {})
-                result.metadata["workspace_snapshot_id"] = snapshot.snapshot_id
-
-            if (
-                getattr(result, "success", False)
-                and _file_mutation(name, arguments)
-                and paths
-            ):
-                rollback_guard = None
+                }
+            tokens = getattr(processor, "cancellation_registry", None)
+            verifier = getattr(registry, "_agent_verifier", None)
+            if verifier is None:
+                verifier = VerificationOrchestrator(
+                    registry.root_path,
+                    registry.process_runner,
+                )
+                registry._agent_verifier = verifier
+            report = verifier.verify(
+                paths,
+                cancellation=(
+                    tokens.token(turn)
+                    if tokens is not None and turn
+                    else None
+                ),
+            )
+            result.metadata = dict(getattr(result, "metadata", {}) or {})
+            result.metadata["verification"] = report.as_dict()
+            if not report.ok:
                 if snapshot is not None and snapshot_service is not None:
-                    rollback_guard = {item["path"]: item["current_sha256"] for item in snapshot_service.diff(
-                        snapshot.snapshot_id, conversation_id=conv, turn_id=turn,
-                    )}
-                tokens = getattr(processor, "cancellation_registry", None)
-                report = verifier.verify(paths, cancellation=tokens.token(turn) if tokens is not None and turn else None)
-                result.metadata = dict(getattr(result, "metadata", {}) or {})
-                result.metadata["verification"] = report.as_dict()
-                if not report.ok:
-                    if snapshot is not None and snapshot_service is not None:
-                        try:
-                            restored = snapshot_service.restore(snapshot.snapshot_id, conversation_id=conv,
-                                turn_id=turn, expected_current=rollback_guard)
-                            result.metadata["post_edit_rolled_back"] = True
-                            result.metadata["rollback_paths"] = restored
-                        except ValueError as exc:
-                            result.metadata["post_edit_rollback_failed"] = True
-                            result.metadata["rollback_conflict"] = str(exc)
-                    result.success = False
-                    result.error = (
-                        "Post-edit verification failed:\n"
-                        + report.failure_message()
-                    )
-            if getattr(result, "success", False) and paths:
-                _expire_code_memory(processor, paths)
-                journal = getattr(processor, "turn_journal", None)
-                if journal is not None:
-                    inner_operation = (
-                        str(arguments.get("operation") or name)
-                        if name == "kitt_runtime"
-                        and isinstance(arguments, dict)
-                        else name
-                    )
-                    journal.record_deliverables(
-                        turn,
-                        paths,
-                        kind=inner_operation,
-                    )
-            return result
-        finally:
-            if resource_claimed and resource_coordinator is not None:
-                resource_coordinator.release_owner(resource_owner)
-            if claimed and coordinator is not None:
-                coordinator.release_tool(conv, turn)
+                    try:
+                        restored = snapshot_service.restore(
+                            snapshot.snapshot_id,
+                            conversation_id=conv,
+                            turn_id=turn,
+                            expected_current=rollback_guard,
+                        )
+                        result.metadata["post_edit_rolled_back"] = True
+                        result.metadata["rollback_paths"] = restored
+                    except ValueError as exc:
+                        result.metadata["post_edit_rollback_failed"] = True
+                        result.metadata["rollback_conflict"] = str(exc)
+                result.success = False
+                result.error = (
+                    "Post-edit verification failed:\n"
+                    + report.failure_message()
+                )
+        if getattr(result, "success", False) and paths:
+            _expire_code_memory(processor, paths)
+            journal = getattr(processor, "turn_journal", None)
+            if journal is not None:
+                inner_operation = (
+                    str(arguments.get("operation") or name)
+                    if name == "kitt_runtime"
+                    and isinstance(arguments, dict)
+                    else name
+                )
+                journal.record_deliverables(
+                    turn,
+                    paths,
+                    kind=inner_operation,
+                )
+        return result
+    finally:
+        if resource_claimed and resource_coordinator is not None:
+            resource_coordinator.release_owner(resource_owner)
+        if claimed and coordinator is not None:
+            coordinator.release_tool(conv, turn)
 
-    registry.execute_tool = execute_tool
-    registry._agent_engineering_execute_installed = True
+
+def resume_turn(processor, turn_id: str, grant=None):
+    """Resume a durable turn through TurnProcessor's native public entrypoints."""
+    row = _turn(processor, turn_id)
+    if not row:
+        yield TurnFailed(error=f"Unknown or non-persistent turn: {turn_id}")
+        return
+    state = str(row.get("state") or "CREATED")
+    conv = str(row.get("conversation_id") or "")
+    if state == "COMPLETED":
+        yield TurnCompleted(
+            response=(
+                _message(processor, turn_id, "assistant")
+                or "[Turn already completed]"
+            ),
+            edit_result=None,
+        )
+        return
+    if state == "WAITING_APPROVAL":
+        repo = _repo(processor)
+        pending = (
+            repo.get_valid_pending_action(
+                f"pa_{turn_id}",
+                processor.workspace_id,
+            )
+            if repo is not None
+            else None
+        )
+        if pending:
+            if grant is not None:
+                yield from processor.continue_turn(turn_id, grant)
+                return
+            yield ApprovalRequired(
+                turn_id=turn_id,
+                conversation_id=conv,
+                tool_name=pending.tool_name,
+                args=pending.normalized_args,
+                action_hash=pending.action_hash,
+                approval_request_id=pending.approval_request_id,
+                workspace_id=pending.workspace_id,
+            )
+            return
+    store = _state_store(processor, conv)
+    checkpoint = store.get(f"turn:{turn_id}:checkpoint") if store else None
+    if not isinstance(checkpoint, dict):
+        checkpoint = {
+            "prompt": _message(processor, turn_id, "user"),
+            "mode": row.get("mode", "auto"),
+            "explicit_files": [],
+        }
+    prompt = str(checkpoint.get("prompt") or "")
+    if not prompt:
+        yield TurnFailed(error="Turn has no persisted resumable prompt.")
+        return
+    yield from processor.run_turn(
+        TurnCommand(
+            conversation_id=conv,
+            prompt=prompt,
+            mode=str(checkpoint.get("mode") or row.get("mode") or "auto"),
+            explicit_files=set(checkpoint.get("explicit_files") or []),
+            dry_run=bool(checkpoint.get("dry_run", False)),
+            turn_id=turn_id,
+        )
+    )
 
 
 def install_agent_engineering(processor, registry) -> None:
-    """Install all controls exactly once at the existing registry seam."""
+    """Install durable services and callbacks without replacing public entrypoints."""
     if getattr(processor, "_agent_engineering_installed", False):
         return
     processor._agent_engineering_installed = True
@@ -1100,125 +1192,34 @@ def install_agent_engineering(processor, registry) -> None:
     processor._record_model_request = journal.record_model_request
     processor.session_ledger = journal.ledger
     from kitt.core.task_plan import TaskPlanCoordinator
-    processor.task_plans = TaskPlanCoordinator(journal.ledger, registry.root_path,
-                                               getattr(registry, "child_tools", None) or getattr(registry, "child_manager", None),
-                                               max_iterations=min(3, int(getattr(processor.config, "max_correction_cycles", 2)) + 1))
+
+    processor.task_plans = TaskPlanCoordinator(
+        journal.ledger,
+        registry.root_path,
+        getattr(registry, "child_tools", None)
+        or getattr(registry, "child_manager", None),
+        max_iterations=min(
+            3,
+            int(getattr(processor.config, "max_correction_cycles", 2)) + 1,
+        ),
+    )
     registry.task_plans = processor.task_plans
     processor._logical_request_ids = {}
     registry.logical_request_ids = processor._logical_request_ids
     from kitt.core.cancellation import CancellationRegistry
+
     processor.cancellation_registry = CancellationRegistry()
     registry.cancellation_registry = processor.cancellation_registry
-    processor.session_projections = journal.ledger.projections if journal.ledger else None
+    processor.session_projections = (
+        journal.ledger.projections if journal.ledger else None
+    )
     processor.task_episodes = journal.episodes
     processor.runtime_invariants = journal.invariants
-    _install_tool_execution(processor, registry)
+    registry._agent_verifier = VerificationOrchestrator(
+        registry.root_path,
+        registry.process_runner,
+    )
 
-    # Register native turn hooks instead of stacking MethodType wrappers for
-    # event correlation, adaptive retrieval and learned routing.
     processor._agent_trace_context = None
     processor._adaptive_retrieval_ratio_fn = adaptive_retrieval_ratio
     processor._routing_feedback_snapshot_fn = routing_feedback_snapshot
-
-    original_run = processor.run_turn
-    def run_turn(self, cmd: TurnCommand) -> Iterator[Any]:
-        journal.begin(cmd)
-        terminal = False
-        previous_context = getattr(self, "_agent_trace_context", None)
-        self._agent_trace_context = (cmd.turn_id, cmd.conversation_id)
-        try:
-            for event in original_run(cmd):
-                journal.observe(cmd, event)
-                if EVENT_STATE.get(type(event).__name__) in TERMINAL:
-                    terminal = True
-                yield event
-        except BaseException as exc:
-            if journal.run_coordinator is not None:
-                try:
-                    journal.run_coordinator.transition(
-                        cmd.conversation_id,
-                        cmd.turn_id,
-                        "FAILED",
-                        reason=type(exc).__name__,
-                    )
-                except Exception:
-                    pass
-            journal.state(cmd, "FAILED", str(exc))
-            raise
-        finally:
-            self._agent_trace_context = previous_context
-            if not terminal:
-                current = str((_turn(self, cmd.turn_id) or {}).get("state") or "")
-                if current not in {"WAITING_APPROVAL", *TERMINAL}:
-                    if journal.run_coordinator is not None:
-                        try:
-                            journal.run_coordinator.transition(
-                                cmd.conversation_id,
-                                cmd.turn_id,
-                                "PAUSED",
-                                reason="interrupted",
-                            )
-                        except Exception:
-                            pass
-                    journal.state(cmd, "INTERRUPTED")
-    processor.run_turn = MethodType(run_turn, processor)
-
-    original_continue = processor.continue_turn
-    def continue_turn(self, turn_id, grant):
-        row = _turn(self, turn_id) or {}
-        cmd = TurnCommand(conversation_id=str(row.get("conversation_id") or ""), prompt="", turn_id=turn_id)
-        previous_context = getattr(self, "_agent_trace_context", None)
-        self._agent_trace_context = (cmd.turn_id, cmd.conversation_id)
-        if journal.run_coordinator is not None and cmd.conversation_id:
-            journal.run_coordinator.transition(
-                cmd.conversation_id,
-                cmd.turn_id,
-                "RUNNING",
-                reason="approval-resume",
-            )
-        budget = getattr(self, "execution_budgets", {}).get(turn_id)
-        if budget is not None:
-            budget.resume()
-        journal.state(cmd, "EXECUTING")
-        try:
-            for event in original_continue(turn_id, grant):
-                journal.observe(cmd, event)
-                yield event
-        finally:
-            self._agent_trace_context = previous_context
-    processor.continue_turn = MethodType(continue_turn, processor)
-
-    def resume_turn(self, turn_id: str, grant=None):
-        row = _turn(self, turn_id)
-        if not row:
-            yield TurnFailed(error=f"Unknown or non-persistent turn: {turn_id}")
-            return
-        state = str(row.get("state") or "CREATED")
-        conv = str(row.get("conversation_id") or "")
-        if state == "COMPLETED":
-            yield TurnCompleted(response=_message(self, turn_id, "assistant") or "[Turn already completed]", edit_result=None)
-            return
-        if state == "WAITING_APPROVAL":
-            pending = _repo(self).get_valid_pending_action(f"pa_{turn_id}", self.workspace_id)
-            if pending:
-                if grant is not None:
-                    yield from self.continue_turn(turn_id, grant)
-                    return
-                yield ApprovalRequired(turn_id=turn_id, conversation_id=conv,
-                    tool_name=pending.tool_name, args=pending.normalized_args,
-                    action_hash=pending.action_hash, approval_request_id=pending.approval_request_id,
-                    workspace_id=pending.workspace_id)
-                return
-        store = _state_store(self, conv)
-        checkpoint = store.get(f"turn:{turn_id}:checkpoint") if store else None
-        if not isinstance(checkpoint, dict):
-            checkpoint = {"prompt": _message(self, turn_id, "user"), "mode": row.get("mode", "auto"), "explicit_files": []}
-        prompt = str(checkpoint.get("prompt") or "")
-        if not prompt:
-            yield TurnFailed(error="Turn has no persisted resumable prompt.")
-            return
-        yield from self.run_turn(TurnCommand(conversation_id=conv, prompt=prompt,
-            mode=str(checkpoint.get("mode") or row.get("mode") or "auto"),
-            explicit_files=set(checkpoint.get("explicit_files") or []),
-            dry_run=bool(checkpoint.get("dry_run", False)), turn_id=turn_id))
-    processor.resume_turn = MethodType(resume_turn, processor)
