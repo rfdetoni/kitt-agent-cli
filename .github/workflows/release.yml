@@ -62,9 +62,44 @@ jobs:
           python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
           python packaging/verify_cleanroom.py
           python -m compileall -q kitt assistant-source/packages/kitt-assistant-runtime/kitt
+      - name: Run release-critical regression contracts
+        run: python scripts/run_release_critical.py
+
+  runtime-acceptance:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install Agent test runtime
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e '.[dev]'
+      - name: Validate real Docker conversation runtime
+        env:
+          KITT_CONTAINER_RUNTIME: docker
+          KITT_RUNTIME_TEST_IMAGE: alpine:3.20
+        run: |
+          docker pull alpine:3.20
+          python -m pytest -q tests/integration/test_real_container_runtime.py
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+      - name: Validate real Podman conversation runtime
+        env:
+          KITT_CONTAINER_RUNTIME: podman
+          KITT_RUNTIME_TEST_IMAGE: alpine:3.20
+        run: |
+          podman pull alpine:3.20
+          python -m pytest -q tests/integration/test_real_container_runtime.py
 
   universal:
-    needs: verify
+    needs: [verify, runtime-acceptance]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
