@@ -108,7 +108,8 @@ class SessionLedger:
         durability: str = "DURABLE",
         parent_event_id: str | None = None,
         event_id: str | None = None,
-    ) -> SessionEventRecord:
+        return_created: bool = False,
+    ) -> SessionEventRecord | tuple[SessionEventRecord, bool]:
         if not conversation_id:
             raise ValueError("conversation_id is required")
         body = _redact_observability(dict(payload or {}))
@@ -132,7 +133,7 @@ class SessionLedger:
                 ):
                     raise ValueError(f"event_id collision: {event_id}")
                 conn.rollback()
-                return record
+                return (record, False) if return_created else record
             exists = conn.execute(
                 "SELECT 1 FROM conversations WHERE id=?",
                 (conversation_id,),
@@ -185,7 +186,7 @@ class SessionLedger:
             created_at=now,
         )
         self.projections.observe(record, force_checkpoint=force_checkpoint)
-        return record
+        return (record, True) if return_created else record
 
     def append_model_request(
         self,
@@ -271,10 +272,11 @@ class SessionLedger:
     def tool_execution(self, execution_id: str) -> dict[str, Any] | None:
         completed = self.event_by_id(self._execution_event_id("done", execution_id))
         if completed is not None:
-            return {"state": "COMPLETED", "event": completed}
+            state = "SUCCEEDED" if bool(completed.payload.get("success")) else "FAILED"
+            return {"state": state, "event": completed}
         reserved = self.event_by_id(self._execution_event_id("reserved", execution_id))
         if reserved is not None:
-            return {"state": "RESERVED", "event": reserved}
+            return {"state": "UNCERTAIN", "event": reserved}
         return None
 
     def reserve_tool_execution(
@@ -291,7 +293,7 @@ class SessionLedger:
         existing = self.tool_execution(execution_id)
         if existing is not None:
             return existing
-        record = self.append_event(
+        record, created = self.append(
             conversation_id,
             "ToolExecutionReserved",
             {
@@ -306,9 +308,15 @@ class SessionLedger:
             durability="SYNC",
             replayable=True,
             event_id=self._execution_event_id("reserved", execution_id),
+            return_created=True,
         )
+        if not created:
+            return self.tool_execution(execution_id) or {
+                "state": "UNCERTAIN",
+                "event": record,
+            }
         self.flush()
-        return {"state": "RESERVED", "event": record, "fresh": True}
+        return {"state": "STARTED", "event": record, "fresh": True}
 
     def complete_tool_execution(
         self,
