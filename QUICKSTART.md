@@ -29,12 +29,12 @@ To explicitly avoid native acceleration, use `--no-native` on POSIX or `-NoNativ
 
 ## 3. Verify the installation
 
-\`\`\`bash
+```bash
 kitt --version
 kitt doctor
 kitt models
 kitt rpc --help
-\`\`\`
+```
 
 The current supported interpreter policy is documented in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
@@ -99,9 +99,9 @@ See [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md).
 
 For automation that needs a structured stdin/stdout boundary:
 
-\`\`\`bash
+```bash
 kitt rpc --root /path/to/project
-\`\`\`
+```
 
 The RPC process uses the same KittRuntime as the interactive Agent. Durable
 heartbeats and schedules re-enter the normal follow-up queue rather than running
