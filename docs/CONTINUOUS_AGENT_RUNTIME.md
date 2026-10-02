@@ -1,6 +1,6 @@
 # Continuous Agent Runtime
 
-Agent CLI 0.82.2 extends KITT's existing host-owned control plane for work that
+Agent CLI 0.82.3 extends KITT's existing host-owned control plane for work that
 spans multiple turns or detached terminal sessions. The implementation is
 KITT-native: it reuses the current SQLite stores, SafeRuntime, retained-agent
 manager, queue, session tree and provider registry instead of introducing a
@@ -52,7 +52,10 @@ can propose changes but cannot directly mutate the harness. Proposals are capped
 at eight edits and each content body is bounded. Session scope is the default;
 workspace scope is explicit.
 
-The immutable base system prompt is never rewritten by refinement.
+The immutable base system prompt is never rewritten by refinement. The
+model-facing safe runtime exposes `harness.refine.prepare`,
+`harness.refine.apply` and `harness.refine.rollback`; they use the existing
+`memory.write`/memory-save authority path rather than a new privilege class.
 
 ## Durable schedules and heartbeats
 
@@ -67,6 +70,10 @@ Supported wake forms are:
 A fired wake does not invoke a hidden agent. It enters the existing FOLLOW_UP
 queue, so the next execution remains subject to the same budgets, policies,
 approvals and verification rules.
+
+The model-facing safe runtime exposes `schedule.create`, `schedule.list`,
+`schedule.cancel` and `heartbeat.set`. These operations reuse the existing
+`goal.manage` capability and policy path.
 
 ## Persistent bounded program sessions
 

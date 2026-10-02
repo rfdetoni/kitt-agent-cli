@@ -35,6 +35,10 @@ The table documents authority metadata. Operation-specific argument validation r
 | flow.execute | - | - | no | 0 | - | - |
 | goal.inspect | goal.manage | - | no | 0 | - | - |
 | goal.update | goal.manage | goal_update | yes | 0 | - | - |
+| harness.refine.apply | memory.write | memory_save | yes | 0 | - | - |
+| harness.refine.prepare | memory.write | memory_save | yes | 0 | - | - |
+| harness.refine.rollback | memory.write | memory_save | yes | 0 | - | - |
+| heartbeat.set | goal.manage | goal_update | yes | 0 | - | - |
 | handles.resolve | - | - | no | 0 | - | - |
 | mcp.call | mcp.call | mcp_call | yes | 0 | - | - |
 | memory.concept | memory.write | memory_save | yes | 0 | - | - |
@@ -80,6 +84,9 @@ The table documents authority metadata. Operation-specific argument validation r
 | repo.search | repo.search | search | no | 0 | - | - |
 | repo.write_file | repo.write | write_file | yes | 1 | - | write_file |
 | security.scan | repo.search | search | no | 0 | - | - |
+| schedule.cancel | goal.manage | goal_update | yes | 0 | - | - |
+| schedule.create | goal.manage | goal_update | yes | 0 | - | - |
+| schedule.list | goal.manage | - | no | 0 | - | - |
 | session.search | memory.read | - | no | 0 | - | - |
 | skill.call | repo.read | - | no | 0 | - | - |
 | state.get | repo.read | - | no | 0 | - | - |

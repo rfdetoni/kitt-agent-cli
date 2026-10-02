@@ -1,8 +1,8 @@
 # K.I.T.T. Agent CLI
 
-## Agent CLI 0.82.2 — durable continuous-agent runtime
+## Agent CLI 0.82.3 — durable continuous-agent runtime
 
-Agent CLI 0.82.2 adds durable agent-family messaging, passivation/revival, a
+Agent CLI 0.82.3 adds durable agent-family messaging, passivation/revival, a
 reviewable continual-harness refinement pipeline, persistent heartbeats and
 schedules, bounded program-session state, provider parking/failover and a
 line-oriented \`kitt rpc\` headless surface. These features extend the existing
