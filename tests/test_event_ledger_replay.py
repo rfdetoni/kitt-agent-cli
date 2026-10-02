@@ -114,3 +114,61 @@ def test_completed_mutation_execution_is_replayed_from_receipt_not_reserved_agai
         "ToolExecutionCompleted",
     ]
     db.close()
+
+
+def test_model_request_is_durable_without_eager_projection_checkpoints(tmp_path):
+    db, ledger, conversation_id = _ledger(tmp_path)
+
+    ledger.append_model_request(
+        conversation_id,
+        "turn-1",
+        system_prompt="system",
+        messages=[{"role": "user", "content": "hello"}],
+        route="agent-loop",
+        profile="kitt-reverse-proxy",
+        model="gemini-web",
+    )
+
+    latest = ledger.latest_model_request(conversation_id, "turn-1")
+    assert latest is not None
+    assert latest["route"] == "agent-loop"
+    assert latest["model"] == "gemini-web"
+
+    with db.get_connection() as conn:
+        checkpoints = conn.execute(
+            "SELECT projection_key FROM session_projection_cache WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchall()
+    assert checkpoints == []
+    db.close()
+
+
+def test_periodic_projection_checkpoint_uses_one_write_transaction(tmp_path, monkeypatch):
+    db, ledger, conversation_id = _ledger(tmp_path)
+    for index in range(7):
+        ledger.append_event(
+            conversation_id,
+            "Example",
+            {"index": index},
+            turn_id="turn-1",
+        )
+
+    original_get_connection = db.get_connection
+    connection_calls = 0
+
+    def counted_get_connection():
+        nonlocal connection_calls
+        connection_calls += 1
+        return original_get_connection()
+
+    monkeypatch.setattr(db, "get_connection", counted_get_connection)
+    ledger.append_event(
+        conversation_id,
+        "Example",
+        {"index": 7},
+        turn_id="turn-1",
+    )
+
+    # One transaction persists the event and one batches all projection checkpoints.
+    assert connection_calls == 2
+    db.close()
