@@ -1,5 +1,13 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.8 — transporte canônico do Reverse Proxy
+
+O Agent CLI fixa a fronteira com o Reverse Proxy em `tools/tool_choice` estruturais, `kitt_context` tipado e `kitt_meta` pertencente ao Protocol. A regressão agora impede a reintrodução de `functions/function_call` legados e da autoridade textual `Tool Contract`. A ponte canônica `<kitt-tool>` continua apenas como representação interna do Agent depois da extração da chamada nativa; nenhum alias semântico adicional é aceito.
+
+Esta versão é pareada com Reverse Proxy **4.9.3** e KITT Protocol **0.9.0**.
+
+Veja [as notas da versão](docs/RELEASE_0.83.8.md).
+
 ## Agent CLI 0.83.7 — recuperação da tentativa de retry
 
 Retries seguros persistidos agora recuperam o `attempt_id` durável mais recente após interrupção, usam numeração determinística e rejeitam conclusão atrasada de uma tentativa anterior. Operações com side effect em estado incerto continuam fail-closed.

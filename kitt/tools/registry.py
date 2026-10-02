@@ -63,10 +63,10 @@ class ToolRegistry(_core.ToolRegistry):
                 )
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
-                # Keep the model-visible composite tool intentionally small. The
-                # TurnProcessor already provides operation examples/listing in its
-                # textual Tool Contract, while native adapters derive the exact enum
-                # directly from OPERATION_SPECS. Retain only the mutation guidance
+                # Keep the model-visible composite tool intentionally small.
+                # Native adapters derive the exact operation enum structurally from
+                # OPERATION_SPECS; do not duplicate that authority in prompt text.
+                # Retain only the mutation guidance
                 # that prevents common misrouting (artifact storage vs workspace
                 # writes, or unified diff vs SEARCH/REPLACE patches).
                 tool["description"] = (
