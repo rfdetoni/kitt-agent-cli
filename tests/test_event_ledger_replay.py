@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import sys
+
+from kitt.core.autonomy_policy import AutonomyPolicy
 from kitt.evidence.ledger import EventLedger
 from kitt.history.database import HistoryDatabase
 from kitt.history.repository import HistoryRepository
+from kitt.tools.registry import ToolRegistry
 
 
 def _ledger(tmp_path):
@@ -70,30 +74,58 @@ def test_reconnect_cursor_and_event_id_dedupe_do_not_duplicate_events(tmp_path):
 
 def test_completed_mutation_execution_is_replayed_from_receipt_not_reserved_again(tmp_path):
     db, ledger, conversation_id = _ledger(tmp_path)
+    registry = ToolRegistry(root_dir=str(tmp_path))
+    registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
     execution_id = "exec-write-1"
+    args = {
+        "argv": [
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path; "
+                "p=Path('count.txt'); "
+                "p.write_text((p.read_text() if p.exists() else '') + 'x')"
+            ),
+        ],
+        "cwd": ".",
+        "timeout_seconds": 30,
+    }
     reserved = ledger.reserve_tool_execution(
         conversation_id,
         "turn-1",
         execution_id=execution_id,
         tool_call_id="call-1",
-        tool_name="kitt_runtime",
+        tool_name="run_command",
         arguments_digest="digest",
         side_effecting=True,
     )
     assert reserved["state"] == "RESERVED"
     assert reserved["fresh"] is True
+    assert reserved["operation_id"] == execution_id
+
+    result = registry.execute_tool(
+        "run_command",
+        args,
+        turn_id="turn-1",
+        conversation_id=conversation_id,
+        workspace_id="workspace-1",
+        enabled_tools=["run_command"],
+    )
+    assert result.success, result.error
+    assert (tmp_path / "count.txt").read_text(encoding="utf-8") == "x"
 
     completed = ledger.complete_tool_execution(
         conversation_id,
         "turn-1",
         execution_id=execution_id,
+        attempt_id=reserved["attempt_id"],
         tool_call_id="call-1",
-        tool_name="kitt_runtime",
+        tool_name="run_command",
         arguments_digest="digest",
-        success=True,
-        output='{"path":"done.txt"}',
-        error=None,
-        metadata={"changed_paths": ["done.txt"]},
+        success=result.success,
+        output=result.output,
+        error=result.error,
+        metadata=result.metadata,
     )
     assert completed.event_type == "ToolExecutionCompleted"
 
@@ -102,17 +134,71 @@ def test_completed_mutation_execution_is_replayed_from_receipt_not_reserved_agai
         "turn-1",
         execution_id=execution_id,
         tool_call_id="call-1",
-        tool_name="kitt_runtime",
+        tool_name="run_command",
         arguments_digest="digest",
         side_effecting=True,
     )
     assert replay["state"] == "COMPLETED"
+    assert replay["outcome"] == "SUCCEEDED"
+    assert replay["operation_id"] == execution_id
+    assert replay["attempt_id"] == reserved["attempt_id"]
     assert "fresh" not in replay
-    assert replay["event"].payload["output"] == '{"path":"done.txt"}'
+    assert (tmp_path / "count.txt").read_text(encoding="utf-8") == "x"
     assert [row.event_type for row in ledger.events(conversation_id)] == [
         "ToolExecutionReserved",
         "ToolExecutionCompleted",
     ]
+    registry.close()
+    db.close()
+
+
+def test_safe_retry_gets_new_attempt_id_without_changing_operation_id(tmp_path):
+    db, ledger, conversation_id = _ledger(tmp_path)
+    execution_id = "exec-read-1"
+    first = ledger.reserve_tool_execution(
+        conversation_id,
+        "turn-1",
+        execution_id=execution_id,
+        tool_call_id="call-1",
+        tool_name="read_file",
+        arguments_digest="digest",
+        side_effecting=False,
+    )
+    retry = ledger.reserve_tool_execution(
+        conversation_id,
+        "turn-1",
+        execution_id=execution_id,
+        tool_call_id="call-1",
+        tool_name="read_file",
+        arguments_digest="digest",
+        side_effecting=False,
+    )
+
+    assert first["operation_id"] == retry["operation_id"] == execution_id
+    assert first["attempt_id"] != retry["attempt_id"]
+    assert retry["outcome"] == "PENDING"
+    assert [row.event_type for row in ledger.events(conversation_id)] == [
+        "ToolExecutionReserved",
+        "ToolExecutionRetry",
+    ]
+
+    completed = ledger.complete_tool_execution(
+        conversation_id,
+        "turn-1",
+        execution_id=execution_id,
+        attempt_id=retry["attempt_id"],
+        tool_call_id="call-1",
+        tool_name="read_file",
+        arguments_digest="digest",
+        success=False,
+        output="",
+        error="known failure",
+    )
+    state = ledger.tool_execution(execution_id)
+    assert completed.payload["attempt_id"] == retry["attempt_id"]
+    assert state is not None
+    assert state["outcome"] == "FAILED"
+    assert state["attempt_id"] == retry["attempt_id"]
     db.close()
 
 
