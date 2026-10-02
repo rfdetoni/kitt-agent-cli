@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.6 — identidade durável de tentativas de tool
+
+Os receipts de execução de tools agora expõem um `operation_id` lógico estável e um `attempt_id` por tentativa. Side effects confirmados continuam sendo apenas reproduzidos pelo receipt; side effects sem conclusão permanecem bloqueados como incertos; e somente retries seguros de operações sem side effect recebem uma nova tentativa sem trocar a operação lógica.
+
+Veja [as notas da versão](docs/RELEASE_0.83.6.md).
+
 ## Agent CLI 0.83.5 — alinhamento com Memory 0.9
 
 O Agent CLI agora resolve o KITT Protocol **0.9.0** e alinha o cliente de memória compartilhada ao KITT Memory **0.9.0**. A hidratação progressiva deixa de solicitar provenance que o Agent não utiliza; a busca passa a expor controles limitados de exclusão/context hints; e o cliente suporta baseline determinístico com ETag sem alterar o loop agêntico nem criar uma segunda autoridade de memória.
