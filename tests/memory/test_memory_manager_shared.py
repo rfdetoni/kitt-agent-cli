@@ -66,6 +66,7 @@ class TestMemoryManagerShared(unittest.TestCase):
         self.assertEqual("trace-get", relevant[0].recall_trace_id)
         self.assertEqual("trace-search", relevant[1].recall_trace_id)
         self.assertEqual(300, client.get_calls[0][2]["token_budget"])
+        self.assertFalse(client.get_calls[0][2]["include_provenance"])
         self.assertEqual(150, client.search_calls[0][2]["token_budget"])
 
     def test_recalled_memory_is_presented_but_never_relearned(self):

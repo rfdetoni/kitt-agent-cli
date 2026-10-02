@@ -16,6 +16,8 @@ from kitt_protocol import (
     AuthenticatedFrame,
     Envelope,
     MAX_FRAME_BYTES,
+    MEMORY_BASELINE_REQUEST,
+    MEMORY_BASELINE_RESPONSE,
     MEMORY_FORGET_REQUEST,
     MEMORY_FORGET_RESPONSE,
     MEMORY_MANAGE_REQUEST,
@@ -265,6 +267,9 @@ class KittMemoryClient:
         as_of: int | None = None,
         allow_private: bool = True,
         allow_secret: bool = False,
+        include_provenance: bool = False,
+        exclude_ids: list[str] | tuple[str, ...] = (),
+        include_context_hints: bool = False,
     ) -> tuple[list[dict[str, Any]], str]:
         body = self._call(
             MEMORY_SEARCH_REQUEST,
@@ -278,6 +283,9 @@ class KittMemoryClient:
                 "as_of": as_of,
                 "allow_private": bool(allow_private),
                 "allow_secret": bool(allow_secret),
+                "include_provenance": bool(include_provenance),
+                "exclude_ids": [str(value) for value in exclude_ids if str(value).strip()][:256],
+                "include_context_hints": bool(include_context_hints),
             },
             MEMORY_SEARCH_RESPONSE,
         )
@@ -299,6 +307,7 @@ class KittMemoryClient:
         scope_key: str | None = None,
         allow_private: bool = True,
         allow_secret: bool = False,
+        include_provenance: bool = True,
     ) -> tuple[list[dict[str, Any]], str, list[str]]:
         body = self._call(
             MEMORY_GET_REQUEST,
@@ -310,6 +319,7 @@ class KittMemoryClient:
                 "token_budget": max(1, min(int(token_budget), 65_536)),
                 "allow_private": bool(allow_private),
                 "allow_secret": bool(allow_secret),
+                "include_provenance": bool(include_provenance),
             },
             MEMORY_GET_RESPONSE,
         )
@@ -336,6 +346,7 @@ class KittMemoryClient:
         namespace: str = "agent-cli",
         allow_private: bool = True,
         allow_secret: bool = False,
+        include_provenance: bool = False,
     ) -> tuple[list[dict[str, Any]], str]:
         body = self._call(
             MEMORY_TIMELINE_REQUEST,
@@ -349,6 +360,7 @@ class KittMemoryClient:
                 "token_budget": max(1, min(int(token_budget), 65_536)),
                 "allow_private": bool(allow_private),
                 "allow_secret": bool(allow_secret),
+                "include_provenance": bool(include_provenance),
             },
             MEMORY_TIMELINE_RESPONSE,
         )
@@ -360,6 +372,37 @@ class KittMemoryClient:
             str(body.get("recall_trace_id") or ""),
         )
 
+    def baseline(
+        self,
+        workspace_id: str,
+        *,
+        max_tokens: int = 800,
+        namespace: str = "agent-cli",
+        scope_key: str | None = None,
+        as_of: int | None = None,
+        allow_private: bool = True,
+        allow_secret: bool = False,
+        if_none_match: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "namespace": namespace,
+            "workspace_id": workspace_id,
+            "scope_key": scope_key,
+            "max_tokens": max(32, min(int(max_tokens), 65_536)),
+            "as_of": as_of,
+            "allow_private": bool(allow_private),
+            "allow_secret": bool(allow_secret),
+        }
+        if if_none_match:
+            payload["if_none_match"] = str(if_none_match)
+        body = self._call(
+            MEMORY_BASELINE_REQUEST,
+            payload,
+            MEMORY_BASELINE_RESPONSE,
+        )
+        if not isinstance(body, dict):
+            raise KittMemoryUnavailable("invalid memory.baseline response")
+        return body
 
     def lifecycle(
         self,
