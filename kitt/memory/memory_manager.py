@@ -195,6 +195,7 @@ class MemoryManager:
             self.workspace_id,
             ids,
             token_budget=budget,
+            include_provenance=False,
         )
         result: list[MemoryItem] = []
         hydrated_ids: set[str] = set()
