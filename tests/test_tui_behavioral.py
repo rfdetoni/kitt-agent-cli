@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 
@@ -11,7 +12,7 @@ from prompt_toolkit.output import DummyOutput
 
 from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
-from kitt.core.turn_events import TextDelta, TurnCompleted, TurnStarted
+from kitt.core.turn_events import TextDelta, TurnCancelled, TurnCompleted, TurnStarted
 from kitt.ui.app import KittUIApp
 from kitt.ui.capabilities import create_backend
 from kitt.ui.event_bridge import TurnEventBridge
@@ -137,6 +138,70 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
         with create_pipe_input() as pipe:
             app_ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
             self.assertFalse(app_ui.state.sidebar_open)
+    async def test_cancelled_worker_does_not_block_or_overwrite_next_prompt(self):
+        first_started = threading.Event()
+        release_first = threading.Event()
+        second_started = threading.Event()
+
+        class BlockingProcessor:
+            def run_turn(self, cmd):
+                yield TurnStarted(
+                    turn_id=cmd.turn_id,
+                    conversation_id=cmd.conversation_id,
+                    prompt=cmd.prompt,
+                )
+                if cmd.prompt == "First":
+                    first_started.set()
+                    release_first.wait(5)
+                    yield TurnCompleted(response="stale")
+                    return
+                second_started.set()
+                yield TurnCompleted(response="fresh")
+
+            def cancel_turn(self, turn_id, reason, conversation_id=None):
+                yield TurnCancelled(reason=reason)
+
+        rt = SimpleNamespace(
+            history=SimpleNamespace(
+                repo=SimpleNamespace(save_message=lambda *a: None),
+            ),
+            processor=BlockingProcessor(),
+        )
+        events = []
+        bridge = TurnEventBridge(rt, events.append, lambda: None)
+        try:
+            first_turn = await bridge.start("First", "conv-cancel", no_history=True)
+            self.assertTrue(await asyncio.to_thread(first_started.wait, 2))
+
+            await bridge.cancel("User pressed Ctrl+C")
+            second_turn = await bridge.start("Second", "conv-cancel", no_history=True)
+
+            self.assertNotEqual(first_turn, second_turn)
+            self.assertTrue(
+                await asyncio.to_thread(second_started.wait, 2),
+                "replacement prompt must not wait for the cancelled worker",
+            )
+            await asyncio.wait_for(bridge._consumer, 2)
+
+            completed = [
+                event.response
+                for event in events
+                if isinstance(event, TurnCompleted)
+            ]
+            self.assertEqual(completed, ["fresh"])
+
+            release_first.set()
+            await asyncio.sleep(0.05)
+            completed = [
+                event.response
+                for event in events
+                if isinstance(event, TurnCompleted)
+            ]
+            self.assertEqual(completed, ["fresh"])
+        finally:
+            release_first.set()
+            await bridge.shutdown()
+
     async def test_06_event_bridge_is_active_and_double_submit_guard(self):
         """Verify bridge.is_active status and submit error handling when turn is active."""
         class SlowProcessor:
