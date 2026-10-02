@@ -206,6 +206,9 @@ class SessionLedger:
             "profile": profile,
             "model": model,
         }
+        # The append-only event is the authoritative durable record. Projection
+        # checkpoints are rebuildable and must remain sparse so model dispatch does
+        # not acquire one extra SQLite write lock per projection.
         return self.append(
             conversation_id,
             "ModelRequestPrepared",
@@ -214,7 +217,6 @@ class SessionLedger:
             episode_id=episode_id,
             model_visible=True,
             replayable=True,
-            force_checkpoint=True,
             source="model-gateway",
             durability="DURABLE",
         )
