@@ -1,7 +1,6 @@
 """Native Python HTTP client for supported LLM providers."""
 from __future__ import annotations
 
-import concurrent.futures
 import asyncio
 import concurrent.futures
 import hashlib
