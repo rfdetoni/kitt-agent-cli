@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.4 — checkpoint limitado do journal de modelo
+
+O envio ao modelo não força mais checkpoint de todas as projeções derivadas do event ledger antes da requisição ao provider. `ModelRequestPrepared` continua durável no ledger append-only; os checkpoints voltam à cadência esparsa normal e, quando necessários, são gravados em uma única transação SQLite. Isso remove aquisições redundantes de write lock do caminho Agent → Reverse Proxy sem enfraquecer o replay. A versão também remove um import duplicado de `concurrent.futures`.
+
+Veja [as notas da versão](docs/RELEASE_0.83.4.md).
+
 ## Agent CLI 0.83.0 — ciclo de requisição limitado
 
 Correções de privacidade, cancelamento HTTP, orçamento do proxy, paginação exata e reconciliação de Memory: [notas da versão](docs/RELEASE_0.83.0.md).
