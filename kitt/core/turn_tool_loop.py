@@ -210,10 +210,55 @@ def _browser_trace_result(
 class TurnToolLoopMixin:
     """Host-tool execution phase extracted from TurnProcessor."""
 
-    def _execute_tool_loop(self, cmd: TurnCommand, request: ExecutionRequest, exe_profile: ModelProfile,
-                           exe_client: LLMClient, workspace_id: str,
-                           security_context: ExecutionSecurityContext,
-                           agent_route: Optional[str] = None) -> Iterator:
+    def _execute_tool_loop(
+        self,
+        cmd: TurnCommand,
+        request: ExecutionRequest,
+        exe_profile: ModelProfile,
+        exe_client: LLMClient,
+        workspace_id: str,
+        security_context: ExecutionSecurityContext,
+        agent_route: Optional[str] = None,
+    ) -> Iterator:
+        """Run the canonical tool loop with the installed completion policy."""
+        if getattr(self, "_completion_guard_installed", False):
+            from kitt.core.completion_guard import run_completion_guard
+
+            yield from run_completion_guard(
+                self,
+                getattr(self, "_completion_guard_registry", self.registry),
+                self._execute_tool_loop_core,
+                cmd,
+                request,
+                exe_profile,
+                exe_client,
+                workspace_id,
+                security_context,
+                max_retries=getattr(self, "_completion_guard_max_retries", 1),
+                agent_route=agent_route,
+            )
+            return
+
+        yield from self._execute_tool_loop_core(
+            cmd,
+            request,
+            exe_profile,
+            exe_client,
+            workspace_id,
+            security_context,
+            agent_route=agent_route,
+        )
+
+    def _execute_tool_loop_core(
+        self,
+        cmd: TurnCommand,
+        request: ExecutionRequest,
+        exe_profile: ModelProfile,
+        exe_client: LLMClient,
+        workspace_id: str,
+        security_context: ExecutionSecurityContext,
+        agent_route: Optional[str] = None,
+    ) -> Iterator:
         effective_agent_route = str(request.agent_route or agent_route or "").strip()
         if not effective_agent_route:
             raise ValueError("agent_route is required for execution")
