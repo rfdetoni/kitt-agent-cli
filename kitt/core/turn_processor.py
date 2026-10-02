@@ -902,6 +902,63 @@ Use read_file/search/repository_map for project data and pass only selected JSON
         )
 
     def run_turn(self, cmd: TurnCommand) -> Iterator[TurnEvent]:
+        """Run a turn through the single native lifecycle and execution path."""
+        journal = getattr(self, "turn_journal", None)
+        if journal is None:
+            yield from self._run_turn_core(cmd)
+            return
+
+        journal.begin(cmd)
+        terminal = False
+        previous_context = getattr(self, "_agent_trace_context", None)
+        self._agent_trace_context = (cmd.turn_id, cmd.conversation_id)
+        try:
+            for event in self._run_turn_core(cmd):
+                journal.observe(cmd, event)
+                if isinstance(
+                    event,
+                    (TurnCompleted, TurnFailed, TurnBlocked, TurnCancelled),
+                ):
+                    terminal = True
+                yield event
+        except BaseException as exc:
+            if journal.run_coordinator is not None:
+                try:
+                    journal.run_coordinator.transition(
+                        cmd.conversation_id,
+                        cmd.turn_id,
+                        "FAILED",
+                        reason=type(exc).__name__,
+                    )
+                except Exception:
+                    pass
+            journal.state(cmd, "FAILED", str(exc))
+            raise
+        finally:
+            self._agent_trace_context = previous_context
+            if not terminal:
+                row = journal.turn_record(cmd.turn_id) or {}
+                current = str(row.get("state") or "")
+                if current not in {
+                    "WAITING_APPROVAL",
+                    "COMPLETED",
+                    "FAILED",
+                    "BLOCKED",
+                    "CANCELLED",
+                }:
+                    if journal.run_coordinator is not None:
+                        try:
+                            journal.run_coordinator.transition(
+                                cmd.conversation_id,
+                                cmd.turn_id,
+                                "PAUSED",
+                                reason="interrupted",
+                            )
+                        except Exception:
+                            pass
+                    journal.state(cmd, "INTERRUPTED")
+
+    def _run_turn_core(self, cmd: TurnCommand) -> Iterator[TurnEvent]:
         if cmd.attachments:
             self._attachment_paths_by_turn[cmd.turn_id] = tuple(sorted(cmd.attachments))
 
@@ -1193,6 +1250,48 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             self._attachment_wire_sent.discard(cmd.turn_id)
 
     def continue_turn(self, turn_id: str, grant: Any) -> Iterator[TurnEvent]:
+        """Resume an approval through the same native lifecycle observer."""
+        journal = getattr(self, "turn_journal", None)
+        if journal is None:
+            yield from self._continue_turn_core(turn_id, grant)
+            return
+
+        row = journal.turn_record(turn_id) or {}
+        conversation_id = str(
+            row.get("conversation_id")
+            or getattr(grant, "conversation_id", "")
+            or ""
+        )
+        cmd = TurnCommand(
+            conversation_id=conversation_id,
+            prompt="",
+            turn_id=turn_id,
+        )
+        previous_context = getattr(self, "_agent_trace_context", None)
+        self._agent_trace_context = (cmd.turn_id, cmd.conversation_id)
+        if journal.run_coordinator is not None and cmd.conversation_id:
+            journal.run_coordinator.transition(
+                cmd.conversation_id,
+                cmd.turn_id,
+                "RUNNING",
+                reason="approval-resume",
+            )
+        budget = getattr(self, "execution_budgets", {}).get(turn_id)
+        if budget is not None:
+            budget.resume()
+        journal.state(cmd, "EXECUTING")
+        try:
+            for event in self._continue_turn_core(turn_id, grant):
+                journal.observe(cmd, event)
+                yield event
+        finally:
+            self._agent_trace_context = previous_context
+
+    def _continue_turn_core(
+        self,
+        turn_id: str,
+        grant: Any,
+    ) -> Iterator[TurnEvent]:
         if grant is None:
             yield TurnFailed(error="No valid approval grant provided; tool requires explicit user confirmation (ASK policy).")
             return
@@ -1367,6 +1466,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             yield TurnFailed(error=f"Execution failed: {res.error or res.output}")
 
         self.pending_actions.pop(turn_id, None)
+
+    def resume_turn(
+        self,
+        turn_id: str,
+        grant: Any = None,
+    ) -> Iterator[TurnEvent]:
+        """Resume a persisted turn through the canonical TurnProcessor entrypoints."""
+        from kitt.core.agent_runtime import resume_turn as resume_durable_turn
+
+        yield from resume_durable_turn(self, turn_id, grant)
 
     def cancel_turn(
         self,
