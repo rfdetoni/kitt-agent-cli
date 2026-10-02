@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.1 — fail closed on unknown processing endpoints
+
+An OpenAI-compatible local backend needs an explicit loopback endpoint to count as local. Only the Ollama protocol has a known implicit loopback default.
+
 ## Agent CLI 0.83.0 — bounded gateway lifecycle
 
 See [release notes](docs/RELEASE_0.83.0.md) for cancellation, privacy, upstream budgets, exact file pagination and Memory reconciliation.

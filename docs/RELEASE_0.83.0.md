@@ -1,4 +1,4 @@
-# Agent CLI 0.83.0 — 2026-10-02
+# Agent CLI 0.83.0 / 0.83.1 — 2026-10-02
 
 The execution wallet remains owned by Agent CLI. A proxy request receives a reserved upstream-attempt grant (at most three), a cumulative input allowance and the remaining whole-turn duration. HTTP retries reuse request identity and do not reserve new upstream attempts. Usage refunds unspent calls; absent acknowledgements retain conservative reservations. Standalone client calls grant one attempt. The proxy owns bounded semantic/serialization repairs; the adapter no longer starts an extra semantic retry behind the wallet.
 
@@ -24,3 +24,5 @@ Memory reconnect/startup retries happen only before a connection. Post-send time
 | Medium | High | tools/handlers/files; native/bridge | Long lines lost tails and delimiters | Exact byte cursor and optional snapshot hash | UTF-8/CRLF roundtrip and stale-page rejection |
 
 No new Python runtime dependency. WorkspaceFileSystem remains the containment authority. Broad checks: pytest, compileall, clean-room packaging and strict unused-symbol/security lint. Cross-component native validation belongs to Toolbox.
+
+0.83.1 follow-up: blank endpoints on OpenAI-compatible adapters are not classified as local, since their transport default is a cloud URL. Ollama counts as implicitly local only under its own protocol.

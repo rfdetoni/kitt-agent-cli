@@ -87,6 +87,8 @@ class KittMemoryClient:
             token = self.token_path.read_text(encoding="utf-8").strip()
         except FileNotFoundError as exc:
             raise _MemoryConnectUnavailable(f"kitt-memoryd token unavailable at {self.token_path}") from exc
+        except OSError as exc:
+            raise KittMemoryUnavailable("kitt-memoryd token cannot be read") from exc
         if len(token) < 48 or not all(ch in "0123456789abcdefABCDEF" for ch in token):
             raise KittMemoryUnavailable("invalid kitt-memoryd token")
         return token
@@ -144,6 +146,8 @@ class KittMemoryClient:
         try:
             sock = socket.create_connection((host, port), timeout=max(.01, deadline - time.monotonic()))
         except (OSError, TimeoutError) as exc:
+            if isinstance(exc, PermissionError):
+                raise KittMemoryUnavailable("kitt-memoryd connection denied by local policy") from exc
             raise _MemoryConnectUnavailable(str(exc)) from exc
         try:
             with sock:

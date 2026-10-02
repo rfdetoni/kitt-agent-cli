@@ -17,6 +17,8 @@ def test_gateway_bind_address_never_implies_local_processing():
     assert not profile_processing_is_local(SimpleNamespace(backend='kitt-proxy', base_url='http://127.0.0.1:3000'))
     assert not profile_processing_is_local(SimpleNamespace(backend='ollama', base_url='https://remote.example'))
     assert profile_processing_is_local(SimpleNamespace(backend='ollama', base_url='http://127.0.0.1:11434'))
+    assert not profile_processing_is_local(SimpleNamespace(backend='lmstudio', base_url=''))
+    assert not profile_processing_is_local(SimpleNamespace(backend='ollama', protocol='openai-chat-completions', base_url=''))
 
 
 def test_required_structured_context_cannot_silently_overspend():

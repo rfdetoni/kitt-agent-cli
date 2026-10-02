@@ -14,7 +14,9 @@ def profile_processing_is_local(profile) -> bool:
         return False
     endpoint = str(getattr(profile, "base_url", "") or "").strip()
     if not endpoint:
-        return True
+        # Only Ollama's protocol has a known implicit loopback endpoint.
+        # OpenAI-compatible adapters otherwise default to a cloud URL.
+        return backend == "ollama" and protocol in {"", "ollama-chat", "ollama-generate"}
     try:
         parsed = urlparse(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
