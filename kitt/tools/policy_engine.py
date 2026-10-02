@@ -198,6 +198,14 @@ class PolicyEngine:
             "git_status", "git_diff", "python_compute", "artifact_list",
             "artifact_read",
         }
+        # A host UI click only records a registered semantic action. It carries
+        # no executable payload; SafeRuntime still validates scope and action.
+        if (
+            origin == "USER"
+            and tool_name == "kitt_runtime"
+            and args.get("operation") == "surface.action"
+        ):
+            return "ALLOW"
         if origin == "MODEL":
             if tool_name == "kitt_runtime" or tool_name in read_tools:
                 return "ALLOW"

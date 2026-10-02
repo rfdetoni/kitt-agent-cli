@@ -21,6 +21,32 @@ def test_gateway_bind_address_never_implies_local_processing():
     assert not profile_processing_is_local(SimpleNamespace(backend='ollama', protocol='openai-chat-completions', base_url=''))
 
 
+def test_user_surface_action_uses_canonical_validation_without_wrapper_approval(tmp_path):
+    from kitt.security.context import ExecutionSecurityContext
+    from kitt.surfaces.service import SurfaceService
+    registry = ToolRegistry(root_dir=str(tmp_path))
+    service = SurfaceService()
+    registry.surface_service = service
+    service.publish({'id': 'ui', 'catalog_id': 'kitt.core.v1', 'root': 'button',
+                     'components': [{'id': 'button', 'component': 'Button',
+                                     'props': {'label': 'Apply', 'action': 'apply'}, 'children': []}]})
+    security = ExecutionSecurityContext.create_user_context(
+        workspace_id=registry.workspace_id, conversation_id='session', turn_id='click', capabilities=())
+    args = {'operation': 'surface.action', 'arguments': {
+        'surface_id': 'ui', 'component_id': 'button', 'action': 'apply'}}
+    try:
+        result = registry.execute_tool('kitt_runtime', args, 'click', 'session',
+                                       registry.workspace_id, ['kitt_runtime'], origin='USER', security_context=security)
+        assert result.success, result.error
+        assert not result.requires_approval
+        args['arguments']['action'] = 'unregistered'
+        assert not registry.execute_tool('kitt_runtime', args, 'click', 'session',
+                                         registry.workspace_id, ['kitt_runtime'], origin='USER', security_context=security).success
+        assert registry.policy.evaluate_tool('kitt_runtime', {'operation': 'process.run'}, origin='USER') == 'ASK'
+    finally:
+        registry.close()
+
+
 def test_required_structured_context_cannot_silently_overspend():
     builder = ContextEnvelopeBuilder('turn', max_tokens=8)
     builder.add(ContextKind.REPOSITORY_MAP, {'files': ['file.py'] * 100}, source='repository', trust=ContextTrust.UNTRUSTED_WORKSPACE, stability=ContextStability.TURN, priority=95)
