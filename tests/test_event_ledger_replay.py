@@ -176,11 +176,35 @@ def test_safe_retry_gets_new_attempt_id_without_changing_operation_id(tmp_path):
 
     assert first["operation_id"] == retry["operation_id"] == execution_id
     assert first["attempt_id"] != retry["attempt_id"]
+    assert retry["attempt_number"] == 2
     assert retry["outcome"] == "PENDING"
     assert [row.event_type for row in ledger.events(conversation_id)] == [
         "ToolExecutionReserved",
         "ToolExecutionRetry",
     ]
+
+    recovered = ledger.tool_execution(execution_id)
+    assert recovered is not None
+    assert recovered["attempt_id"] == retry["attempt_id"]
+    assert recovered["attempt_number"] == 2
+
+    try:
+        ledger.complete_tool_execution(
+            conversation_id,
+            "turn-1",
+            execution_id=execution_id,
+            attempt_id=first["attempt_id"],
+            tool_call_id="call-1",
+            tool_name="read_file",
+            arguments_digest="digest",
+            success=False,
+            output="",
+            error="stale attempt",
+        )
+    except ValueError as exc:
+        assert "stale attempt_id" in str(exc)
+    else:
+        raise AssertionError("stale attempt completion must be rejected")
 
     completed = ledger.complete_tool_execution(
         conversation_id,
@@ -196,9 +220,11 @@ def test_safe_retry_gets_new_attempt_id_without_changing_operation_id(tmp_path):
     )
     state = ledger.tool_execution(execution_id)
     assert completed.payload["attempt_id"] == retry["attempt_id"]
+    assert completed.payload["attempt_number"] == 2
     assert state is not None
     assert state["outcome"] == "FAILED"
     assert state["attempt_id"] == retry["attempt_id"]
+    assert state["attempt_number"] == 2
     db.close()
 
 
