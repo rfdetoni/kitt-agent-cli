@@ -577,7 +577,7 @@ class TurnToolLoopMixin:
             tool_started_at = time.perf_counter()
             replayed_execution = bool(
                 execution_state is not None
-                and execution_state.get("state") == "COMPLETED"
+                and execution_state.get("state") in {"SUCCEEDED", "FAILED"}
             )
             if replayed_execution:
                 payload = dict(execution_state["event"].payload)
@@ -593,8 +593,7 @@ class TurnToolLoopMixin:
                 )
             elif (
                 execution_state is not None
-                and execution_state.get("state") == "RESERVED"
-                and not execution_state.get("fresh")
+                and execution_state.get("state") == "UNCERTAIN"
                 and side_effecting
             ):
                 yield TurnBlocked(
