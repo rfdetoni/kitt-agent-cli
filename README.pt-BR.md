@@ -1,5 +1,13 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.9 — fluxo nativo autoritativo de execução
+
+O Agent CLI agora mantém lifecycle do turno, validação de conclusão e execução de tools nos entrypoints nativos de `TurnProcessor`, `TurnToolLoopMixin` e `ToolRegistry`, sem substituir métodos em runtime. Policy, approvals, evidência durável, replay, verificação pós-edição e cancelamento existentes continuam sendo reutilizados. Negações por policy de papel também retornam um `ToolResult` válido em vez de falhar ao construir a resposta de negação.
+
+Nenhum campo compartilhado do Protocol ou contrato cross-repo foi alterado. Reverse Proxy **4.9.3** e KITT Protocol **0.9.0** permanecem compatíveis.
+
+Veja [as notas da versão](docs/RELEASE_0.83.9.md).
+
 ## Agent CLI 0.83.8 — transporte canônico do Reverse Proxy
 
 O Agent CLI fixa a fronteira com o Reverse Proxy em `tools/tool_choice` estruturais, `kitt_context` tipado e `kitt_meta` pertencente ao Protocol. A regressão agora impede a reintrodução de `functions/function_call` legados e da autoridade textual `Tool Contract`. A ponte canônica `<kitt-tool>` continua apenas como representação interna do Agent depois da extração da chamada nativa; nenhum alias semântico adicional é aceito.
