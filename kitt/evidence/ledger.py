@@ -269,9 +269,9 @@ class SessionLedger:
         return f"sev_exec_{prefix}_{digest}"
 
     @staticmethod
-    def _attempt_id(execution_id: str, attempt_number: int) -> str:
+    def _initial_attempt_id(execution_id: str) -> str:
         digest = hashlib.sha256(
-            f"{execution_id}:{int(attempt_number)}".encode("utf-8")
+            f"{execution_id}:initial".encode("utf-8")
         ).hexdigest()[:40]
         return f"attempt_{digest}"
 
@@ -285,7 +285,7 @@ class SessionLedger:
                 "operation_id": execution_id,
                 "attempt_id": str(
                     completed.payload.get("attempt_id")
-                    or self._attempt_id(execution_id, 1)
+                    or self._initial_attempt_id(execution_id)
                 ),
             }
         reserved = self.event_by_id(self._execution_event_id("reserved", execution_id))
@@ -301,7 +301,7 @@ class SessionLedger:
                 "operation_id": execution_id,
                 "attempt_id": str(
                     reserved.payload.get("attempt_id")
-                    or self._attempt_id(execution_id, 1)
+                    or self._initial_attempt_id(execution_id)
                 ),
             }
         return None
@@ -321,16 +321,7 @@ class SessionLedger:
         if existing is not None:
             if existing["state"] == "RESERVED" and not side_effecting:
                 parent_id = self._execution_event_id("reserved", execution_id)
-                with self.db.get_connection() as conn:
-                    retries = int(
-                        conn.execute(
-                            """SELECT COUNT(*) FROM session_events
-                               WHERE parent_event_id=? AND event_type='ToolExecutionRetry'""",
-                            (parent_id,),
-                        ).fetchone()[0]
-                    )
-                attempt_number = retries + 2
-                attempt_id = self._attempt_id(execution_id, attempt_number)
+                attempt_id = f"attempt_{uuid.uuid4().hex}"
                 self.append_event(
                     conversation_id,
                     "ToolExecutionRetry",
@@ -338,7 +329,6 @@ class SessionLedger:
                         "execution_id": execution_id,
                         "operation_id": execution_id,
                         "attempt_id": attempt_id,
-                        "attempt_number": attempt_number,
                         "tool_call_id": tool_call_id,
                         "tool_name": tool_name,
                         "arguments_digest": arguments_digest,
@@ -348,9 +338,6 @@ class SessionLedger:
                     durability="SYNC",
                     replayable=True,
                     parent_event_id=parent_id,
-                    event_id=self._execution_event_id(
-                        f"retry-{attempt_number}", execution_id
-                    ),
                 )
                 self.flush()
                 return {
@@ -360,7 +347,7 @@ class SessionLedger:
                 }
             return existing
 
-        attempt_id = self._attempt_id(execution_id, 1)
+        attempt_id = self._initial_attempt_id(execution_id)
         record = self.append_event(
             conversation_id,
             "ToolExecutionReserved",
