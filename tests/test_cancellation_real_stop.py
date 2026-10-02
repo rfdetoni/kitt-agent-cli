@@ -40,13 +40,14 @@ class TestCancellationRealStop(unittest.TestCase):
                 release_old = threading.Event()
 
                 def fake_run_turn(cmd):
+                    if cmd.turn_id == "turn_old":
+                        blocked.set()
                     yield TurnStarted(
                         turn_id=cmd.turn_id,
                         conversation_id=cmd.conversation_id,
                         prompt=cmd.prompt,
                     )
                     if cmd.turn_id == "turn_old":
-                        blocked.set()
                         release_old.wait(timeout=5)
                         yield TurnCompleted(response="old")
                     else:
