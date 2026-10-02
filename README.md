@@ -1,5 +1,13 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.8 — canonical Reverse Proxy transport
+
+Agent CLI now locks the Reverse Proxy request boundary to structural `tools/tool_choice`, typed `kitt_context` and protocol-owned `kitt_meta`. Regression coverage explicitly rejects reintroduction of legacy `functions/function_call` transport and stale textual `Tool Contract` authority. The existing canonical `<kitt-tool>` bridge remains an internal Agent representation after native tool-call extraction; no additional semantic aliases are introduced.
+
+This release pairs with Reverse Proxy **4.9.3** and KITT Protocol **0.9.0**.
+
+See [release notes](docs/RELEASE_0.83.8.md).
+
 ## Agent CLI 0.83.7 — recoverable retry attempt identity
 
 Persisted safe retries now recover the latest durable `attempt_id` after interruption, use deterministic attempt numbering, and reject stale completion from an older attempt. Side-effecting uncertain operations remain fail-closed.
