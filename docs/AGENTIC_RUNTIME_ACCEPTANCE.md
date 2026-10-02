@@ -1,6 +1,6 @@
 # Agentic Runtime Acceptance Matrix
 
-Evidence baseline: Agent CLI **0.83.5**, Protocol **0.9.0**, Memory **0.9.0**, Reverse Proxy **4.9.2**.
+Evidence baseline: Agent CLI **0.83.7**, Protocol **0.9.0**, Memory **0.9.0**, Reverse Proxy **4.9.2**.
 
 This matrix preserves the 30 acceptance requirements as a catalogue, but it does not treat every row as a gate for every release. Evidence is recorded only when the named behavior was actually exercised. Unit or integration evidence is not promoted to E2E evidence, and infrastructure-dependent checks remain pending until executed against the real dependency.
 
@@ -22,7 +22,7 @@ Statuses describe the strongest evidence currently available:
 
 | Component | Evidence SHA | Workflow / run | Environment | Result |
 |---|---|---|---|---|
-| Agent CLI | `82c0c48a75031c2f812d6f133dcfca53812fa68b` | PR Checks / `37035075150` | Ubuntu + Python 3.14; Windows package smoke; real Docker runtime | SUCCESS |
+| Agent CLI | `f551c6a932a0fa844841aef7f842a457cb91d214` | PR Checks / `37045869576` | Ubuntu + Python 3.14; Windows package smoke; real Docker runtime | SUCCESS |
 | Memory | `ad0e99b62ff5a8602f61fb5ea94a218d895cce8d` | ci / `37022758823` | Ubuntu; Rust workspace tests, MSRV 1.88, audit | SUCCESS |
 | Protocol | `f1c17df15c64411c24c8b35ef41cf6299f4571b9` | ci / `37022261512` | repository CI | SUCCESS |
 | Reverse Proxy | `90e8b7b912931866cbe14b7574762338894dd6f0` | CI / `37037505733` | Node repository CI | SUCCESS |
@@ -41,7 +41,7 @@ The Agent evidence SHA is the runtime candidate exercised by PR Checks and pinne
 | 5 | Event persist-before-publish | agent | R | Agent critical suite: `test_event_is_persisted_before_publisher_observes_it` | none beyond boundary integration when ledger transport changes | VERIFIED-CI |
 | 6 | Reconnect with cursor without duplicate event | agent | R | Agent critical suite: `test_reconnect_cursor_and_event_id_dedupe_do_not_duplicate_events` | real reconnect E2E when transport changes | VERIFIED-CI |
 | 7 | Replay of mutating tool call does not repeat side effect | agent | R | Agent critical suite: `test_completed_mutation_execution_is_replayed_from_receipt_not_reserved_again` | real mutating-tool replay after crash/recovery | VERIFIED-CI |
-| 8 | Ctrl+C followed immediately by a new prompt | agent | R | Agent critical suite: `tests/test_cancellation_real_stop.py::test_turn_cancellation_aborts_processing_immediately` | explicit Ctrl+C → immediate next-prompt integration/E2E | PARTIAL |
+| 8 | Ctrl+C followed immediately by a new prompt | agent | R | Agent critical suite: `tests/test_cancellation_real_stop.py::test_ctrl_c_does_not_block_next_prompt` keeps the old worker blocked while the next turn completes | interactive TUI smoke only when TUI cancellation wiring changes | VERIFIED-CI |
 | 9 | Two simultaneous prompts in the same conversation | agent | I | current coordinator suite does not directly exercise this requirement | concurrency integration | PENDING |
 | 10 | Different conversations execute in parallel | agent | I | no directly matching current test found | concurrency integration | PENDING |
 | 11 | FIFO/resource locks without starvation/deadlock | agent | I | no directly matching current test found | deterministic contention test | PENDING |
@@ -78,6 +78,6 @@ The Agent evidence SHA is the runtime candidate exercised by PR Checks and pinne
 
 ## Current gaps
 
-The current release-critical suite is green on the recorded Agent SHA, but the catalogue is intentionally not all green. The strongest unresolved gaps are the explicit Ctrl+C → next-prompt flow, same/different-conversation concurrency guarantees, resource-lock fairness, selective rollback/artifact recovery, progress/reread/learn paths, current-SHA Podman coverage, and real WebChat reconnect continuity.
+The current release-critical suite is green on the recorded Agent SHA, but the catalogue is intentionally not all green. The strongest unresolved gaps are same/different-conversation concurrency guarantees, resource-lock fairness, selective rollback/artifact recovery, progress/reread/learn paths, current-SHA Podman coverage, and real WebChat reconnect continuity.
 
 Those gaps must be addressed only by the slice that owns them or by a release whose changed behavior makes them applicable.
