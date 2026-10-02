@@ -77,3 +77,7 @@ Cross-repository migrations require a compatibility window or a coordinated main
 ## Architecture test principle
 
 Architecture checks should enforce stable, high-value boundaries rather than cosmetic folder names. Existing module-boundary CI prevents Rust/native/daemon/evolution ownership from drifting back into Agent CLI. Add new executable rules only after the intended dependency direction is true in the codebase; never make CI bless an aspirational architecture by adding broad exceptions.
+
+## Gateway lifecycle consistency
+
+Agent owns the execution wallet and processing privacy policy; Protocol owns grant fields and typed context schemas. The Proxy owns one queued transaction for the initial web turn and any authorized repairs, with process-scoped replay protection and per-generation context acknowledgement. Memory owns durable request receipts. A browser session and a local listening address confer no authority to classify upstream computation as local or to create unbudgeted retries.

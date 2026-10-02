@@ -453,6 +453,8 @@ class ToolRegistry:
                 "around_symbol": "indexed symbol name",
                 "context_lines": "int, default 20",
                 "start_line": "int >=1",
+                "start_byte": "UTF-8 byte cursor from next_start_byte; takes precedence over start_line",
+                "expected_file_hash": "full_file_hash from prior page; rejects changed files",
                 "end_line": "int, max 5000 lines",
                 "max_bytes": "int, optional output cap",
                 "max_tokens": "output token budget, default 1200",

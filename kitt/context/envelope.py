@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from kitt.context_filter.prompt_budget import PromptBudget, TokenCounter
+from kitt.context_filter.prompt_budget import TokenCounter
 from kitt_protocol import (
     CacheRegion,
     ContextEnvelope,
@@ -39,21 +39,29 @@ def _digest(value: Any) -> str:
 
 
 def _token_cost(value: Any) -> int:
-    if isinstance(value, dict) and isinstance(value.get("text"), str):
-        return TokenCounter.count_tokens(value["text"])
     return TokenCounter.count_tokens(_canonical(value))
 
 
 def _truncate_body(body: Any, budget: int) -> Any:
-    if budget <= 0:
-        return {"text": ""}
+    if _token_cost(body) <= budget:
+        return body
     if not isinstance(body, dict) or not isinstance(body.get("text"), str):
-        return body
+        raise ValueError("Required structured context exceeds the token budget")
+    candidate = {**body, "text": "", "truncated": True}
+    if _token_cost(candidate) > budget:
+        raise ValueError("Required context metadata exceeds the token budget")
     text = body["text"]
-    if TokenCounter.count_tokens(text) <= budget:
-        return body
-    bounded = PromptBudget(8192, 1024)._truncate_to_tokens(text, budget)
-    return {**body, "text": bounded, "truncated": True}
+    low, high = 0, len(text)
+    # Binary search with a final authoritative serialized-cost check.
+    while low < high:
+        middle = (low + high + 1) // 2
+        candidate["text"] = text[:middle]
+        if _token_cost(candidate) <= budget: low = middle
+        else: high = middle - 1
+    candidate["text"] = text[:low]
+    if _token_cost(candidate) > budget:
+        raise ValueError("Required context exceeds the token budget")
+    return candidate
 
 
 @dataclass
@@ -123,7 +131,7 @@ class ContextEnvelopeBuilder:
                     fitted.append(segment)
                     remaining -= segment.token_cost
                     continue
-                if segment.priority >= 90 and remaining > 32:
+                if segment.priority >= 90:
                     body = _truncate_body(segment.body_ref, remaining)
                     fitted.append(
                         ContextSegment(

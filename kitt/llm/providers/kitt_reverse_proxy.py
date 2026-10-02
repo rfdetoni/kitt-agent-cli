@@ -43,12 +43,9 @@ _REQUIRED_ARGS = {
     "child_spawn": ("task",),
     "harness_remember": ("text",),
 }
-_TOOL_RETRY_PROMPT = (
-    "[KITT TOOL RETRY] The request is not complete yet. "
-    "Emit exactly one valid JSON <tool_call> envelope now, with quotes, backslashes, "
-    "and line breaks correctly escaped; execute the requested mutation. "
-    "Do not respond with code, a read result, or an explanation."
-)
+
+
+
 def _property_schema(name: str, hint: Any) -> Dict[str, Any]:
     if isinstance(hint, dict):
         if isinstance(hint.get("type"), str):
@@ -329,8 +326,6 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                         raise ProviderProtocolError("KITT reverse proxy returned invalid SSE JSON") from exc
                     if not isinstance(chunk, dict):
                         raise ProviderProtocolError("KITT reverse proxy returned a non-object SSE event")
-                    if "error" in chunk:
-                        raise ProviderProtocolError("KITT reverse proxy returned an SSE error")
                     usage = chunk.get("usage")
                     if isinstance(usage, dict) and request.usage_callback is not None:
                         safe_usage = {
@@ -341,14 +336,19 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                                 "completion_tokens",
                                 "total_tokens",
                                 "kitt_estimated",
+                                "upstream_attempts",
+                                "kitt_replay",
                             }
                             and isinstance(value, (int, float, bool))
                         }
                         if safe_usage:
-                            try:
-                                request.usage_callback(safe_usage)
-                            except Exception:
-                                pass
+                            request.usage_callback(safe_usage)
+                    if "error" in chunk:
+                        error = chunk["error"] if isinstance(chunk["error"], dict) else {}
+                        message = f"KITT reverse proxy: {error.get('code', 'stream_error')}: {error.get('message', 'SSE error')}"
+                        if error.get("recoverable") is True:
+                            raise ProviderRecoverableError(message, code=str(error.get("code", "stream_error")), recovery_action=str(error.get("recovery_action", "continue")))
+                        raise ProviderProtocolError(message)
                     choices = chunk.get("choices")
                     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                         continue
@@ -387,6 +387,13 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             ) from exc
         except urllib.error.HTTPError as exc:
             body = read_error_body(exc)
+            try:
+                error_body = json.loads(body)
+            except (ValueError, TypeError):
+                error_body = {}
+            error_usage = error_body.get("usage") if isinstance(error_body, dict) else None
+            if isinstance(error_usage, dict) and request.usage_callback is not None:
+                request.usage_callback(error_usage)
             if "X-Kitt-Reasoning-Effort" in request.extra_headers and (
                 "reasoning_level_unavailable" in body
                 or "reasoning_not_supported" in body
@@ -445,44 +452,6 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             )
             matched = next((code for code in semantic_codes if code in body), None)
             if matched:
-                if matched in {"tool_required_but_not_called", "tool_parse_failed", "invalid_tool_call"} and not any(
-                    message.get("role") == "user"
-                    and "KITT TOOL RETRY" in str(message.get("content", ""))
-                    for message in request.messages
-                ):
-                    retry_messages = [dict(message) for message in request.messages]
-                    retry_messages.append({
-                        "role": "user",
-                        "content": _TOOL_RETRY_PROMPT,
-                    })
-                    retry_request = LLMRequest(
-                        model=request.model,
-                        messages=retry_messages,
-                        system_prompt=request.system_prompt,
-                        response_format=request.response_format,
-                        tool_definitions=list(request.tool_definitions),
-                        context_envelope=(
-                            dict(request.context_envelope)
-                            if request.context_envelope
-                            else None
-                        ),
-                        request_metadata=(
-                            dict(request.request_metadata)
-                            if request.request_metadata
-                            else None
-                        ),
-                        usage_callback=request.usage_callback,
-                        temperature=request.temperature,
-                        context_window=request.context_window,
-                        max_output_tokens=request.max_output_tokens,
-                        keep_alive=request.keep_alive,
-                        api_key=request.api_key,
-                        base_url=request.base_url,
-                        timeout_seconds=request.timeout_seconds,
-                        extra_headers=request.extra_headers,
-                    )
-                    yield from self.stream(retry_request)
-                    return
                 suffix = f": {detail}" if detail else ""
                 raise ProviderProtocolError(
                     f"KITT reverse proxy rejected the request: {matched}{suffix}"

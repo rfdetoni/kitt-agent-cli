@@ -172,6 +172,39 @@ class ExecutionBudgetLedger:
             bucket["input_tokens"] = int(bucket["input_tokens"]) + charged_input
             bucket["cost"] = float(bucket["cost"]) + charged_cost
 
+    def gateway_prompt_allowance(self, desired: int) -> int:
+        with self._lock:
+            self._check_duration()
+            reserved_tokens, _, _ = self._outstanding()
+            return max(0, min(int(desired), self.budget.max_input_tokens - self.input_tokens,
+                self.budget.max_total_tokens - self.input_tokens - self.output_tokens - self.child_tokens - reserved_tokens))
+
+    def remaining_duration_ms(self) -> int:
+        with self._lock:
+            self._check_duration()
+            return max(1, self.budget.max_duration_ms - self._elapsed_ms())
+
+    def reserve_model_attempts(self, *, max_attempts: int, input_tokens: int = 0, cost: float = 0.0, stage: str = "model") -> int:
+        with self._lock:
+            _, reserved_calls, _ = self._outstanding()
+            granted = min(max(1, int(max_attempts)), 3,
+                self.budget.max_model_calls - self.model_calls - self.child_model_calls - reserved_calls)
+            if granted <= 0: raise ExecutionBudgetExceeded("model call budget exceeded")
+            self.reserve_model_call(input_tokens=input_tokens, cost=cost, stage=stage)
+            self.model_calls += granted - 1
+            bucket = self._stage(stage)
+            bucket["model_calls"] = int(bucket["model_calls"]) + granted - 1
+            return granted
+
+    def settle_model_attempts(self, *, granted: int, used: int, stage: str = "model") -> None:
+        if isinstance(used, bool) or not isinstance(used, int) or not 0 <= used <= granted:
+            raise ExecutionBudgetExceeded("invalid gateway attempt accounting")
+        with self._lock:
+            unused = granted - used
+            self.model_calls = max(0, self.model_calls - unused)
+            bucket = self._stage(stage)
+            bucket["model_calls"] = max(0, int(bucket["model_calls"]) - unused)
+
     def reconcile_model_input(
         self,
         *,

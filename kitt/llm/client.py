@@ -1,12 +1,16 @@
 """Native Python HTTP client for supported LLM providers."""
 from __future__ import annotations
 
+import concurrent.futures
 import asyncio
 import concurrent.futures
 import hashlib
 import logging
 import threading
 import uuid
+from kitt.llm.http_security import TransportCancellation, cancellation_scope
+from kitt.llm.privacy import profile_processing_is_local
+
 from typing import Callable, Dict, Generator, List, Optional, TypeAlias
 
 from kitt.domain.entities import ModelProfile
@@ -111,7 +115,7 @@ def _with_retry(fn, max_retries: int = 3, base_delay: float = 0.5):
 class LLMClient:
     """Unified client delegating requests to protocol adapters."""
 
-    LOCAL_BACKENDS = frozenset({"ollama", "lmstudio", "antigravity", "local", "kitt-reverse-proxy", "kitt-proxy"})
+    LOCAL_BACKENDS = frozenset({"ollama", "lmstudio", "local", "localai", "vllm"})
 
     def __init__(
         self,
@@ -154,7 +158,7 @@ class LLMClient:
         """Expose the existing routing capability contract to runtime selectors."""
         profile = self.profile
         backend = (profile.backend or "").lower()
-        is_local = backend in self.LOCAL_BACKENDS
+        is_local = profile_processing_is_local(self.profile)
         tier = "small" if profile.context_window <= 8192 else "large"
         return ModelCapabilities(
             profile_name=profile.model or backend or "model",
@@ -308,6 +312,19 @@ class LLMClient:
         loop = asyncio.get_running_loop()
         sentinel = object()
         stop = threading.Event()
+        cancellation = TransportCancellation()
+
+        def enqueue(item):
+            if stop.is_set(): return
+            pending = asyncio.run_coroutine_threadsafe(queue.put(item), loop)
+            try:
+                while not stop.is_set():
+                    try:
+                        pending.result(timeout=.1)
+                        return
+                    except concurrent.futures.TimeoutError: continue
+            finally:
+                if not pending.done(): pending.cancel()
 
         def worker():
             try:
@@ -323,20 +340,15 @@ class LLMClient:
                     request_metadata=request_metadata,
                     usage_callback=usage_callback,
                     attempt_callback=attempt_callback,
+                    transport_cancellation=cancellation,
                 ):
                     if stop.is_set():
                         break
-                    asyncio.run_coroutine_threadsafe(
-                        queue.put(("data", chunk)), loop
-                    ).result(timeout=10.0)
-                asyncio.run_coroutine_threadsafe(
-                    queue.put(("done", sentinel)), loop
-                )
+                    enqueue(("data", chunk))
+                enqueue(("done", sentinel))
             except Exception as exc:
                 try:
-                    asyncio.run_coroutine_threadsafe(
-                        queue.put(("error", exc)), loop
-                    )
+                    enqueue(("error", exc))
                 except RuntimeError:
                     pass
 
@@ -352,6 +364,7 @@ class LLMClient:
                     yield payload
         finally:
             stop.set()
+            cancellation.cancel()
             if not future.done():
                 future.cancel()
 
@@ -369,7 +382,10 @@ class LLMClient:
         request_metadata: Optional[Dict[str, object]] = None,
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
         attempt_callback: Optional[Callable[[int], None]] = None,
+        transport_cancellation: TransportCancellation | None = None,
     ) -> Generator[str, None, None]:
+        cancellation = transport_cancellation or TransportCancellation()
+        cancellation.check()
         system_prompt = normalize_execution_system_prompt(system_prompt)
 
         backend = (self.profile.backend or "").strip().lower()
@@ -437,6 +453,7 @@ class LLMClient:
             if session_header:
                 extra_headers[session_header] = session_id
             metadata = dict(request_metadata or {})
+            metadata.setdefault("max_upstream_attempts", 1)
             metadata["route"] = contract_route
             metadata.setdefault("session_id", session_id)
             request_id = str(metadata.get("request_id") or uuid.uuid4().hex)
@@ -503,10 +520,14 @@ class LLMClient:
                 api_key=api_key,
             )
 
+        def cancellable_stream():
+            with cancellation_scope(cancellation):
+                yield from adapter.stream(request)
         try:
             for chunk in self.retry_policy.execute_with_retry(
-                lambda: adapter.stream(request),
+                cancellable_stream,
                 on_attempt=attempt_callback,
+                wait_fn=cancellation.wait,
             ):
                 if trace_summary is not None:
                     trace_summary.update(chunk)

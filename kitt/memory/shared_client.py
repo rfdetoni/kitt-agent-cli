@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+import threading
 import shutil
 from pathlib import Path
 from typing import Any
@@ -34,11 +35,17 @@ from kitt_protocol import (
 
 
 class KittMemoryUnavailable(RuntimeError):
+    request_id: str | None = None
+
+class _MemoryConnectUnavailable(KittMemoryUnavailable):
     pass
+
+_START_LOCK = threading.RLock()
+_START_ATTEMPTS: dict[tuple[str, str], float] = {}
 
 
 class KittMemoryClient:
-    def __init__(self, address: str | None = None, token_path: str | Path | None = None, timeout: float = 0.75):
+    def __init__(self, address: str | None = None, token_path: str | Path | None = None, timeout: float = 6.0):
         self.address: str = (
             address
             or os.getenv("KITT_MEMORY_ADDR")
@@ -78,18 +85,22 @@ class KittMemoryClient:
     def _read_token(self) -> str:
         try:
             token = self.token_path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise KittMemoryUnavailable(f"kitt-memoryd token unavailable at {self.token_path}") from exc
+        except FileNotFoundError as exc:
+            raise _MemoryConnectUnavailable(f"kitt-memoryd token unavailable at {self.token_path}") from exc
         if len(token) < 48 or not all(ch in "0123456789abcdefABCDEF" for ch in token):
             raise KittMemoryUnavailable("invalid kitt-memoryd token")
         return token
 
     @staticmethod
-    def _read_line(sock: socket.socket) -> bytes:
+    def _read_line(sock: socket.socket, deadline: float | None = None) -> bytes:
         data = bytearray()
         while True:
             if len(data) > MAX_FRAME_BYTES:
                 raise KittMemoryUnavailable("kitt-memoryd response exceeds frame limit")
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0: raise TimeoutError("kitt-memoryd response deadline exceeded")
+                sock.settimeout(remaining)
             chunk = sock.recv(min(65536, MAX_FRAME_BYTES + 1 - len(data)))
             if not chunk:
                 raise KittMemoryUnavailable("kitt-memoryd closed connection")
@@ -122,18 +133,23 @@ class KittMemoryClient:
         except OSError:
             return
 
-    def _call_once(self, kind: str, payload: dict[str, Any], expected_kind: str) -> Any:
-        request = Envelope(kind=kind, payload=payload)
+    def _call_once(self, kind: str, payload: dict[str, Any], expected_kind: str, *, request: Envelope | None = None, timeout: float | None = None) -> Any:
+        request = request or Envelope(kind=kind, payload=payload)
         frame = AuthenticatedFrame(token=self._read_token(), envelope=request)
         host, port = self._split_address()
+        wire = frame.dumps().encode("utf-8") + b"\n"
+        if len(wire) > MAX_FRAME_BYTES:
+            raise KittMemoryUnavailable("request exceeds frame limit")
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         try:
-            with socket.create_connection((host, port), timeout=self.timeout) as sock:
-                sock.settimeout(self.timeout)
-                wire = frame.dumps().encode("utf-8") + b"\n"
-                if len(wire) > MAX_FRAME_BYTES:
-                    raise KittMemoryUnavailable("request exceeds frame limit")
+            sock = socket.create_connection((host, port), timeout=max(.01, deadline - time.monotonic()))
+        except (OSError, TimeoutError) as exc:
+            raise _MemoryConnectUnavailable(str(exc)) from exc
+        try:
+            with sock:
+                sock.settimeout(max(.01, deadline - time.monotonic()))
                 sock.sendall(wire)
-                raw = self._read_line(sock)
+                raw = self._read_line(sock, deadline)
         except (OSError, TimeoutError) as exc:
             raise KittMemoryUnavailable(str(exc)) from exc
         try:
@@ -150,20 +166,33 @@ class KittMemoryClient:
         return response.payload
 
     def _call(self, kind: str, payload: dict[str, Any], expected_kind: str) -> Any:
-        first_error: Exception | None = None
+        request = Envelope(kind=kind, payload=payload)
         try:
-            return self._call_once(kind, payload, expected_kind)
-        except KittMemoryUnavailable as exc:
-            first_error = exc
-        self._start_local_service()
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            time.sleep(0.05)
             try:
-                return self._call_once(kind, payload, expected_kind)
-            except KittMemoryUnavailable:
-                continue
-        raise KittMemoryUnavailable(str(first_error or "kitt-memoryd unavailable"))
+                return self._call_once(kind, payload, expected_kind, request=request)
+            except _MemoryConnectUnavailable:
+                key = (self.address, str(self.token_path))
+                with _START_LOCK:
+                    now = time.monotonic()
+                    if now - _START_ATTEMPTS.get(key, float('-inf')) >= 3.0:
+                        if len(_START_ATTEMPTS) >= 64: _START_ATTEMPTS.pop(next(iter(_START_ATTEMPTS)))
+                        _START_ATTEMPTS[key] = now
+                        self._start_local_service()
+            deadline = time.monotonic() + min(3.0, self.timeout)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0: raise _MemoryConnectUnavailable("kitt-memoryd startup timed out")
+                time.sleep(min(.05, remaining))
+                try:
+                    return self._call_once(kind, payload, expected_kind, request=request, timeout=max(.01, deadline - time.monotonic()))
+                except _MemoryConnectUnavailable:
+                    continue
+        except KittMemoryUnavailable as exc:
+            exc.request_id = request.id
+            raise
+
+    def request_status(self, request_id: str) -> dict[str, Any]:
+        return self.manage("request.status", {"request_id": request_id})
 
     def ping(self) -> dict[str, Any]:
         body = self._call(SYSTEM_PING_REQUEST, {}, SYSTEM_PING_RESPONSE)

@@ -476,7 +476,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                 "kitt_runtime",
             )
 
-    def test_tool_retry_preserves_structural_tool_definitions(self):
+    def test_tool_failure_preserves_structural_definitions_without_hidden_retry(self):
         adapter = KittReverseProxyAdapter()
         calls = []
 
@@ -547,24 +547,11 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
             side_effect=fake_urlopen,
         ):
-            chunks = list(adapter.stream(request))
-
-        self.assertEqual("".join(chunks), "ok after retry")
-        self.assertEqual(len(calls), 2)
+            with self.assertRaises(ProviderProtocolError):
+                list(adapter.stream(request))
+        self.assertEqual(len(calls), 1)
         first_payload = json.loads(calls[0].data.decode("utf-8"))
-        retry_payload = json.loads(calls[1].data.decode("utf-8"))
-        self.assertEqual(
-            first_payload["tools"][0]["function"]["name"],
-            "kitt_runtime",
-        )
-        self.assertEqual(
-            retry_payload["tools"][0]["function"]["name"],
-            "kitt_runtime",
-        )
-        self.assertIn(
-            "KITT TOOL RETRY",
-            retry_payload["messages"][-1]["content"],
-        )
+        self.assertEqual(first_payload["tools"][0]["function"]["name"], "kitt_runtime")
 
     def test_usage_callback_receives_proxy_usage_metadata(self):
         observed = []
@@ -622,7 +609,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertEqual(observed[0]["completion_tokens"], 5)
         self.assertTrue(observed[0]["kitt_estimated"])
 
-    def test_tool_retry_preserves_typed_context_envelope(self):
+    def test_tool_failure_preserves_typed_context_without_hidden_retry(self):
         adapter = KittReverseProxyAdapter()
         calls = []
 
@@ -698,16 +685,12 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
             side_effect=fake_open,
         ):
-            self.assertEqual(
-                "".join(adapter.stream(request)),
-                "ok",
-            )
-
-        self.assertEqual(len(calls), 2)
-        for call in calls:
-            body = json.loads(call.data.decode("utf-8"))
-            self.assertEqual(body["kitt_context"], envelope)
-            self.assertEqual(body["kitt_meta"], request_metadata)
+            with self.assertRaises(ProviderProtocolError):
+                list(adapter.stream(request))
+        self.assertEqual(len(calls), 1)
+        body = json.loads(calls[0].data.decode("utf-8"))
+        self.assertEqual(body["kitt_context"], envelope)
+        self.assertEqual(body["kitt_meta"], request_metadata)
 
     def test_read_error_body_caches_on_repeated_reads(self):
         from kitt.llm.http_security import read_error_body

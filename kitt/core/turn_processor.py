@@ -8,6 +8,8 @@ import logging
 import re
 import threading
 import time
+from kitt.llm.privacy import profile_processing_is_local
+
 from dataclasses import replace
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Iterator
@@ -252,6 +254,8 @@ class TurnProcessor(
         return bool(guard and guard.is_cancelled(turn_id))
 
     def _mark_cancelled(self, turn_id: str) -> bool:
+        cancellation = getattr(self, "_transport_cancellations", {}).get(turn_id)
+        if cancellation is not None: cancellation.cancel()
         guard = getattr(self, "turn_guard", None)
         if guard is None:
             cancelled = getattr(self, "cancelled_turns", None)
@@ -426,10 +430,9 @@ class TurnProcessor(
         return ledger
 
     def _routing_capabilities(self) -> Dict[str, ModelCapabilities]:
-        local_backends = {"ollama", "lmstudio", "antigravity", "local", "kitt-reverse-proxy", "kitt-proxy"}
         caps: Dict[str, ModelCapabilities] = {}
         for name, profile in self.router.config.profiles.items():
-            is_local = profile.backend in local_backends
+            is_local = profile_processing_is_local(profile)
             tier = "small" if name == "context" or profile.context_window <= 8192 else "large"
             caps[name] = ModelCapabilities(
                 profile_name=name,

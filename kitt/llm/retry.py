@@ -89,6 +89,7 @@ class RetryPolicy:
         fn: Callable[[], Generator[T, None, None]],
         *,
         on_attempt: Callable[[int], None] | None = None,
+        wait_fn: Callable[[float], None] | None = None,
     ) -> Generator[T, None, None]:
         for attempt in range(self.config.max_retries + 1):
             # Callers use this hook to reserve one global-budget model call per
@@ -107,4 +108,4 @@ class RetryPolicy:
                 # repeating it can duplicate visible text or provider side effects.
                 if emitted or attempt >= self.config.max_retries or not self.is_retryable(exc):
                     raise
-                time.sleep(self.delay_seconds(exc, attempt))
+                (wait_fn or time.sleep)(self.delay_seconds(exc, attempt))

@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.0 — bounded gateway lifecycle
+
+See [release notes](docs/RELEASE_0.83.0.md) for cancellation, privacy, upstream budgets, exact file pagination and Memory reconciliation.
+
 ## Agent CLI 0.82.3 — durable continuous-agent runtime
 
 Agent CLI 0.82.3 adds durable agent-family messaging, passivation/revival, a

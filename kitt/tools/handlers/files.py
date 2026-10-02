@@ -175,80 +175,53 @@ class ReadFileHandler:
         except Exception as exc:
             return ToolResult(False, "", f"File access denied: {exc}")
 
-        start = min(start_line - 1, max(0, data.content.count(b"\n") + 1))
-        requested_end = end_line if end_line is not None else start + 200
-        end = min(requested_end, start + 5000)
-        text = data.content.decode("utf-8", errors="ignore")
-        lines = text.splitlines()
-        start = min(start, len(lines))
-        end = min(end, len(lines))
-        selected = lines[start:end]
-
-        byte_budget = max_tokens * 4
-        if requested_max > 0:
-            byte_budget = min(byte_budget, requested_max)
-
-        bounded: list[str] = []
-        bytes_used = 0
-        partial_line = False
-        for line in selected:
-            encoded = line.encode("utf-8")
-            separator = 1 if bounded else 0
-            if bounded and bytes_used + separator + len(encoded) > byte_budget:
-                break
-            if not bounded and len(encoded) > byte_budget:
-                # Avoid returning invalid UTF-8 while making the omission explicit.
-                keep = min(len(encoded), byte_budget)
-                while keep > 0:
-                    try:
-                        prefix = encoded[:keep].decode("utf-8")
-                        break
-                    except UnicodeDecodeError:
-                        keep -= 1
-                else:
-                    prefix = ""
-                bounded.append(prefix)
-                partial_line = True
-                break
-            bounded.append(line)
-            bytes_used += separator + len(encoded)
-
-        chunk = "\n".join(bounded)
-        returned_end = start + len(bounded)
-        selected_not_fully_returned = returned_end < end
-        range_has_more = end < len(lines)
-        truncated = partial_line or selected_not_fully_returned or range_has_more
-        next_start_line = returned_end + 1 if truncated and not partial_line else None
-
-        raw_range = "\n".join(selected)
-        raw_tokens = (len(raw_range.encode("utf-8")) + 3) // 4
-        output_tokens = (len(chunk.encode("utf-8")) + 3) // 4
-        return ToolResult(
-            True,
-            chunk,
-            bytes_count=len(chunk.encode("utf-8")),
-            truncated=truncated,
-            metadata={
-                "method": "workspace_fs",
-                "output_family": "read",
-                "content_hash": hashlib.sha256(chunk.encode("utf-8")).hexdigest(),
-                "hash_scope": "returned_range",
-                "path": relative,
-                "start_line": start + 1,
-                "end_line": returned_end,
-                "file_size": data.size,
-                "mtime_ns": data.mtime_ns,
-                "full_file_hash": data.sha256,
-                "total_lines": len(lines),
-                "omitted_lines": max(0, len(lines) - returned_end),
-                "next_start_line": next_start_line,
-                "partial_line_truncated": partial_line,
-                "estimated_tokens": output_tokens,
-                "raw_estimated_tokens": raw_tokens,
-                "output_estimated_tokens": output_tokens,
-                "tokens_saved": max(0, raw_tokens - output_tokens),
-            },
-        )
+        try:
+            text = data.content.decode("utf-8")
+            lines = text.splitlines(keepends=True)
+            offsets = [0]
+            for line in lines: offsets.append(offsets[-1] + len(line.encode("utf-8")))
+            start = min(start_line - 1, len(lines))
+            start_byte = int(args.get("start_byte", offsets[start]))
+            if not 0 <= start_byte <= len(data.content): raise ValueError("start_byte outside the file")
+            data.content[:start_byte].decode("utf-8")
+            expected_hash = args.get("expected_file_hash")
+            if expected_hash is not None and expected_hash != data.sha256:
+                raise ValueError("File changed since the previous page")
+            if "start_byte" in args:
+                import bisect
+                start = min(bisect.bisect_right(offsets, start_byte) - 1, len(lines))
+            end = min(end_line if end_line is not None else start + 200, start + 5000, len(lines))
+            selected_end = max(start_byte, offsets[end])
+            byte_budget = min(max_tokens * 4, requested_max or DEFAULT_MAX_FILE_BYTES)
+            stop_byte = min(selected_end, start_byte + byte_budget)
+            while stop_byte > start_byte:
+                try:
+                    chunk = data.content[start_byte:stop_byte].decode("utf-8")
+                    break
+                except UnicodeDecodeError: stop_byte -= 1
+            else: chunk = ""
+            if stop_byte == start_byte and stop_byte < selected_end:
+                raise ValueError("Output budget cannot fit the next UTF-8 character")
+            import bisect
+            returned_end = min(len(lines), bisect.bisect_left(offsets, stop_byte))
+            partial_line = stop_byte not in offsets
+            truncated = stop_byte < len(data.content)
+            next_start_line = returned_end + 1 if truncated and not partial_line else None
+            raw_tokens = (selected_end - start_byte + 3) // 4
+            output_tokens = (stop_byte - start_byte + 3) // 4
+        except (UnicodeDecodeError, ValueError, TypeError) as exc:
+            return ToolResult(False, "", f"Invalid file read: {exc}")
+        return ToolResult(True, chunk, bytes_count=stop_byte - start_byte, truncated=truncated, metadata={
+            "method": "workspace_fs", "output_family": "read",
+            "content_hash": hashlib.sha256(chunk.encode("utf-8")).hexdigest(), "hash_scope": "returned_range",
+            "path": relative, "start_line": start + 1, "end_line": returned_end,
+            "start_byte": start_byte, "next_start_byte": stop_byte if truncated else None,
+            "file_size": data.size, "mtime_ns": data.mtime_ns, "full_file_hash": data.sha256,
+            "total_lines": len(lines), "omitted_lines": max(0, len(lines) - returned_end),
+            "next_start_line": next_start_line, "partial_line_truncated": partial_line,
+            "estimated_tokens": output_tokens, "raw_estimated_tokens": raw_tokens,
+            "output_estimated_tokens": output_tokens, "tokens_saved": max(0, raw_tokens - output_tokens),
+        })
 
 
 class CreateDirectoryHandler:

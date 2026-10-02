@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+from kitt.llm.privacy import profile_processing_is_local
+
 from typing import List, Tuple, Optional, Dict, Any
 
 from kitt.dreaming.models import (
@@ -91,8 +93,7 @@ class DreamConsolidatePhase:
             return True
         # If egress policy is offline or local_only, verify client backend is local
         if self.egress_policy.mode in ("offline", "local_only"):
-            backend = getattr(getattr(self.llm_client, "profile", None), "backend", "").lower()
-            if backend not in ("ollama", "lmstudio", "localai", "vllm"):
+            if not profile_processing_is_local(getattr(self.llm_client, "profile", None)):
                 return False
         return True
 

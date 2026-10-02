@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import shlex
+from kitt.llm.privacy import profile_processing_is_local
+
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 from typing import Any
@@ -417,8 +419,7 @@ class GoalStepExecutor:
             backend = str(getattr(profile, "backend", "") or "").strip().lower()
             base_url = str(getattr(profile, "base_url", "") or "")
             host = urlparse(base_url).hostname
-            loopback = host in {None, "", "localhost", "127.0.0.1", "::1"}
-            is_local = backend in LLMClient.LOCAL_BACKENDS and loopback
+            is_local = profile_processing_is_local(profile)
 
             input_tokens = (
                 TokenCounter.count_tokens(clean_system)

@@ -24,6 +24,7 @@ from kitt.router.features import TaskFeatureExtractor
 from kitt.router.models import RoutingDecision
 from kitt.tools.protocol import TOOL_CALL_OPEN
 from kitt.tools.safe_python import PYTHON_TOOL_CALL_OPEN
+from kitt.llm.http_security import TransportCancellation
 from kitt_protocol import KittRequestMetadata
 
 
@@ -183,9 +184,19 @@ class TurnModelMixin:
 
         provider_usage: Dict[str, object] = {}
 
+        is_proxy = _reverse_proxy_identity(profile) is not None
+        attempt_grant = 1
+        attempt_settled = False
+
         def _observe_usage(usage: Dict[str, object]) -> None:
+            nonlocal attempt_settled
             provider_usage.clear()
             provider_usage.update(dict(usage))
+            if is_proxy and execution_budget is not None and not attempt_settled:
+                attempts = usage.get("upstream_attempts")
+                if isinstance(attempts, int) and not isinstance(attempts, bool):
+                    execution_budget.settle_model_attempts(granted=attempt_grant, used=attempts, stage=budget_stage)
+                    attempt_settled = True
 
         execution_budget = getattr(self, "execution_budgets", {}).get(turn_id)
         estimated_input = 0
@@ -198,6 +209,11 @@ class TurnModelMixin:
                     estimated_input += TokenCounter.count_tokens(
                         str(message.get("content") or "")
                     )
+            if is_proxy:
+                estimated_input = execution_budget.gateway_prompt_allowance(min(1_000_000, max(1, int(getattr(profile, "context_window", 8192))) * 3))
+                if estimated_input <= 0:
+                    from kitt.core.execution_budget import ExecutionBudgetExceeded
+                    raise ExecutionBudgetExceeded("input token budget exceeded")
             estimated_input_cost = estimate_execution_cost(
                 str(getattr(profile, "model", "") or ""),
                 estimated_input,
@@ -208,14 +224,13 @@ class TurnModelMixin:
             # The first attempt is reserved here so injected/fake clients that
             # do not expose the retry hook remain covered. LLMClient invokes the
             # callback for every provider attempt; attempts > 0 are retries.
-            execution_budget.reserve_model_call(
-                input_tokens=estimated_input,
-                cost=estimated_input_cost,
-                stage=budget_stage,
-            )
+            if is_proxy:
+                attempt_grant = execution_budget.reserve_model_attempts(max_attempts=3, input_tokens=estimated_input, cost=estimated_input_cost, stage=budget_stage)
+            else:
+                execution_budget.reserve_model_call(input_tokens=estimated_input, cost=estimated_input_cost, stage=budget_stage)
 
         def _reserve_retry_attempt(attempt: int) -> None:
-            if execution_budget is not None and int(attempt) > 0:
+            if execution_budget is not None and not is_proxy and int(attempt) > 0:
                 execution_budget.reserve_model_call(
                     input_tokens=estimated_input,
                     cost=estimated_input_cost,
@@ -247,6 +262,16 @@ class TurnModelMixin:
                 "usage_callback": _observe_usage,
                 "attempt_callback": _reserve_retry_attempt,
             }
+            if is_proxy:
+                kwargs["request_metadata"].update({"max_upstream_attempts": attempt_grant,
+                    **({"max_prompt_tokens": estimated_input, "deadline_ms": min(240_000, execution_budget.remaining_duration_ms())} if execution_budget is not None else {})})
+            cancellation = TransportCancellation()
+            cancellations = getattr(self, "_transport_cancellations", None)
+            if cancellations is None:
+                cancellations = {}; self._transport_cancellations = cancellations
+            cancellations[turn_id] = cancellation
+            if getattr(self, "_cancel_requested", lambda _: False)(turn_id): cancellation.cancel()
+            kwargs["transport_cancellation"] = cancellation
             try:
                 sig = inspect.signature(client.chat_stream)
                 has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
@@ -254,7 +279,13 @@ class TurnModelMixin:
                     kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
             except (ValueError, TypeError):
                 pass
-            return client.chat_stream(msgs, **kwargs)
+            def stream():
+                try:
+                    yield from client.chat_stream(msgs, **kwargs)
+                finally:
+                    if cancellations.get(turn_id) is cancellation: cancellations.pop(turn_id, None)
+                    cancellation.cancel()
+            return stream()
 
         if "lfm" in getattr(profile, "model", "").lower():
             raw_text = "".join(_invoke_chat_stream(wire_messages, system_prompt))
@@ -485,6 +516,9 @@ class TurnModelMixin:
             else None
         )
         if llm_first_profile is not None:
+            policy_mode = str(getattr(getattr(self, "egress_policy", None), "mode", "") or getattr(self.config, "privacy_mode", "hybrid_redacted"))
+            if policy_mode in {"offline", "local_only"}:
+                raise PermissionError("Reverse proxy performs remote processing and is blocked by the privacy policy")
             profile_name = (
                 configured_exe_name
                 if llm_first_profile is configured_exe

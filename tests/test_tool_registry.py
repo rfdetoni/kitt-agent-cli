@@ -272,7 +272,7 @@ class TestToolRegistry(unittest.TestCase):
 
         res = self.registry.execute_tool("read_file", {"path": "sample.py", "start_line": 1, "end_line": 2}, enabled_tools=["read_file"])
         self.assertTrue(res.success)
-        self.assertEqual(res.output, "line1\nline2")
+        self.assertEqual(res.output, "line1\nline2\n")
         self.assertEqual(res.metadata["hash_scope"], "returned_range")
         self.assertEqual(res.metadata["end_line"], 2)
 

@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.0 — ciclo de requisição limitado
+
+Correções de privacidade, cancelamento HTTP, orçamento do proxy, paginação exata e reconciliação de Memory: [notas da versão](docs/RELEASE_0.83.0.md).
+
 
 ## Agent CLI 0.81.1 — migração segura de estado e bounded loops consistentes
 

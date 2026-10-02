@@ -124,12 +124,13 @@ class NativeCodeEngine:
         end_line: int | None = None,
         max_bytes: int = 4 * 1024 * 1024,
         token_budget: int = 1200,
+        start_byte: int | None = None,
     ) -> dict[str, Any]:
         if self._native is None:
             raise RuntimeError("native workspace read is unavailable")
         return self._loads(
             self._native.read_file(
-                path, start_line, end_line, max_bytes, token_budget
+                path, start_line, end_line, max_bytes, token_budget, **({"start_byte": start_byte} if start_byte is not None else {})
             )
         )
 

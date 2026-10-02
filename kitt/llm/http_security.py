@@ -1,6 +1,11 @@
 """Bounded HTTP transport primitives for LLM/provider/OAuth traffic."""
 from __future__ import annotations
 
+import contextvars
+import http.client
+import socket
+import threading
+from contextlib import contextmanager
 import re
 import urllib.error
 import urllib.request
@@ -44,12 +49,80 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     http_error_308 = _blocked
 
 
+class TransportCancelled(RuntimeError):
+    pass
+
+class TransportCancellation:
+    def __init__(self):
+        self._event = threading.Event()
+        self._lock = threading.Lock()
+        self._sockets = set()
+    def check(self):
+        if self._event.is_set(): raise TransportCancelled("Provider request cancelled")
+    def track(self, sock):
+        with self._lock:
+            self.check()
+            self._sockets.add(sock)
+    def untrack(self, sock):
+        with self._lock: self._sockets.discard(sock)
+    def cancel(self):
+        self._event.set()
+        with self._lock: sockets = tuple(self._sockets)
+        for sock in sockets:
+            try: sock.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
+    def wait(self, seconds):
+        self._event.wait(seconds)
+        self.check()
+
+_ACTIVE_CANCELLATION = contextvars.ContextVar("kitt_transport_cancellation", default=None)
+
+@contextmanager
+def cancellation_scope(cancellation):
+    marker = _ACTIVE_CANCELLATION.set(cancellation)
+    try:
+        cancellation.check()
+        yield
+    finally: _ACTIVE_CANCELLATION.reset(marker)
+
+class _CancellableHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        token = _ACTIVE_CANCELLATION.get()
+        if token: token.check()
+        super().connect()
+        if token:
+            try: token.track(self.sock)
+            except TransportCancelled:
+                self.close()
+                raise
+
+class _CancellableHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        token = _ACTIVE_CANCELLATION.get()
+        if token: token.check()
+        super().connect()
+        if token:
+            try: token.track(self.sock)
+            except TransportCancelled:
+                self.close()
+                raise
+
+class _CancellableHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req): return self.do_open(_CancellableHTTPConnection, req)
+
+class _CancellableHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req): return self.do_open(_CancellableHTTPSConnection, req, context=self._context)
+
+_CANCELLABLE_OPENER = urllib.request.build_opener(_NoRedirectHandler(), _CancellableHTTPHandler(), _CancellableHTTPSHandler())
+
 _OPENER = urllib.request.build_opener(_NoRedirectHandler())
 
 
 class BoundedHTTPResponse:
     def __init__(self, response, max_body_bytes: int, max_line_bytes: int):
         self._response = response
+        self._cancellation = _ACTIVE_CANCELLATION.get()
+        self._socket = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
         self._max_body_bytes = max(1, int(max_body_bytes))
         self._max_line_bytes = max(1, int(max_line_bytes))
         self._seen = 0
@@ -75,9 +148,12 @@ class BoundedHTTPResponse:
         return getattr(self._response, name)
 
     def close(self):
-        return self._response.close()
+        try: return self._response.close()
+        finally:
+            if self._cancellation and self._socket: self._cancellation.untrack(self._socket)
 
     def _account(self, data: bytes) -> bytes:
+        if self._cancellation: self._cancellation.check()
         self._seen += len(data)
         if self._seen > self._max_body_bytes:
             self.close()
@@ -120,7 +196,18 @@ def secure_urlopen(
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     max_line_bytes: int = DEFAULT_MAX_LINE_BYTES,
 ):
-    response = _OPENER.open(request, timeout=timeout)
+    token = _ACTIVE_CANCELLATION.get()
+    if token: token.check()
+    response = (_CANCELLABLE_OPENER if token else _OPENER).open(request, timeout=min(timeout, 10.0) if token else timeout)
+    sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+    if token and sock:
+        try:
+            token.check()
+            sock.settimeout(timeout)
+        except BaseException:
+            response.close()
+            token.untrack(sock)
+            raise
     return BoundedHTTPResponse(response, max_body_bytes, max_line_bytes)
 
 
