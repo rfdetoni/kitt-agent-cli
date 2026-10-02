@@ -111,12 +111,12 @@ class KittMemoryClient:
             if pos >= 0:
                 return bytes(data[:pos]).rstrip(b"\r")
 
-    def _start_local_service(self) -> None:
+    def _start_local_service(self) -> bool:
         if os.getenv("KITT_MEMORY_AUTOSTART", "1").strip().lower() in {"0", "false", "no", "off"}:
-            return
+            return False
         binary = os.getenv("KITT_MEMORYD_BIN") or shutil.which("kitt-memoryd")
         if not binary:
-            return
+            return False
         kwargs: dict[str, Any] = {
             "stdin": subprocess.DEVNULL,
             "stdout": subprocess.DEVNULL,
@@ -133,7 +133,8 @@ class KittMemoryClient:
         try:
             subprocess.Popen([binary], **kwargs)
         except OSError:
-            return
+            return False
+        return True
 
     def _call_once(self, kind: str, payload: dict[str, Any], expected_kind: str, *, request: Envelope | None = None, timeout: float | None = None) -> Any:
         request = request or Envelope(kind=kind, payload=payload)
@@ -179,9 +180,12 @@ class KittMemoryClient:
                 with _START_LOCK:
                     now = time.monotonic()
                     if now - _START_ATTEMPTS.get(key, float('-inf')) >= 3.0:
+                        if not self._start_local_service():
+                            # There is no startup to wait for. Keep the original
+                            # pre-connect failure and request identity.
+                            raise
                         if len(_START_ATTEMPTS) >= 64: _START_ATTEMPTS.pop(next(iter(_START_ATTEMPTS)))
                         _START_ATTEMPTS[key] = now
-                        self._start_local_service()
             deadline = time.monotonic() + min(3.0, self.timeout)
             while True:
                 remaining = deadline - time.monotonic()

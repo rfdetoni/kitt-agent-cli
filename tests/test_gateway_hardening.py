@@ -72,6 +72,17 @@ def test_terminal_memory_error_is_never_replayed_or_restarted(tmp_path):
         start.assert_not_called()
 
 
+def test_missing_memory_daemon_does_not_wait_for_an_impossible_startup(tmp_path):
+    from kitt.memory.shared_client import _MemoryConnectUnavailable
+    client = KittMemoryClient(address='127.0.0.1:1', token_path=tmp_path / 'unique-token')
+    with patch.object(client, '_call_once', side_effect=_MemoryConnectUnavailable('not connected')) as call, patch.object(client, '_start_local_service', return_value=False), patch('kitt.memory.shared_client.time.sleep') as sleep:
+        with pytest.raises(KittMemoryUnavailable) as error:
+            client.ping()
+        assert error.value.request_id
+        assert call.call_count == 1
+        sleep.assert_not_called()
+
+
 def test_read_cursor_roundtrips_long_utf8_lines_and_crlf(tmp_path):
     content = ('á😀' * 200 + '\r\nlast\n').encode('utf-8')
     (tmp_path / 'long.txt').write_bytes(content)
