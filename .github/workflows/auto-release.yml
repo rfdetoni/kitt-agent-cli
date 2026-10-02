@@ -127,8 +127,26 @@ jobs:
               exit 1
             fi
             if [[ "$tagged" != "$head" ]]; then
-              echo "Candidate $current equals latest release, but $tag points to $tagged instead of validated main $head. Bump the version; never move the published tag." >&2
-              exit 1
+              if ! git merge-base --is-ancestor "$tagged" "$head"; then
+                echo "Published tag $tag at $tagged is not an ancestor of validated main $head." >&2
+                exit 1
+              fi
+
+              release_changes=()
+              while IFS= read -r path; do
+                case "$path" in
+                  .github/*|docs/*|scripts/run_release_critical.py) ;;
+                  *) release_changes+=("$path") ;;
+                esac
+              done < <(git diff --name-only "$tagged..$head")
+
+              if (( ${#release_changes[@]} )); then
+                printf 'Same-version main contains publishable changes that require a version bump:\n' >&2
+                printf '  %s\n' "${release_changes[@]}" >&2
+                exit 1
+              fi
+
+              echo "Validated main differs from $tag only in release/CI evidence files; no package release is required."
             fi
           fi
 
