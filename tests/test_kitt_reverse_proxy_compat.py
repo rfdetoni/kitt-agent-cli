@@ -191,8 +191,19 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                     },
                 },
             }],
+            context_envelope={
+                "schema_version": 1,
+                "epoch": "test-epoch",
+                "segments": [],
+            },
+            request_metadata={
+                "conversation_id": "conversation-test",
+                "turn_id": "turn-test",
+                "request_id": "request-test",
+                "route": "agent-loop",
+            },
             base_url="http://127.0.0.1:3000",
-            extra_headers={"X-Kitt-Agent-Contract": "v1"},
+            extra_headers={"X-Kitt-Agent-Contract": "v2"},
         )
 
         with patch(
@@ -208,6 +219,10 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             ["repo.list", "repo.read", "repo.write_file"],
         )
         self.assertNotIn("Tool Contract:", payload["messages"][0]["content"])
+        self.assertEqual(payload["kitt_context"]["epoch"], "test-epoch")
+        self.assertEqual(payload["kitt_meta"]["request_id"], "request-test")
+        self.assertNotIn("functions", payload)
+        self.assertNotIn("function_call", payload)
 
     def test_stream_reconstructs_native_tool_call_and_preserves_headers(self):
         class FakeResponse:
