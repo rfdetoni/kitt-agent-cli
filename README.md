@@ -1,5 +1,13 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.9 — authoritative native execution flow
+
+Agent CLI now keeps turn lifecycle, completion validation, and tool execution on native `TurnProcessor`, `TurnToolLoopMixin`, and `ToolRegistry` entrypoints instead of replacing methods at runtime. Existing policy, approval, durable evidence, replay, post-edit verification, and cancellation controls are reused unchanged. Role-policy denials also return a valid `ToolResult` instead of raising while constructing the denial.
+
+No shared Protocol field or cross-repository contract changed. Reverse Proxy **4.9.3** and KITT Protocol **0.9.0** remain compatible.
+
+See [release notes](docs/RELEASE_0.83.9.md).
+
 ## Agent CLI 0.83.8 — canonical Reverse Proxy transport
 
 Agent CLI now locks the Reverse Proxy request boundary to structural `tools/tool_choice`, typed `kitt_context` and protocol-owned `kitt_meta`. Regression coverage explicitly rejects reintroduction of legacy `functions/function_call` transport and stale textual `Tool Contract` authority. The existing canonical `<kitt-tool>` bridge remains an internal Agent representation after native tool-call extraction; no additional semantic aliases are introduced.
