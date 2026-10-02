@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.7 — recoverable retry attempt identity
+
+Persisted safe retries now recover the latest durable `attempt_id` after interruption, use deterministic attempt numbering, and reject stale completion from an older attempt. Side-effecting uncertain operations remain fail-closed.
+
+See [release notes](docs/RELEASE_0.83.7.md).
+
 ## Agent CLI 0.83.6 — durable tool attempt identity
 
 Tool execution receipts now expose a stable logical `operation_id` plus a per-attempt `attempt_id`. Confirmed side effects remain replay-only, unresolved side effects remain blocked as uncertain, and only safe non-side-effect retries allocate a new attempt without changing the logical operation.
