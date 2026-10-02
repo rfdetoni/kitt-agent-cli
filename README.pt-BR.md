@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.7 — recuperação da tentativa de retry
+
+Retries seguros persistidos agora recuperam o `attempt_id` durável mais recente após interrupção, usam numeração determinística e rejeitam conclusão atrasada de uma tentativa anterior. Operações com side effect em estado incerto continuam fail-closed.
+
+Veja [as notas da versão](docs/RELEASE_0.83.7.md).
+
 ## Agent CLI 0.83.6 — identidade durável de tentativas de tool
 
 Os receipts de execução de tools agora expõem um `operation_id` lógico estável e um `attempt_id` por tentativa. Side effects confirmados continuam sendo apenas reproduzidos pelo receipt; side effects sem conclusão permanecem bloqueados como incertos; e somente retries seguros de operações sem side effect recebem uma nova tentativa sem trocar a operação lógica.
