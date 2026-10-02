@@ -135,7 +135,7 @@ jobs:
               release_changes=()
               while IFS= read -r path; do
                 case "$path" in
-                  .github/*|docs/*|scripts/run_release_critical.py) ;;
+                  .github/*|docs/*|tests/*|README.md|README.pt-BR.md|LICENSE|SECURITY.md|scripts/run_release_critical.py) ;;
                   *) release_changes+=("$path") ;;
                 esac
               done < <(git diff --name-only "$tagged..$head")
