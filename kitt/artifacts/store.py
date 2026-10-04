@@ -74,9 +74,7 @@ class ArtifactStore:
             turn = conn.execute(
                 "SELECT conversation_id FROM turns WHERE id=?", (turn_id,)
             ).fetchone()
-            if not turn:
-                raise sqlite3.IntegrityError(f"Unknown turn id {turn_id}")
-            if turn["conversation_id"] != conversation_id:
+            if turn and turn["conversation_id"] != conversation_id:
                 raise sqlite3.IntegrityError(
                     f"Turn {turn_id} does not belong to conversation {conversation_id}"
                 )
