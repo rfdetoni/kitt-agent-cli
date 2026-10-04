@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from dataclasses import fields, is_dataclass
 from typing import Any
@@ -40,6 +41,7 @@ EVENT_STATE = {
 }
 MUTATING_LEGACY = {"write_file", "apply_patch", "run_command", "child_spawn", "goal_create", "goal_add_gate", "harness_remember", "queue_input"}
 FILE_MUTATIONS = {"write_file", "apply_patch"}
+TOOL_LEASE_HEARTBEAT_SECONDS = 60.0
 
 
 def _repo(processor):
@@ -1002,6 +1004,35 @@ def execute_tool_with_engineering(
                 )
                 resource_claimed = True
 
+    lease_stop = threading.Event()
+    lease_thread = None
+    if claimed or resource_claimed:
+        turn_owner = f"turn:{conv}:{turn}"
+
+        def refresh_leases() -> None:
+            while not lease_stop.wait(TOOL_LEASE_HEARTBEAT_SECONDS):
+                try:
+                    workspace = getattr(coordinator, "workspace", None)
+                    if claimed and workspace is not None:
+                        workspace.refresh_owner(turn_owner, ttl_seconds=180.0)
+                    if resource_claimed and resource_coordinator is not None:
+                        resource_coordinator.refresh_owner(
+                            resource_owner,
+                            ttl_seconds=180.0,
+                        )
+                except Exception:
+                    # Coordination remains fail-closed on acquisition. Renewal
+                    # is best-effort so a transient DB error does not abort a
+                    # side effect that may already be running.
+                    continue
+
+        lease_thread = threading.Thread(
+            target=refresh_leases,
+            name=f"kitt-tool-lease-{turn[:12]}",
+            daemon=True,
+        )
+        lease_thread.start()
+
     snapshot_service = getattr(
         processor,
         "workspace_snapshot_service",
@@ -1111,6 +1142,9 @@ def execute_tool_with_engineering(
                 )
         return result
     finally:
+        lease_stop.set()
+        if lease_thread is not None:
+            lease_thread.join(timeout=0.2)
         if resource_claimed and resource_coordinator is not None:
             resource_coordinator.release_owner(resource_owner)
         if claimed and coordinator is not None:

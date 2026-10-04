@@ -100,6 +100,75 @@ class TestCancellationRealStop(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_cancelled_blocked_turns_do_not_exhaust_global_prompt_capacity(self):
+        async def scenario():
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+                processor = TurnProcessor(root_dir=tmp_dir)
+                release_blocked = threading.Event()
+
+                def fake_run_turn(cmd):
+                    yield TurnStarted(
+                        turn_id=cmd.turn_id,
+                        conversation_id=cmd.conversation_id,
+                        prompt=cmd.prompt,
+                    )
+                    if cmd.turn_id.startswith("turn_blocked_"):
+                        release_blocked.wait(timeout=5)
+                        yield TurnCompleted(response="blocked")
+                    else:
+                        yield TurnCompleted(response="recovered")
+
+                processor.run_turn = fake_run_turn
+                blocked_streams = []
+                closing = []
+                try:
+                    for index in range(4):
+                        stream = processor.arun_turn(
+                            TurnCommand(
+                                conversation_id=f"conv_{index}",
+                                prompt="blocked",
+                                turn_id=f"turn_blocked_{index}",
+                            )
+                        )
+                        self.assertIsInstance(await anext(stream), TurnStarted)
+                        blocked_streams.append(stream)
+
+                    closing = [
+                        asyncio.create_task(stream.aclose())
+                        for stream in blocked_streams
+                    ]
+                    await asyncio.sleep(0)
+
+                    recovered = await asyncio.wait_for(
+                        _collect_async(
+                            processor.arun_turn(
+                                TurnCommand(
+                                    conversation_id="conv_recovered",
+                                    prompt="new prompt",
+                                    turn_id="turn_recovered",
+                                )
+                            )
+                        ),
+                        timeout=1,
+                    )
+                    self.assertTrue(
+                        any(
+                            isinstance(event, TurnCompleted)
+                            and event.response == "recovered"
+                            for event in recovered
+                        )
+                    )
+                finally:
+                    release_blocked.set()
+                    if closing:
+                        await asyncio.wait_for(
+                            asyncio.gather(*closing),
+                            timeout=3,
+                        )
+                    processor.close()
+
+        asyncio.run(scenario())
+
     def setIsInstance(self, obj, cls):
         self.assertTrue(isinstance(obj, cls), f"Expected instance of {cls}, got {type(obj)}")
 

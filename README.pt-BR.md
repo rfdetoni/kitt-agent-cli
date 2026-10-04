@@ -1,5 +1,13 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.10 — integridade de runtime e cancelamento
+
+Esta versão corrige três falhas concretas sem introduzir nova arquitetura: o GC de artefatos não remove mais blobs content-addressed ainda referenciados; turnos síncronos cancelados deixam de consumir permanentemente toda a capacidade global de prompts; e mutações longas renovam os leases de coordenação já existentes enquanto a tool permanece em execução.
+
+Também endurece ownership de artefatos: `turn_id` exige uma conversa válida e correspondente.
+
+Veja [as notas da versão](docs/RELEASE_0.83.10.md).
+
 ## Agent CLI 0.83.9 — fluxo nativo autoritativo de execução
 
 O Agent CLI agora mantém lifecycle do turno, validação de conclusão e execução de tools nos entrypoints nativos de `TurnProcessor`, `TurnToolLoopMixin` e `ToolRegistry`, sem substituir métodos em runtime. Policy, approvals, evidência durável, replay, verificação pós-edição e cancelamento existentes continuam sendo reutilizados. Negações por policy de papel também retornam um `ToolResult` válido em vez de falhar ao construir a resposta de negação.
