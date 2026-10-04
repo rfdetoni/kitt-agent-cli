@@ -1,6 +1,6 @@
 # Agentic Runtime Acceptance Matrix
 
-Evidence baseline: Agent CLI **0.83.7**, Protocol **0.9.0**, Memory **0.9.0**, Reverse Proxy **4.9.2**.
+Evidence baseline: Agent CLI **0.83.11**, Protocol **0.9.0**, Memory **0.9.1**, Reverse Proxy **4.9.4**.
 
 This matrix preserves the 30 acceptance requirements as a catalogue, but it does not treat every row as a gate for every release. Evidence is recorded only when the named behavior was actually exercised. Unit or integration evidence is not promoted to E2E evidence, and infrastructure-dependent checks remain pending until executed against the real dependency.
 
@@ -22,11 +22,11 @@ Statuses describe the strongest evidence currently available:
 
 | Component | Evidence SHA | Workflow / run | Environment | Result |
 |---|---|---|---|---|
-| Agent CLI | `f551c6a932a0fa844841aef7f842a457cb91d214` | PR Checks / `37045869576` | Ubuntu + Python 3.14; Windows package smoke; real Docker runtime | SUCCESS |
-| Memory | `ad0e99b62ff5a8602f61fb5ea94a218d895cce8d` | ci / `37022758823` | Ubuntu; Rust workspace tests, MSRV 1.88, audit | SUCCESS |
-| Protocol | `f1c17df15c64411c24c8b35ef41cf6299f4571b9` | ci / `37022261512` | repository CI | SUCCESS |
-| Reverse Proxy | `90e8b7b912931866cbe14b7574762338894dd6f0` | CI / `37037505733` | Node repository CI | SUCCESS |
-| Ecosystem composition | `323a3a969e57a420e2a5acf66b8bfece2495973d` | ecosystem-integration / `37039767692` | Ubuntu; edge install + release-channel immutable smoke | SUCCESS |
+| Agent CLI | `d73b9d72062c3c32e41ed35c2a06fb6e2fda81ba` | PR Checks / `37223618003` | Ubuntu + Python 3.14; cancellation saturation/quarantine, artifact integrity, lease renewal; Docker companion green | SUCCESS |
+| Memory | `3a3e9695ce8293e07ffd4839781a850834ad34dd` | ci / `37223640525` | Ubuntu; Rust workspace, real kitt-memoryd kill/restart recovery, MSRV 1.88, audit | SUCCESS |
+| Protocol | `48c71b3624e9029a35a839461fe745d55c3d9dae` | ci / `37223423740` | repository CI; generated round-trip and adversarial decoder coverage | SUCCESS |
+| Reverse Proxy | `e93703ff93b5926de99f7727aae2d5a64d837724` | CI / `37054991196` | Node repository CI | SUCCESS |
+| Ecosystem composition | `99ec7956466dfcb9dfc6c5cc033e13f5ad9d18cc` | ecosystem-integration / `37086064788` | Ubuntu; full main install + immutable release + Assistant lock smoke | SUCCESS |
 
 The Agent evidence SHA is the runtime candidate exercised by PR Checks and pinned by the ecosystem release manifest. Later documentation/workflow-only commits do not retroactively turn unexecuted runtime behavior into evidence.
 
@@ -37,11 +37,11 @@ The Agent evidence SHA is the runtime candidate exercised by PR Checks and pinne
 | 1 | ContextEnvelope round-trip and provider lowering | protocol / agent / proxy | I | Agent critical suite: `tests/test_kitt_reverse_proxy_compat.py` | final real Agent ↔ Proxy provider E2E | PARTIAL |
 | 2 | Memory segment is not lost under budget pressure | memory / agent | R | Agent critical suite: `tests/memory/test_memory_manager_shared.py::test_progressive_memory_hydrates_then_keeps_budgeted_snippet` | long-context E2E only when that path changes | VERIFIED-CI |
 | 3 | Recalled memory is not relearned as new memory | memory / agent | R | Agent critical suite: `test_recalled_memory_is_presented_but_never_relearned` | real memoryd E2E when memory lifecycle changes | VERIFIED-CI |
-| 4 | Extraction/Consolidation job crash/retry/lease/idempotency | memory | R | Memory CI: `evidence_jobs_test.rs` covers dedupe, lease and deterministic retry; request receipt survives reopen | real process crash/restart recovery | PARTIAL |
+| 4 | Extraction/Consolidation job crash/retry/lease/idempotency | memory | R | Memory CI covers dedupe/retry plus `restart_recovery.rs`, which kills `kitt-memoryd`, restarts against the same SQLite DB, reclaims the expired lease as attempt 2 and completes once | none beyond boundary-specific lifecycle changes | VERIFIED-CI |
 | 5 | Event persist-before-publish | agent | R | Agent critical suite: `test_event_is_persisted_before_publisher_observes_it` | none beyond boundary integration when ledger transport changes | VERIFIED-CI |
 | 6 | Reconnect with cursor without duplicate event | agent | R | Agent critical suite: `test_reconnect_cursor_and_event_id_dedupe_do_not_duplicate_events` | real reconnect E2E when transport changes | VERIFIED-CI |
 | 7 | Replay of mutating tool call does not repeat side effect | agent | R | Agent critical suite: `test_completed_mutation_execution_is_replayed_from_receipt_not_reserved_again` | real mutating-tool replay after crash/recovery | VERIFIED-CI |
-| 8 | Ctrl+C followed immediately by a new prompt | agent | R | Agent critical suite: `tests/test_cancellation_real_stop.py::test_ctrl_c_does_not_block_next_prompt` keeps the old worker blocked while the next turn completes | interactive TUI smoke only when TUI cancellation wiring changes | VERIFIED-CI |
+| 8 | Ctrl+C followed immediately by a new prompt | agent | R | `tests/test_cancellation_real_stop.py` covers immediate next-prompt recovery, four blocked cancelled turns, and a bounded producer quarantine so recovery does not create unbounded orphan threads | interactive TUI smoke only when TUI cancellation wiring changes | VERIFIED-CI |
 | 9 | Two simultaneous prompts in the same conversation | agent | I | current coordinator suite does not directly exercise this requirement | concurrency integration | PENDING |
 | 10 | Different conversations execute in parallel | agent | I | no directly matching current test found | concurrency integration | PENDING |
 | 11 | FIFO/resource locks without starvation/deadlock | agent | I | no directly matching current test found | deterministic contention test | PENDING |
