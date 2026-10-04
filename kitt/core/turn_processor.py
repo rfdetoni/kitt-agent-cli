@@ -89,7 +89,9 @@ from kitt.security.capabilities import (
 logger = logging.getLogger(__name__)
 
 _TURN_CONCURRENCY = 4
+_TURN_THREAD_CAPACITY = _TURN_CONCURRENCY * 2
 _TURN_SLOTS = threading.BoundedSemaphore(_TURN_CONCURRENCY)
+_TURN_THREAD_SLOTS = threading.BoundedSemaphore(_TURN_THREAD_CAPACITY)
 
 
 class TurnProcessor(
@@ -525,18 +527,40 @@ class TurnProcessor(
                 slot_held = False
             _TURN_SLOTS.release()
 
+        def bounded_produce() -> None:
+            try:
+                produce()
+            finally:
+                _TURN_THREAD_SLOTS.release()
+
         producer: threading.Thread | None = None
         stream_completed = False
+        thread_slot_held = False
         try:
-            while not _TURN_SLOTS.acquire(blocking=False):
+            while True:
+                if not _TURN_SLOTS.acquire(blocking=False):
+                    await _asyncio.sleep(0.01)
+                    continue
+                slot_held = True
+                if _TURN_THREAD_SLOTS.acquire(blocking=False):
+                    thread_slot_held = True
+                    break
+                release_slot()
                 await _asyncio.sleep(0.01)
-            slot_held = True
+
             producer = threading.Thread(
-                target=produce,
+                target=bounded_produce,
                 name=f"kitt-turn-{cmd.turn_id[:12]}",
                 daemon=True,
             )
-            producer.start()
+            try:
+                producer.start()
+                thread_slot_held = False
+            except Exception:
+                if thread_slot_held:
+                    _TURN_THREAD_SLOTS.release()
+                    thread_slot_held = False
+                raise
 
             while True:
                 item = await queue.get()
@@ -545,14 +569,18 @@ class TurnProcessor(
                     break
                 yield item
         finally:
-            # Cancellation must release logical turn capacity immediately even
-            # when a synchronous provider/tool ignores cancellation. The
-            # abandoned daemon producer may finish later, but it cannot starve
-            # all future prompts.
+            # A cancelled producer may remain blocked in synchronous provider
+            # code. Release logical turn capacity immediately, but keep its
+            # producer-thread permit until the thread actually exits. This
+            # preserves prompt recovery without allowing unbounded orphan
+            # thread growth.
             if not stream_completed:
                 self._mark_cancelled(cmd.turn_id)
             stop.set()
             release_slot()
+            if thread_slot_held:
+                _TURN_THREAD_SLOTS.release()
+                thread_slot_held = False
             if producer is not None and producer.is_alive():
                 deadline = loop.time() + 2.0
                 while producer.is_alive() and loop.time() < deadline:
