@@ -320,7 +320,7 @@ class ArtifactStore:
         """Remove expired artifacts without deleting shared content-addressed blobs."""
         now = now or time.time()
         removed = 0
-        orphaned_paths: set[str] = set()
+        candidate_paths: set[str] = set()
         with self.db.get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM artifacts WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at < ?",
@@ -331,18 +331,23 @@ class ArtifactStore:
                 conn.execute("DELETE FROM artifacts WHERE id=?", (a.id,))
                 removed += 1
                 if a.storage_kind == "FILE" and a.relative_storage_path:
-                    still_referenced = conn.execute(
-                        """SELECT 1 FROM artifacts
-                           WHERE storage_kind='FILE' AND relative_storage_path=?
-                           LIMIT 1""",
-                        (a.relative_storage_path,),
-                    ).fetchone()
-                    if not still_referenced:
-                        orphaned_paths.add(a.relative_storage_path)
-        for relative_path in orphaned_paths:
-            target = self.storage / relative_path
-            if target.exists():
-                target.unlink()
+                    candidate_paths.add(a.relative_storage_path)
+
+        for relative_path in candidate_paths:
+            # Recheck under a writer reservation so a concurrent put cannot
+            # create a new reference between the SELECT and the unlink.
+            with self.db.get_connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                still_referenced = conn.execute(
+                    """SELECT 1 FROM artifacts
+                       WHERE storage_kind='FILE' AND relative_storage_path=?
+                       LIMIT 1""",
+                    (relative_path,),
+                ).fetchone()
+                if not still_referenced:
+                    target = self.storage / relative_path
+                    if target.exists():
+                        target.unlink()
         return removed
 
     def close(self) -> None:
