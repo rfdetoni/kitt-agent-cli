@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.12 — per-conversation concurrency and proven recovery
+
+Active turns in the same conversation are now serialized at admission while different conversations continue to execute in parallel. This release also adds deterministic evidence for FIFO resource fairness, selective rollback, exact snapshot/artifact recovery, and bounded query/page retrieval for large artifacts.
+
+See [release notes](docs/RELEASE_0.83.12.md).
+
 ## Agent CLI 0.83.11 — bounded cancellation and race-free artifact GC
 
 The Agent now bounds both active turns and synchronous producer threads that remain alive after cancellation: new prompts can recover from blocked calls without allowing orphan threads to grow without limit. Artifact GC also rechecks references under a SQLite write reservation immediately before deleting a shared blob, closing the TOCTOU window found during the 0.83.10 review.

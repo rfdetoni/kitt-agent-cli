@@ -187,6 +187,8 @@ class TurnProcessor(
         self._attachment_paths_by_turn: Dict[str, tuple[str, ...]] = {}
         self._attachment_wire_sent: set[str] = set()
         self._token_ledger = TokenLedger()
+        self._active_conversations: set[str] = set()
+        self._active_conversations_lock = threading.Lock()
 
     def set_proxy_session_scope(self, scope: str) -> None:
         """Override the reverse-proxy session namespace for a dedicated runtime.
@@ -536,7 +538,25 @@ class TurnProcessor(
         producer: threading.Thread | None = None
         stream_completed = False
         thread_slot_held = False
+        conversation_claimed = False
+
+        def release_conversation() -> None:
+            nonlocal conversation_claimed
+            if not conversation_claimed:
+                return
+            with self._active_conversations_lock:
+                self._active_conversations.discard(cmd.conversation_id)
+            conversation_claimed = False
+
         try:
+            while True:
+                with self._active_conversations_lock:
+                    if cmd.conversation_id not in self._active_conversations:
+                        self._active_conversations.add(cmd.conversation_id)
+                        conversation_claimed = True
+                        break
+                await _asyncio.sleep(0.01)
+
             while True:
                 if not _TURN_SLOTS.acquire(blocking=False):
                     await _asyncio.sleep(0.01)
@@ -578,6 +598,7 @@ class TurnProcessor(
                 self._mark_cancelled(cmd.turn_id)
             stop.set()
             release_slot()
+            release_conversation()
             if thread_slot_held:
                 _TURN_THREAD_SLOTS.release()
                 thread_slot_held = False
