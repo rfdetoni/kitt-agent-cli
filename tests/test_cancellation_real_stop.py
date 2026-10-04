@@ -2,9 +2,11 @@ import asyncio
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import TurnCancelled, TurnCompleted, TurnStarted
+import kitt.core.turn_processor as turn_processor_module
 from kitt.core.turn_processor import TurnProcessor
 
 async def _collect_async(stream):
@@ -166,6 +168,91 @@ class TestCancellationRealStop(unittest.TestCase):
                             timeout=3,
                         )
                     processor.close()
+
+        asyncio.run(scenario())
+
+    def test_cancelled_producer_quarantine_remains_bounded(self):
+        async def scenario():
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+                processor = TurnProcessor(root_dir=tmp_dir)
+                release_blocked = threading.Event()
+
+                def fake_run_turn(cmd):
+                    yield TurnStarted(
+                        turn_id=cmd.turn_id,
+                        conversation_id=cmd.conversation_id,
+                        prompt=cmd.prompt,
+                    )
+                    if cmd.turn_id.startswith("blocked"):
+                        release_blocked.wait(timeout=5)
+                        yield TurnCompleted(response="blocked")
+                    else:
+                        yield TurnCompleted(response="recovered")
+
+                processor.run_turn = fake_run_turn
+                with (
+                    patch.object(
+                        turn_processor_module,
+                        "_TURN_SLOTS",
+                        threading.BoundedSemaphore(1),
+                    ),
+                    patch.object(
+                        turn_processor_module,
+                        "_TURN_THREAD_SLOTS",
+                        threading.BoundedSemaphore(2),
+                    ),
+                ):
+                    streams = []
+                    closings = []
+                    try:
+                        for index in range(2):
+                            stream = processor.arun_turn(
+                                TurnCommand(
+                                    conversation_id=f"conv_bounded_{index}",
+                                    prompt="blocked",
+                                    turn_id=f"blocked_{index}",
+                                )
+                            )
+                            self.assertIsInstance(await anext(stream), TurnStarted)
+                            streams.append(stream)
+                            closings.append(asyncio.create_task(stream.aclose()))
+                            await asyncio.sleep(0)
+
+                        third = processor.arun_turn(
+                            TurnCommand(
+                                conversation_id="conv_third",
+                                prompt="third",
+                                turn_id="third",
+                            )
+                        )
+                        first_event = asyncio.create_task(anext(third))
+                        with self.assertRaises(asyncio.TimeoutError):
+                            await asyncio.wait_for(
+                                asyncio.shield(first_event),
+                                timeout=0.1,
+                            )
+
+                        release_blocked.set()
+                        await asyncio.wait_for(asyncio.gather(*closings), timeout=3)
+
+                        started = await asyncio.wait_for(first_event, timeout=1)
+                        self.assertIsInstance(started, TurnStarted)
+                        remaining = await asyncio.wait_for(
+                            _collect_async(third),
+                            timeout=1,
+                        )
+                        self.assertTrue(
+                            any(
+                                isinstance(event, TurnCompleted)
+                                and event.response == "recovered"
+                                for event in remaining
+                            )
+                        )
+                    finally:
+                        release_blocked.set()
+                        if closings:
+                            await asyncio.gather(*closings, return_exceptions=True)
+                        processor.close()
 
         asyncio.run(scenario())
 
