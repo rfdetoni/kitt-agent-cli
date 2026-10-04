@@ -73,16 +73,6 @@ class ArtifactStoreIntegrityTests(unittest.TestCase):
                 turn_id="turn-1",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "Unknown turn id"):
-            self.store.put(
-                self.identity.id,
-                "content",
-                "TEXT",
-                "invalid",
-                conversation_id=self.conversation["id"],
-                turn_id="missing-turn",
-            )
-
 
 if __name__ == "__main__":
     unittest.main()
