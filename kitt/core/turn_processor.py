@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio as _asyncio
-import concurrent.futures
 import hashlib
 import json
 import logging
@@ -89,10 +88,8 @@ from kitt.security.capabilities import (
 
 logger = logging.getLogger(__name__)
 
-_TURN_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4,
-    thread_name_prefix="kitt-turn",
-)
+_TURN_CONCURRENCY = 4
+_TURN_SLOTS = threading.BoundedSemaphore(_TURN_CONCURRENCY)
 
 
 class TurnProcessor(
@@ -517,9 +514,30 @@ class TurnProcessor(
                 if not stop.is_set():
                     put(sentinel, timeout=5.0)
 
-        producer = _TURN_EXECUTOR.submit(produce)
+        slot_lock = threading.Lock()
+        slot_held = False
+
+        def release_slot() -> None:
+            nonlocal slot_held
+            with slot_lock:
+                if not slot_held:
+                    return
+                slot_held = False
+            _TURN_SLOTS.release()
+
+        producer: threading.Thread | None = None
         stream_completed = False
         try:
+            while not _TURN_SLOTS.acquire(blocking=False):
+                await _asyncio.sleep(0.01)
+            slot_held = True
+            producer = threading.Thread(
+                target=produce,
+                name=f"kitt-turn-{cmd.turn_id[:12]}",
+                daemon=True,
+            )
+            producer.start()
+
             while True:
                 item = await queue.get()
                 if item is sentinel:
@@ -527,19 +545,18 @@ class TurnProcessor(
                     break
                 yield item
         finally:
-            # Producer capacity is globally bounded so child sessions cannot
-            # create one unbounded OS thread per turn.
+            # Cancellation must release logical turn capacity immediately even
+            # when a synchronous provider/tool ignores cancellation. The
+            # abandoned daemon producer may finish later, but it cannot starve
+            # all future prompts.
             if not stream_completed:
                 self._mark_cancelled(cmd.turn_id)
             stop.set()
-            if not producer.done():
-                try:
-                    await _asyncio.wait_for(
-                        _asyncio.shield(_asyncio.wrap_future(producer)),
-                        timeout=2.0,
-                    )
-                except (_asyncio.TimeoutError, _asyncio.CancelledError):
-                    pass
+            release_slot()
+            if producer is not None and producer.is_alive():
+                deadline = loop.time() + 2.0
+                while producer.is_alive() and loop.time() < deadline:
+                    await _asyncio.sleep(0.02)
 
     def _history_context(self, conversation_id: str, max_messages: int = 12,
                          exclude_prompt: Optional[str] = None) -> str:
