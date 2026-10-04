@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.11 — bounded cancellation and race-free artifact GC
+
+The Agent now bounds both active turns and synchronous producer threads that remain alive after cancellation: new prompts can recover from blocked calls without allowing orphan threads to grow without limit. Artifact GC also rechecks references under a SQLite write reservation immediately before deleting a shared blob, closing the TOCTOU window found during the 0.83.10 review.
+
+See [release notes](docs/RELEASE_0.83.11.md).
+
 ## Agent CLI 0.83.10 — runtime integrity and cancellation
 
 This release fixes three concrete runtime failures without introducing a new architecture: artifact garbage collection no longer removes content-addressed blobs that are still referenced; cancelled synchronous turns no longer permanently consume all global prompt capacity; and long-running mutations renew the existing coordination leases while the tool is active.
