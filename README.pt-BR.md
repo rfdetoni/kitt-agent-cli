@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.11 — limites de concorrência e GC sem race
+
+O Agent limita agora tanto turnos ativos quanto producers síncronos ainda vivos após cancelamento: prompts novos continuam se recuperando de calls bloqueadas, mas threads órfãs não podem crescer sem limite. O GC de artefatos também refaz a checagem de referências sob reserva de escrita SQLite imediatamente antes de remover um blob compartilhado, fechando a janela TOCTOU encontrada no review de 0.83.10.
+
+Veja [as notas da versão](docs/RELEASE_0.83.11.md).
+
 ## Agent CLI 0.83.10 — integridade de runtime e cancelamento
 
 Esta versão corrige três falhas concretas sem introduzir nova arquitetura: o GC de artefatos não remove mais blobs content-addressed ainda referenciados; turnos síncronos cancelados deixam de consumir permanentemente toda a capacidade global de prompts; e mutações longas renovam os leases de coordenação já existentes enquanto a tool permanece em execução.
