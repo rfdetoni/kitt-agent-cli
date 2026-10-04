@@ -68,12 +68,18 @@ class ArtifactStore:
                 raise sqlite3.IntegrityError(
                     f"Conversation {conversation_id} does not belong to workspace {workspace_id}"
                 )
-        if turn_id and conversation_id:
+        if turn_id:
+            if not conversation_id:
+                raise sqlite3.IntegrityError("turn_id requires conversation_id")
             turn = conn.execute(
                 "SELECT conversation_id FROM turns WHERE id=?", (turn_id,)
             ).fetchone()
-            if turn and turn["conversation_id"] != conversation_id:
-                raise sqlite3.IntegrityError(f"Turn {turn_id} does not belong to conversation {conversation_id}")
+            if not turn:
+                raise sqlite3.IntegrityError(f"Unknown turn id {turn_id}")
+            if turn["conversation_id"] != conversation_id:
+                raise sqlite3.IntegrityError(
+                    f"Turn {turn_id} does not belong to conversation {conversation_id}"
+                )
 
     def put(self, workspace_id: str, content, artifact_type: str, summary: str,
             conversation_id: Optional[str] = None, turn_id: Optional[str] = None,
@@ -313,9 +319,10 @@ class ArtifactStore:
             return cur.rowcount == 1
 
     def collect_garbage(self, now: Optional[float] = None) -> int:
-        """Remove expired, unpinned artifacts and their blob files."""
+        """Remove expired artifacts without deleting shared content-addressed blobs."""
         now = now or time.time()
         removed = 0
+        orphaned_paths: set[str] = set()
         with self.db.get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM artifacts WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at < ?",
@@ -323,12 +330,21 @@ class ArtifactStore:
             ).fetchall()
             for r in rows:
                 a = self._from_row(r)
-                if a.storage_kind == "FILE" and a.relative_storage_path:
-                    target = self.storage / a.relative_storage_path
-                    if target.exists():
-                        target.unlink()
                 conn.execute("DELETE FROM artifacts WHERE id=?", (a.id,))
                 removed += 1
+                if a.storage_kind == "FILE" and a.relative_storage_path:
+                    still_referenced = conn.execute(
+                        """SELECT 1 FROM artifacts
+                           WHERE storage_kind='FILE' AND relative_storage_path=?
+                           LIMIT 1""",
+                        (a.relative_storage_path,),
+                    ).fetchone()
+                    if not still_referenced:
+                        orphaned_paths.add(a.relative_storage_path)
+        for relative_path in orphaned_paths:
+            target = self.storage / relative_path
+            if target.exists():
+                target.unlink()
         return removed
 
     def close(self) -> None:
