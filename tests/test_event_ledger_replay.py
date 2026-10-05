@@ -77,16 +77,14 @@ def test_completed_mutation_execution_is_replayed_from_receipt_not_reserved_agai
     registry = ToolRegistry(root_dir=str(tmp_path))
     registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
     execution_id = "exec-write-1"
+    (tmp_path / "mutate.py").write_text(
+        "from pathlib import Path\n"
+        "p = Path('count.txt')\n"
+        "p.write_text((p.read_text() if p.exists() else '') + 'x')\n",
+        encoding="utf-8",
+    )
     args = {
-        "argv": [
-            sys.executable,
-            "-c",
-            (
-                "from pathlib import Path; "
-                "p=Path('count.txt'); "
-                "p.write_text((p.read_text() if p.exists() else '') + 'x')"
-            ),
-        ],
+        "argv": [sys.executable, "mutate.py"],
         "cwd": ".",
         "timeout_seconds": 30,
     }

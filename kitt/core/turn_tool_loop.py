@@ -133,6 +133,64 @@ def _runtime_operation_name(tool_name: str, tool_args: object) -> str:
     return str(tool_name or "")
 
 
+_OBSERVATIONAL_ACTIONS = frozenset(
+    {
+        "repo.read",
+        "repo.list",
+        "repo.search",
+        "repo.inspect_symbol",
+        "repo.read_symbol",
+        "repo.references",
+        "repo.context_map",
+        "read_file",
+        "list_files",
+        "search",
+        "repository_map",
+        "git_status",
+        "git_diff",
+        "artifact_list",
+        "artifact_read",
+    }
+)
+
+
+def _stuck_sequence(fingerprints: list[str]) -> bool:
+    recent = fingerprints[-4:]
+    return (
+        len(recent) >= 3
+        and len(set(recent[-3:])) == 1
+    ) or (
+        len(recent) == 4
+        and recent[:2] == recent[2:]
+        and recent[0] != recent[1]
+    )
+
+
+_MAX_COMPLETION_RECOVERIES = 2
+
+
+def _completion_recovery_exhausted(attempts: int) -> bool:
+    return int(attempts) > _MAX_COMPLETION_RECOVERIES
+
+
+def _observational_fingerprint(
+    tool_name: str,
+    tool_args: object,
+    output: object,
+) -> str | None:
+    operation = _runtime_operation_name(tool_name, tool_args)
+    if operation not in _OBSERVATIONAL_ACTIONS:
+        return None
+    raw = (
+        operation
+        + "\0"
+        + _canonical_tool_args(tool_args)
+        + "\0"
+        + str(output or "")
+    )
+    return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()
+
+
 def _browser_trace_origin(value: object) -> str:
     try:
         parsed = urlsplit(str(value or "").strip())
@@ -300,7 +358,8 @@ class TurnToolLoopMixin:
         yield ThinkingStarted(), None, None
 
         completion_recoveries = 0
-        failed_evidence = []
+        failed_evidence: list[str] = []
+        no_progress_actions: list[str] = []
         while True:
             if cmd.turn_id in self.cancelled_turns:
                 self.cancelled_turns.discard(cmd.turn_id)
@@ -460,7 +519,7 @@ class TurnToolLoopMixin:
                         host = plans.host_state(cmd.conversation_id, cmd.turn_id)
                         if not host["completion_ready"]:
                             completion_recoveries += 1
-                            if completion_recoveries > 2:
+                            if _completion_recovery_exhausted(completion_recoveries):
                                 yield TurnBlocked(reason="Host evidence does not satisfy pending tasks or verification"), None, None
                                 return
                             execution_messages.extend([
@@ -743,14 +802,41 @@ class TurnToolLoopMixin:
             if effective_agent_route == "agent-loop" and not tool_result.requires_approval:
                 if tool_result.success:
                     failed_evidence.clear()
+                    fingerprint = _observational_fingerprint(
+                        tool_name,
+                        tool_args,
+                        tool_result.output,
+                    )
+                    if fingerprint is None:
+                        no_progress_actions.clear()
+                    else:
+                        no_progress_actions.append(fingerprint)
+                        no_progress_actions = no_progress_actions[-4:]
+                        if _stuck_sequence(no_progress_actions):
+                            yield TurnBlocked(
+                                reason=(
+                                    "No progress: repeated unchanged observations; "
+                                    "mutate, validate, or reconcile evidence before rereading"
+                                )
+                            ), None, None
+                            return
                 else:
-                    fingerprint = hashlib.sha256((_canonical_tool_args(tool_args) + str(tool_result.error)).encode()).hexdigest()
+                    no_progress_actions.clear()
+                    fingerprint = hashlib.sha256(
+                        (
+                            _canonical_tool_args(tool_args)
+                            + str(tool_result.error)
+                        ).encode()
+                    ).hexdigest()
                     failed_evidence.append(fingerprint)
                     failed_evidence = failed_evidence[-4:]
-                    if (len(failed_evidence) >= 3 and len(set(failed_evidence[-3:])) == 1) or (
-                        len(failed_evidence) == 4 and failed_evidence[:2] == failed_evidence[2:]
-                    ):
-                        yield TurnBlocked(reason="No progress: repeated host failures; reconcile evidence before retrying"), None, None
+                    if _stuck_sequence(failed_evidence):
+                        yield TurnBlocked(
+                            reason=(
+                                "No progress: repeated host failures; "
+                                "reconcile evidence before retrying"
+                            )
+                        ), None, None
                         return
                 cadence = max(1, (request.loop_action_budget + 1) // 2)
                 if plans is not None and tool_calls % cadence == 0 and plans.ledger is not None:

@@ -242,7 +242,26 @@ class CompactionService:
             if any(key in lower for key in ("must ", "must not", "constraint", "decision", "decid", "regra", "requirement")):
                 decisions.append(line)
                 matched = True
-            if any(key in lower for key in ("error", "fail", "failed", "exception", "corrig", "fix", "repair")):
+            if any(
+                key in lower
+                for key in (
+                    "error",
+                    "fail",
+                    "failed",
+                    "exception",
+                    "corrig",
+                    "fix",
+                    "repair",
+                    "stderr",
+                    "exit code",
+                    "exit_code",
+                    "returncode",
+                    "command:",
+                    "tool:",
+                    "permission denied",
+                    "approval denied",
+                )
+            ):
                 errors.append(line)
                 matched = True
             if any(key in lower for key in ("todo", "pending", "next", "remaining", "falta", "pendente", "open issue")):

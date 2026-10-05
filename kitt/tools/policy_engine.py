@@ -35,6 +35,13 @@ class PolicyEngine:
         "sh", "bash", "zsh", "fish", "dash", "cmd", "cmd.exe",
         "powershell", "powershell.exe", "pwsh", "pwsh.exe",
     })
+    OPAQUE_INTERPRETER_EVAL_FLAGS = {
+        "python": frozenset({"-c"}),
+        "python3": frozenset({"-c"}),
+        "python.exe": frozenset({"-c"}),
+        "node": frozenset({"-e", "--eval", "-p", "--print"}),
+        "node.exe": frozenset({"-e", "--eval", "-p", "--print"}),
+    }
     DENIED_GIT_FLAGS = {
         "--no-index", "-C", "--git-dir", "--work-tree", "--exec-path",
         "--config-env",
@@ -254,9 +261,12 @@ class PolicyEngine:
                 return "DENY"
 
         if tool_name == "run_command":
-            command_decision = self.evaluate_argv(args.get("argv"))
+            argv = args.get("argv")
+            command_decision = self.evaluate_argv(argv)
             if command_decision == "DENY":
                 return "DENY"
+            if self._requires_explicit_approval_argv(argv):
+                return "ASK"
             # Repository autonomy is user-owned; model commands cannot change it.
             return "ALLOW" if getattr(self.autonomy, "allow_run_command_auto", False) else "ASK"
 
@@ -288,9 +298,12 @@ class PolicyEngine:
         ):
             return "ALLOW"
         if tool_name == "run_command":
-            command_decision = self.evaluate_argv(args.get("argv"))
+            argv = args.get("argv")
+            command_decision = self.evaluate_argv(argv)
             if command_decision == "DENY":
                 return "DENY"
+            if self._requires_explicit_approval_argv(argv):
+                return "ASK"
             if getattr(self.autonomy, "allow_run_command_auto", False):
                 return "ALLOW"
             return "ASK"
@@ -302,6 +315,20 @@ class PolicyEngine:
 
     def evaluate_command_request(self, req: CommandRequest) -> Permission:
         return self.evaluate_argv(req.argv)
+
+    def _requires_explicit_approval_argv(self, argv: Any) -> bool:
+        if not isinstance(argv, (list, tuple)) or not argv:
+            return False
+        executable = Path(str(argv[0])).name.lower()
+        eval_flags = self.OPAQUE_INTERPRETER_EVAL_FLAGS.get(executable, ())
+        if not eval_flags:
+            return False
+        return any(
+            arg in eval_flags
+            or (arg.startswith("--eval=") and "--eval" in eval_flags)
+            for arg in argv[1:]
+            if isinstance(arg, str)
+        )
 
     def _path_arg_safe(self, arg: str) -> bool:
         if arg.startswith(("/", "..", "~")):
@@ -445,6 +472,11 @@ class PolicyEngine:
 
         if executable in self.DISALLOWED_PROCESS_EXECUTABLES:
             return "DENY"
+        if self._requires_explicit_approval_argv(argv):
+            # Inline interpreter payloads are opaque to the argv policy. They
+            # remain executable after an exact explicit approval, but autonomy
+            # must never silently upgrade them to ALLOW.
+            return "ASK"
         if any(not self._path_arg_safe(arg) for arg in argv[1:] if not arg.startswith("-")):
             return "DENY"
 
