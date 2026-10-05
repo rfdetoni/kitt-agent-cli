@@ -42,6 +42,7 @@ RELEASE_CRITICAL_TESTS = (
     "tests/test_continuous_agent_runtime.py",
     "tests/test_agentic_remaining_acceptance.py",
     "tests/test_learn_privacy_acceptance.py",
+    "tests/test_reverse_proxy_predispatch.py",
     "tests/memory/test_memory_manager_shared.py",
     "tests/memory/test_shared_memory_client.py",
     "tests/native/test_kitt_integration_contract.py",
