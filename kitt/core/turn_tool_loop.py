@@ -365,24 +365,67 @@ class TurnToolLoopMixin:
                 self.cancelled_turns.discard(cmd.turn_id)
                 return
 
-            self._rebudget_execution_messages(execution_messages, request.system_prompt, exe_profile)
-            model_round_started_at = time.perf_counter()
-            stream_kwargs = {
-                "turn_id": cmd.turn_id,
-                "started_at": thinking_started_at,
-                "session_key": self._provider_session_key(
-                    exe_profile, cmd.conversation_id
-                ),
-                "route": effective_agent_route,
-                "conversation_id": cmd.conversation_id,
-                "tool_definitions": request.tool_definitions,
-                "loop_action_budget": request.loop_action_budget,
-                "context_envelope": (
-                    self.task_plans.context(request.context_envelope, cmd.conversation_id, cmd.turn_id)
-                    if effective_agent_route in {"agent-loop", "code-generation", "code-edit", "validate-diff"} and getattr(self, "task_plans", None) is not None
+            try:
+                self._rebudget_execution_messages(
+                    execution_messages,
+                    request.system_prompt,
+                    exe_profile,
+                )
+                context_envelope = (
+                    self.task_plans.context(
+                        request.context_envelope,
+                        cmd.conversation_id,
+                        cmd.turn_id,
+                    )
+                    if effective_agent_route
+                    in {
+                        "agent-loop",
+                        "code-generation",
+                        "code-edit",
+                        "validate-diff",
+                    }
+                    and getattr(self, "task_plans", None) is not None
                     else request.context_envelope
-                ),
-            }
+                )
+                model_round_started_at = time.perf_counter()
+                stream_kwargs = {
+                    "turn_id": cmd.turn_id,
+                    "started_at": thinking_started_at,
+                    "session_key": self._provider_session_key(
+                        exe_profile, cmd.conversation_id
+                    ),
+                    "route": effective_agent_route,
+                    "conversation_id": cmd.conversation_id,
+                    "tool_definitions": request.tool_definitions,
+                    "loop_action_budget": request.loop_action_budget,
+                    "context_envelope": context_envelope,
+                }
+                trace_event(
+                    logger,
+                    "tool_loop.dispatch_ready",
+                    turn_id=cmd.turn_id,
+                    route=effective_agent_route,
+                    tool_calls=tool_calls,
+                    context_segments=(
+                        len(context_envelope.get("segments", ()))
+                        if isinstance(context_envelope, dict)
+                        and isinstance(context_envelope.get("segments"), list)
+                        else 0
+                    ),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "tool loop pre-dispatch failed",
+                    extra={
+                        "extra_data": {
+                            "event": "tool_loop.pre_dispatch_error",
+                            "turn_id": cmd.turn_id,
+                            "route": effective_agent_route,
+                            "error": exc,
+                        }
+                    },
+                )
+                raise
             try:
                 signature = inspect.signature(self._stream_execution_response)
                 supports_kwargs = any(
@@ -438,6 +481,19 @@ class TurnToolLoopMixin:
                 thinking_started_at = time.time()
                 thinking_completed = False
                 continue
+            except Exception as exc:
+                logger.exception(
+                    "tool loop model dispatch failed",
+                    extra={
+                        "extra_data": {
+                            "event": "tool_loop.model_dispatch_error",
+                            "turn_id": cmd.turn_id,
+                            "route": effective_agent_route,
+                            "error": exc,
+                        }
+                    },
+                )
+                raise
 
             trace_event(
                 logger,
