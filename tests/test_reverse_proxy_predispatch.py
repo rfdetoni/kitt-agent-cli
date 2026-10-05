@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.core.execution_budget import ExecutionBudgetLedger
 from kitt.core.turn_model import TurnModelMixin
@@ -24,7 +22,7 @@ def _budget() -> ExecutionBudget:
     )
 
 
-def test_pre_accept_connection_refusal_is_retryable_but_timeout_is_not_for_proxy_policy():
+def test_pre_accept_connection_refusal_is_retryable_but_ambiguous_close_is_not():
     policy = RetryPolicy(
         RetryConfig(max_retries=2, retry_timeouts=False, jitter_ratio=0.0)
     )
