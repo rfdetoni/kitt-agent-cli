@@ -59,6 +59,16 @@ class RetryPolicy:
                 "too many requests",
                 "overloaded",
                 "temporarily unavailable",
+                # These failures happen before an HTTP request is accepted by
+                # the provider, so retrying cannot duplicate a WebChat turn.
+                "connection refused",
+                "connection reset",
+                "connection aborted",
+                "connection closed",
+                "network is unreachable",
+                "host is unreachable",
+                "temporary failure in name resolution",
+                "name or service not known",
             )
             return any(s in msg for s in status_strings) or any(k in msg for k in keywords)
         return False
