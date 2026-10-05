@@ -200,6 +200,7 @@ class TurnModelMixin:
 
         execution_budget = getattr(self, "execution_budgets", {}).get(turn_id)
         estimated_input = 0
+        prompt_allowance = 0
         estimated_input_cost = 0.0
         budget_stage = str(route or "execution")
         if execution_budget is not None:
@@ -210,8 +211,13 @@ class TurnModelMixin:
                         str(message.get("content") or "")
                     )
             if is_proxy:
-                estimated_input = execution_budget.gateway_prompt_allowance(min(1_000_000, max(1, int(getattr(profile, "context_window", 8192))) * 3))
-                if estimated_input <= 0:
+                prompt_allowance = execution_budget.gateway_prompt_allowance(
+                    min(
+                        1_000_000,
+                        max(1, int(getattr(profile, "context_window", 8192))) * 3,
+                    )
+                )
+                if estimated_input > prompt_allowance:
                     from kitt.core.execution_budget import ExecutionBudgetExceeded
                     raise ExecutionBudgetExceeded("input token budget exceeded")
             estimated_input_cost = estimate_execution_cost(
@@ -263,8 +269,20 @@ class TurnModelMixin:
                 "attempt_callback": _reserve_retry_attempt,
             }
             if is_proxy:
-                kwargs["request_metadata"].update({"max_upstream_attempts": attempt_grant,
-                    **({"max_prompt_tokens": estimated_input, "deadline_ms": min(240_000, execution_budget.remaining_duration_ms())} if execution_budget is not None else {})})
+                kwargs["request_metadata"].update({
+                    "max_upstream_attempts": attempt_grant,
+                    **(
+                        {
+                            "max_prompt_tokens": prompt_allowance,
+                            "deadline_ms": min(
+                                240_000,
+                                execution_budget.remaining_duration_ms(),
+                            ),
+                        }
+                        if execution_budget is not None
+                        else {}
+                    ),
+                })
             cancellation = TransportCancellation()
             cancellations = getattr(self, "_transport_cancellations", None)
             if cancellations is None:
