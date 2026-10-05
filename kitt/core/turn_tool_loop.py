@@ -166,6 +166,13 @@ def _stuck_sequence(fingerprints: list[str]) -> bool:
     )
 
 
+_MAX_COMPLETION_RECOVERIES = 2
+
+
+def _completion_recovery_exhausted(attempts: int) -> bool:
+    return int(attempts) > _MAX_COMPLETION_RECOVERIES
+
+
 def _observational_fingerprint(
     tool_name: str,
     tool_args: object,
@@ -512,7 +519,7 @@ class TurnToolLoopMixin:
                         host = plans.host_state(cmd.conversation_id, cmd.turn_id)
                         if not host["completion_ready"]:
                             completion_recoveries += 1
-                            if completion_recoveries > 2:
+                            if _completion_recovery_exhausted(completion_recoveries):
                                 yield TurnBlocked(reason="Host evidence does not satisfy pending tasks or verification"), None, None
                                 return
                             execution_messages.extend([
