@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.14 — reverse-proxy pre-dispatch hardening
+
+Reverse-proxy turns now retry only provably pre-accept connectivity failures, reserve actual estimated prompt usage instead of the whole remaining allowance, and emit explicit diagnostics around the boundary before model transport. Ambiguous connection failures remain non-retryable to avoid duplicating browser-backed turns.
+
+See [release notes](docs/RELEASE_0.83.14.md).
+
 ## Agent CLI 0.83.13 — remaining local agentic invariants
 
 This patch closes the remaining locally-testable authority, isolation, compaction, no-progress and execution-policy gaps without adding a new protocol, scheduler or authority. Managed-process controls are regression-tested against their original AuthoritySnapshot; real Git worktrees prove child isolation/integration/discard; compaction retains critical execution diagnostics; unchanged reread loops stop deterministically; opaque interpreter eval wrappers fail closed even under `allow-all`; and learning/experiment analytics remain privacy-safe and never auto-promote candidates.
