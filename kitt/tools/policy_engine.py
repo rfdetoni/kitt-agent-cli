@@ -35,6 +35,13 @@ class PolicyEngine:
         "sh", "bash", "zsh", "fish", "dash", "cmd", "cmd.exe",
         "powershell", "powershell.exe", "pwsh", "pwsh.exe",
     })
+    OPAQUE_INTERPRETER_EVAL_FLAGS = {
+        "python": frozenset({"-c"}),
+        "python3": frozenset({"-c"}),
+        "python.exe": frozenset({"-c"}),
+        "node": frozenset({"-e", "--eval", "-p", "--print"}),
+        "node.exe": frozenset({"-e", "--eval", "-p", "--print"}),
+    }
     DENIED_GIT_FLAGS = {
         "--no-index", "-C", "--git-dir", "--work-tree", "--exec-path",
         "--config-env",
@@ -444,6 +451,16 @@ class PolicyEngine:
             executable = Path(argv[0]).name.lower()
 
         if executable in self.DISALLOWED_PROCESS_EXECUTABLES:
+            return "DENY"
+        eval_flags = self.OPAQUE_INTERPRETER_EVAL_FLAGS.get(executable, ())
+        if eval_flags and any(
+            arg in eval_flags
+            or (arg.startswith("--eval=") and "--eval" in eval_flags)
+            for arg in argv[1:]
+        ):
+            # Inline interpreter payloads are opaque to the argv policy. Treat
+            # them fail-closed so autonomous mode cannot turn an ASK into an
+            # approval bypass for code hidden behind python -c/node -e.
             return "DENY"
         if any(not self._path_arg_safe(arg) for arg in argv[1:] if not arg.startswith("-")):
             return "DENY"
