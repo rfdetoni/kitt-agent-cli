@@ -62,11 +62,9 @@ class RetryPolicy:
                 # These failures happen before an HTTP request is accepted by
                 # the provider, so retrying cannot duplicate a WebChat turn.
                 "connection refused",
-                "connection reset",
-                "connection aborted",
-                "connection closed",
                 "network is unreachable",
                 "host is unreachable",
+                "no route to host",
                 "temporary failure in name resolution",
                 "name or service not known",
             )
