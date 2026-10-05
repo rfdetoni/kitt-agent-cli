@@ -8,7 +8,7 @@ This patch closes the remaining locally-testable agentic acceptance gaps with fo
 
 ## Runtime changes
 
-- Fail closed on opaque inline interpreter wrappers such as `python -c` and `node -e`, including under `/autonomy allow-all`.
+- Require explicit approval for opaque inline interpreter wrappers such as `python -c` and `node -e`, including under `/autonomy allow-all`; hard shell wrappers remain denied.
 - Preserve explicit command, stderr, exit-code/returncode and authority-denial evidence during context compaction.
 - Stop deterministic no-progress loops when the agent repeats the same unchanged observation three times or alternates unchanged observations A/B/A/B.
 - Reset the observation detector when output changes or a non-observational action occurs, so new evidence is not treated as stuck progress.
@@ -31,7 +31,7 @@ The distinct experimental reread-detector acceptance row is intentionally folded
 
 ## External evidence
 
-Podman, a real provider ContextEnvelope round trip, cross-provider secret observability and authenticated WebChat reconnect remain environment-dependent gates. Their status must not be promoted without executing the corresponding real environment.
+Real Docker and Podman lifecycle/replacement checks are executed in PR CI. A real provider ContextEnvelope round trip, cross-provider secret observability and authenticated WebChat reconnect remain environment-dependent gates and must not be promoted without executing those environments.
 
 ## Tests
 
