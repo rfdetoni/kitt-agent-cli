@@ -1230,8 +1230,7 @@ def install_agent_engineering(processor, registry) -> None:
     processor.task_plans = TaskPlanCoordinator(
         journal.ledger,
         registry.root_path,
-        getattr(registry, "child_tools", None)
-        or getattr(registry, "child_manager", None),
+        getattr(registry, "child_manager", None),
         max_iterations=min(
             3,
             int(getattr(processor.config, "max_correction_cycles", 2)) + 1,

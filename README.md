@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.83.15 — task-plan child-manager wiring
+
+Task-plan host-state evaluation now uses the retained-agent manager rather than the spawn-only `ChildTools` adapter, fixing the pre-dispatch `ChildTools.repo` crash seen before the first Reverse Proxy request.
+
+See [release notes](docs/RELEASE_0.83.15.md).
+
 ## Agent CLI 0.83.14 — reverse-proxy pre-dispatch hardening
 
 Reverse-proxy turns now retry only provably pre-accept connectivity failures, reserve actual estimated prompt usage instead of the whole remaining allowance, and emit explicit diagnostics around the boundary before model transport. Ambiguous connection failures remain non-retryable to avoid duplicating browser-backed turns.
