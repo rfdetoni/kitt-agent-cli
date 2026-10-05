@@ -35,6 +35,11 @@ def test_pre_accept_connection_refusal_is_retryable_but_timeout_is_not_for_proxy
             "<urlopen error [Errno 111] Connection refused>"
         )
     )
+    assert not policy.is_retryable(
+        ProviderConnectionError(
+            "KITT reverse proxy connection closed after request transmission"
+        )
+    )
 
 
 def test_reverse_proxy_reserves_actual_prompt_usage_not_full_allowance(tmp_path):
