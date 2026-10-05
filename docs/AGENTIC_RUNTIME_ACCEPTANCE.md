@@ -1,6 +1,6 @@
 # Agentic Runtime Acceptance Matrix
 
-Evidence baseline: Agent CLI **0.83.12**, Protocol **0.9.0**, Memory **0.9.1**, Reverse Proxy **4.9.4**.
+Evidence baseline: Agent CLI **0.83.13**, Protocol **0.9.0**, Memory **0.9.1**, Reverse Proxy **4.9.4**.
 
 This matrix preserves the 30 acceptance requirements as a catalogue, but it does not treat every row as a gate for every release. Evidence is recorded only when the named behavior was actually exercised. Unit or integration evidence is not promoted to E2E evidence, and infrastructure-dependent checks remain pending until executed against the real dependency.
 
@@ -22,7 +22,7 @@ Statuses describe the strongest evidence currently available:
 
 | Component | Evidence SHA | Workflow / run | Environment | Result |
 |---|---|---|---|---|
-| Agent CLI | `d74de318fd79c7ac6a2274feb5d68e885dbfdff4` | PR Checks / `37240776981`; Docker / `37240777022` | Ubuntu + Python 3.14; Windows package smoke; real Docker runtime; concurrency/recovery acceptance slice | SUCCESS |
+| Agent CLI | `d8c3401cebdc3fe0480b4e5c5552451983987a0a` | PR Checks / `37252349210`; Docker / `37252349208` | Ubuntu + Python 3.14; Windows package smoke; real Docker + Podman runtime; remaining agentic acceptance regressions | SUCCESS |
 | Memory | `3a3e9695ce8293e07ffd4839781a850834ad34dd` | ci / `37223640525` | Ubuntu; Rust workspace tests, real `kitt-memoryd` kill/restart recovery, MSRV 1.88, audit | SUCCESS |
 | Protocol | `48c71b3624e9029a35a839461fe745d55c3d9dae` | ci / `37223423740` | repository CI; generated round-trip and adversarial decoder coverage | SUCCESS |
 | Reverse Proxy | `e93703ff93b5926de99f7727aae2d5a64d837724` | CI / `37054991196` | Node repository CI | SUCCESS |
@@ -45,24 +45,24 @@ The Agent evidence SHA is the runtime candidate exercised by PR Checks and pinne
 | 9 | Two simultaneous prompts in the same conversation | agent | I | `tests/test_turn_concurrency_acceptance.py::test_same_conversation_turns_are_serialized` proves only one active turn per conversation while preserving cancellation release | none beyond transport-specific E2E when admission changes | VERIFIED-CI |
 | 10 | Different conversations execute in parallel | agent | I | `tests/test_turn_concurrency_acceptance.py::test_different_conversations_execute_in_parallel` starts two blocked turns in distinct conversations before either is released | none beyond provider-specific E2E when scheduling changes | VERIFIED-CI |
 | 11 | FIFO/resource locks without starvation/deadlock | agent | I | `tests/test_turn_concurrency_acceptance.py::test_conflicting_resource_waiters_are_fifo_without_deadlock` queues two conflicting writers and proves acquisition order plus bounded completion | broader stress only if coordinator algorithm changes | VERIFIED-CI |
-| 12 | ExecPolicy rejects shell/interpreter wrapping escapes | agent | R | critical suite exercises tool policy and shell-file mutation denial | direct wrapping-escape regression | PARTIAL |
-| 13 | `/autonomy allow-all` respects authority boundaries | agent | R | Agent critical suite: `tests/test_autonomy_policy.py` and approval delegation tests | interactive allow-all boundary E2E | PARTIAL |
-| 14 | stdin/signal uses original AuthoritySnapshot | agent | R | delegated approval binding is covered; original signal snapshot is not directly exercised | managed-process signal regression | PENDING |
+| 12 | ExecPolicy rejects shell/interpreter wrapping escapes | agent | R | `tests/test_autonomy_policy.py::TestAutonomyPolicy::test_opaque_interpreter_wrappers_are_denied_even_with_allow_all` proves shell wrappers are denied and inline interpreter payloads remain explicit-approval only under allow-all | none beyond new interpreter families when execution policy changes | VERIFIED-CI |
+| 13 | `/autonomy allow-all` respects authority boundaries | agent | R | `test_allow_all_changes_approval_ux_not_runtime_authority` covers capability, path-scope, control-plane, child-spawn and unknown-operation boundaries while allow-all removes only eligible approval UX | interactive TUI smoke only when autonomy UI wiring changes | VERIFIED-CI |
+| 14 | stdin/signal uses original AuthoritySnapshot | agent | R | `tests/test_agentic_remaining_acceptance.py::test_managed_process_control_uses_original_authority_snapshot` rejects principal/network-authority drift on stdin/signal and permits the later turn only with the original authority | platform-specific signal additions only when process control changes | VERIFIED-CI |
 | 15 | One budget includes classifier/context/validator/condenser | agent | R | Agent critical suite: global wallet and stage roll-up tests in `tests/test_execution_budget.py` | staged provider E2E only when budgeting transport changes | VERIFIED-CI |
 | 16 | Concurrent subagent wallet cannot overspend | agent | R | `test_concurrent_child_tool_and_cost_leases_cannot_overspend_parent` | none beyond integration when child execution boundary changes | VERIFIED-CI |
-| 17 | Worktree isolation between parent/children | agent | I | child lifecycle/admission is covered; worktree isolation itself is not directly covered | parent + child worktree integration | PARTIAL |
+| 17 | Worktree isolation between parent/children | agent | I | `test_git_worktrees_isolate_integrate_discard_and_cancel` uses real Git worktrees to prove child isolation, merge integration, discard and cancelled-worktree preservation/cleanup | none beyond alternate Git/worktree backends if introduced | VERIFIED-CI |
 | 18 | Selective rollback | agent | I | `tests/test_workspace_recovery_acceptance.py::test_selective_rollback_restores_only_requested_path` restores one captured path while leaving another later mutation untouched | none beyond mutation-boundary E2E when snapshot semantics change | VERIFIED-CI |
 | 19 | Artifact exact recovery | agent | I | `tests/test_workspace_recovery_acceptance.py::test_snapshot_recovers_exact_bytes_after_service_reconstruction` rebuilds the snapshot service from durable ledger/artifact state and restores exact binary bytes | none beyond storage-backend changes | VERIFIED-CI |
 | 20 | Artifact query retrieval | agent | I | `tests/test_workspace_recovery_acceptance.py::test_large_artifact_query_and_page_reads_remain_bounded` proves bounded page size and bounded query hit retrieval on a file-backed artifact | none beyond artifact query implementation changes | VERIFIED-CI |
-| 21 | Compaction preserves error/exit code/path/constraint | agent | R | runtime resilience suite exercises compaction routing/fallback | explicit preservation regression for all named fields | PARTIAL |
-| 22 | Stuck detector catches same action/error, alternating loop and monologue | agent | R | no directly matching current test found | deterministic progress/stall regression | PENDING |
+| 21 | Compaction preserves error/exit code/path/constraint | agent | R | `test_runtime_compaction_preserves_critical_execution_evidence` verifies command, stderr/error, exit code, affected path, constraint and failed validation survive compaction even when the narrative summarizer omits them | provider-backed condenser E2E only when compaction provider path changes | VERIFIED-CI |
+| 22 | Stuck detector catches same action/error, alternating loop and monologue | agent | R | `test_same_and_alternating_failures_share_the_deterministic_stuck_rule` plus `test_stuck_detector_is_bounded_and_resets_on_new_evidence` cover same/alternating failures, unchanged observations, changed-evidence reset and the bounded no-action completion-recovery threshold used by the production loop | provider E2E only when the loop/provider boundary changes | VERIFIED-CI |
 | 23 | No-progress from absent mutation/validation | agent | R | critical suite: `tests/test_required_workspace_mutation_guard.py`, completion and verification contracts | end-to-end no-progress recovery when loop changes | VERIFIED-CI |
-| 24 | Docker/Podman real provision/pause/resume | agent/runtime | E | PR Checks real Docker runtime succeeded | current-SHA real Podman execution and explicit pause/resume coverage | PARTIAL |
-| 25 | Runtime state persists after container replacement | agent/runtime | E | real Docker test `test_real_container_lifecycle_replacement_persistence_and_secret_sanitization` succeeded | current-SHA Podman replacement execution | PARTIAL |
+| 24 | Docker/Podman real provision/pause/resume | agent/runtime | E | PR Checks run `37252349210` executes `tests/integration/test_real_container_runtime.py` against both real Docker and real Podman, including provision, health, pause and resume | none beyond runtime-specific infrastructure changes | VERIFIED-CI |
+| 25 | Runtime state persists after container replacement | agent/runtime | E | the same real Docker and Podman integration test creates workspace state, terminates/replaces the container and verifies the file persists after replacement/reconnect | none beyond runtime storage/mount changes | VERIFIED-CI |
 | 26 | Secret does not appear in prompt/event/log | agent / proxy / runtime | R | critical secret/credential suites plus real Docker sanitization succeeded | final cross-provider/process observability scan | PARTIAL |
-| 27 | Reread detector | agent | X | previous dedicated progress-aware test no longer exists on current main | focused reread regression if detector remains a supported invariant | PENDING |
-| 28 | `kitt learn` does not collect sensitive arguments | agent | X | previous learn-privacy test no longer exists on current main | sanitized telemetry evidence if learn remains enabled | PENDING |
-| 29 | A/B experiment never promotes candidate without sufficient evidence | agent | X | previous learn-privacy test no longer exists on current main | explicit promotion evidence if experiment path remains enabled | PENDING |
+| 27 | Reread detector | agent | X | the reread invariant is folded into the host-owned no-progress detector; `test_stuck_detector_is_bounded_and_resets_on_new_evidence` blocks repeated unchanged reads/A-B loops and permits changed output | none while it remains part of the general progress guard | VERIFIED-CI |
+| 28 | `kitt learn` does not collect sensitive arguments | agent | X | `tests/test_learn_privacy_acceptance.py::test_kitt_learn_never_exposes_raw_sensitive_tool_arguments` proves process args/env and sensitive path material collapse to category-level signatures without the raw sentinel | none beyond new telemetry/export paths | VERIFIED-CI |
+| 29 | A/B experiment never promotes candidate without sufficient evidence | agent | X | `test_kitt_learn_experiments_never_auto_promote_candidates` verifies insufficient evidence yields EVIDENCE_REQUIRED and even a measurably better candidate returns `promote: false` | none unless an explicit promotion command is added | VERIFIED-CI |
 | 30 | Reverse Proxy preserves memory/context and continuity after reconnect | agent / proxy / memory | E | compatibility suite verifies structural context, stable sessions and retry boundaries | real supported WebChat reconnect with credentials/session continuity | BLOCKED |
 
 ## Promotion rules
@@ -78,6 +78,6 @@ The Agent evidence SHA is the runtime candidate exercised by PR Checks and pinne
 
 ## Current gaps
 
-The current release-critical suite is green on the recorded Agent SHA, but the catalogue is intentionally not all green. The strongest unresolved gaps are managed-process AuthoritySnapshot signal/stdin binding, parent/child worktree isolation, compaction field preservation, progress/stuck/reread/learn paths, current-SHA Podman coverage, final cross-provider secret observability, and real WebChat reconnect continuity.
+The current release-critical suite is green on the recorded Agent SHA. The remaining catalogue gaps are intentionally limited to boundaries that still require stronger external evidence: a real Agent ↔ Reverse Proxy provider ContextEnvelope round trip, final cross-provider/process secret observability, and authenticated WebChat reconnect continuity.
 
-Those gaps must be addressed only by the slice that owns them or by a release whose changed behavior makes them applicable.
+Those remaining gaps must be addressed only by the slice that owns them or by a release whose changed behavior makes them applicable.
