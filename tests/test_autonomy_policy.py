@@ -77,6 +77,138 @@ class TestAutonomyPolicy(unittest.TestCase):
             for argv in commands:
                 self.assertEqual(engine.evaluate_tool("run_command", {"argv": argv}), "DENY")
 
+    def test_opaque_interpreter_wrappers_are_denied_even_with_allow_all(self):
+        engine = PolicyEngine(autonomy=AutonomyPolicy.preset("allow_all"))
+        vectors = (
+            ["sh", "-c", "git status"],
+            ["bash", "-c", "git status"],
+            ["cmd", "/c", "git status"],
+            ["powershell", "-Command", "git status"],
+            ["python", "-c", "from pathlib import Path; Path('x').write_text('bad')"],
+            ["python3", "-c", "print('opaque')"],
+            ["node", "-e", "require('fs').writeFileSync('x','bad')"],
+            ["node", "--eval=console.log('opaque')"],
+            ["python", "../outside.py"],
+        )
+        for argv in vectors:
+            with self.subTest(argv=argv):
+                self.assertEqual(engine.evaluate_argv(argv), "DENY")
+                self.assertEqual(
+                    engine.evaluate_tool("run_command", {"argv": argv}),
+                    "DENY",
+                )
+
+        self.assertEqual(engine.evaluate_argv(["python", "scripts/check.py"]), "ASK")
+
+    def test_allow_all_changes_approval_ux_not_runtime_authority(self):
+        import tempfile
+        from pathlib import Path
+
+        from kitt.runtime.safe_runtime import SafeRuntime
+        from kitt.security.capabilities import (
+            CAP_REPO_READ,
+            CAP_REPO_WRITE,
+        )
+        from kitt.security.context import ExecutionSecurityContext
+        from kitt.tools.registry import ToolRegistry
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir()
+            registry = ToolRegistry(root_dir=tmpdir)
+            registry.policy.autonomy = AutonomyPolicy.preset("allow_all")
+            runtime = SafeRuntime(
+                workspace_root=root,
+                workspace_id="ws-allow-all",
+                conversation_id="conv-allow-all",
+                tool_registry=registry,
+            )
+            try:
+                writer = ExecutionSecurityContext.create_user_context(
+                    workspace_id="ws-allow-all",
+                    conversation_id="conv-allow-all",
+                    turn_id="turn-1",
+                    capabilities={CAP_REPO_WRITE},
+                    path_scope={"src"},
+                )
+                allowed = runtime.execute(
+                    "repo.write_file",
+                    {"path": "src/allowed.txt", "content": "ok"},
+                    turn_id="turn-1",
+                    security_context=writer,
+                )
+                self.assertTrue(allowed.success, allowed.error)
+                self.assertFalse(allowed.requires_approval)
+
+                outside = runtime.execute(
+                    "repo.write_file",
+                    {"path": "outside.txt", "content": "blocked"},
+                    turn_id="turn-1",
+                    security_context=writer,
+                )
+                self.assertFalse(outside.success)
+                self.assertFalse((root / "outside.txt").exists())
+
+                reader = ExecutionSecurityContext.create_user_context(
+                    workspace_id="ws-allow-all",
+                    conversation_id="conv-allow-all",
+                    turn_id="turn-2",
+                    capabilities={CAP_REPO_READ},
+                )
+                missing_capability = runtime.execute(
+                    "repo.write_file",
+                    {"path": "src/no-capability.txt", "content": "blocked"},
+                    turn_id="turn-2",
+                    security_context=reader,
+                )
+                self.assertFalse(missing_capability.success)
+                self.assertIn("not granted", missing_capability.error)
+
+                unrestricted_writer = ExecutionSecurityContext.create_user_context(
+                    workspace_id="ws-allow-all",
+                    conversation_id="conv-allow-all",
+                    turn_id="turn-3",
+                    capabilities={CAP_REPO_WRITE},
+                )
+                protected = runtime.execute(
+                    "repo.write_file",
+                    {"path": ".kitt/policy.json", "content": "{}"},
+                    turn_id="turn-3",
+                    security_context=unrestricted_writer,
+                )
+                self.assertFalse(protected.success)
+                self.assertTrue(protected.requires_approval)
+
+                child = ExecutionSecurityContext(
+                    workspace_id="ws-allow-all",
+                    conversation_id="conv-allow-all",
+                    turn_id="turn-child",
+                    origin="AGENT",
+                    principal_type="CHILD",
+                    principal_id="child-1",
+                    capabilities=frozenset({CAP_REPO_READ}),
+                    trace_id="trace-child",
+                )
+                child_spawn = runtime.execute(
+                    "children.spawn",
+                    {"task": "must remain blocked"},
+                    turn_id="turn-child",
+                    security_context=child,
+                )
+                self.assertFalse(child_spawn.success)
+                self.assertIn("not granted", child_spawn.error)
+
+                unknown = runtime.execute(
+                    "provider.unregistered.tool",
+                    {},
+                    turn_id="turn-3",
+                    security_context=unrestricted_writer,
+                )
+                self.assertFalse(unknown.success)
+                self.assertIn("Unknown runtime operation", unknown.error)
+            finally:
+                registry.close()
+
     def test_rtk_proxy_evaluation(self):
         engine = PolicyEngine()
         self.assertEqual(engine.evaluate_command("rtk git status"), "ALLOW")
