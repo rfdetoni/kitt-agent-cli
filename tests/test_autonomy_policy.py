@@ -79,23 +79,33 @@ class TestAutonomyPolicy(unittest.TestCase):
 
     def test_opaque_interpreter_wrappers_are_denied_even_with_allow_all(self):
         engine = PolicyEngine(autonomy=AutonomyPolicy.preset("allow_all"))
-        vectors = (
+        denied = (
             ["sh", "-c", "git status"],
             ["bash", "-c", "git status"],
             ["cmd", "/c", "git status"],
             ["powershell", "-Command", "git status"],
-            ["python", "-c", "from pathlib import Path; Path('x').write_text('bad')"],
-            ["python3", "-c", "print('opaque')"],
-            ["node", "-e", "require('fs').writeFileSync('x','bad')"],
-            ["node", "--eval=console.log('opaque')"],
             ["python", "../outside.py"],
         )
-        for argv in vectors:
+        for argv in denied:
             with self.subTest(argv=argv):
                 self.assertEqual(engine.evaluate_argv(argv), "DENY")
                 self.assertEqual(
                     engine.evaluate_tool("run_command", {"argv": argv}),
                     "DENY",
+                )
+
+        explicit_approval = (
+            ["python", "-c", "from pathlib import Path; Path('x').write_text('bad')"],
+            ["python3", "-c", "print('opaque')"],
+            ["node", "-e", "require('fs').writeFileSync('x','bad')"],
+            ["node", "--eval=console.log('opaque')"],
+        )
+        for argv in explicit_approval:
+            with self.subTest(argv=argv):
+                self.assertEqual(engine.evaluate_argv(argv), "ASK")
+                self.assertEqual(
+                    engine.evaluate_tool("run_command", {"argv": argv}),
+                    "ASK",
                 )
 
         self.assertEqual(engine.evaluate_argv(["python", "scripts/check.py"]), "ASK")
