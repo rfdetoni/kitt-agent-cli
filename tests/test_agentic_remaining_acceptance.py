@@ -19,7 +19,7 @@ from kitt.history.repository import HistoryRepository
 from kitt.history.session_tree import SessionTreeRepository
 from kitt.native.coordinator import WorkspaceCoordinator
 from kitt.runtime.process_lifecycle import ManagedProcessManager
-from kitt.security.capabilities import CAP_PROCESS_RUN
+from kitt.security.capabilities import CAP_NETWORK_ACCESS, CAP_PROCESS_RUN
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.registry import ToolRegistry
 
@@ -71,23 +71,29 @@ def test_managed_process_control_uses_original_authority_snapshot(tmp_path: Path
         )
         process_id = started["process_id"]
 
-        weakened = replace(
+        different_principal = replace(
             original,
             turn_id="turn-later",
-            capabilities=frozenset(),
+            principal_id="different-user",
         )
-        with pytest.raises(PermissionError, match="capability mismatch"):
+        with pytest.raises(PermissionError, match="executable_identity mismatch"):
             manager.stdin(
                 process_id,
                 "must-not-write\n",
-                security_context=weakened,
+                security_context=different_principal,
                 turn_id="turn-later",
             )
-        with pytest.raises(PermissionError, match="capability mismatch"):
+
+        widened_authority = replace(
+            original,
+            turn_id="turn-later",
+            capabilities=frozenset({CAP_PROCESS_RUN, CAP_NETWORK_ACCESS}),
+        )
+        with pytest.raises(PermissionError, match="network capability mismatch"):
             manager.signal(
                 process_id,
                 "TERM",
-                security_context=weakened,
+                security_context=widened_authority,
                 turn_id="turn-later",
             )
 
