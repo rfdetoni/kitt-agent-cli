@@ -65,16 +65,16 @@ class TestToolRegistry(unittest.TestCase):
     def test_run_command_uses_argv_and_workspace_cwd(self):
         workdir = self.root_path / "frontend"
         workdir.mkdir()
+        (workdir / "print_cwd.py").write_text(
+            "import os\nprint(os.path.basename(os.getcwd()))\n",
+            encoding="utf-8",
+        )
         self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
 
         res = self.registry.execute_tool(
             "run_command",
             {
-                "argv": [
-                    sys.executable,
-                    "-c",
-                    "import os; print(os.path.basename(os.getcwd()))",
-                ],
+                "argv": [sys.executable, "print_cwd.py"],
                 "cwd": "frontend",
                 "timeout_seconds": 30,
             },
@@ -90,7 +90,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_autonomous_run_command_does_not_reopen_approval_without_strong_sandbox(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("allow-all")
         args = {
-            "argv": [sys.executable, "-c", "print('autonomous-no-modal')"],
+            "argv": [sys.executable, "--version"],
             "timeout_seconds": 30,
         }
 
@@ -111,13 +111,13 @@ class TestToolRegistry(unittest.TestCase):
 
         self.assertTrue(result.success, result.error)
         self.assertFalse(result.requires_approval)
-        self.assertEqual(result.output.strip(), "autonomous-no-modal")
+        self.assertIn("Python", result.output)
         self.assertFalse(result.metadata["sandbox"]["strong"])
 
     def test_run_command_network_requires_explicit_elevation(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
         args = {
-            "argv": [sys.executable, "-c", "print('network-approved')"],
+            "argv": [sys.executable, "--version"],
             "network": True,
         }
         turn_id = "turn-network"
@@ -169,7 +169,7 @@ class TestToolRegistry(unittest.TestCase):
             expected_approval_id=approval_id,
         )
         self.assertTrue(approved.success, approved.error)
-        self.assertEqual(approved.output.strip(), "network-approved")
+        self.assertIn("Python", approved.output)
         self.assertEqual(
             approved.metadata["sandbox"]["profile"],
             "workspace-write+network",
@@ -180,7 +180,7 @@ class TestToolRegistry(unittest.TestCase):
         res = self.registry.execute_tool(
             "run_command",
             {
-                "argv": [sys.executable, "-c", "print('never')"],
+                "argv": [sys.executable, "--version"],
                 "network": "true",
             },
             enabled_tools=["run_command"],
@@ -257,7 +257,7 @@ class TestToolRegistry(unittest.TestCase):
         res = self.registry.execute_tool(
             "run_command",
             {
-                "argv": [sys.executable, "-c", "print('never')"],
+                "argv": [sys.executable, "--version"],
                 "cwd": "..",
             },
             enabled_tools=["run_command"],
