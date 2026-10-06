@@ -51,3 +51,45 @@ def test_failed_trust_write_does_not_change_router(monkeypatch):
     with pytest.raises(PermissionError, match='private'):
         asyncio.run(bind_instance_to_role(SimpleNamespace(_set_model_role=set_role),'code',instance()))
     assert calls == []
+
+
+def test_explicit_model_picker_trusts_selected_proxy_before_applying(monkeypatch, tmp_path):
+    from kitt.ui.provider_flow import _apply_pending_model
+
+    monkeypatch.setattr('pathlib.Path.home', lambda: tmp_path)
+    policy = ProviderEndpointTrustStore()
+    calls = []
+    toasts = []
+
+    async def set_role(*args):
+        policy.assert_trusted(args[2], args[3])
+        calls.append(args)
+
+    ui = SimpleNamespace(_set_model_role=set_role, application=None,
+        state=SimpleNamespace(add_toast=lambda text, **_kwargs: toasts.append(text)))
+    asyncio.run(_apply_pending_model(ui,'principal','chatgpt-web','kitt-reverse-proxy','http://127.0.0.1:3001'))
+    assert calls == [('principal','chatgpt-web','kitt-reverse-proxy','http://127.0.0.1:3001')], toasts
+    assert not policy.is_trusted('kitt-reverse-proxy','http://127.0.0.1:3002')
+
+
+def test_model_picker_with_no_auth_uses_the_same_trusted_selection_path(monkeypatch, tmp_path):
+    from kitt.ui.provider_flow import _apply_selected_model
+    from kitt.llm.auth import ProviderAuthService
+
+    monkeypatch.setattr('pathlib.Path.home', lambda: tmp_path)
+    monkeypatch.setattr(ProviderAuthService,'state',lambda *_args: SimpleNamespace(auth_type='none'))
+    calls = []
+    toasts = []
+
+    async def set_role(*args):
+        ProviderEndpointTrustStore().assert_trusted(args[2],args[3])
+        calls.append(args)
+
+    ui = SimpleNamespace(_set_model_role=set_role,application=None,
+        _profile_for_role=lambda _role: None,
+        _provider_defaults=lambda _provider: ('http://127.0.0.1:3000',None),
+        state=SimpleNamespace(add_toast=lambda text, **_kwargs: toasts.append(text)),
+        model_setup_model=SimpleNamespace(selected_model='chatgpt-web',selected_role='principal',
+            selected_provider='kitt-reverse-proxy',base_url_override='http://127.0.0.1:3001'))
+    asyncio.run(_apply_selected_model(ui))
+    assert calls == [('principal','chatgpt-web','kitt-reverse-proxy','http://127.0.0.1:3001')], toasts

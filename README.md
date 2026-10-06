@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.83.19 — consistent endpoint trust in model selection
+
+The pending model-selection/authentication path now grants the same exact-origin trust as explicit Reverse Proxy role binding and `/model`. Non-default managed ports stay usable when selected through either UI path, without trusting workspace configuration or neighboring endpoints. See [release notes](docs/RELEASE_0.83.19.md).
+
 ## Release 0.83.18 — Trust the explicitly selected managed proxy endpoint
 
 Selecting a Reverse Proxy instance for Context, Code or Validation now records its exact origin in the existing private endpoint trust store before saving the router. This fixes `Refusing provider egress` for newly allocated ports such as 3001. Merely listing or starting a service and workspace configuration do not grant trust. See [release notes](docs/RELEASE_0.83.18.md).

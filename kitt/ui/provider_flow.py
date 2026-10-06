@@ -411,6 +411,9 @@ def _accept_auth_login(ui, buffer) -> bool:
 
 async def _apply_pending_model(ui, role: str, model: str, provider: str, base_url: str | None) -> None:
     try:
+        if base_url:
+            from kitt.llm.endpoint_security import ProviderEndpointTrustStore
+            ProviderEndpointTrustStore().trust(provider, base_url)
         await ui._set_model_role(role, model, provider, base_url)
         ui.state.add_toast(f"✓ Cargo '{role.title()}' definido: {provider}/{model} (Esc para fechar)", duration=3.5)
     except Exception as exc:
@@ -465,14 +468,7 @@ async def _apply_selected_model(ui) -> None:
             ui.application.invalidate()
         return
 
-    try:
-        await ui._set_model_role(role, model, provider, base_url)
-        ui.state.add_toast(f"✓ Cargo '{role.title()}' definido: {provider}/{model} (Esc para fechar)", duration=3.5)
-    except Exception as exc:
-        ui.state.add_toast(f"Falha ao atualizar modelo: {exc}", persistent=True)
-    if ui.application:
-        ui.application.invalidate()
-
+    await _apply_pending_model(ui, role, model, provider, base_url)
 
 
 def _provider_endpoint_text(ui) -> str:
