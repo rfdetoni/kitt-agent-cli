@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.83.17 — REA MCP and evidence-qualified completion
+
+Add an optional built-in REA adapter that registers an installed local `rea mcp` server through the existing governed MCP boundary; KITT never downloads REA implicitly. Evidence records now retain authority, kind, confidence, coverage, limitations, producer metadata and a provenance digest in schema 11. The existing task-plan ledger projects verification obligations and residual unknowns into the trusted output contract so incomplete work stays explicit without introducing a second scheduler, ledger or wire protocol.
+
+See [release notes](docs/RELEASE_0.83.17.md) and [REA integration](docs/REA.md).
+
 ## Release 0.83.16 — execution boundary hardening
 
 Contain native Python fallback reads with RepositoryScanner and WorkspaceFileSystem. Run user regex in a disposable process with a 3 second execution deadline. Reserve both move/rename paths. Capture file and directory mutations before execution and guard rollback against changed contents. Directory recovery is bounded to 1000 entries/32 MiB and refuses links. Verify directory descendants. Recover the latest run state beyond 10000 events. Reject invalid UTF-8 in proxy SSE. Bound memory context to 8 seconds and receipt telemetry to 1 second; submit one receipt batch. A memory outage blocks the turn with a recoverable retry failure. Reconnect daemon streams by delivered cursor, deduplicate replay and buffer live events during attachment without resubmitting mutations. Release path leases if resource acquisition fails. Source-tree CLI version agrees with package version. Add release-critical regressions.
