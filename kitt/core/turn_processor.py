@@ -17,6 +17,7 @@ from kitt.router.router import TaskRouter
 from kitt.router.models import ModelCapabilities
 from kitt.router.policy import RoutingPolicy
 from kitt.memory.memory_manager import MemoryManager
+from kitt.memory.shared_client import KittMemoryUnavailable
 from kitt.skills.skill_manager import SkillManager
 from kitt.skills.discovery import SkillDiscovery
 from kitt.skills.loader import ProgressiveSkillLoader
@@ -1289,6 +1290,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     return
                 yield ev
 
+        except KittMemoryUnavailable as e:
+            yield TurnFailed(error=f"Memory service unavailable: {e}", turn_id=cmd.turn_id,
+                             conversation_id=cmd.conversation_id, recoverable=True, recovery_action="retry")
         except ProviderRecoverableError as e:
             trace_event(
                 logger,

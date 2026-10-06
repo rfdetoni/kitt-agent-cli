@@ -142,6 +142,9 @@ class TurnEventBridge:
         if not getattr(config, "daemon_enabled", False):
             return False
         if self._daemon_bridge is not None:
+            if not self._daemon_bridge.connected:
+                if not await self._daemon_bridge.reconnect():
+                    raise ConnectionError("Daemon disconnected; retry after reconnecting")
             if self._daemon_bridge.attached_session_id == conversation_id:
                 return True
             if await self._daemon_bridge.attach(conversation_id):

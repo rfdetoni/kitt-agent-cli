@@ -13,11 +13,37 @@ def full_scan_search(
     args: dict[str, Any],
     *,
     path_allowed=None,
+    _isolated: bool = False,
 ) -> dict[str, Any]:
     pattern = str(args.get("query", args.get("pattern", "")) or "")
     if not pattern or len(pattern) > 500:
         raise ValueError("Invalid search pattern")
     regex_mode = bool(args.get("regex", False))
+    if regex_mode and not _isolated:
+        import json
+        import os
+        import subprocess
+        import sys
+        root_path = Path(root).resolve()
+        paths = RepositoryScanner(root_path).scan_relative_files()
+        if path_allowed is not None:
+            paths = [path for path in paths if path_allowed(path)]
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = os.pathsep.join(str(path) for path in sys.path if path)
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "kitt.runtime.regex_worker"],
+                input=json.dumps({"root": str(root_path), "args": args, "paths": paths}),
+                capture_output=True, text=True, encoding="utf-8", env=environment, timeout=3.0,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("Regex search exceeded its 3 second execution deadline") from exc
+        if result.returncode != 0:
+            raise ValueError("Isolated regex search failed")
+        response = json.loads(result.stdout)
+        if "error" in response:
+            raise ValueError(response["error"])
+        return response
     case_sensitive = bool(args.get("case_sensitive", False))
     try:
         expression = re.compile(
@@ -59,7 +85,10 @@ def full_scan_search(
         try:
             if path.is_symlink() or not path.is_file():
                 continue
-            with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            import io
+            from kitt.security.workspace_fs import WorkspaceFileSystem
+            text, _ = WorkspaceFileSystem(root_path).read_text(relative)
+            with io.StringIO(text) as handle:
                 for line_number, line in enumerate(handle, 1):
                     match = expression.search(line)
                     if match is None:

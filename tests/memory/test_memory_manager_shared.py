@@ -75,7 +75,9 @@ class TestMemoryManagerShared(unittest.TestCase):
         context = manager.get_memory_context("services", max_tokens=300, turn_id="turn-1")
         self.assertIn("full hydrated memory", context)
         self.assertEqual([], client.remember_calls)
-        receipts = [item for item in client.manage_calls if item[0] == "receipt.record"]
+        batches = [item for item in client.manage_calls if item[0] == "receipt.record_batch"]
+        self.assertEqual(1, len(batches))
+        receipts = [("receipt", {"receipt": item}) for item in batches[0][1]["receipts"]]
         self.assertEqual(2, len(receipts))
         self.assertTrue(all(item[1]["receipt"]["presented"] for item in receipts))
         self.assertTrue(all(not item[1]["receipt"]["referenced"] for item in receipts))

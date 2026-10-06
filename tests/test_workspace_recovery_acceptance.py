@@ -141,6 +141,41 @@ class WorkspaceRecoveryAcceptanceTests(unittest.TestCase):
         self.assertIn(marker, hits[0]["excerpt"])
         self.assertEqual(hits[0]["content_hash"], artifact.content_hash)
 
+    def test_runtime_directory_move_is_snapshotted_and_rolled_back(self):
+        from types import SimpleNamespace
+        from kitt.core.agent_runtime import execute_tool_with_engineering
+        from kitt.core.run_coordinator import RunCoordinator
+        from kitt.security.workspace_mutations import move_path
+        from kitt.tools.registry_core import ToolResult
+        (self.root / "source").mkdir()
+        (self.root / "source" / "original.py").write_bytes(b"def original():\n    return 1\n")
+        processor = SimpleNamespace(run_coordinator=RunCoordinator(self.ledger),
+            workspace_snapshot_service=self.snapshots)
+        report = SimpleNamespace(ok=False, as_dict=lambda: {"ok": False}, failure_message=lambda: "fixture failure")
+        registry = SimpleNamespace(root_path=self.root, _agent_verifier=SimpleNamespace(verify=lambda *args, **kwargs: report))
+        def execute(*args, **kwargs):
+            move_path(self.snapshots.fs, "source", "destination")
+            return ToolResult(True, "moved")
+        result = execute_tool_with_engineering(processor, registry, execute, "kitt_runtime",
+            {"operation": "repo.move", "arguments": {"path": "source", "target": "destination"}},
+            conversation_id=self.conversation["id"], turn_id="move-turn")
+        self.assertFalse(result.success)
+        self.assertTrue(result.metadata["post_edit_rolled_back"])
+        self.assertEqual((self.root / "source" / "original.py").read_bytes(), b"def original():\n    return 1\n")
+        self.assertFalse((self.root / "destination").exists())
+
+    def test_directory_rollback_refuses_concurrent_descendant_changes(self):
+        (self.root / "tree").mkdir()
+        (self.root / "tree" / "file.txt").write_text("original")
+        snapshot = self.snapshots.capture(conversation_id=self.conversation["id"], turn_id="tree-turn", paths=["tree"])
+        changes = self.snapshots.diff(snapshot.snapshot_id, conversation_id=self.conversation["id"], turn_id="tree-turn")
+        guard = {item["path"]: item["current_sha256"] for item in changes}
+        self.assertEqual(changes[0]["status"], "UNCHANGED")
+        (self.root / "tree" / "new.txt").write_text("concurrent")
+        with self.assertRaisesRegex(ValueError, "Rollback conflict"):
+            self.snapshots.restore(snapshot.snapshot_id, conversation_id=self.conversation["id"], turn_id="tree-turn", expected_current=guard)
+        self.assertTrue((self.root / "tree" / "new.txt").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

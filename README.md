@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.83.16 — execution boundary hardening
+
+Contain native Python fallback reads with RepositoryScanner and WorkspaceFileSystem. Run user regex in a disposable process with a 3 second execution deadline. Reserve both move/rename paths. Capture file and directory mutations before execution and guard rollback against changed contents. Directory recovery is bounded to 1000 entries/32 MiB and refuses links. Verify directory descendants. Recover the latest run state beyond 10000 events. Reject invalid UTF-8 in proxy SSE. Bound memory context to 8 seconds and receipt telemetry to 1 second; submit one receipt batch. A memory outage blocks the turn with a recoverable retry failure. Reconnect daemon streams by delivered cursor, deduplicate replay and buffer live events during attachment without resubmitting mutations. Release path leases if resource acquisition fails. Source-tree CLI version agrees with package version. Add release-critical regressions.
+
+See [release notes](docs/RELEASE_0.83.16.md).
+
 ## Agent CLI 0.83.15 — task-plan child-manager wiring
 
 Task-plan host-state evaluation now uses the retained-agent manager rather than the spawn-only `ChildTools` adapter, fixing the pre-dispatch `ChildTools.repo` crash seen before the first Reverse Proxy request.
