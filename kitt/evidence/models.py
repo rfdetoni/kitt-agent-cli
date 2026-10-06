@@ -15,6 +15,27 @@ class EvidenceState(StrEnum):
     NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
+class EvidenceKind(StrEnum):
+    OBSERVATION = "OBSERVATION"
+    INFERENCE = "INFERENCE"
+    CLAIM = "CLAIM"
+    UNKNOWN = "UNKNOWN"
+
+
+class EvidenceConfidence(StrEnum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    UNKNOWN = "UNKNOWN"
+
+
+class EvidenceCoverage(StrEnum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    UNKNOWN = "UNKNOWN"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
 EVIDENCE_STRENGTH = {
     EvidenceState.MISSING: 0,
     EvidenceState.UNOBSERVED: 0,
@@ -69,6 +90,13 @@ class EvidenceRecord:
     evidence_refs: tuple[str, ...]
     finding_refs: tuple[str, ...]
     created_at: float
+    kind: EvidenceKind = EvidenceKind.OBSERVATION
+    authority: str = "host"
+    confidence: EvidenceConfidence = EvidenceConfidence.UNKNOWN
+    coverage: EvidenceCoverage = EvidenceCoverage.UNKNOWN
+    limitations: tuple[str, ...] = ()
+    producer: dict[str, Any] = field(default_factory=dict)
+    provenance_digest: str = ""
 
 
 @dataclass(frozen=True)
