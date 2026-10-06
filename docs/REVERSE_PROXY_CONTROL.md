@@ -24,7 +24,7 @@ Selecting an instance and pressing:
 - `e` binds Principal/Code (`chat`, `code-generation`, `code-edit`).
 - `v` binds Validation (`validate-diff`).
 
-Bindings are persisted through the existing router save path. No new routing database is introduced.
+An explicit role binding first trusts the selected instance’s exact origin for `kitt-reverse-proxy` in the existing user-private endpoint store, then persists it through the existing router save path. Other ports and provider identities remain untrusted. Listing or starting services does not grant trust; workspace configuration cannot authorize it. No new routing database is introduced.
 
 ## Example
 

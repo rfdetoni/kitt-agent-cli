@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.83.18 — Trust the explicitly selected managed proxy endpoint
+
+Selecting a Reverse Proxy instance for Context, Code or Validation now records its exact origin in the existing private endpoint trust store before saving the router. This fixes `Refusing provider egress` for newly allocated ports such as 3001. Merely listing or starting a service and workspace configuration do not grant trust. See [release notes](docs/RELEASE_0.83.18.md).
+
 ## Release 0.83.17 — REA MCP and evidence-qualified completion
 
 Add an optional built-in REA adapter that registers an installed local `rea mcp` server through the existing governed MCP boundary; KITT never downloads REA implicitly. Evidence records now retain authority, kind, confidence, coverage, limitations, producer metadata and a provenance digest in schema 11. The existing task-plan ledger projects verification obligations and residual unknowns into the trusted output contract so incomplete work stays explicit without introducing a second scheduler, ledger or wire protocol.
