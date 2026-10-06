@@ -21,6 +21,7 @@ RELEASE_CRITICAL_TESTS = (
     "tests/test_tool_payload_contract.py",
     "tests/test_tool_registry.py",
     "tests/test_tool_result_evidence.py",
+    "tests/test_rea_evidence_v2.py",
     "tests/test_provider_auth_contract.py",
     "tests/test_provider_catalog_contract.py",
     "tests/test_provider_runtime_contract.py",

@@ -446,6 +446,128 @@ class TaskPlanCoordinator:
             bool(complete),
         ).to_mapping()
 
+    def verification_snapshot(self, conversation_id, turn_id, *, host_execution=None):
+        """Project verification obligations from existing host-owned execution facts."""
+        host = dict(host_execution or self.host_state(conversation_id, turn_id))
+        plan = self.inspect(conversation_id, turn_id)
+        obligations = []
+
+        mutation_count = int(host.get("mutation_count") or 0)
+        verified_mutations = int(host.get("verified_mutation_count") or 0)
+        if mutation_count:
+            mutation_status = "VERIFIED" if verified_mutations == mutation_count else "OPEN"
+            obligations.append(
+                {
+                    "id": "mutations-verified",
+                    "title": "Every workspace mutation has current host verification",
+                    "status": mutation_status,
+                    "authority": "host-execution",
+                    "evidence": {
+                        "mutation_count": mutation_count,
+                        "verified_mutation_count": verified_mutations,
+                    },
+                    "required_next_evidence": (
+                        None
+                        if mutation_status == "VERIFIED"
+                        else "Run a registered verification that covers every pending mutation path."
+                    ),
+                }
+            )
+
+        for task in (plan or {}).get("tasks", []):
+            task_status = str(task.get("status") or "PENDING").upper()
+            status = (
+                "VERIFIED"
+                if task_status == "VERIFIED"
+                else "BLOCKED"
+                if task_status == "BLOCKED"
+                else "OPEN"
+            )
+            checks = task.get("checks") if isinstance(task.get("checks"), dict) else {}
+            obligations.append(
+                {
+                    "id": f"task:{task.get('task_id')}",
+                    "title": str(task.get("title") or task.get("local_id") or "Task")[:1000],
+                    "status": status,
+                    "authority": "task-plan",
+                    "evidence": {
+                        "task_status": task_status,
+                        "attempts": int(task.get("attempts") or 0),
+                        "check_statuses": {
+                            str(name): str((value or {}).get("status") or "UNKNOWN")
+                            for name, value in checks.items()
+                            if isinstance(value, dict)
+                        },
+                        "verified_digest": task.get("verified_digest"),
+                    },
+                    "required_next_evidence": (
+                        None
+                        if status == "VERIFIED"
+                        else "Verify the task against its current declared paths and registered checks."
+                    ),
+                }
+            )
+
+        active_children = []
+        if self.children is not None:
+            active_children = [
+                child.id
+                for child in self.children.repo.list(conversation_id, limit=100)
+                if child.parent_turn_id == turn_id
+                and child.state in {"CREATED", "QUEUED", "RUNNING", "WAITING_APPROVAL"}
+            ]
+        if active_children:
+            obligations.append(
+                {
+                    "id": "children-settled",
+                    "title": "All delegated work has reached a terminal state",
+                    "status": "OPEN",
+                    "authority": "child-lifecycle",
+                    "evidence": {"active_child_count": len(active_children)},
+                    "required_next_evidence": "Wait for or cancel active child work before completion.",
+                }
+            )
+
+        if not obligations and not bool(host.get("completion_ready", False)):
+            obligations.append(
+                {
+                    "id": "host-completion",
+                    "title": "Host completion preconditions are satisfied",
+                    "status": "OPEN",
+                    "authority": "host-execution",
+                    "evidence": {},
+                    "required_next_evidence": "Resolve the remaining host-owned completion precondition.",
+                }
+            )
+
+        unknowns = [
+            {
+                "id": f"unknown:{item['id']}",
+                "obligation_id": item["id"],
+                "reason": (
+                    "required verification is blocked"
+                    if item["status"] == "BLOCKED"
+                    else "required verification has not been observed"
+                ),
+                "required_next_evidence": item.get("required_next_evidence"),
+            }
+            for item in obligations
+            if item["status"] != "VERIFIED"
+        ]
+        status = (
+            "BLOCKED"
+            if any(item["status"] == "BLOCKED" for item in obligations)
+            else "OPEN"
+            if unknowns or not bool(host.get("completion_ready", False))
+            else "READY"
+        )
+        return {
+            "schema_version": 1,
+            "status": status,
+            "obligations": obligations,
+            "residual_unknowns": unknowns,
+        }
+
     def context(self, envelope, conversation_id, turn_id):
         if self.ledger is None:
             raise RuntimeError("Agent loop requires durable host evidence")
@@ -453,9 +575,15 @@ class TaskPlanCoordinator:
         result["segments"] = [
             s for s in result["segments"] if s.get("id") != "host-execution-state"
         ]
+        host_execution = self.host_state(conversation_id, turn_id)
         body = {
-            "host_execution": self.host_state(conversation_id, turn_id),
+            "host_execution": host_execution,
             "task_plan": self.inspect(conversation_id, turn_id),
+            "verification": self.verification_snapshot(
+                conversation_id,
+                turn_id,
+                host_execution=host_execution,
+            ),
         }
         result["segments"].append(
             {

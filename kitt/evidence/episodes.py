@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -7,7 +8,15 @@ import uuid
 from typing import Any
 
 from .ledger import SessionLedger
-from .models import EVIDENCE_STRENGTH, EvidenceRecord, EvidenceState, TaskEpisode
+from .models import (
+    EVIDENCE_STRENGTH,
+    EvidenceConfidence,
+    EvidenceCoverage,
+    EvidenceKind,
+    EvidenceRecord,
+    EvidenceState,
+    TaskEpisode,
+)
 
 
 _TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED", "BLOCKED"}
@@ -39,6 +48,47 @@ class TaskEpisodeService:
             completed_at=row["completed_at"],
             outcome=json.loads(row["outcome_json"] or "{}"),
             metadata=json.loads(row["metadata_json"] or "{}"),
+        )
+
+    @staticmethod
+    def _evidence_row(row) -> EvidenceRecord:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (KeyError, TypeError, json.JSONDecodeError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        try:
+            kind = EvidenceKind(str(metadata.get("kind") or "OBSERVATION"))
+        except ValueError:
+            kind = EvidenceKind.OBSERVATION
+        try:
+            confidence = EvidenceConfidence(str(metadata.get("confidence") or "UNKNOWN"))
+        except ValueError:
+            confidence = EvidenceConfidence.UNKNOWN
+        try:
+            coverage = EvidenceCoverage(str(metadata.get("coverage") or "UNKNOWN"))
+        except ValueError:
+            coverage = EvidenceCoverage.UNKNOWN
+        limitations = metadata.get("limitations")
+        producer = metadata.get("producer")
+        return EvidenceRecord(
+            id=row["id"],
+            episode_id=row["episode_id"],
+            dimension=row["dimension"],
+            check_id=row["check_id"],
+            state=EvidenceState(row["state"]),
+            result=str(row["result"] or ""),
+            evidence_refs=tuple(json.loads(row["evidence_refs_json"] or "[]")),
+            finding_refs=tuple(json.loads(row["finding_refs_json"] or "[]")),
+            created_at=float(row["created_at"]),
+            kind=kind,
+            authority=str(metadata.get("authority") or "host"),
+            confidence=confidence,
+            coverage=coverage,
+            limitations=tuple(limitations) if isinstance(limitations, list) else (),
+            producer=dict(producer) if isinstance(producer, dict) else {},
+            provenance_digest=str(metadata.get("provenance_digest") or ""),
         )
 
     def _goal(self, conversation_id: str):
@@ -121,6 +171,10 @@ class TaskEpisodeService:
             EvidenceState.PRESENT,
             result="Task objective captured in the durable episode boundary.",
             evidence_refs=(f"turn:{turn_id}",),
+            authority="host.task-episode",
+            confidence=EvidenceConfidence.HIGH,
+            coverage=EvidenceCoverage.COMPLETE,
+            producer={"component": "kitt-agent-cli"},
         )
         return episode
 
@@ -144,8 +198,57 @@ class TaskEpisodeService:
         result: str = "",
         evidence_refs: tuple[str, ...] | list[str] = (),
         finding_refs: tuple[str, ...] | list[str] = (),
+        kind: EvidenceKind | str = EvidenceKind.OBSERVATION,
+        authority: str = "host",
+        confidence: EvidenceConfidence | str = EvidenceConfidence.UNKNOWN,
+        coverage: EvidenceCoverage | str = EvidenceCoverage.UNKNOWN,
+        limitations: tuple[str, ...] | list[str] = (),
+        producer: dict[str, Any] | None = None,
     ) -> EvidenceRecord:
-        normalized = EvidenceState(str(state))
+        normalized = state if isinstance(state, EvidenceState) else EvidenceState(str(state))
+        evidence_kind = kind if isinstance(kind, EvidenceKind) else EvidenceKind(str(kind).upper())
+        confidence_level = (
+            confidence
+            if isinstance(confidence, EvidenceConfidence)
+            else EvidenceConfidence(str(confidence).upper())
+        )
+        coverage_level = (
+            coverage
+            if isinstance(coverage, EvidenceCoverage)
+            else EvidenceCoverage(str(coverage).upper())
+        )
+        authority_name = str(authority or "host").strip()[:160] or "host"
+        bounded_limitations = tuple(
+            dict.fromkeys(str(item).strip()[:512] for item in limitations if str(item).strip())
+        )[:16]
+        producer_data = dict(producer or {})
+        encoded_producer = json.dumps(
+            producer_data,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        if len(encoded_producer.encode("utf-8")) > 8192:
+            raise ValueError("Evidence producer metadata exceeds 8 KiB")
+        metadata = {
+            "schema_version": 2,
+            "kind": evidence_kind.value,
+            "authority": authority_name,
+            "confidence": confidence_level.value,
+            "coverage": coverage_level.value,
+            "limitations": list(bounded_limitations),
+            "producer": producer_data,
+        }
+        metadata["provenance_digest"] = hashlib.sha256(
+            json.dumps(
+                metadata,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
         now = time.time()
         with self.db.get_connection() as conn:
             current = conn.execute(
@@ -156,7 +259,7 @@ class TaskEpisodeService:
             if current:
                 current_state = EvidenceState(current["state"])
                 if EVIDENCE_STRENGTH.get(current_state, 0) > EVIDENCE_STRENGTH.get(normalized, 0):
-                    normalized = current_state
+                    return self._evidence_row(current)
                 record_id = current["id"]
                 created_at = float(current["created_at"])
             else:
@@ -165,12 +268,13 @@ class TaskEpisodeService:
             conn.execute(
                 """INSERT INTO evidence_records(
                        id,episode_id,dimension,check_id,state,result,
-                       evidence_refs_json,finding_refs_json,created_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?)
+                       evidence_refs_json,finding_refs_json,metadata_json,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(episode_id,dimension,check_id)
                    DO UPDATE SET state=excluded.state,result=excluded.result,
                        evidence_refs_json=excluded.evidence_refs_json,
-                       finding_refs_json=excluded.finding_refs_json""",
+                       finding_refs_json=excluded.finding_refs_json,
+                       metadata_json=excluded.metadata_json""",
                 (
                     record_id,
                     episode_id,
@@ -180,6 +284,7 @@ class TaskEpisodeService:
                     str(result or ""),
                     json.dumps(list(evidence_refs), ensure_ascii=False),
                     json.dumps(list(finding_refs), ensure_ascii=False),
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                     created_at,
                 ),
             )
@@ -193,7 +298,23 @@ class TaskEpisodeService:
             evidence_refs=tuple(evidence_refs),
             finding_refs=tuple(finding_refs),
             created_at=created_at,
+            kind=evidence_kind,
+            authority=authority_name,
+            confidence=confidence_level,
+            coverage=coverage_level,
+            limitations=bounded_limitations,
+            producer=producer_data,
+            provenance_digest=metadata["provenance_digest"],
         )
+
+    def list_evidence(self, episode_id: str) -> list[EvidenceRecord]:
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM evidence_records
+                   WHERE episode_id=? ORDER BY created_at ASC,id ASC""",
+                (episode_id,),
+            ).fetchall()
+        return [self._evidence_row(row) for row in rows]
 
     def record_deliverables(
         self,
@@ -240,8 +361,14 @@ class TaskEpisodeService:
                 EvidenceState.EXERCISED,
                 result="Context selection was exercised for this episode.",
                 evidence_refs=refs,
+                authority="host.context",
+                confidence=EvidenceConfidence.HIGH,
+                coverage=EvidenceCoverage.PARTIAL,
+                limitations=("Context selection is bounded by the active retrieval budget.",),
+                producer={"component": "context-engine"},
             )
         elif event_type == "ToolCompleted":
+            tool_name = str(payload.get("tool_name") or "")
             self.record_evidence(
                 episode_id,
                 "controlled-execution",
@@ -253,6 +380,11 @@ class TaskEpisodeService:
                     else "Tool execution was exercised and returned a failure."
                 ),
                 evidence_refs=refs,
+                authority="rea.mcp" if tool_name.startswith("mcp.rea.") else "host.tool-execution",
+                confidence=EvidenceConfidence.HIGH,
+                coverage=EvidenceCoverage.PARTIAL,
+                limitations=("One observed operation does not prove unexercised behavior.",),
+                producer={"tool": tool_name},
             )
         elif event_type == "ApprovalRequired":
             self.record_evidence(
@@ -262,6 +394,10 @@ class TaskEpisodeService:
                 EvidenceState.EXERCISED,
                 result="The permission boundary was exercised.",
                 evidence_refs=refs,
+                authority="host.approval-policy",
+                confidence=EvidenceConfidence.HIGH,
+                coverage=EvidenceCoverage.COMPLETE,
+                producer={"component": "approval-manager"},
             )
         elif event_type == "ValidationCompleted":
             self.record_evidence(
@@ -275,6 +411,11 @@ class TaskEpisodeService:
                     else "Validation completed with failures."
                 ),
                 evidence_refs=refs,
+                authority="host.validation",
+                confidence=EvidenceConfidence.HIGH,
+                coverage=EvidenceCoverage.PARTIAL,
+                limitations=("Validation proves only the checks that actually executed.",),
+                producer={"component": "verification-orchestrator"},
             )
 
     def settle_for_turn(self, turn_id: str, state: str, *, outcome: dict[str, Any] | None = None) -> None:

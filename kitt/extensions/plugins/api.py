@@ -303,6 +303,86 @@ class MCPAPI:
             "owned": True,
         }
 
+    def register_stdio(
+        self,
+        server_id: str,
+        command: str,
+        *,
+        args: Optional[List[str]] = None,
+        env: Optional[Dict[str, str]] = None,
+        enabled: bool = True,
+        trust: str = "restricted",
+        allow_tools: Optional[List[str]] = None,
+        deny_tools: Optional[List[str]] = None,
+        timeout_seconds: float = 30.0,
+        max_output_bytes: int = 2 * 1024 * 1024,
+    ) -> Dict[str, Any]:
+        """Register a plugin-owned local stdio MCP server without invoking a shell."""
+        self._require_manage()
+        normalized = str(server_id or "").strip().lower()
+        executable = str(command or "").strip()
+        trust = str(trust or "restricted").strip().lower()
+        if not normalized:
+            raise ValueError("MCP server_id is required")
+        if not executable or "\x00" in executable:
+            raise ValueError("MCP stdio command is required")
+        if trust not in {"trusted", "restricted", "isolated"}:
+            raise ValueError("MCP trust must be trusted, restricted, or isolated")
+
+        argv = list(args or [])
+        if len(argv) > 128 or any(
+            not isinstance(item, str) or "\x00" in item or len(item) > 8192
+            for item in argv
+        ):
+            raise ValueError("MCP stdio args must be a bounded list of strings")
+        environment = dict(env or {})
+        if len(environment) > 256 or any(
+            not isinstance(key, str)
+            or not isinstance(value, str)
+            or not key
+            or "\x00" in key
+            or "\x00" in value
+            or len(key) > 512
+            or len(value) > 8192
+            for key, value in environment.items()
+        ):
+            raise ValueError("MCP stdio env must be a bounded string map")
+
+        for existing in self.mcp_manager.list_servers():
+            if existing.server_id == normalized:
+                return {
+                    **self._safe_config(
+                        existing,
+                        self.mcp_manager.get_server_status(normalized).value,
+                    ),
+                    "registered": False,
+                    "owned": False,
+                }
+
+        from kitt.extensions.mcp.models import MCPServerConfig
+
+        config = MCPServerConfig(
+            server_id=normalized,
+            transport="stdio",
+            command=executable,
+            args=argv,
+            env=environment,
+            enabled=bool(enabled),
+            trust=trust,
+            allow_tools=list(allow_tools) if allow_tools is not None else None,
+            deny_tools=list(deny_tools or []),
+            timeout_seconds=float(timeout_seconds),
+            max_output_bytes=int(max_output_bytes),
+            source=f"plugin:{self.plugin_name}",
+        )
+        self.mcp_manager.register_server(config)
+        self._owned_server_ids.add(normalized)
+        return {
+            **self._safe_config(config, "DISCONNECTED"),
+            "registered": True,
+            "owned": True,
+        }
+
     async def connect(self, server_id: str):
         self._require_manage()
         return await self.mcp_manager.connect(server_id)
