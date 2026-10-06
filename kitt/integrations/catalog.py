@@ -67,6 +67,11 @@ _SPECS: tuple[IntegrationSpec, ...] = (
         recommended=True,
     ),
     IntegrationSpec(
+        "rea", "reverse-engineering", "REA local reverse-engineering MCP server",
+        commands=("rea",),
+        capabilities=("analysis.reverse_engineering", "mcp.server"),
+    ),
+    IntegrationSpec(
         "codex", "external-agent", "OpenAI Codex CLI child-agent backend",
         commands=("codex",), capabilities=("child.external"), recommended=True,
     ),
