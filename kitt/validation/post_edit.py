@@ -150,7 +150,26 @@ class PostEditValidator:
         diagnostics: list[GateDiagnostic] = []
         skipped = 0
         changed: list[str] = []
-        for raw in dict.fromkeys(str(path) for path in paths if path):
+        expanded = []
+        try:
+            for raw in dict.fromkeys(str(path) for path in paths if path):
+                relative = self.fs.relative(raw)
+                if self.fs.is_safe_directory(relative):
+                    for base, directories, files in os.walk(self.fs.absolute_lexical(relative), followlinks=False):
+                        for directory in directories:
+                            child = (Path(base) / directory).relative_to(self.fs.root).as_posix()
+                            if not self.fs.is_safe_directory(child):
+                                raise PermissionError("Directory validation refuses unsafe links")
+                        for filename in files:
+                            expanded.append((Path(base) / filename).relative_to(self.fs.root).as_posix())
+                            if len(expanded) > 1000:
+                                raise ValueError("Directory validation exceeds 1000 file budget")
+                else:
+                    expanded.append(relative)
+        except (OSError, ValueError) as exc:
+            return PostEditReport(ok=False, checked=1, skipped=0,
+                diagnostics=[GateDiagnostic(str(raw), "workspace-read", False, str(exc))])
+        for raw in dict.fromkeys(expanded):
             try:
                 relative = self.fs.relative(raw)
                 diagnostic, was_skipped = self._validate_one(relative)

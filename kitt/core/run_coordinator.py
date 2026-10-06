@@ -85,19 +85,15 @@ class RunCoordinator:
         if cached is not None:
             return cached
         latest = None
-        for event in self.ledger.events(
-            conversation_id,
-            turn_id=turn_id,
-            limit=10000,
-        ):
-            if event.event_type == "RunStateChanged":
-                latest = RunSnapshot(
-                    conversation_id,
-                    turn_id,
-                    str(event.payload.get("state") or "IDLE"),
-                    event.sequence,
-                    str(event.payload.get("reason") or ""),
-                )
+        event = self.ledger.latest_event(conversation_id, "RunStateChanged", turn_id=turn_id)
+        if event is not None:
+            latest = RunSnapshot(
+                conversation_id,
+                turn_id,
+                str(event.payload.get("state") or "IDLE"),
+                event.sequence,
+                str(event.payload.get("reason") or ""),
+            )
         snapshot = latest or RunSnapshot(conversation_id, turn_id, "IDLE")
         with self._lock:
             self._states[key] = snapshot
@@ -182,6 +178,14 @@ class RunCoordinator:
         return list(dict.fromkeys(paths))
 
     @classmethod
+    def _move_paths(cls, payload: dict[str, Any]) -> list[str]:
+        source = payload.get("source") or payload.get("path")
+        destination = payload.get("destination") or payload.get("target")
+        if not all(isinstance(path, str) and path.strip() for path in (source, destination)):
+            return ["."]
+        return list(dict.fromkeys([source.strip(), destination.strip()]))
+
+    @classmethod
     def mutation_paths(cls, tool_name: str, args: dict[str, Any]) -> list[str] | None:
         name = str(tool_name or "")
         payload = args if isinstance(args, dict) else {}
@@ -193,6 +197,8 @@ class RunCoordinator:
             inner = raw if isinstance(raw, dict) else {}
             if operation == "patch.apply":
                 return cls._patch_paths(str(inner.get("patch") or "")) or ["."]
+            if operation in {"repo.move", "repo.rename"}:
+                return cls._move_paths(inner)
             path = inner.get("path") or inner.get("file")
             if isinstance(path, str) and path.strip():
                 return [path.strip()]
@@ -201,6 +207,8 @@ class RunCoordinator:
             return None
         if name == "apply_patch":
             return cls._patch_paths(str(payload.get("patch") or "")) or ["."]
+        if name in {"move", "rename"}:
+            return cls._move_paths(payload)
         path = payload.get("path") or payload.get("file")
         if isinstance(path, str) and path.strip():
             return [path.strip()]

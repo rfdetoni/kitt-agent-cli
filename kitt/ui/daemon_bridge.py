@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
+import asyncio
 from typing import Any, Callable, Optional
 
 from kitt.core import turn_events as te
@@ -51,6 +52,15 @@ class DaemonUIBridge:
         self.attached_session_id: Optional[str] = None
         self._last_sequence_by_session: dict[str, int] = {}
         self._connected = False
+        self._watch_task = None
+        self._attach_lock = asyncio.Lock()
+        self._replaying = False
+        self._buffered_events = []
+
+    @property
+    def connected(self) -> bool:
+        return bool(self.client and getattr(self.client, "connected", getattr(self.client, "_connected", False))
+                    and not self.client.resync_required)
 
     @property
     def last_sequence_id(self) -> int:
@@ -66,7 +76,34 @@ class DaemonUIBridge:
             return False
         self.client = DaemonClient(self.workspace_dir, token=self.token)
         self._connected = await self.client.connect()
+        if self._connected and self._watch_task is None:
+            self._watch_task = asyncio.create_task(self._watch_connection())
         return self._connected
+
+    async def _watch_connection(self) -> None:
+        delay = 0.25
+        while self.client:
+            await asyncio.sleep(delay)
+            if self.connected:
+                delay = 0.25
+                continue
+            try:
+                await self.reconnect()
+            except (ConnectionError, RuntimeError, OSError, TimeoutError):
+                pass
+            delay = min(3.0, delay * 2)
+
+    async def reconnect(self) -> bool:
+        async with self._attach_lock:
+            if self.connected:
+                return True
+            if not self.client:
+                return False
+            await self.client.close()
+            if not await self.client.connect():
+                return False
+            session = self.attached_session_id
+            return await self._attach(session) if session else True
 
     async def request(self, action: str, params: Optional[dict] = None, timeout: float = 30.0) -> dict:
         if not self.client:
@@ -84,19 +121,46 @@ class DaemonUIBridge:
         return res.get("session_id")
 
     def _on_wire_event(self, event: Any) -> None:
+        if self._replaying:
+            if len(self._buffered_events) >= 2048:
+                raise ConnectionError("Daemon replay buffer exceeded its bound")
+            self._buffered_events.append(event)
+            return
+        self._deliver_wire_event(event)
+
+    def _deliver_wire_event(self, event: Any) -> None:
         sid = str(event.session_id or self.attached_session_id or "")
-        if sid:
-            self._last_sequence_by_session[sid] = max(
-                self._last_sequence_by_session.get(sid, 0), event.sequence_id
-            )
+        if sid and self.attached_session_id and sid != self.attached_session_id:
+            return
+        if event.sequence_id <= self._last_sequence_by_session.get(sid, 0):
+            return
         if self.event_sink:
             if sid and self.attached_session_id and sid != self.attached_session_id:
                 return
             mapped = map_daemon_event_to_turn_event(event)
             if mapped is not None:
                 self.event_sink(mapped)
+        if sid:
+            self._last_sequence_by_session[sid] = event.sequence_id
 
     async def attach(self, session_id: str) -> bool:
+        async with self._attach_lock:
+            return await self._attach(session_id)
+
+    async def _attach(self, session_id: str) -> bool:
+        self._replaying = True
+        completed = False
+        try:
+            completed = await self._attach_pages(session_id)
+            return completed
+        finally:
+            self._replaying = False
+            events, self._buffered_events = self._buffered_events, []
+            if completed:
+                for event in sorted(events, key=lambda item: item.sequence_id):
+                    self._deliver_wire_event(event)
+
+    async def _attach_pages(self, session_id: str) -> bool:
         if not self.client:
             return False
         res = await self.client.attach(
@@ -108,17 +172,17 @@ class DaemonUIBridge:
             return False
         self.attached_session_id = session_id
         for evt in res.get("events", []):
-            self._on_wire_event(evt)
+            self._deliver_wire_event(evt)
         while res.get("has_more"):
             res = await self.client.attach(
                 session_id,
                 on_event=self._on_wire_event,
-                last_sequence=int(res.get("next_sequence", self.last_sequence_id)),
+                last_sequence=self.last_sequence_id,
             )
             if res.get("status") != "ok":
                 return False
             for evt in res.get("events", []):
-                self._on_wire_event(evt)
+                self._deliver_wire_event(evt)
         return True
 
     async def detach(self) -> None:
@@ -258,9 +322,14 @@ class DaemonUIBridge:
         return res.get("status") == "ok"
 
     async def close(self) -> None:
+        if self._watch_task:
+            self._watch_task.cancel()
+            await asyncio.gather(self._watch_task, return_exceptions=True)
+            self._watch_task = None
         if self.client:
             try:
-                await self.detach()
+                if self.connected:
+                    await self.detach()
             finally:
                 await self.client.close()
         self.client = None

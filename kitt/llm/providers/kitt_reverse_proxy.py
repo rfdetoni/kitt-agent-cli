@@ -313,7 +313,10 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                     received_bytes += len(raw_line)
                     if received_bytes > 4 * 1024 * 1024:
                         raise ProviderProtocolError("KITT reverse proxy stream exceeds 4 MiB")
-                    line = raw_line.decode("utf-8", "replace").strip()
+                    try:
+                        line = raw_line.decode("utf-8", "strict").strip()
+                    except UnicodeDecodeError as exc:
+                        raise ProviderProtocolError("KITT reverse proxy returned invalid UTF-8") from exc
                     if not line.startswith("data:"):
                         continue
                     data_content = line[5:].lstrip()

@@ -28,18 +28,8 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _iter_files(root: Path) -> Iterable[Path]:
-    for base, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in _IGNORED_DIRS and not d.startswith(".git")]
-        for name in files:
-            path = Path(base) / name
-            if path.suffix.lower() not in _TEXT_EXTENSIONS:
-                continue
-            try:
-                if path.stat().st_size > 4 * 1024 * 1024:
-                    continue
-            except OSError:
-                continue
-            yield path
+    from kitt.index.scanner import RepositoryScanner
+    yield from RepositoryScanner(root).scan_files(max_files=100000, max_file_bytes=4 * 1024 * 1024)
 
 
 def _compact_line(line: str, match_start: int, match_len: int) -> str:
@@ -53,6 +43,11 @@ def _compact_line(line: str, match_start: int, match_len: int) -> str:
 def search(root: Path, query: str, *, regex: bool = False, case_sensitive: bool = False,
            max_results: int = 50, max_per_file: int = 8, context_lines: int = 1,
            token_budget: int = 1200) -> dict[str, Any]:
+    if regex:
+        from kitt.runtime.search_fallback import full_scan_search
+        return full_scan_search(root, {"query": query, "regex": True, "case_sensitive": case_sensitive,
+                                      "max_results": max_results, "max_per_file": max_per_file,
+                                      "token_budget": token_budget})
     flags = 0 if case_sensitive else re.IGNORECASE
     pattern = re.compile(query if regex else re.escape(query), flags)
     hits: list[dict[str, Any]] = []
@@ -62,8 +57,9 @@ def search(root: Path, query: str, *, regex: bool = False, case_sensitive: bool 
     matched_files: set[str] = set()
     for path in _iter_files(root):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            from kitt.security.workspace_fs import WorkspaceFileSystem
+            text, _ = WorkspaceFileSystem(root).read_text(path.relative_to(root), max_bytes=4 * 1024 * 1024)
+        except (OSError, PermissionError, ValueError):
             continue
         rel = path.relative_to(root).as_posix()
         lines = text.splitlines()
@@ -174,7 +170,8 @@ def symbols_in_file(root: Path, rel: str) -> list[dict[str, Any]]:
         raise PermissionError("path escapes repository root")
     # Preserve physical newlines so AST-derived UTF-8 byte offsets stay aligned
     # with the raw bytes later sliced by read_symbol/replace_symbol on Windows.
-    text = path.read_bytes().decode("utf-8", errors="replace")
+    from kitt.security.workspace_fs import WorkspaceFileSystem
+    text = WorkspaceFileSystem(root).read(rel).content.decode("utf-8", errors="replace")
     return _python_symbols(rel, text) if path.suffix.lower() == ".py" else _generic_symbols(rel, text)
 
 
@@ -199,7 +196,8 @@ def read_symbol(root: Path, symbol_id: str) -> dict[str, Any] | None:
     path = root / rel
     if not path.is_file():
         return None
-    raw = path.read_bytes()
+    from kitt.security.workspace_fs import WorkspaceFileSystem
+    raw = WorkspaceFileSystem(root).read(rel).content
     for sym in symbols_in_file(root, rel):
         if sym["id"] == symbol_id:
             source = raw[sym["start_byte"]:sym["end_byte"]].decode("utf-8", "replace")
@@ -213,8 +211,9 @@ def references(root: Path, symbol_id: str, limit: int = 100) -> list[dict[str, A
     out = []
     for path in _iter_files(root):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            from kitt.security.workspace_fs import WorkspaceFileSystem
+            text, _ = WorkspaceFileSystem(root).read_text(path.relative_to(root), max_bytes=4 * 1024 * 1024)
+        except (OSError, PermissionError, ValueError):
             continue
         rel = path.relative_to(root).as_posix()
         syms = symbols_in_file(root, rel)

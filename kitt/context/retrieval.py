@@ -41,8 +41,10 @@ class HybridRetrievalPipeline:
         native_engine: NativeCodeEngine | None = None,
         rag_config: RagConfig | None = None,
         embedding_provider: EmbeddingProvider | None = None,
+        graph_enabled: bool = True,
     ):
         self.index = index
+        self.graph_enabled = graph_enabled
         self.workspace_fs = WorkspaceFileSystem(
             index.root_path,
             max_file_bytes=max(index.max_file_bytes, 8 * 1024 * 1024),
@@ -191,7 +193,7 @@ class HybridRetrievalPipeline:
 
         graph_candidates: list[ContextCandidate] = []
         seed_paths = {candidate.path for candidate in deterministic_pool if candidate.path}
-        if seed_paths and (plan.include_dependencies or plan.include_dependents):
+        if self.graph_enabled and seed_paths and (plan.include_dependencies or plan.include_dependents):
             graph_candidates = self._graph_candidates(seed_paths, plan)
             if graph_candidates:
                 sources.append(

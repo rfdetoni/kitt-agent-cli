@@ -25,7 +25,8 @@ def _agent_version() -> str:
     try:
         return package_version("kitt-agent-cli")
     except PackageNotFoundError:
-        return "dev"
+        from kitt import __version__
+        return __version__
 
 
 def _log_runtime_identity() -> None:

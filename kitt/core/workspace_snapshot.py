@@ -4,8 +4,10 @@ import hashlib
 import json
 import time
 import uuid
+import base64
 from dataclasses import asdict
 from typing import Any
+from pathlib import Path
 
 from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt_protocol import WorkspaceSnapshot
@@ -58,6 +60,14 @@ class WorkspaceSnapshotService:
         snapshot_id = f"wsnap_{uuid.uuid4().hex}"
         entries: list[dict[str, Any]] = []
         for rel in normalized:
+            if self.fs.is_safe_directory(rel):
+                raw = self._tree(rel)
+                artifact = self.artifacts.put(self.workspace_id, raw, "WORKSPACE_SNAPSHOT_DIRECTORY",
+                    f"Pre-mutation snapshot of {rel}", conversation_id=conversation_id or None,
+                    turn_id=turn_id or None, sensitivity="PRIVATE", metadata={"snapshot_id": snapshot_id, "path": rel})
+                entries.append({"path": rel, "existed": True, "kind": "directory", "artifact_id": artifact.id,
+                                "sha256": "directory:" + hashlib.sha256(raw).hexdigest()})
+                continue
             if not self.fs.exists_regular(rel):
                 entries.append(
                     {
@@ -122,6 +132,39 @@ class WorkspaceSnapshotService:
             )
         return snapshot
 
+    def _tree(self, rel: str) -> bytes:
+        """Bounded, deterministic manifest; links and special files fail closed."""
+        import os
+        import stat
+        manifest = []
+        size = 0
+        base = self.fs.absolute_lexical(rel)
+        for current, dirs, files in os.walk(base, followlinks=False):
+            for name in sorted(dirs + files):
+                path = Path(current) / name
+                relative = path.relative_to(base).as_posix()
+                workspace_path = path.relative_to(self.fs.root).as_posix()
+                st = path.lstat()
+                if stat.S_ISLNK(st.st_mode) or self.fs._windows_reparse_point(st):
+                    raise PermissionError("Snapshot refuses links/reparse points")
+                if stat.S_ISDIR(st.st_mode):
+                    item = {"path": relative, "directory": True}
+                elif stat.S_ISREG(st.st_mode):
+                    data = self.fs.read(workspace_path).content
+                    size += len(data)
+                    item = {"path": relative, "content": base64.b64encode(data).decode("ascii")}
+                else:
+                    raise PermissionError("Snapshot refuses special files")
+                manifest.append(item)
+                if len(manifest) > 1000 or size > 32 * 1024 * 1024:
+                    raise ValueError("Directory snapshot exceeds recovery budget")
+        return json.dumps(sorted(manifest, key=lambda item: item["path"]), sort_keys=True, separators=(",", ":")).encode()
+
+    def _current_sha(self, rel: str) -> str | None:
+        if self.fs.is_safe_directory(rel):
+            return "directory:" + hashlib.sha256(self._tree(rel)).hexdigest()
+        return self.fs.read(rel).sha256 if self.fs.exists_regular(rel) else None
+
     def _load_record(
         self,
         snapshot_id: str,
@@ -185,8 +228,8 @@ class WorkspaceSnapshotService:
             if selected is not None and rel not in selected:
                 continue
             existed = bool(item.get("existed"))
-            current_exists = self.fs.exists_regular(rel)
-            current_sha = self.fs.read(rel).sha256 if current_exists else None
+            current_sha = self._current_sha(rel)
+            current_exists = current_sha is not None
             before_sha = str(item.get("sha256") or "") or None
             if existed and not current_exists:
                 status = "DELETED"
@@ -287,6 +330,24 @@ class WorkspaceSnapshotService:
             if selected is not None and rel not in selected:
                 continue
             existed = bool(item.get("existed"))
+            if item.get("kind") == "directory":
+                raw = self.artifacts.read(str(item.get("artifact_id") or ""))
+                if "directory:" + hashlib.sha256(raw).hexdigest() != item.get("sha256"):
+                    raise ValueError(f"snapshot artifact digest mismatch for {rel}")
+                from kitt.security.workspace_mutations import delete_path
+                if self.fs.is_safe_directory(rel):
+                    delete_path(self.fs, rel, recursive=True)
+                elif self.fs.exists_regular(rel):
+                    self.fs.unlink(rel, expected_sha256=None if expected_current is None else expected_current[rel])
+                self.fs.create_directory(rel, parents=True, exist_ok=True)
+                for entry in json.loads(raw):
+                    target = rel + "/" + entry["path"]
+                    if entry.get("directory"):
+                        self.fs.create_directory(target, parents=True, exist_ok=True)
+                    else:
+                        self.fs.atomic_write(target, base64.b64decode(entry["content"], validate=True))
+                restored.append(rel)
+                continue
             if existed:
                 artifact_id = str(item.get("artifact_id") or "")
                 if not artifact_id:
@@ -302,6 +363,10 @@ class WorkspaceSnapshotService:
                 restored.append(rel)
             elif self.fs.exists_regular(rel):
                 self.fs.unlink(rel, expected_sha256=None if expected_current is None else expected_current[rel])
+                restored.append(rel)
+            elif self.fs.is_safe_directory(rel):
+                from kitt.security.workspace_mutations import delete_path
+                delete_path(self.fs, rel, recursive=True)
                 restored.append(rel)
 
         if self.ledger is not None and conversation_id:

@@ -40,7 +40,7 @@ EVENT_STATE = {
     "TurnFailed": "FAILED", "TurnBlocked": "BLOCKED", "TurnCancelled": "CANCELLED",
 }
 MUTATING_LEGACY = {"write_file", "apply_patch", "run_command", "child_spawn", "goal_create", "goal_add_gate", "harness_remember", "queue_input"}
-FILE_MUTATIONS = {"write_file", "apply_patch"}
+FILE_MUTATIONS = {"write_file", "apply_patch", "move", "rename", "delete", "create_directory"}
 TOOL_LEASE_HEARTBEAT_SECONDS = 60.0
 
 
@@ -435,7 +435,7 @@ def adaptive_retrieval_ratio(processor, task: Any, cmd: TurnCommand) -> float:
 
 
 def _is_mutating(name: str, args: dict[str, Any]) -> bool:
-    if name in MUTATING_LEGACY:
+    if name in MUTATING_LEGACY or name in FILE_MUTATIONS:
         return True
     if name != "kitt_runtime":
         return False
@@ -450,11 +450,15 @@ def _is_mutating(name: str, args: dict[str, Any]) -> bool:
 
 def _file_mutation(name: str, args: dict[str, Any]) -> bool:
     return name in FILE_MUTATIONS or (
-        name == "kitt_runtime" and str(args.get("operation") or "") in {"repo.edit_symbol", "patch.apply"}
+        name == "kitt_runtime" and str(args.get("operation") or "") in {"repo.edit_symbol", "patch.apply", "repo.write_file", "repo.move", "repo.rename", "repo.delete", "repo.create_directory"}
     )
 
 
 def _affected_paths(processor, name: str, args: dict[str, Any], result: Any) -> list[str]:
+    from kitt.core.run_coordinator import RunCoordinator
+    mutation_paths = RunCoordinator.mutation_paths(name, args)
+    if mutation_paths and "." not in mutation_paths:
+        return mutation_paths
     try:
         found = processor._paths_from_tool(name, args, result)
         if found:
@@ -990,19 +994,24 @@ def execute_tool_with_engineering(
                 arguments,
             )
             claimed = True
-        if resource_coordinator is not None and conv and turn:
-            resources = resource_coordinator.resources_for_tool(
-                name,
-                arguments,
-                conversation_id=conv,
-            )
-            if resources:
-                resource_coordinator.acquire_many(
-                    resources,
-                    resource_owner,
-                    intent=f"{name} execution",
+        try:
+            if resource_coordinator is not None and conv and turn:
+                resources = resource_coordinator.resources_for_tool(
+                    name,
+                    arguments,
+                    conversation_id=conv,
                 )
-                resource_claimed = True
+                if resources:
+                    resource_coordinator.acquire_many(
+                        resources,
+                        resource_owner,
+                        intent=f"{name} execution",
+                    )
+                    resource_claimed = True
+        except BaseException:
+            if claimed:
+                coordinator.release_tool(conv, turn)
+            raise
 
     lease_stop = threading.Event()
     lease_thread = None

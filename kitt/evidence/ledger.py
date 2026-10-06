@@ -532,6 +532,16 @@ class SessionLedger:
             rows = conn.execute(sql, args).fetchall()
         return [self._row(row) for row in rows]
 
+    def latest_event(self, conversation_id: str, event_type: str, *, turn_id: str | None = None) -> SessionEventRecord | None:
+        sql = "SELECT * FROM session_events WHERE conversation_id=? AND event_type=?"
+        args = [conversation_id, event_type]
+        if turn_id:
+            sql += " AND turn_id=?"
+            args.append(turn_id)
+        with self.db.get_connection() as conn:
+            row = conn.execute(sql + " ORDER BY sequence DESC LIMIT 1", args).fetchone()
+        return self._row(row) if row else None
+
     def latest_model_request(
         self,
         conversation_id: str,
@@ -558,4 +568,3 @@ class SessionLedger:
 
 class EventLedger(SessionLedger):
     """Canonical name for the durable append-only execution event log."""
-

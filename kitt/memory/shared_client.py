@@ -9,6 +9,7 @@ import sys
 import time
 import threading
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,23 @@ class KittMemoryClient:
         else:
             root = Path(os.getenv("XDG_CONFIG_HOME") or (Path.home() / ".config"))
         self.token_path = Path(token_path or os.getenv("KITT_MEMORY_TOKEN_PATH") or (root / "kitt" / "memory" / "auth.token"))
+        self._budgets = threading.local()
         self.timeout = max(0.05, min(float(timeout), 10.0))
+
+    @contextmanager
+    def request_budget(self, seconds: float):
+        previous = getattr(self._budgets, "deadline", float("inf"))
+        self._budgets.deadline = min(previous, time.monotonic() + seconds)
+        try:
+            yield
+        finally:
+            self._budgets.deadline = previous
+
+    def _deadline(self, seconds: float) -> float:
+        deadline = min(time.monotonic() + seconds, getattr(self._budgets, "deadline", float("inf")))
+        if deadline <= time.monotonic():
+            raise KittMemoryUnavailable("memory request budget exhausted")
+        return deadline
 
     def _split_address(self) -> tuple[str, int]:
         raw = self.address.strip()
@@ -145,7 +162,7 @@ class KittMemoryClient:
         wire = frame.dumps().encode("utf-8") + b"\n"
         if len(wire) > MAX_FRAME_BYTES:
             raise KittMemoryUnavailable("request exceeds frame limit")
-        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
+        deadline = self._deadline(self.timeout if timeout is None else timeout)
         try:
             sock = socket.create_connection((host, port), timeout=max(.01, deadline - time.monotonic()))
         except (OSError, TimeoutError) as exc:
@@ -188,7 +205,7 @@ class KittMemoryClient:
                             raise
                         if len(_START_ATTEMPTS) >= 64: _START_ATTEMPTS.pop(next(iter(_START_ATTEMPTS)))
                         _START_ATTEMPTS[key] = now
-            deadline = time.monotonic() + min(3.0, self.timeout)
+            deadline = self._deadline(min(3.0, self.timeout))
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0: raise _MemoryConnectUnavailable("kitt-memoryd startup timed out")

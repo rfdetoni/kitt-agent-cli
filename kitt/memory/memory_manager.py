@@ -6,6 +6,7 @@ from typing import Any, List, Literal
 import hashlib
 import json
 import time
+from contextlib import nullcontext
 
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.memory.shared_client import KittMemoryClient
@@ -249,30 +250,19 @@ class MemoryManager:
         if not turn_id:
             return
         now = int(time.time())
-        for item in items:
-            if not item.memory_id or not item.recall_trace_id:
-                continue
+        receipts = [{
+            "recall_trace_id": item.recall_trace_id, "memory_id": item.memory_id,
+            "consumer": "kitt-agent-cli", "purpose": purpose, "presented": True,
+            "referenced": False, "used_for_action": False, "outcome": "",
+            "turn_id": turn_id, "consumed_at": now,
+        } for item in items if item.memory_id and item.recall_trace_id][:128]
+        if receipts:
             try:
-                self.client.manage(
-                    "receipt.record",
-                    {
-                        "receipt": {
-                            "recall_trace_id": item.recall_trace_id,
-                            "memory_id": item.memory_id,
-                            "consumer": "kitt-agent-cli",
-                            "purpose": purpose,
-                            "presented": True,
-                            "referenced": False,
-                            "used_for_action": False,
-                            "outcome": "",
-                            "turn_id": turn_id,
-                            "consumed_at": now,
-                        }
-                    },
-                )
+                with self.client.request_budget(1.0) if isinstance(self.client, KittMemoryClient) else nullcontext():
+                    self.client.manage("receipt.record_batch", {"receipts": receipts})
             except Exception:
-                # Evidence telemetry must never make memory recall unavailable.
-                continue
+                # Telemetry is bounded and cannot invalidate a successful recall.
+                pass
 
     def get_memory_context(
         self,
@@ -281,6 +271,10 @@ class MemoryManager:
         *,
         turn_id: str = "",
     ) -> str:
+        with self.client.request_budget(8.0) if isinstance(self.client, KittMemoryClient) else nullcontext():
+            return self._get_memory_context(prompt, max_tokens, turn_id=turn_id)
+
+    def _get_memory_context(self, prompt: str, max_tokens: int, *, turn_id: str) -> str:
         items = (
             self.get_relevant_memories(prompt, max_tokens=max_tokens)
             if prompt
