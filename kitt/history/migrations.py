@@ -6,7 +6,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -684,6 +684,7 @@ SCHEMA_V5_STATEMENTS = [
         result TEXT NOT NULL DEFAULT '',
         evidence_refs_json TEXT NOT NULL,
         finding_refs_json TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
         created_at REAL NOT NULL,
         UNIQUE(episode_id, dimension, check_id),
         FOREIGN KEY(episode_id) REFERENCES task_episodes(id) ON DELETE CASCADE
@@ -1029,6 +1030,15 @@ class MigrationRunner:
             "TEXT",
         )
 
+    def _migrate_10_to_11(self, conn: sqlite3.Connection) -> None:
+        # Evidence v2 extends existing records without introducing a second ledger.
+        self._add_column_if_missing(
+            conn,
+            "evidence_records",
+            "metadata_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
+
     def migrate(self, conn: sqlite3.Connection) -> None:
         current_version = self.get_current_version(conn)
         if current_version == self.target_version:
@@ -1056,7 +1066,7 @@ class MigrationRunner:
             )
             return
 
-        if current_version < 1 or current_version > 9:
+        if current_version < 1 or current_version > 10:
             raise IncompatibleSchemaError(
                 f"State schema version {current_version} is unsupported; supported "
                 f"upgrade range is 1..{self.target_version}."
@@ -1135,6 +1145,13 @@ class MigrationRunner:
                 "Migrated KITT SQLite schema to version 10; legacy global "
                 "remembered approval rules were invalidated when required"
             )
+
+        if current_version == 10:
+            with conn:
+                self._migrate_10_to_11(conn)
+                self._set_version(conn, 11)
+            current_version = 11
+            logger.info("Migrated KITT SQLite schema to version 11 (Evidence v2 metadata)")
 
         if current_version != self.target_version:
             raise IncompatibleSchemaError(
