@@ -320,7 +320,11 @@ class TurnContextMixin:
 
         filter_res = semantic_filter.filter_and_plan(
             cmd.prompt,
-            session_key=self._provider_session_key(ctx_profile, cmd.conversation_id),
+            session_key=self._provider_session_key(
+                ctx_profile,
+                cmd.conversation_id,
+                isolated_turn_id=cmd.turn_id if cmd.no_history else None,
+            ),
             attempt_callback=reserve_classifier_attempt,
             usage_callback=observe_classifier_usage,
         )
@@ -504,11 +508,12 @@ class TurnContextMixin:
                     session_key=self._provider_session_key(
                         getattr(sf_client, "profile", None),
                         cmd.conversation_id,
+                        isolated_turn_id=cmd.turn_id if cmd.no_history else None,
                     ),
                     turn_id=cmd.turn_id,
                 )
 
-        working_context = self.working_set.context(cmd.conversation_id)
+        working_context = "" if cmd.no_history else self.working_set.context(cmd.conversation_id)
         if working_context:
             context_map_str = f"Working Set:\n{working_context}\n\n{context_map_str}".strip()
 
@@ -608,9 +613,13 @@ class TurnContextMixin:
         else:
             principal_task_prompt = cmd.prompt
 
-        history_context = self._history_context(
-            cmd.conversation_id,
-            exclude_prompt=cmd.prompt,
+        history_context = (
+            ""
+            if cmd.no_history
+            else self._history_context(
+                cmd.conversation_id,
+                exclude_prompt=cmd.prompt,
+            )
         )
         allocated = budget.allocate_context(
             system_prompt=base_sys,
@@ -634,7 +643,7 @@ class TurnContextMixin:
             else ""
         )
         memory_context = ""
-        if plan.enabled_tools:
+        if plan.enabled_tools and not cmd.no_history:
             try:
                 memory_context = self.memory.get_memory_context(
                     cmd.prompt,
@@ -654,7 +663,7 @@ class TurnContextMixin:
                 cmd.conversation_id,
                 max_chars=self.config.max_harness_chars,
             )
-            if plan.enabled_tools and self.harness_service and self.history_service
+            if plan.enabled_tools and not cmd.no_history and self.harness_service and self.history_service
             else ""
         )
         tool_instructions = (
