@@ -28,3 +28,13 @@ def test_safe_runtime_exposes_compact_native_operations():
         "memory.query", "memory.correct", "memory.concept", "memory.link", "session.search", "process.run",
     }
     assert required.issubset(OPERATION_SPECS)
+    semantic = {
+        "repo.definition",
+        "repo.hover",
+        "repo.references_semantic",
+        "repo.diagnostics",
+        "repo.call_hierarchy",
+        "repo.outline",
+    }
+    assert semantic.issubset(OPERATION_SPECS)
+    assert "repo.ast_search" not in OPERATION_SPECS
