@@ -13,6 +13,7 @@ from kitt.core.turn_events import (
 from kitt.goals.contract import _extract_prefixed_json
 from kitt.security.capabilities import CAP_ARTIFACT_READ, CAP_REPO_READ, CAP_REPO_SEARCH
 from kitt.security.context import ExecutionSecurityContext
+from kitt.runtime.state import RuntimeStateStore
 
 
 VALIDATION_PREFIX = "KITT_VALIDATION_REPORT:"
@@ -179,12 +180,17 @@ class ContractValidator:
             capabilities=frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ}),
             trace_id=f"contract-validation:{goal.id}:{item.local_id}",
         )
+        inputs = RuntimeStateStore(
+            self.runtime.database, self.runtime.workspace_id, goal.conversation_id,
+        ).get(f"goal.inputs:{goal.id}") or {}
         command = TurnCommand(
             conversation_id=goal.conversation_id,
             prompt=prompt,
             mode="plan",
             no_history=True,
             security_context=security,
+            explicit_files=set(inputs.get("explicit_files") or []),
+            attachments=set(inputs.get("attachments") or []),
         )
         response = ""
         tokens = 0

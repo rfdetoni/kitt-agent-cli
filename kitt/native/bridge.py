@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from . import fallback
+from kitt.security.workspace_fs import WorkspaceFileSystem
 
 
 @dataclass(frozen=True)
@@ -58,9 +59,25 @@ class NativeCodeEngine:
         return fallback.find_symbols(self.root, query, limit)
 
     def read_symbol(self, symbol_id: str) -> dict[str, Any] | None:
+        if "::" in symbol_id:
+            fs = WorkspaceFileSystem(self.root)
+            relative = fs.relative(symbol_id.split("::", 1)[0])
+            try:
+                fs.stat_regular(relative)
+            except FileNotFoundError:
+                return None
         if self._native is not None:
             return self._loads(self._native.read_symbol(symbol_id))
         return fallback.read_symbol(self.root, symbol_id)
+
+    def invalidate_path(self, path: str) -> None:
+        if self._native is not None:
+            self._native.invalidate_path(WorkspaceFileSystem(self.root).relative(path))
+
+    def symbol_index_status(self) -> dict[str, Any]:
+        if self._native is not None:
+            return self._loads(self._native.symbol_index_status())
+        return {"backend": "python"}
 
     def references(self, symbol_id: str, limit: int = 100) -> list[dict[str, Any]]:
         if self._native is not None:

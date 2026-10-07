@@ -7,6 +7,7 @@ import socket
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Tuple
+from kitt_protocol import MAX_TOOL_ARGUMENT_BYTES
 
 from kitt.llm.domain import (
     ProviderConnectionError,
@@ -382,7 +383,7 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                                 state["name"] += name
                             if isinstance(arguments, str) and arguments:
                                 state["arguments"] += arguments
-                            if len(state["name"]) > 64 or len(state["arguments"].encode("utf-8")) > 64 * 1024:
+                            if len(state["name"]) > 64 or len(state["arguments"].encode("utf-8")) > MAX_TOOL_ARGUMENT_BYTES:
                                 raise ProviderProtocolError("KITT reverse proxy tool call exceeds protocol limits")
         except socket.timeout as exc:
             raise ProviderTimeoutError(

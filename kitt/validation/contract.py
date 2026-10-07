@@ -33,6 +33,8 @@ _BUILTIN_STEPS: dict[str, dict[str, Any]] = {
     "jvm.compile": {"enabled": True, "timeout_seconds": 180},
     "jvm.check": {"enabled": True, "timeout_seconds": 240},
     "node.typecheck": {"enabled": True, "timeout_seconds": 180},
+    "node.check": {"enabled": True, "timeout_seconds": 180},
+    "node.build": {"enabled": True, "timeout_seconds": 180},
     "node.lint": {"enabled": True, "timeout_seconds": 180},
     "node.test": {"enabled": True, "timeout_seconds": 240},
     "go.vet": {"enabled": True, "timeout_seconds": 180},

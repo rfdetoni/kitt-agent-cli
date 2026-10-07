@@ -4,6 +4,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from kitt.core.cancellation import CancellationRegistry, CancelledError
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import (
     ApprovalRequired,
@@ -29,6 +30,7 @@ from kitt.security.capabilities import (
     capabilities_for_tools,
 )
 from kitt.security.context import ExecutionSecurityContext
+from kitt.security.workspace_fs import WorkspaceFileSystem
 
 
 _AUTO_CONTRACT_TTL_SECONDS = 24 * 60 * 60
@@ -54,6 +56,10 @@ def _outer_state_key(turn_id: str) -> str:
 
 def goal_resume_key(goal_id: str) -> str:
     return f"goal.resume:{goal_id}"
+
+
+def goal_inputs_key(goal_id: str) -> str:
+    return f"goal.inputs:{goal_id}"
 
 
 def goal_active_turn_key(goal_id: str) -> str:
@@ -153,13 +159,22 @@ def cancel_automatic_contract(
     outer_turn_id: str,
     reason: str,
 ) -> bool:
-    goal_id = automatic_contract_goal_id(
-        runtime,
-        conversation_id,
-        outer_turn_id,
-    )
-    if not goal_id:
+    state = _outer_state(runtime, conversation_id)
+    value = state.get(_outer_state_key(outer_turn_id))
+    if not isinstance(value, dict):
         return False
+    registry = getattr(runtime.processor, "cancellation_registry", None)
+    if registry is not None:
+        registry.cancel(outer_turn_id)
+    planning_turn_id = str(value.get("planning_turn_id") or "")
+    if planning_turn_id:
+        for _event in runtime.processor.cancel_turn(
+            planning_turn_id, reason, conversation_id=conversation_id,
+        ):
+            pass
+    goal_id = str(value.get("goal_id") or "")
+    if not goal_id:
+        return True
     goal = runtime.goals.get_scoped(goal_id, conversation_id)
     if goal is None or goal.state in _TERMINAL_GOAL_STATES:
         return False
@@ -191,45 +206,61 @@ def cancel_automatic_contract(
 
 def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent]:
     """Execute a normal user auto request through the durable Goal contract."""
-    yield TurnStarted(
-        turn_id=command.turn_id,
-        conversation_id=command.conversation_id,
-        prompt=command.prompt,
-    )
-    if command.no_history:
-        yield TurnFailed(
-            error=(
-                "Automatic contract execution requires persistent state; "
-                "no_history is incompatible with mode=auto."
-            ),
+    state = _outer_state(runtime, command.conversation_id)
+    processor = getattr(runtime, "processor", None)
+    registry = getattr(processor, "cancellation_registry", None) or CancellationRegistry()
+    cancellation = registry.token(command.turn_id)
+    goal = None
+    state.set(_outer_state_key(command.turn_id), {}, ttl_seconds=_AUTO_CONTRACT_TTL_SECONDS)
+    try:
+        fs = WorkspaceFileSystem(runtime.canonical_root)
+        if len(command.explicit_files) > 64 or len(command.attachments) > 8:
+            raise ValueError("Too many selected files or attachments")
+        command.explicit_files = {fs.relative(path) for path in command.explicit_files}
+        command.attachments = {fs.relative(path) for path in command.attachments}
+        yield TurnStarted(
             turn_id=command.turn_id,
             conversation_id=command.conversation_id,
+            prompt=command.prompt,
         )
-        return
+        if command.no_history:
+            yield TurnFailed(
+                error=(
+                    "Automatic contract execution requires persistent state; "
+                    "no_history is incompatible with mode=auto."
+                ),
+                turn_id=command.turn_id,
+                conversation_id=command.conversation_id,
+            )
+            return
 
-    planning_started = time.perf_counter()
-    yield ThinkingStarted()
-    try:
-        items = ContractPlanner(runtime).plan(
-            command.conversation_id,
-            command.prompt,
-        )
-    except Exception as exc:
+        planning_started = time.perf_counter()
+        yield ThinkingStarted()
+        try:
+            items = ContractPlanner(runtime).plan(
+                command.conversation_id,
+                command.prompt,
+                source_command=command,
+            )
+        except CancelledError:
+            raise
+        except Exception as exc:
+            yield ThinkingCompleted(
+                duration_ms=max(1, int((time.perf_counter() - planning_started) * 1000)),
+            )
+            yield TurnFailed(
+                error=f"Automatic contract planning failed: {exc}",
+                turn_id=command.turn_id,
+                conversation_id=command.conversation_id,
+            )
+            return
         yield ThinkingCompleted(
             duration_ms=max(1, int((time.perf_counter() - planning_started) * 1000)),
         )
-        yield TurnFailed(
-            error=f"Automatic contract planning failed: {exc}",
-            turn_id=command.turn_id,
-            conversation_id=command.conversation_id,
-        )
-        return
-    yield ThinkingCompleted(
-        duration_ms=max(1, int((time.perf_counter() - planning_started) * 1000)),
-    )
 
-    goal = None
-    try:
+        cancellation.raise_if_cancelled()
+        if not bool(getattr(runtime.goal_scheduler, "_running", False)):
+            raise RuntimeError("Automatic contract requires the GoalScheduler to be running")
         goal = runtime.goals.create_contract(
             command.conversation_id,
             command.prompt,
@@ -240,6 +271,16 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
             5,
             start_paused=False,
         )
+        state.set(
+            goal_inputs_key(goal.id),
+            {"explicit_files": sorted(command.explicit_files), "attachments": sorted(command.attachments)},
+        )
+        state.set(
+            _outer_state_key(command.turn_id),
+            {"goal_id": goal.id},
+            ttl_seconds=_AUTO_CONTRACT_TTL_SECONDS,
+        )
+        cancellation.raise_if_cancelled()
         open_goal_progress(goal.id)
         if not runtime.goal_scheduler.schedule_goal(
             goal.id,
@@ -248,39 +289,20 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
             owner_session_id=command.conversation_id,
         ):
             raise RuntimeError(f"Unable to schedule automatic contract {goal.id}")
-        if not bool(getattr(runtime.goal_scheduler, "_running", False)):
-            raise RuntimeError(
-                "Automatic contract requires the GoalScheduler to be running"
+        cancellation.raise_if_cancelled()
+        yield TextDelta(
+            delta=(
+                f"[contract] {goal.id}: plano criado com {len(items)} itens; "
+                "iniciando execução sequencial.\n"
             )
-    except Exception as exc:
-        if goal is not None:
-            close_goal_progress(goal.id)
-        yield TurnFailed(
-            error=f"Automatic contract planning failed: {exc}",
-            turn_id=command.turn_id,
-            conversation_id=command.conversation_id,
         )
-        return
 
-    state = _outer_state(runtime, command.conversation_id)
-    state.set(
-        _outer_state_key(command.turn_id),
-        {"goal_id": goal.id},
-        ttl_seconds=_AUTO_CONTRACT_TTL_SECONDS,
-    )
-    yield TextDelta(
-        delta=(
-            f"[contract] {goal.id}: plano criado com {len(items)} itens; "
-            "iniciando execução sequencial.\n"
-        )
-    )
+        last_signature = None
+        emitted_approvals: set[str] = set()
+        deadline = time.monotonic() + max(60.0, float(goal.max_wall_seconds) + 30.0)
 
-    last_signature = None
-    emitted_approvals: set[str] = set()
-    deadline = time.monotonic() + max(60.0, float(goal.max_wall_seconds) + 30.0)
-
-    try:
         while True:
+            cancellation.raise_if_cancelled()
             for progress_event in drain_goal_progress(goal.id):
                 yield progress_event
 
@@ -338,9 +360,22 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
                 )
                 return
             time.sleep(0.2)
+    except CancelledError:
+        if goal is not None:
+            runtime.goals.cancel_contract(goal.id, "Cancelled by user", conversation_id=command.conversation_id)
+        yield TurnCancelled(reason="Automatic contract cancelled")
+    except Exception as exc:
+        if goal is not None:
+            runtime.goals.cancel_contract(goal.id, str(exc), conversation_id=command.conversation_id)
+        yield TurnFailed(error=str(exc), turn_id=command.turn_id, conversation_id=command.conversation_id)
     finally:
-        close_goal_progress(goal.id)
+        if goal is not None:
+            close_goal_progress(goal.id)
+            current = runtime.goals.get(goal.id)
+            if current is None or current.state in _TERMINAL_GOAL_STATES:
+                state.delete(goal_inputs_key(goal.id))
         state.delete(_outer_state_key(command.turn_id))
+        registry.discard(command.turn_id)
 
 
 @dataclass(frozen=True)

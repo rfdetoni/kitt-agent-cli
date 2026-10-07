@@ -85,6 +85,34 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
             with self.assertRaises(ProviderProtocolError):
                 list(KittReverseProxyAdapter().stream(LLMRequest(model='fixture', messages=[])))
 
+    def test_tool_arguments_enforce_shared_utf8_byte_limit(self):
+        from kitt_protocol import MAX_TOOL_ARGUMENT_BYTES
+
+        prefix, suffix = '{"content":"', '"}'
+        available = MAX_TOOL_ARGUMENT_BYTES - len((prefix + suffix).encode())
+        exact = prefix + 'x' * available + suffix
+        multibyte = prefix + 'é' * (available // 2) + suffix
+        request = LLMRequest(model='fixture', messages=[], tool_definitions=[
+            {'name': 'write_file', 'args': {'content': 'string'}},
+        ])
+        for arguments, allowed in [(exact, True), (multibyte, True),
+                                   (exact[:-2] + 'x' + suffix, False),
+                                   (multibyte[:-2] + 'é' + suffix, False)]:
+            event = {'choices': [{'delta': {'tool_calls': [{
+                'index': 0, 'id': 'call_limit', 'function': {
+                    'name': 'write_file', 'arguments': arguments,
+                },
+            }]}}]}
+            raw = f'data: {json.dumps(event)}\n\ndata: [DONE]\n'.encode()
+            with self.subTest(size=len(arguments.encode())), patch(
+                'kitt.llm.providers.kitt_reverse_proxy.secure_urlopen', return_value=io.BytesIO(raw)
+            ):
+                if allowed:
+                    self.assertEqual(len(list(KittReverseProxyAdapter().stream(request))), 1)
+                else:
+                    with self.assertRaises(ProviderProtocolError):
+                        list(KittReverseProxyAdapter().stream(request))
+
     def test_converts_structural_tool_definitions_without_prompt_parsing(self):
         tools = openai_tools_from_definitions([
             {

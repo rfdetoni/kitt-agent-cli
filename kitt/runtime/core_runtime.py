@@ -1397,6 +1397,7 @@ class SafeRuntime:
                     tokens_saved=omitted_source_bytes // 4,
                     metadata={
                         "backend": engine.status.backend,
+                        "symbol_index": getattr(engine, "symbol_index_status", lambda: {})(),
                         "max_tokens": max_tokens,
                         "truncated": omitted_source_bytes > 0 or len(snippets) < min(3, len(safe_matches)),
                     },
@@ -1448,10 +1449,13 @@ class SafeRuntime:
             },
         )
 
-    def _resolve_native_symbol(self, value: str):
+    def _resolve_native_symbol(self, value: str, security_context=None):
         engine = getattr(self.registry, "native_engine", None) if self.registry else None
         if engine is None:
             return None, None
+        if "::" in value and "." in value.split("::", 1)[0]:
+            relative = WorkspaceFileSystem(self.root).relative(value.split("::", 1)[0])
+            self._assert_native_path_allowed(security_context, relative)
         direct = engine.read_symbol(value)
         if direct:
             return engine, direct
@@ -1469,7 +1473,7 @@ class SafeRuntime:
         value = str(args.get("symbol_id", args.get("symbol", ""))).strip()
         if not value:
             return SafeRuntimeResult(False, "repo.read_symbol", error="symbol or symbol_id required")
-        engine, found = self._resolve_native_symbol(value)
+        engine, found = self._resolve_native_symbol(value, security_context)
         if engine is None:
             return SafeRuntimeResult(False, "repo.read_symbol", error="native code engine unavailable")
         if not found:
@@ -1482,7 +1486,8 @@ class SafeRuntime:
             "repo.read_symbol",
             data=bounded,
             context_handles=[f"ctx:repo:{found['symbol']['id']}"],
-            metadata={"max_tokens": max_tokens, "truncated": bounded.get("truncated", False)},
+            metadata={"max_tokens": max_tokens, "truncated": bounded.get("truncated", False),
+                      "symbol_index": getattr(engine, "symbol_index_status", lambda: {})()},
         )
 
     def _op_repo_references(self, args, security_context):
@@ -1527,6 +1532,7 @@ class SafeRuntime:
                 "max_tokens": max_tokens,
                 "returned": len(bounded),
                 "total_allowed": len(allowed),
+                "symbol_index": getattr(engine, "symbol_index_status", lambda: {})(),
                 "truncated": len(bounded) < len(allowed),
             },
         )
@@ -1618,7 +1624,7 @@ class SafeRuntime:
         replacement = args.get("replacement")
         if not value or not isinstance(replacement, str):
             raise ValueError("symbol_id/symbol and replacement are required")
-        engine, found = self._resolve_native_symbol(value)
+        engine, found = self._resolve_native_symbol(value, security_context)
         if engine is None or not found:
             raise KeyError(f"symbol not found: {value}")
         symbol = found["symbol"]

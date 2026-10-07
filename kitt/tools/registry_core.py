@@ -303,6 +303,10 @@ class ToolRegistry:
         return getattr(self.context_engine, "index", None)
 
     def _refresh_index(self, paths: Optional[List[str]] = None) -> None:
+        native = getattr(self, "native_engine", None)
+        if native is not None and paths:
+            for path in paths:
+                native.invalidate_path(path)
         index = self.repository_index
         if index is None:
             return

@@ -30,6 +30,13 @@ class BuildDetector:
             path = Path(raw)
             if path.suffix.casefold() in suffixes or path.name in manifests:
                 return True
+            directory = (self.root_path / path).resolve()
+            if (
+                directory.is_relative_to(self.root_path)
+                and directory.is_dir()
+                and any((self.root_path / name).is_file() for name in manifests)
+            ):
+                return True
         return False
 
     def _python_targeted(self, target_files: List[str]) -> list[VerificationStep]:
@@ -175,9 +182,14 @@ class BuildDetector:
         ):
             manager, scripts = self._package_scripts()
             if manager:
-                for script, kind in (("typecheck", "typecheck"), ("lint", "lint")):
-                    if script in scripts:
+                typecheck = "typecheck" if scripts.get("typecheck") else "check"
+                selected = ((typecheck, "typecheck"), ("build", "compile"), ("lint", "lint"))
+                seen_scripts: set[str] = set()
+                for script, kind in selected:
+                    command = scripts.get(script, "").strip()
+                    if command and command not in seen_scripts:
                         steps.append(self._script_step(manager, script, kind))
+                        seen_scripts.add(command)
                 test_script = scripts.get("test", "")
                 if test_script and "no test specified" not in test_script.casefold():
                     steps.append(self._script_step(manager, "test", "test", 240))

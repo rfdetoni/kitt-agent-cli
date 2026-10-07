@@ -108,6 +108,7 @@ class ContractCheckRunner:
             "status": str(raw_evidence.get("status") or ""),
             "checked_paths": list(raw_evidence.get("checked_paths") or [])[:64],
             "full_verification": bool(raw_evidence.get("full_verification")),
+            "workspace_verified": bool(raw_evidence.get("workspace_verified")),
             "steps": [
                 {
                     "name": str(step.get("name") or ""),
@@ -121,6 +122,7 @@ class ContractCheckRunner:
         }
         evidence_text = redact(
             f"status={report.status}; ok={report.ok}; full={report.full_verification}; "
+            f"workspace_verified={report.workspace_verified}; "
             f"checked_paths={unique_paths!r}\n"
             + (report.failure_message() if not report.ok else report.command_output)
         ).strip()

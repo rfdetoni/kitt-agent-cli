@@ -4,12 +4,14 @@ import json
 import re
 from typing import Any
 
+from kitt.core.cancellation import CancelledError
 from kitt.core.turn_command import TurnCommand
-from kitt.core.turn_events import TurnBlocked, TurnCompleted, TurnFailed
+from kitt.core.turn_events import TurnBlocked, TurnCancelled, TurnCompleted, TurnFailed
 from kitt.goals.risk import ReviewRisk, classify_review_risk
 from kitt.security.capabilities import CAP_ARTIFACT_READ, CAP_REPO_READ, CAP_REPO_SEARCH
 from kitt.security.context import ExecutionSecurityContext
 from kitt.security.workspace_fs import WorkspaceFileSystem
+from kitt.runtime.state import RuntimeStateStore
 from kitt.validation.contract import VerificationContractManager
 
 
@@ -43,6 +45,7 @@ class ContractPlanner:
 
     def __init__(self, runtime):
         self.runtime = runtime
+        self.source_command: TurnCommand | None = None
         self.fs = WorkspaceFileSystem(runtime.canonical_root)
         self.known_check_ids = VerificationContractManager(
             runtime.canonical_root
@@ -279,9 +282,23 @@ class ContractPlanner:
             mode="plan",
             no_history=True,
             security_context=security,
+            explicit_files=set(self.source_command.explicit_files) if self.source_command else set(),
+            attachments=set(self.source_command.attachments) if self.source_command else set(),
         )
+        if self.source_command is not None:
+            self._check_cancelled()
+            state = RuntimeStateStore(self.runtime.database, self.runtime.workspace_id, conversation_id)
+            state.set(
+                f"auto-contract:{self.source_command.turn_id}",
+                {"planning_turn_id": command.turn_id},
+                ttl_seconds=24 * 60 * 60,
+            )
+            self._check_cancelled()
         response = ""
         for event in self.runtime.processor.run_turn(command):
+            self._check_cancelled()
+            if isinstance(event, TurnCancelled):
+                raise CancelledError(event.reason)
             if isinstance(event, TurnCompleted):
                 response = event.response
             elif isinstance(event, TurnBlocked):
@@ -358,11 +375,21 @@ class ContractPlanner:
             return issues
         raise ValueError("Plan review verdict must be OK or REVISE with concrete issues")
 
+    def _check_cancelled(self) -> None:
+        if self.source_command is not None:
+            registry = getattr(self.runtime.processor, "cancellation_registry", None)
+            if registry is not None:
+                registry.token(self.source_command.turn_id).raise_if_cancelled()
+
     def plan(
         self,
         conversation_id: str,
         superprompt: str,
+        *,
+        source_command: TurnCommand | None = None,
     ) -> list[dict[str, Any]]:
+        self.source_command = source_command
+        self._check_cancelled()
         if not str(superprompt or "").strip():
             raise ValueError("Contract objective is required")
 
@@ -370,6 +397,7 @@ class ContractPlanner:
         errors: list[str] = []
         previous = ""
         for attempt in range(3):
+            self._check_cancelled()
             if attempt:
                 prompt = (
                     self._planning_prompt(superprompt.strip())

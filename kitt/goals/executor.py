@@ -12,7 +12,7 @@ from kitt.core.turn_events import (
     TurnFailed,
 )
 from kitt.goals.completion import AutonomousCompletionEngine
-from kitt.goals.auto_contract import goal_active_turn_key
+from kitt.goals.auto_contract import goal_active_turn_key, goal_inputs_key
 from kitt.goals.contract_execution import build_contract_prompt, prepare_contract_step
 from kitt.goals.gates import QualityGateRunner
 from kitt.runtime.state import RuntimeStateStore
@@ -100,11 +100,14 @@ class GoalStepExecutor:
             fencing_subject_type="GOAL",
             fencing_subject_id=goal.id,
         )
+        inputs = state.get(goal_inputs_key(goal.id)) or {}
         command = TurnCommand(
             conversation_id=goal.conversation_id,
             prompt=prompt,
             mode="auto",
             security_context=security,
+            explicit_files=set(inputs.get("explicit_files") or []),
+            attachments=set(inputs.get("attachments") or []),
         )
         result = {
             "status": "FAILED",

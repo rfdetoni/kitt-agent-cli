@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.9 — Cancellation, selected inputs and build verification
+
+Automatic contracts register the planning turn for cancellation and refuse work after cancellation. Selected text files and attachment references survive planning and durable execution. Full Node verification includes check/build scripts and directory targets, and reports whether workspace verification actually ran. The native bridge invalidates changed files and validates symbol paths before scoped reads. Tool argument limits come from kitt-protocol.
+
+See [release notes](docs/RELEASE_0.84.9.md).
+
 ## Release 0.84.8 — live durable-contract progress
 
 Automatic durable contracts now forward safe inner-turn progress to the outer user turn. While T01/T02/... execute, the TUI receives thinking, context, tool and edit events instead of appearing stalled between contract checkpoints.

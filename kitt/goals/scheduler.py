@@ -63,7 +63,8 @@ class GoalScheduler:
             cursor = connection.execute(
                 """UPDATE goals SET scheduled_at=?,next_run_at=?,recurrence=?,
                    heartbeat_enabled=?,resume_policy=?,retry_policy=?,
-                   owner_session_id=?,updated_at=? WHERE id=?""",
+                   owner_session_id=?,updated_at=? WHERE id=?
+                   AND state IN ('ACTIVE','PAUSED','RETRY_WAIT','RUNNING','WAITING_APPROVAL')""",
                 (
                     now,
                     now + max(0.0, float(next_run_delay_seconds)),

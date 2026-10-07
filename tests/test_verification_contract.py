@@ -48,3 +48,31 @@ def test_global_baseline_is_created_and_reused():
         assert first["steps"]["go.tests"]["enabled"] is True
         assert second["steps"]["go.tests"]["timeout_seconds"] == 240
         assert global_path.exists()
+
+
+def test_full_node_verification_runs_available_build_for_directory_targets():
+    from types import SimpleNamespace
+    from kitt.validation.orchestrator import VerificationOrchestrator
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "src").mkdir()
+        (root / "src" / "bad.ts").write_text('const count: number = "wrong";')
+        (root / "package.json").write_text(json.dumps({"scripts": {"build": "tsc --noEmit"}}))
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return SimpleNamespace(returncode=1, stdout="", stderr="TS2322", timed_out=False, cancelled=False)
+        runner = SimpleNamespace(run=run)
+        report = VerificationOrchestrator(root, runner).verify(["src"], force_full=True)
+        assert not report.ok
+        assert calls == [["npm", "run", "-s", "build"]]
+        assert report.steps[0].name == "node.build"
+        assert "TS2322" in report.failure_message()
+
+
+def test_node_check_alias_and_duplicate_build_are_not_silently_omitted():
+    from kitt.tools.build_detector import BuildDetector
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "package.json").write_text(json.dumps({"scripts": {"check": "tsc --noEmit", "build": "tsc --noEmit"}}))
+        assert [step.name for step in BuildDetector(tmp).plan_verification(["a.ts"], full=True)] == ["node.check"]

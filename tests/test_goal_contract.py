@@ -9,7 +9,8 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 from kitt.core.turn_command import TurnCommand
-from kitt.core.turn_events import ToolStarted, TurnCompleted
+from kitt.core.turn_events import ToolStarted, TurnCancelled, TurnCompleted
+from kitt.core.cancellation import CancellationRegistry
 from kitt.core.turn_processor import TurnProcessor
 from kitt.core.turn_tool_loop import (
     _goal_contract_uses_outer_verification,
@@ -20,6 +21,8 @@ from kitt.goals.contract_execution import ContractStep, build_contract_prompt
 from kitt.goals.contract_store import ContractLeaseError
 from kitt.goals.auto_contract import (
     automatic_contract_capabilities,
+    cancel_automatic_contract,
+    goal_inputs_key,
     iter_automatic_contract,
 )
 from kitt.goals.contract_validation import ContractValidator, parse_validation_report
@@ -370,7 +373,7 @@ class GoalContractTests(unittest.TestCase):
                 )
 
         processor = Processor()
-        runtime = SimpleNamespace(workspace_id="ws", processor=processor)
+        runtime = SimpleNamespace(workspace_id="ws", processor=processor, database=self.db)
         goal = SimpleNamespace(
             id="goal-1",
             conversation_id="conv",
@@ -525,6 +528,66 @@ class GoalContractTests(unittest.TestCase):
         with self.assertRaises((ValueError, ContractLeaseError)):
             self.goals.resume_contract(goal.id, conversation_id="conv")
 
+    def test_cancel_during_planning_and_before_scheduling_starts_no_work(self):
+        from kitt.runtime.state import RuntimeStateStore
+        from unittest.mock import Mock
+        for cancel_phase in ("planning", "creation"):
+            with self.subTest(phase=cancel_phase):
+                registry = CancellationRegistry()
+                scheduler = SimpleNamespace(_running=True, schedule_goal=Mock(return_value=True))
+                processor = SimpleNamespace(cancellation_registry=registry)
+                runtime = SimpleNamespace(canonical_root=Path(self.tmp.name), database=self.db,
+                    workspace_id="ws", goals=self.goals, goal_scheduler=scheduler, processor=processor)
+                command = TurnCommand(conversation_id="conv", prompt="implement", turn_id=f"cancel-{cancel_phase}")
+                planned = [_item("T01"), _item("FINAL", kind="final")]
+                def plan(*args, **kwargs):
+                    if cancel_phase == "planning":
+                        self.assertTrue(cancel_automatic_contract(runtime, "conv", command.turn_id, "cancel"))
+                    return planned
+                create = self.goals.create_contract
+                def create_then_cancel(*args, **kwargs):
+                    goal = create(*args, **kwargs)
+                    registry.cancel(command.turn_id)
+                    return goal
+                with patch("kitt.goals.auto_contract.ContractPlanner.plan", side_effect=plan), patch.object(
+                    self.goals, "create_contract", side_effect=create_then_cancel if cancel_phase == "creation" else create,
+                ):
+                    events = list(iter_automatic_contract(runtime, command))
+                self.assertIsInstance(events[-1], TurnCancelled)
+                scheduler.schedule_goal.assert_not_called()
+                self.assertIsNone(RuntimeStateStore(self.db, "ws", "conv").get(f"auto-contract:{command.turn_id}"))
+                if cancel_phase == "creation":
+                    self.assertEqual(self.goals.latest_contract("conv").state, "CANCELLED")
+
+    def test_planner_preserves_selected_inputs_and_registers_inner_cancellation(self):
+        from kitt.runtime.state import RuntimeStateStore
+        registry = CancellationRegistry()
+        captured = []
+        cancelled = []
+        source = TurnCommand(conversation_id="conv", prompt="implement", explicit_files={"selected.py", "reference.png"})
+        def run(command):
+            captured.append(command)
+            self.assertTrue(cancel_automatic_contract(runtime, "conv", source.turn_id, "cancel"))
+            yield TurnCompleted(response="should not be accepted")
+        def cancel(turn_id, *args, **kwargs):
+            cancelled.append(turn_id)
+            yield TurnCancelled(reason="cancel")
+        runtime = SimpleNamespace(canonical_root=Path(self.tmp.name), database=self.db, workspace_id="ws",
+            processor=SimpleNamespace(run_turn=run, cancel_turn=cancel, cancellation_registry=registry))
+        with self.assertRaisesRegex(RuntimeError, "cancelled"):
+            ContractPlanner(runtime).plan("conv", "implement", source_command=source)
+        self.assertEqual(captured[0].explicit_files, {"selected.py"})
+        self.assertEqual(captured[0].attachments, {"reference.png"})
+        self.assertEqual(cancelled, [captured[0].turn_id])
+        self.assertTrue(registry.is_cancelled(source.turn_id))
+
+    def test_cancelled_goal_cannot_be_rescheduled(self):
+        goal = self._contract()
+        self.goals.cancel_contract(goal.id, "cancel", conversation_id="conv")
+        scheduler = GoalScheduler(self.db, self.goals, lambda goal: {})
+        self.assertFalse(scheduler.schedule_goal(goal.id))
+        self.assertEqual(self.goals.get(goal.id).state, "CANCELLED")
+
     def test_automatic_contract_wraps_normal_auto_turn(self):
         created_goal = SimpleNamespace(
             id="goal-auto",
@@ -573,6 +636,7 @@ class GoalContractTests(unittest.TestCase):
             def contract_items(self, _goal_id):
                 return contract_items
 
+        test_case = self
         class Scheduler:
             def __init__(self):
                 self.scheduled = None
@@ -580,6 +644,9 @@ class GoalContractTests(unittest.TestCase):
 
             def schedule_goal(self, goal_id, **kwargs):
                 self.scheduled = (goal_id, kwargs)
+                from kitt.runtime.state import RuntimeStateStore
+                inputs = RuntimeStateStore(test_case.db, "ws", "conv").get(goal_inputs_key(goal_id))
+                test_case.assertEqual(inputs, {"explicit_files": ["selected.py"], "attachments": ["reference.png"]})
                 publish_goal_progress(
                     goal_id,
                     ToolStarted(
@@ -602,6 +669,7 @@ class GoalContractTests(unittest.TestCase):
             prompt="implement and validate the request",
             mode="auto",
             turn_id="turn-auto",
+            explicit_files={"selected.py", "reference.png"},
         )
         planned = [
             _item("T01"),
