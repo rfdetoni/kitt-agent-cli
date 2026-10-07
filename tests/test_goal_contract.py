@@ -413,6 +413,7 @@ class GoalContractTests(unittest.TestCase):
         class Scheduler:
             def __init__(self):
                 self.scheduled = None
+                self._running = True
 
             def schedule_goal(self, goal_id, **kwargs):
                 self.scheduled = (goal_id, kwargs)
