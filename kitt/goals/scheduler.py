@@ -209,9 +209,13 @@ class GoalScheduler:
         next_run=None,
         error=None,
     ) -> bool:
-        if state == "SUCCEEDED" and not self.goals.contract_complete(goal_id):
-            raise ValueError("Cannot release unfinished contract goal as SUCCEEDED")
         with self.db.get_connection() as connection:
+            if state == "SUCCEEDED":
+                connection.execute("BEGIN IMMEDIATE")
+                if not self.goals.contracts.is_complete(goal_id, connection):
+                    raise ValueError(
+                        "Cannot release unfinished contract goal as SUCCEEDED"
+                    )
             cursor = connection.execute(
                 """UPDATE goals SET state=?,next_run_at=?,last_error=?,updated_at=?,
                    lease_id=NULL,lease_owner_id=NULL,lease_expires_at=NULL,
