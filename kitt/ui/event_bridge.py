@@ -243,8 +243,14 @@ class TurnEventBridge:
         self._event_loop = loop
         self._queue_signal = asyncio.Event()
         self._consumer = loop.create_task(self._consume(gen))
+        if mode == "auto" and not no_history:
+            from kitt.goals.auto_contract import iter_automatic_contract
+
+            events = iter_automatic_contract(self.runtime, cmd)
+        else:
+            events = self.runtime.processor.run_turn(cmd)
         self._producer_future = loop.run_in_executor(
-            self._executor, self._produce, gen, self.runtime.processor.run_turn(cmd)
+            self._executor, self._produce, gen, events
         )
         return cmd.turn_id
 
