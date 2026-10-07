@@ -19,14 +19,7 @@ from kitt.core.turn_events import (
 from kitt.goals.contract import ContractPlanner
 from kitt.goals.contract_commands import render_contract
 from kitt.runtime.state import RuntimeStateStore
-from kitt.security.capabilities import (
-    CAP_ARTIFACT_READ,
-    CAP_ARTIFACT_WRITE,
-    CAP_PROCESS_RUN,
-    CAP_REPO_READ,
-    CAP_REPO_SEARCH,
-    CAP_REPO_WRITE,
-)
+from kitt.security.capabilities import ALL_CAPABILITIES
 from kitt.security.context import ExecutionSecurityContext
 
 
@@ -37,16 +30,6 @@ _TERMINAL_GOAL_STATES = {
     "CANCELLED",
     "PAUSED_BUDGET_EXCEEDED",
 }
-_AUTOMATIC_CODING_CAPABILITIES = (
-    CAP_ARTIFACT_READ,
-    CAP_ARTIFACT_WRITE,
-    CAP_PROCESS_RUN,
-    CAP_REPO_READ,
-    CAP_REPO_SEARCH,
-    CAP_REPO_WRITE,
-)
-
-
 def _outer_state(runtime, conversation_id: str) -> RuntimeStateStore:
     return RuntimeStateStore(
         runtime.database,
@@ -65,7 +48,7 @@ def goal_resume_key(goal_id: str) -> str:
 
 def automatic_contract_capabilities() -> list[str]:
     """Host-owned capability ceiling for normal autonomous coding requests."""
-    return sorted(_AUTOMATIC_CODING_CAPABILITIES)
+    return sorted(ALL_CAPABILITIES)
 
 
 def _pending_action_for_goal(runtime, goal_id: str, conversation_id: str):
