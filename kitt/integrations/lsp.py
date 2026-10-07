@@ -211,7 +211,14 @@ class LanguageServerClient:
                 {"textDocument": {"uri": uri, "languageId": language_id, "version": 1, "text": source}},
                 notification=True,
             )
-            request_params = params or {"textDocument": {"uri": uri}, "position": self._position(line, column)}
+            if params is not None:
+                request_params = params
+            else:
+                request_params = {"textDocument": {"uri": uri}}
+                if method not in {"textDocument/documentSymbol", "textDocument/diagnostic"}:
+                    request_params["position"] = self._position(line, column)
+                if method == "textDocument/references":
+                    request_params["context"] = {"includeDeclaration": True}
             request_id = send(method, request_params)
             result = await_id(request_id, deadline)
             return {"backend": f"lsp:{spec.name}", "available": True, "method": method, "result": result}
