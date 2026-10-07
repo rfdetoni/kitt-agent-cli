@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.1 — focused goal-step verification
+
+The durable task-contract behavior from 0.84.0 is unchanged, but the implementation is now structurally smaller: `GoalStepExecutor` only executes turns and delegates post-turn verification. Mutation snapshots, adversarial-review runtime and completion verification live in focused modules instead of one oversized executor. See [release notes](docs/RELEASE_0.84.1.md).
+
 ## Release 0.84.0 — durable Plan → Execute → Validate → Retry contracts
 
 Large requests can now be decomposed into a bounded persistent task contract on top of the existing Goals scheduler. Each item is executed, checked with host-owned verification, independently validated, and retried in place until it passes or its attempt budget is exhausted. The scheduler owns the lease-fenced state transition, and a contract goal cannot become `SUCCEEDED` until every item, including final integration validation, is `DONE`.
