@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.7 — immediate TUI session transition on submit
+
+Submitting the first prompt now leaves the home screen immediately, before daemon connection/attachment and automatic-contract bootstrap complete. The session shows the submitted prompt, `STARTING` status and the active core task instead of appearing frozen.
+
+`TurnStarted` reconciles the optimistic prompt instead of duplicating it. Startup failures keep the session visible, switch to `ERROR`, mark the core task failed and surface a persistent toast. See [release notes](docs/RELEASE_0.84.7.md).
+
 ## Release 0.84.6 — complete Goals/TaskPlan verification separation
 
 GOAL-owned durable contract items without a nested TaskPlan no longer receive TaskPlan host-execution/verification state in their model context. This removes the remaining contradictory instruction that could still tell the model to run registered TaskPlan verification even though `GoalStepVerifier` owns post-turn validation.
