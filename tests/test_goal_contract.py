@@ -7,10 +7,11 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from kitt.core.turn_events import TurnCompleted
 from kitt.core.turn_processor import TurnProcessor
 from kitt.goals.contract import ContractPlanner
 from kitt.goals.contract_store import ContractLeaseError
-from kitt.goals.contract_validation import parse_validation_report
+from kitt.goals.contract_validation import ContractValidator, parse_validation_report
 from kitt.goals.scheduler import GoalScheduler
 from kitt.goals.service import GoalService
 from kitt.history.database import HistoryDatabase
@@ -112,6 +113,25 @@ class GoalContractTests(unittest.TestCase):
         with self.assertRaises((ValueError, PermissionError)):
             planner.validate(traversal)
 
+        unknown_check = json.loads(json.dumps(valid))
+        unknown_check["items"][0]["check_ids"] = ["model.invented.check"]
+        with self.assertRaises(ValueError):
+            planner.validate(unknown_check)
+
+        path_overflow = {
+            "items": [
+                _item("T01", paths=[f"a/{idx}.py" for idx in range(40)]),
+                _item(
+                    "T02",
+                    paths=[f"b/{idx}.py" for idx in range(40)],
+                    depends_on=["T01"],
+                ),
+                _item("FINAL", kind="final", depends_on=["T02"]),
+            ]
+        }
+        with self.assertRaises(ValueError):
+            planner.validate(path_overflow)
+
     def test_planner_requires_ordered_dependencies_and_final_item(self):
         planner = ContractPlanner(
             SimpleNamespace(canonical_root=Path(self.tmp.name))
@@ -142,6 +162,46 @@ class GoalContractTests(unittest.TestCase):
             'KITT_VALIDATION_REPORT: {"verdict":"OK","evidence":["pytest passed"],"issues":[]}'
         )
         self.assertTrue(ok.ok)
+
+    def test_final_validation_receives_original_user_request(self):
+        class Processor:
+            def __init__(self):
+                self.command = None
+
+            def run_turn(self, command):
+                self.command = command
+                yield TurnCompleted(
+                    response=(
+                        'KITT_VALIDATION_REPORT: '
+                        '{"verdict":"OK","evidence":["workspace inspected"],"issues":[]}'
+                    )
+                )
+
+        processor = Processor()
+        runtime = SimpleNamespace(workspace_id="ws", processor=processor)
+        goal = SimpleNamespace(
+            id="goal-1",
+            conversation_id="conv",
+            objective="Keep audit logging and migrate the API.",
+        )
+        item = SimpleNamespace(
+            kind="final",
+            local_id="FINAL",
+            title="Final validation",
+            validation_prompt="Validate the integrated result.",
+        )
+
+        report, _, _ = ContractValidator(runtime).validate(
+            goal=goal,
+            item=item,
+            deterministic_evidence="checks passed",
+            changed_paths=[],
+            snapshot="",
+        )
+
+        self.assertTrue(report.ok)
+        self.assertIn(goal.objective, processor.command.prompt)
+        self.assertTrue(processor.command.no_history)
 
     def test_contract_creation_is_atomic_and_guards_success(self):
         goal = self._contract(max_attempts=4)
