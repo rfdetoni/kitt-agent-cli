@@ -367,10 +367,26 @@ class TurnEventBridge:
         # run. Any old worker that returns from a blocking provider/tool call will
         # hit the processor's cooperative cancellation checks.
         if turn_id:
-            for event in self.runtime.processor.cancel_turn(
-                turn_id, reason, conversation_id=self._active_conversation_id
-            ):
-                self._deliver(event)
+            cancelled_contract = False
+            if self._active_conversation_id:
+                try:
+                    from kitt.goals.auto_contract import cancel_automatic_contract
+
+                    cancelled_contract = cancel_automatic_contract(
+                        self.runtime,
+                        self._active_conversation_id,
+                        turn_id,
+                        reason,
+                    )
+                except Exception:
+                    cancelled_contract = False
+            if cancelled_contract:
+                self._deliver(TurnCancelled(reason=reason))
+            else:
+                for event in self.runtime.processor.cancel_turn(
+                    turn_id, reason, conversation_id=self._active_conversation_id
+                ):
+                    self._deliver(event)
         else:
             self._deliver(TurnCancelled(reason=reason))
 
