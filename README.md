@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.8 — live durable-contract progress
+
+Automatic durable contracts now forward safe inner-turn progress to the outer user turn. While T01/T02/... execute, the TUI receives thinking, context, tool and edit events instead of appearing stalled between contract checkpoints.
+
+Planning itself now emits visible thinking state. Interactive memory recall is bounded to four seconds and degrades to empty recall when kitt-memoryd is temporarily unavailable; recall remains contextual enrichment rather than execution authority. Prompt construction and memory recall now have separate latency telemetry. See [release notes](docs/RELEASE_0.84.8.md).
+
 ## Release 0.84.7 — immediate TUI session transition on submit
 
 Submitting the first prompt now leaves the home screen immediately, before daemon connection/attachment and automatic-contract bootstrap complete. The session shows the submitted prompt, `STARTING` status and the active core task instead of appearing frozen.
