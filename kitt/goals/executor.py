@@ -15,6 +15,7 @@ from kitt.goals.completion import AutonomousCompletionEngine
 from kitt.goals.contract_execution import build_contract_prompt, prepare_contract_step
 from kitt.goals.gates import QualityGateRunner
 from kitt.runtime.state import RuntimeStateStore
+from kitt.goals.review_snapshot import paths_from_tool_start
 from kitt.goals.step_verifier import GoalStepVerifier
 from kitt.security.context import ExecutionSecurityContext
 
@@ -23,6 +24,7 @@ class GoalStepExecutor:
     """Execute scheduler work through the canonical TurnProcessor policy path."""
 
     RESUME_KEY_PREFIX = "goal.resume:"
+
     def __init__(self, runtime_getter, reviewer_factory=None):
         self.runtime_getter = runtime_getter
         self.reviewer_factory = reviewer_factory
@@ -102,7 +104,7 @@ class GoalStepExecutor:
         pending_mutation_paths = {}
         for event in runtime.processor.run_turn(command):
             if isinstance(event, ToolStarted):
-                paths = verifier.paths_from_tool_start(runtime, event)
+                paths = paths_from_tool_start(runtime, event)
                 if paths:
                     pending_mutation_paths[event.call_id] = paths
             elif isinstance(event, ToolCompleted):
