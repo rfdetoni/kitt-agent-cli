@@ -271,7 +271,10 @@ class MemoryManager:
         *,
         turn_id: str = "",
     ) -> str:
-        with self.client.request_budget(8.0) if isinstance(self.client, KittMemoryClient) else nullcontext():
+        # Context recall is optional enrichment on the interactive hot path.
+        # Keep enough time for local-service autostart, but never let recall dominate
+        # a turn before the model/tool loop can begin.
+        with self.client.request_budget(4.0) if isinstance(self.client, KittMemoryClient) else nullcontext():
             return self._get_memory_context(prompt, max_tokens, turn_id=turn_id)
 
     def _get_memory_context(self, prompt: str, max_tokens: int, *, turn_id: str) -> str:
