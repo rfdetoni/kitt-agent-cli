@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.3 — refresh stale managed Reverse Proxy control plane
+
+Managed Reverse Proxy start/restart now refreshes a resident control plane once per Agent process before creating services. This fixes upgrades where an older control-plane process remained on port 2999 and silently ignored the newer `log_file` and ownership fields even though the installed Reverse Proxy binary was current.
+
+When Agent logging is configured, the returned managed instance must also report a proxy log path in the same directory; otherwise startup fails explicitly instead of silently logging elsewhere. Restart recreates the instance with the Agent's current logging settings. See [release notes](docs/RELEASE_0.84.3.md).
+
 ## Release 0.84.2 — automatic durable contracts
 
 Persisted user turns in `mode=auto` now use the durable Plan → Execute → Validate → Retry contract by default. The planner decomposes the request, GoalScheduler executes one item at a time, validation failures retry the same item, and completion still requires every item plus final integration validation to pass.
