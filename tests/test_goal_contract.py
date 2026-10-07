@@ -96,6 +96,10 @@ class GoalContractTests(unittest.TestCase):
         self.assertEqual(items[-1]["depends_on"], ["T01"])
         self.assertEqual(items[-1]["check_ids"], ["python.tests"])
         self.assertEqual(items[-1]["paths"], ["src/a.py"])
+        self.assertEqual(
+            items[-1]["success_criteria"],
+            ["T01 works", "FINAL works"],
+        )
 
         for forbidden in ("capabilities", "gates", "argv"):
             payload = json.loads(json.dumps(valid))
@@ -261,6 +265,21 @@ class GoalContractTests(unittest.TestCase):
                 lease_owner_id=scheduler.worker_id,
                 outcome="DONE",
             )
+
+    def test_resume_refuses_active_or_leased_contract(self):
+        goal = self._contract()
+        with self.assertRaises(ValueError):
+            self.goals.resume_contract(goal.id, conversation_id="conv")
+
+        scheduler = GoalScheduler(
+            self.db,
+            self.goals,
+            runtime_step_executor=lambda *_a, **_k: {},
+        )
+        lease_id = scheduler._claim(goal.id)
+        self.assertIsNotNone(lease_id)
+        with self.assertRaises((ValueError, ContractLeaseError)):
+            self.goals.resume_contract(goal.id, conversation_id="conv")
 
     def test_no_history_turns_get_isolated_provider_session_keys(self):
         processor = object.__new__(TurnProcessor)
