@@ -46,6 +46,10 @@ def goal_resume_key(goal_id: str) -> str:
     return f"goal.resume:{goal_id}"
 
 
+def goal_active_turn_key(goal_id: str) -> str:
+    return f"goal.active_turn:{goal_id}"
+
+
 def automatic_contract_capabilities() -> list[str]:
     """Host-owned capability ceiling for normal autonomous coding requests."""
     return sorted(ALL_CAPABILITIES)
@@ -147,13 +151,24 @@ def cancel_automatic_contract(
     goal = runtime.goals.get_scoped(goal_id, conversation_id)
     if goal is None or goal.state in _TERMINAL_GOAL_STATES:
         return False
-    runtime.goals.update_state(
-        goal_id,
-        "CANCELLED",
-        reason,
-        conversation_id=conversation_id,
+    state = _outer_state(runtime, conversation_id)
+    active_turn = state.get(goal_active_turn_key(goal_id))
+    if isinstance(active_turn, dict):
+        inner_turn_id = str(active_turn.get("turn_id") or "")
+        if inner_turn_id:
+            for _event in runtime.processor.cancel_turn(
+                inner_turn_id,
+                reason,
+                conversation_id=conversation_id,
+            ):
+                pass
+    return bool(
+        runtime.goals.cancel_contract(
+            goal_id,
+            reason,
+            conversation_id=conversation_id,
+        )
     )
-    return True
 
 
 def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent]:
