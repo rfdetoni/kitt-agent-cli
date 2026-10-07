@@ -425,7 +425,7 @@ class GoalScheduler:
                         outcome = "RETRY"
                         next_run = time.time() + retry_in
                     elif status in {
-                        "ITEM_EXHAUSTED", "REVIEW_EXHAUSTED", "STAGNATION_EXHAUSTED"
+                        "BLOCKED", "ITEM_EXHAUSTED", "REVIEW_EXHAUSTED", "STAGNATION_EXHAUSTED"
                     }:
                         outcome = "BLOCKED"
                         next_run = None
@@ -486,7 +486,7 @@ class GoalScheduler:
                             {
                                 "goal_id": goal.id,
                                 "local_id": contract_item.local_id,
-                                "reason": status,
+                                "reason": result.get("block_reason") or status,
                             },
                         )
                     results.append(
