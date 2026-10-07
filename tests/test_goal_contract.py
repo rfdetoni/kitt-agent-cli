@@ -11,7 +11,9 @@ from types import SimpleNamespace
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import TurnCompleted
 from kitt.core.turn_processor import TurnProcessor
+from kitt.core.turn_tool_loop import _goal_contract_uses_outer_verification
 from kitt.goals.contract import ContractPlanner
+from kitt.goals.contract_execution import ContractStep, build_contract_prompt
 from kitt.goals.contract_store import ContractLeaseError
 from kitt.goals.auto_contract import (
     automatic_contract_capabilities,
@@ -235,6 +237,57 @@ class GoalContractTests(unittest.TestCase):
         self.assertEqual(updated.state, "FAILED")
         self.assertEqual(updated.retries_used, 0)
         self.assertEqual(updated.failures_used, 0)
+
+    def test_goal_contract_turn_defers_completion_to_outer_verifier_without_task_plan(self):
+        class Plans:
+            def inspect(self, _conversation_id, _turn_id):
+                return None
+
+        security = SimpleNamespace(principal_type="GOAL")
+        self.assertTrue(
+            _goal_contract_uses_outer_verification(
+                Plans(), security, "conv", "turn-goal"
+            )
+        )
+        self.assertFalse(
+            _goal_contract_uses_outer_verification(
+                Plans(),
+                SimpleNamespace(principal_type="USER"),
+                "conv",
+                "turn-user",
+            )
+        )
+
+        class NestedPlans:
+            def inspect(self, _conversation_id, _turn_id):
+                return {"tasks": []}
+
+        self.assertFalse(
+            _goal_contract_uses_outer_verification(
+                NestedPlans(), security, "conv", "turn-goal"
+            )
+        )
+
+    def test_contract_step_prompt_rejects_nested_task_plan_verification(self):
+        item = SimpleNamespace(local_id="T01", status="RUNNING")
+        runtime = SimpleNamespace(
+            goals=SimpleNamespace(
+                contract_items=lambda _goal_id: [
+                    item,
+                    SimpleNamespace(local_id="FINAL", status="PENDING"),
+                ]
+            )
+        )
+        goal = SimpleNamespace(id="goal-1")
+        step = ContractStep(
+            item=item,
+            goal=SimpleNamespace(objective="Implement the current slice."),
+            completion_key="completion",
+            completion_state=None,
+        )
+        prompt = build_contract_prompt(runtime, goal, step, None)
+        self.assertIn("do not call plan.submit/plan.verify", prompt)
+        self.assertIn("post-turn checks", prompt)
 
     def test_validation_report_is_fail_closed(self):
         malformed = parse_validation_report("not a report")
