@@ -267,6 +267,10 @@ class KittUIApp:
         except Exception as err:
             self.state.is_thinking = False
             self.state.status_text = "ERROR"
+            for block in reversed(self.state.transcript):
+                if block.metadata.get("pending_turn_start") is True:
+                    block.metadata.pop("pending_turn_start", None)
+                    break
             if self.state.active_tasks:
                 core_task = self.state.active_tasks[0]
                 core_task.status = "error"
