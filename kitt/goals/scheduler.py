@@ -9,6 +9,7 @@ import time
 import uuid
 from typing import Optional
 
+from kitt.goals.contract_store import ContractItemExhausted
 from kitt.goals.service import GoalService
 from kitt.history.database import HistoryDatabase
 
@@ -208,6 +209,8 @@ class GoalScheduler:
         next_run=None,
         error=None,
     ) -> bool:
+        if state == "SUCCEEDED" and not self.goals.contract_complete(goal_id):
+            raise ValueError("Cannot release unfinished contract goal as SUCCEEDED")
         with self.db.get_connection() as connection:
             cursor = connection.execute(
                 """UPDATE goals SET state=?,next_run_at=?,last_error=?,updated_at=?,
@@ -325,6 +328,29 @@ class GoalScheduler:
             if not lease_id:
                 continue
 
+            try:
+                contract_item = self.goals.begin_contract_attempt(
+                    goal.id,
+                    lease_id=lease_id,
+                    lease_owner_id=self.worker_id,
+                )
+            except ContractItemExhausted as exc:
+                self._release(
+                    goal.id,
+                    lease_id,
+                    state="FAILED",
+                    next_run=None,
+                    error=str(exc),
+                )
+                self._on_event(
+                    "GoalContractItemExhausted",
+                    {"goal_id": goal.id, "error": str(exc)},
+                )
+                results.append(
+                    {"goal_id": goal.id, "status": "ITEM_EXHAUSTED", "error": str(exc)}
+                )
+                continue
+
             if self.executor is None:
                 self._release(
                     goal.id,
@@ -356,6 +382,92 @@ class GoalScheduler:
                 tokens = int(result.get("tokens", 0)) if isinstance(result, dict) else 0
                 cost = float(result.get("cost", 0.0)) if isinstance(result, dict) else 0.0
                 self.goals.charge(goal.id, tokens, turn=True, cost=cost)
+
+                if contract_item is not None:
+                    retry_in = max(0.1, min(self.poll_interval, 1.0))
+                    if status in {"ITEM_DONE", "SUCCEEDED"}:
+                        outcome = "DONE"
+                        next_run = time.time()
+                    elif status == "WAITING_APPROVAL":
+                        outcome = "WAITING_APPROVAL"
+                        next_run = None
+                    elif status == "INCOMPLETE":
+                        outcome = "RETRY"
+                        next_run = time.time() + retry_in
+                    elif status in {
+                        "ITEM_EXHAUSTED", "REVIEW_EXHAUSTED", "STAGNATION_EXHAUSTED"
+                    }:
+                        outcome = "BLOCKED"
+                        next_run = None
+                    else:
+                        message = (
+                            result.get("error", status)
+                            if isinstance(result, dict)
+                            else status
+                        )
+                        raise RuntimeError(message)
+
+                    committed = self.goals.commit_contract_outcome(
+                        goal.id,
+                        contract_item.id,
+                        lease_id=lease_id,
+                        lease_owner_id=self.worker_id,
+                        outcome=outcome,
+                        feedback=(result.get("error", "") if isinstance(result, dict) else ""),
+                        evidence=(result.get("contract_evidence") or result.get("evidence") or {})
+                        if isinstance(result, dict)
+                        else {},
+                        next_run=next_run,
+                    )
+                    effective_status = status
+                    if outcome == "DONE":
+                        self._on_event(
+                            "GoalContractItemDone",
+                            {
+                                "goal_id": goal.id,
+                                "item_id": contract_item.id,
+                                "local_id": contract_item.local_id,
+                                "goal_state": committed["goal_state"],
+                            },
+                        )
+                    elif outcome == "RETRY":
+                        if committed["goal_state"] == "FAILED":
+                            effective_status = "ITEM_EXHAUSTED"
+                            self._on_event(
+                                "GoalContractItemExhausted",
+                                {
+                                    "goal_id": goal.id,
+                                    "item_id": contract_item.id,
+                                    "local_id": contract_item.local_id,
+                                },
+                            )
+                        else:
+                            self._on_event(
+                                "GoalSchedulerVerificationRetry",
+                                {
+                                    "goal_id": goal.id,
+                                    "local_id": contract_item.local_id,
+                                    "retry_in": retry_in,
+                                },
+                            )
+                    elif outcome == "BLOCKED":
+                        self._on_event(
+                            "GoalSchedulerGovernanceStopped",
+                            {
+                                "goal_id": goal.id,
+                                "local_id": contract_item.local_id,
+                                "reason": status,
+                            },
+                        )
+                    results.append(
+                        {
+                            "goal_id": goal.id,
+                            "status": effective_status,
+                            "result": result,
+                            "contract": committed,
+                        }
+                    )
+                    continue
 
                 if status == "WAITING_APPROVAL":
                     self._release(
