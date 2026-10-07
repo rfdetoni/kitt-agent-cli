@@ -49,7 +49,7 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
         )
         events = []
         bridge = TurnEventBridge(rt, events.append, lambda: None)
-        turn_id = await bridge.start("Hi", "conv-1", no_history=False)
+        turn_id = await bridge.start("Hi", "conv-1", no_history=False, mode="ask")
         await asyncio.wait_for(bridge._consumer, 2)
         await bridge.shutdown()
 
@@ -78,7 +78,7 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
         )
         events = []
         bridge = TurnEventBridge(rt, events.append, lambda: None)
-        await bridge.start("Oi", "conv-2", no_history=False)
+        await bridge.start("Oi", "conv-2", no_history=False, mode="ask")
         await asyncio.wait_for(bridge._consumer, 2)
         await bridge.shutdown()
 
