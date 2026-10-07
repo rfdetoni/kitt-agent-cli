@@ -65,6 +65,7 @@ class ReverseProxyInstance:
     pid: int
     status: str
     started_at: str
+    log_file: str | None = None
 
     @property
     def endpoint(self) -> str:
@@ -84,4 +85,5 @@ class ReverseProxyInstance:
             pid=int(value.get("pid") or 0),
             status=_text(value.get("status")) or "running",
             started_at=_text(value.get("startedAt") or value.get("started_at")),
+            log_file=_text(value.get("logFile") or value.get("log_file")) or None,
         )
