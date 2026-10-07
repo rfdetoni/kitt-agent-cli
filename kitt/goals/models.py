@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, List, Optional
 
 
 @dataclass(frozen=True)
@@ -12,6 +12,28 @@ class QualityGate:
     timeout_seconds: int = 120
     last_exit_code: Optional[int] = None
     last_output_artifact_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ContractItem:
+    id: str
+    goal_id: str
+    position: int
+    local_id: str
+    kind: str
+    title: str
+    prompt: str
+    validation_prompt: str
+    criteria: List[str] = field(default_factory=list)
+    check_ids: List[str] = field(default_factory=list)
+    paths: List[str] = field(default_factory=list)
+    depends_on: List[str] = field(default_factory=list)
+    status: str = "PENDING"
+    attempts: int = 0
+    max_attempts: int = 5
+    last_feedback: Optional[str] = None
+    evidence: dict[str, Any] = field(default_factory=dict)
+    updated_at: float = 0.0
 
 
 @dataclass(frozen=True)

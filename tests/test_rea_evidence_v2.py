@@ -29,7 +29,7 @@ def _episode(tmp_path):
     return db, conversation["id"], ledger, service, episode
 
 
-def test_schema_10_migrates_evidence_metadata_to_schema_11():
+def test_schema_10_migrates_evidence_metadata_through_current_schema():
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE schema_info(version INTEGER PRIMARY KEY)")
     conn.execute("INSERT INTO schema_info(version) VALUES(10)")
@@ -45,7 +45,7 @@ def test_schema_10_migrates_evidence_metadata_to_schema_11():
 
     version = conn.execute("SELECT version FROM schema_info").fetchone()[0]
     columns = {row[1] for row in conn.execute("PRAGMA table_info(evidence_records)")}
-    assert version == 11
+    assert version == 12
     assert "metadata_json" in columns
     conn.close()
 

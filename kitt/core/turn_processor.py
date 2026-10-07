@@ -204,7 +204,15 @@ class TurnProcessor(
             raise ValueError("Proxy session scope must be non-empty")
         self._proxy_session_key = normalized
 
-    def _provider_session_key(self, profile, conversation_id: str) -> str:
+    def _provider_session_key(
+        self,
+        profile,
+        conversation_id: str,
+        *,
+        isolated_turn_id: str | None = None,
+    ) -> str:
+        if isolated_turn_id:
+            return f"{self._proxy_session_key}:isolated:{conversation_id}:{isolated_turn_id}"
         if _reverse_proxy_identity(profile):
             return f"{self._proxy_session_key}:conversation:{conversation_id}"
         return conversation_id

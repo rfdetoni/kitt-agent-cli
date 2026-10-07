@@ -207,8 +207,99 @@ class PlainLineUI:
                 arg = text.partition(" ")[2].strip()
                 self._write(render_gain(self.runtime.history.repo, conversation["id"], arg) + "\n")
                 continue
+            if (
+                text == "/contract-status"
+                or text.startswith("/contract-status ")
+                or text.startswith("/contract-resume ")
+                or text.startswith("/contract ")
+            ):
+                await self._handle_contract_command(text)
+                continue
             await self.run_turn(text)
         return 0
+
+    async def _handle_contract_command(self, text: str) -> None:
+        import shlex
+
+        from kitt.goals.contract_commands import (
+            create_planned_contract,
+            render_contract,
+            resume_contract,
+        )
+
+        if _daemon_authoritative(self.runtime):
+            self._write(
+                "Contract commands require the local runtime to own GoalScheduler; "
+                "the resident daemon is authoritative in this session.\n"
+            )
+            return
+
+        conversation = self.runtime.history.get_or_create_active()
+        name, _, arg = text.partition(" ")
+        arg = arg.strip()
+        if name == "/contract-status":
+            goal_id = arg
+            if not goal_id:
+                latest = self.runtime.goals.latest_contract(conversation["id"])
+                goal_id = latest.id if latest else ""
+            self._write(
+                (render_contract(self.runtime, goal_id) if goal_id else "No contract found.")
+                + "\n"
+            )
+            return
+
+        if name == "/contract-resume":
+            if not arg:
+                self._write("Usage: /contract-resume <id>\n")
+                return
+            try:
+                goal = await asyncio.to_thread(
+                    resume_contract,
+                    self.runtime,
+                    arg,
+                    conversation_id=conversation["id"],
+                )
+            except Exception as exc:
+                self._write(f"Contract resume failed: {exc}\n")
+                return
+            self._write(
+                (render_contract(self.runtime, goal.id) if goal else "Contract not found.")
+                + "\n"
+            )
+            return
+
+        try:
+            tokens = shlex.split(arg)
+        except ValueError as exc:
+            self._write(f"Invalid /contract syntax: {exc}\n")
+            return
+        allow = None
+        if tokens[:1] == ["--allow"]:
+            if len(tokens) < 3:
+                self._write("Usage: /contract [--allow write,run] <prompt>\n")
+                return
+            allow = tokens[1]
+            tokens = tokens[2:]
+        objective = " ".join(tokens).strip()
+        if not objective:
+            self._write("Usage: /contract [--allow write,run] <prompt>\n")
+            return
+        try:
+            goal, _ = await asyncio.to_thread(
+                create_planned_contract,
+                self.runtime,
+                conversation_id=conversation["id"],
+                objective=objective,
+                allow=allow,
+                start_paused=True,
+            )
+        except Exception as exc:
+            self._write(f"Contract planning failed: {exc}\n")
+            return
+        self._write(
+            render_contract(self.runtime, goal.id)
+            + f"\n\nReview the contract, then start it with /contract-resume {goal.id}\n"
+        )
 
     async def run_turn(self, prompt: str) -> None:
         if _daemon_authoritative(self.runtime):

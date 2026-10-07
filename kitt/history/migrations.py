@@ -6,7 +6,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 SCHEMA_V1_STATEMENTS = [
     """
@@ -299,6 +299,35 @@ SCHEMA_V1_STATEMENTS = [
         timeout_seconds INTEGER DEFAULT 120,
         FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE
     );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS goal_contract_items (
+        id TEXT PRIMARY KEY,
+        goal_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        local_id TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'task' CHECK(kind IN ('task','final')),
+        title TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        validation_prompt TEXT NOT NULL,
+        criteria_json TEXT NOT NULL,
+        check_ids_json TEXT NOT NULL DEFAULT '[]',
+        paths_json TEXT NOT NULL DEFAULT '[]',
+        depends_on_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','RUNNING','DONE','BLOCKED')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 5,
+        last_feedback TEXT,
+        evidence_json TEXT NOT NULL DEFAULT '{}',
+        updated_at REAL NOT NULL,
+        UNIQUE(goal_id, position),
+        UNIQUE(goal_id, local_id),
+        FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_goal_contract_items_goal_status
+    ON goal_contract_items(goal_id, status, position);
     """,
     """
     CREATE TABLE IF NOT EXISTS child_sessions (
@@ -1039,6 +1068,37 @@ class MigrationRunner:
             "TEXT NOT NULL DEFAULT '{}'",
         )
 
+    def _migrate_11_to_12(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS goal_contract_items (
+                id TEXT PRIMARY KEY,
+                goal_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                local_id TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'task' CHECK(kind IN ('task','final')),
+                title TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                validation_prompt TEXT NOT NULL,
+                criteria_json TEXT NOT NULL,
+                check_ids_json TEXT NOT NULL DEFAULT '[]',
+                paths_json TEXT NOT NULL DEFAULT '[]',
+                depends_on_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','RUNNING','DONE','BLOCKED')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 5,
+                last_feedback TEXT,
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                updated_at REAL NOT NULL,
+                UNIQUE(goal_id, position),
+                UNIQUE(goal_id, local_id),
+                FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE
+            );"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_goal_contract_items_goal_status
+               ON goal_contract_items(goal_id, status, position);"""
+        )
+
     def migrate(self, conn: sqlite3.Connection) -> None:
         current_version = self.get_current_version(conn)
         if current_version == self.target_version:
@@ -1066,7 +1126,7 @@ class MigrationRunner:
             )
             return
 
-        if current_version < 1 or current_version > 10:
+        if current_version < 1 or current_version > 11:
             raise IncompatibleSchemaError(
                 f"State schema version {current_version} is unsupported; supported "
                 f"upgrade range is 1..{self.target_version}."
@@ -1152,6 +1212,13 @@ class MigrationRunner:
                 self._set_version(conn, 11)
             current_version = 11
             logger.info("Migrated KITT SQLite schema to version 11 (Evidence v2 metadata)")
+
+        if current_version == 11:
+            with conn:
+                self._migrate_11_to_12(conn)
+                self._set_version(conn, 12)
+            current_version = 12
+            logger.info("Migrated KITT SQLite schema to version 12 (goal contracts)")
 
         if current_version != self.target_version:
             raise IncompatibleSchemaError(

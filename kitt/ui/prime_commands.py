@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 
 
 async def handle_prime_command(app, command_id: str, arg: str) -> bool:
@@ -52,6 +53,87 @@ async def handle_prime_command(app, command_id: str, arg: str) -> bool:
         goal_id = arg.strip()
         goal = app.runtime.goals.resume(goal_id, conversation_id=conv_id)
         app._show_result(f"Goal {goal_id} resumed." if goal else "Goal not found.")
+        return True
+
+    if command_id in {"contract", "contract_status", "contract_resume"}:
+        if getattr(app.runtime.config, "frontend_only", False):
+            app._show_result(
+                "Contract commands require the local runtime to own GoalScheduler; "
+                "the resident daemon is authoritative in this session."
+            )
+            return True
+        from kitt.goals.contract_commands import (
+            create_planned_contract,
+            render_contract,
+            resume_contract,
+        )
+
+        if command_id == "contract_status":
+            goal_id = arg.strip()
+            if not goal_id:
+                latest = app.runtime.goals.latest_contract(conv_id)
+                goal_id = latest.id if latest else ""
+            app._show_result(
+                render_contract(app.runtime, goal_id)
+                if goal_id
+                else "No contract found for this conversation."
+            )
+            return True
+
+        if command_id == "contract_resume":
+            goal_id = arg.strip()
+            if not goal_id:
+                app._show_result("Usage: /contract-resume <id>")
+                return True
+            try:
+                goal = await app._run_blocking(
+                    resume_contract,
+                    app.runtime,
+                    goal_id,
+                    conversation_id=conv_id,
+                )
+            except Exception as exc:
+                app._show_result(f"Contract resume failed: {exc}")
+                return True
+            app._show_result(
+                render_contract(app.runtime, goal.id)
+                if goal
+                else "Contract not found in the active conversation."
+            )
+            return True
+
+        try:
+            tokens = shlex.split(arg)
+        except ValueError as exc:
+            app._show_result(f"Invalid /contract syntax: {exc}")
+            return True
+        allow = None
+        if tokens[:1] == ["--allow"]:
+            if len(tokens) < 3:
+                app._show_result("Usage: /contract [--allow write,run] <prompt>")
+                return True
+            allow = tokens[1]
+            tokens = tokens[2:]
+        objective = " ".join(tokens).strip()
+        if not objective:
+            app._show_result("Usage: /contract [--allow write,run] <prompt>")
+            return True
+        try:
+            goal, _items = await app._run_blocking(
+                create_planned_contract,
+                app.runtime,
+                conversation_id=conv_id,
+                objective=objective,
+                allow=allow,
+                start_paused=True,
+            )
+        except Exception as exc:
+            app._show_result(f"Contract planning failed: {exc}")
+            return True
+        app._show_result(
+            render_contract(app.runtime, goal.id)
+            + f"\n\nReview the contract, then start it with /contract-resume {goal.id}"
+        )
         return True
 
     if command_id == "attach":

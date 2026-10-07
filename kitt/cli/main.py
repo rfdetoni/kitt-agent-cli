@@ -156,6 +156,34 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {_agent_version()}",
     )
     parser.add_argument("-p", "--print", dest="prompt", help="Print one response and exit")
+    parser.add_argument(
+        "--contract",
+        action="store_true",
+        help="Plan and run -p as a durable task contract",
+    )
+    parser.add_argument(
+        "--contract-yes",
+        action="store_true",
+        help="Start a newly planned contract without a separate confirmation step",
+    )
+    parser.add_argument(
+        "--contract-resume",
+        metavar="GOAL_ID",
+        default=None,
+        help="Resume a blocked or paused contract goal",
+    )
+    parser.add_argument(
+        "--allow",
+        dest="contract_allow",
+        default=None,
+        help="Contract capabilities: comma-separated read,write,run,all",
+    )
+    parser.add_argument(
+        "--contract-max-attempts",
+        type=int,
+        default=5,
+        help="Maximum scheduler attempts per contract item (default: 5)",
+    )
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
     models_parser = subparsers.add_parser(
@@ -459,42 +487,147 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _run_contract_mode(runtime, args) -> int:
+    from kitt.goals.contract_commands import (
+        create_planned_contract,
+        render_contract,
+        resume_contract,
+        schedule_contract,
+    )
+
+    if args.contract_resume:
+        goal = runtime.goals.get(args.contract_resume)
+        if goal is None or not runtime.goals.contract_items(goal.id):
+            print(f"Contract goal not found: {args.contract_resume}", file=sys.stderr)
+            return 2
+        resumed = resume_contract(runtime, goal.id)
+        if resumed is None:
+            print(f"Unable to resume contract: {goal.id}", file=sys.stderr)
+            return 2
+        goal = resumed
+        print(render_contract(runtime, goal.id))
+    else:
+        if not args.contract or not str(args.prompt or "").strip():
+            print("--contract requires -p/--print with a non-empty prompt", file=sys.stderr)
+            return 2
+        conversation = runtime.history.get_or_create_active()
+        try:
+            goal, _items = await asyncio.to_thread(
+                create_planned_contract,
+                runtime,
+                conversation_id=conversation["id"],
+                objective=args.prompt,
+                allow=args.contract_allow,
+                max_attempts=max(1, int(args.contract_max_attempts)),
+                start_paused=not bool(args.contract_yes),
+            )
+        except (ValueError, RuntimeError) as exc:
+            print(f"Contract planning failed: {exc}", file=sys.stderr)
+            return 2
+        print(render_contract(runtime, goal.id))
+        if not args.contract_yes:
+            print(
+                f"Contract saved but not started. Review it, then run: "
+                f"kitt --contract-resume {goal.id}",
+            )
+            return 0
+        if not schedule_contract(runtime, goal.id):
+            print(f"Unable to schedule contract goal {goal.id}", file=sys.stderr)
+            return 2
+
+    terminal = {"SUCCEEDED", "FAILED", "CANCELLED", "PAUSED_BUDGET_EXCEEDED"}
+    last_state = ""
+    while True:
+        goal = runtime.goals.get(goal.id)
+        if goal is None:
+            print("Contract goal disappeared from persistent state.", file=sys.stderr)
+            return 2
+        if goal.state != last_state:
+            print(f"[contract] {goal.id}: {goal.state}")
+            last_state = goal.state
+        if goal.state in terminal:
+            print(render_contract(runtime, goal.id))
+            return 0 if goal.state == "SUCCEEDED" else 1
+        if goal.state == "WAITING_APPROVAL":
+            print(
+                "Contract is waiting for a host approval. Approve it from an interactive "
+                "KITT session, then use --contract-resume.",
+                file=sys.stderr,
+            )
+            return 3
+
+        results = await asyncio.to_thread(runtime.goal_scheduler.check_and_execute_due)
+        for entry in results:
+            status = str(entry.get("status") or "")
+            contract = entry.get("contract") or {}
+            local_id = contract.get("local_id") or ""
+            suffix = f" {local_id}" if local_id else ""
+            print(f"[contract]{suffix}: {status}")
+        if not results:
+            await asyncio.sleep(0.1)
+
+
 async def async_main(args) -> int:
     base_config = RuntimeConfig.from_env()
     persistent = not args.no_history
     resident_available = _module_available("kitt.daemon.client")
     daemon_enabled = bool(base_config.daemon_enabled and resident_available)
     daemon_authoritative = bool(daemon_enabled and persistent)
+    contract_mode = bool(
+        getattr(args, "contract", False)
+        or getattr(args, "contract_resume", None)
+    )
+    if contract_mode and not persistent:
+        print(
+            "Contract mode requires persistent state; --no-history is incompatible.",
+            file=sys.stderr,
+        )
+        return 2
+    if contract_mode and daemon_authoritative:
+        print(
+            "Contract mode requires the local runtime to own the GoalScheduler. "
+            "Disable the resident daemon for this invocation; no local fallback is used.",
+            file=sys.stderr,
+        )
+        return 2
     config = replace(
         base_config,
         history_enabled=persistent,
         persistence_enabled=persistent,
         daemon_enabled=daemon_enabled,
         frontend_only=daemon_authoritative,
+        scheduler_enabled=False if contract_mode else base_config.scheduler_enabled,
     )
     runtime = KittRuntime.build(args.root, config=config)
     # A new KITT invocation starts logically blank. Saved history remains
     # available through explicit history/resume commands.
     runtime.history.begin_fresh_session()
-    backend = (
-        HeadlessUI(runtime, args.prompt)
-        if args.prompt is not None
-        else create_backend(
-            runtime,
-            "plain" if args.plain else args.ui,
-            no_animation=args.no_animation,
+    backend = None
+    if not contract_mode:
+        backend = (
+            HeadlessUI(runtime, args.prompt)
+            if args.prompt is not None
+            else create_backend(
+                runtime,
+                "plain" if args.plain else args.ui,
+                no_animation=args.no_animation,
+            )
         )
-    )
     code = 1
     errors = []
     try:
         await runtime.start()
-        code = await backend.run_async()
+        code = (
+            await _run_contract_mode(runtime, args)
+            if contract_mode
+            else await backend.run_async()
+        )
     finally:
-        try:
-            await backend.shutdown()
-        except BaseException as exc:
-            errors.append(exc)
+        if backend is not None:
+            try:
+                await backend.shutdown()
+            except BaseException as exc:
+                errors.append(exc)
         try:
             await runtime.aclose()
         except BaseException as exc:

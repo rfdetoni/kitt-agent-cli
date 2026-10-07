@@ -338,6 +338,72 @@ class AutonomousCompletionEngine:
 
         return CompletionVerification(success, score, checks, feedback, signature)
 
+    def include_checks(
+        self,
+        verification: CompletionVerification,
+        checks: List[CompletionCheck],
+    ) -> CompletionVerification:
+        """Merge host-owned checks without allowing weaker evidence to override failures."""
+        extra = list(checks or [])
+        if not extra:
+            return verification
+        combined = [*verification.checks, *extra]
+        total = len(combined)
+        passed_count = sum(1 for check in combined if check.passed)
+        success = verification.success and all(check.passed for check in extra)
+        score = 1.0 if total == 0 else passed_count / total
+        if success:
+            return CompletionVerification(True, score, combined, "", "")
+
+        failed = [check for check in extra if not check.passed]
+        feedback_parts = [verification.feedback] if verification.feedback else []
+        if failed:
+            feedback_parts.append(
+                "Host verification failed:\\n"
+                + "\\n".join(
+                    f"- [{check.kind}] {check.name}: {_bounded(check.evidence, 3500)}"
+                    for check in failed
+                )
+            )
+        signature_parts = [verification.failure_signature] if verification.failure_signature else []
+        signature_parts.extend(
+            f"{check.kind}:{_normalize(check.name)}" for check in failed
+        )
+        signature = (
+            hashlib.sha256("\\n".join(signature_parts).encode("utf-8")).hexdigest()
+            if signature_parts
+            else ""
+        )
+        return CompletionVerification(
+            False,
+            score,
+            combined,
+            "\\n\\n".join(part for part in feedback_parts if part),
+            signature,
+        )
+
+    def include_validation(
+        self,
+        verification: CompletionVerification,
+        report: Any,
+    ) -> CompletionVerification:
+        evidence_items = list(getattr(report, "evidence", None) or [])
+        feedback = str(getattr(report, "feedback", lambda: "")() or "").strip()
+        evidence = "\\n".join(str(item) for item in evidence_items if str(item).strip())
+        if feedback:
+            evidence = f"{evidence}\\n{feedback}".strip()
+        return self.include_checks(
+            verification,
+            [
+                CompletionCheck(
+                    "validation",
+                    "Independent contract validation",
+                    bool(getattr(report, "ok", False)),
+                    _bounded(evidence or "Missing validation evidence.", 12000),
+                )
+            ],
+        )
+
     def include_adversarial_review(
         self,
         verification: CompletionVerification,

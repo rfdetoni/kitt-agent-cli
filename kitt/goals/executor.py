@@ -20,9 +20,14 @@ from kitt.core.turn_events import (
     TurnCompleted,
     TurnFailed,
 )
-from kitt.goals.completion import (
-    AutonomousCompletionEngine,
-    completion_state_key,
+from kitt.goals.completion import AutonomousCompletionEngine
+from kitt.goals.contract_execution import (
+    build_contract_prompt,
+    contract_evidence,
+    contract_history_paths,
+    prepare_contract_step,
+    run_contract_checks,
+    run_contract_validation,
 )
 from kitt.goals.gates import QualityGateRunner
 from kitt.goals.evidence import EvidenceLedger
@@ -66,12 +71,12 @@ class GoalStepExecutor:
     @staticmethod
     def _completion_engine(runtime, goal) -> AutonomousCompletionEngine:
         def authorize_gate(argv):
-            command = shlex.join(list(argv))
             return runtime.policy.evaluate_tool(
                 "run_command",
-                {"command": command},
+                {"argv": list(argv)},
                 origin="SCHEDULE",
                 conversation_id=goal.conversation_id,
+                workspace_id=runtime.workspace_id,
             )
 
         return AutonomousCompletionEngine(
@@ -549,22 +554,15 @@ class GoalStepExecutor:
             goal.conversation_id,
         )
         resume = state.get(self._resume_key(goal.id))
-        completion_key = completion_state_key(goal.id)
-        completion_state = state.get(completion_key)
-        completion = self._completion_engine(runtime, goal)
+        contract_step = prepare_contract_step(runtime, goal, state)
+        contract_item = contract_step.item
+        step_goal = contract_step.goal
+        completion_key = contract_step.completion_key
+        completion_state = contract_step.completion_state
+        completion = self._completion_engine(runtime, step_goal)
 
-        prompt = goal.objective
-        if isinstance(resume, dict):
-            approved_output = str(resume.get("tool_output") or "")[:32768]
-            prompt = (
-                "Continue the existing persistent goal after an approved host "
-                "action. The approved action already succeeded; do not repeat "
-                "it. Use the existing conversation/history and complete only "
-                "the remaining work.\n\n"
-                f"Approved host result:\n{approved_output}\n\n"
-                f"Original objective:\n{goal.objective}"
-            )
-        prompt = completion.build_execution_prompt(goal, prompt, completion_state)
+        prompt = build_contract_prompt(runtime, goal, contract_step, resume)
+        prompt = completion.build_execution_prompt(step_goal, prompt, completion_state)
 
         security = ExecutionSecurityContext(
             workspace_id=runtime.workspace_id,
@@ -638,8 +636,30 @@ class GoalStepExecutor:
                 for path in dict.fromkeys([*prior_review_paths, *current_review_paths])
                 if self._is_reviewable_path(path)
             ]
-            verification = completion.verify(goal, result["response"])
+            history_paths = contract_history_paths(runtime, goal, contract_item)
+            if contract_item is not None and contract_item.kind == "final":
+                prior_review_paths.extend(history_paths)
+                review_paths = [
+                    path
+                    for path in dict.fromkeys([*prior_review_paths, *current_review_paths])
+                    if self._is_reviewable_path(path)
+                ]
+
+            verification = completion.verify(step_goal, result["response"])
+            verification, contract_check_result, check_evidence = run_contract_checks(
+                runtime,
+                goal,
+                contract_item,
+                review_paths=review_paths,
+                history_paths=history_paths,
+                completion=completion,
+                verification=verification,
+            )
+            if check_evidence:
+                result["contract_checks"] = check_evidence
             risk_name = ""
+            snapshot = ""
+            snapshot_complete = True
             if verification.success and review_paths:
                 snapshot, snapshot_complete = self._collect_review_snapshot(
                     runtime,
@@ -680,7 +700,7 @@ class GoalStepExecutor:
                         }
                         reviewer = self._build_reviewer(
                             runtime,
-                            goal,
+                            step_goal,
                             completion_state,
                             pass_usage,
                             route=route,
@@ -688,9 +708,9 @@ class GoalStepExecutor:
                             turn_id=command.turn_id,
                         )
                         review = reviewer.review(
-                            objective=goal.objective,
+                            objective=step_goal.objective,
                             success_criteria=list(
-                                getattr(goal, "success_criteria", None) or []
+                                getattr(step_goal, "success_criteria", None) or []
                             ),
                             verification=verification,
                             change_snapshot=snapshot,
@@ -784,6 +804,36 @@ class GoalStepExecutor:
                         ),
                     }
 
+            if contract_item is not None and verification.success:
+                if review_paths and not snapshot:
+                    snapshot, snapshot_complete = self._collect_review_snapshot(
+                        runtime,
+                        goal,
+                        security,
+                        command.turn_id,
+                        review_paths,
+                    )
+                validation, validation_tokens, validation_cost, validation_redactions = (
+                    run_contract_validation(
+                        runtime,
+                        goal,
+                        contract_item,
+                        check_result=contract_check_result,
+                        review_paths=review_paths,
+                        snapshot=snapshot,
+                        redact=self._redact_for_review,
+                    )
+                )
+                result["tokens"] += validation_tokens
+                result["cost"] += validation_cost
+                result["validation_redactions"] = validation_redactions
+                result["contract_validation"] = {
+                    "verdict": validation.verdict,
+                    "evidence": list(validation.evidence),
+                    "issues": list(validation.issues),
+                }
+                verification = completion.include_validation(verification, validation)
+
             result["verification"] = verification.to_dict()
             result["evidence"] = EvidenceLedger.from_verification(
                 verification,
@@ -793,6 +843,16 @@ class GoalStepExecutor:
                 state.delete(completion_key)
                 if resume is not None:
                     state.delete(self._resume_key(goal.id))
+                if contract_item is not None:
+                    result["status"] = "ITEM_DONE"
+                    result["contract_item_id"] = contract_item.id
+                    result["contract_evidence"] = contract_evidence(
+                        review_paths,
+                        max_paths=self.MAX_REVIEW_FILES,
+                        host_checks=result.get("contract_checks", {}),
+                        validation=result.get("contract_validation", {}),
+                        verification=verification,
+                    )
             else:
                 next_state = completion.next_state(completion_state, verification)
                 next_state["review_paths"] = review_paths[: self.MAX_REVIEW_FILES]
@@ -816,7 +876,12 @@ class GoalStepExecutor:
                         + verification.feedback
                     )
                 else:
-                    terminal_status = "INCOMPLETE"
+                    terminal_status = (
+                        "ITEM_EXHAUSTED"
+                        if contract_item is not None
+                        and contract_item.attempts >= contract_item.max_attempts
+                        else "INCOMPLETE"
+                    )
                     terminal_error = verification.feedback
                 result.update(
                     status=terminal_status,
