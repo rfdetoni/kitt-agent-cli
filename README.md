@@ -1,5 +1,13 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.0 — durable Plan → Execute → Validate → Retry contracts
+
+Large requests can now be decomposed into a bounded persistent task contract on top of the existing Goals scheduler. Each item is executed, checked with host-owned verification, independently validated, and retried in place until it passes or its attempt budget is exhausted. The scheduler owns the lease-fenced state transition, and a contract goal cannot become `SUCCEEDED` until every item, including final integration validation, is `DONE`.
+
+Contract plans cannot grant capabilities or inject arbitrary command argv. `no_history=True` now also isolates local conversation context and Reverse Proxy provider sessions for planner/validator turns. No KITT Protocol, Reverse Proxy, or KITT Memory wire change was required.
+
+Use `kitt -p "..." --contract --allow write,run` to plan and inspect before execution, add `--contract-yes` for immediate start, or use `/contract`, `/contract-status`, and `/contract-resume` interactively. See [release notes](docs/RELEASE_0.84.0.md).
+
 ## Release 0.83.19 — consistent endpoint trust in model selection
 
 The pending model-selection/authentication path now grants the same exact-origin trust as explicit Reverse Proxy role binding and `/model`. Non-default managed ports stay usable when selected through either UI path, without trusting workspace configuration or neighboring endpoints. See [release notes](docs/RELEASE_0.83.19.md).
