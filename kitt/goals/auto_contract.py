@@ -135,6 +135,44 @@ def _progress_text(goal, items) -> str:
     )
 
 
+def automatic_contract_goal_id(
+    runtime,
+    conversation_id: str,
+    outer_turn_id: str,
+) -> str:
+    value = _outer_state(runtime, conversation_id).get(
+        _outer_state_key(outer_turn_id)
+    )
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("goal_id") or "")
+
+
+def cancel_automatic_contract(
+    runtime,
+    conversation_id: str,
+    outer_turn_id: str,
+    reason: str,
+) -> bool:
+    goal_id = automatic_contract_goal_id(
+        runtime,
+        conversation_id,
+        outer_turn_id,
+    )
+    if not goal_id:
+        return False
+    goal = runtime.goals.get_scoped(goal_id, conversation_id)
+    if goal is None or goal.state in _TERMINAL_GOAL_STATES:
+        return False
+    runtime.goals.update_state(
+        goal_id,
+        "CANCELLED",
+        reason,
+        conversation_id=conversation_id,
+    )
+    return True
+
+
 def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent]:
     """Execute a normal user auto request through the durable Goal contract."""
     yield TurnStarted(
