@@ -173,6 +173,16 @@ class ContractPlanner:
 
         final = normalized[-1]
         final["depends_on"] = [item["local_id"] for item in normalized[:-1]]
+        all_criteria = list(
+            dict.fromkeys(
+                criterion
+                for item in normalized
+                for criterion in item["success_criteria"]
+            )
+        )
+        if len(all_criteria) > 64:
+            raise ValueError("Contract exceeds 64 distinct final acceptance criteria")
+        final["success_criteria"] = all_criteria
         final["check_ids"] = list(
             dict.fromkeys(
                 check_id
