@@ -312,9 +312,13 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
                     yield approval
 
             if current_goal.state == "SUCCEEDED":
+                for progress_event in drain_goal_progress(goal.id):
+                    yield progress_event
                 yield TurnCompleted(response=render_contract(runtime, goal.id))
                 return
             if current_goal.state in _TERMINAL_GOAL_STATES:
+                for progress_event in drain_goal_progress(goal.id):
+                    yield progress_event
                 yield TurnFailed(
                     error=(
                         current_goal.last_error
