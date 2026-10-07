@@ -1,5 +1,13 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.84.0 — contratos duráveis Plan → Execute → Validate → Retry
+
+Pedidos grandes agora podem ser decompostos em um contrato persistente e limitado de tarefas sobre o scheduler de Goals já existente. Cada item é executado, passa por verificações pertencentes ao host, recebe validação independente e é reiterado no mesmo item até passar ou esgotar o orçamento de tentativas. O scheduler mantém a autoridade sobre lease/fencing e um contrato só chega a `SUCCEEDED` quando todos os itens, inclusive a validação final integrada, estão `DONE`.
+
+O plano não pode conceder capabilities nem injetar argv arbitrário. `no_history=True` agora também isola o contexto local da conversa e a sessão do provider/Reverse Proxy nos turnos de planejamento e validação. Não foi necessária alteração de wire contract no KITT Protocol, Reverse Proxy ou KITT Memory.
+
+Use `kitt -p "..." --contract --allow write,run` para planejar e revisar antes de iniciar, acrescente `--contract-yes` para iniciar imediatamente, ou use `/contract`, `/contract-status` e `/contract-resume` nas interfaces interativas. Veja [as notas da versão](docs/RELEASE_0.84.0.md).
+
 ## Agent CLI 0.83.12 — concorrência por conversa e recovery comprovado
 
 Turns ativos da mesma conversa agora são serializados no admission path, enquanto conversas diferentes continuam executando em paralelo. A release também adiciona evidência determinística para fairness FIFO de recursos, rollback seletivo, recuperação exata por snapshot/artifact e busca/paginação bounded de artifacts grandes.
