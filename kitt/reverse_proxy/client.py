@@ -187,17 +187,24 @@ class ReverseProxyClient:
 
     def restart_instance(self, instance_id: str) -> ReverseProxyInstance:
         self._refresh_managed_control_plane()
-        payload = self._request(
-            "service.restart",
-            {"id": instance_id},
-            "service",
-            "restart",
-            instance_id,
+        current = next(
+            (item for item in self.list_instances() if item.id == instance_id),
+            None,
         )
-        instance = payload.get("instance")
-        if not isinstance(instance, dict):
-            raise ReverseProxyControlError("Reverse proxy did not return the restarted instance.")
-        return ReverseProxyInstance.from_dict(instance)
+        if current is None:
+            raise ReverseProxyControlError(
+                f"Reverse proxy instance was not found: {instance_id}"
+            )
+        if not self.stop_instance(instance_id):
+            raise ReverseProxyControlError(
+                f"Reverse proxy instance could not be stopped: {instance_id}"
+            )
+        return self.start_instance(
+            current.target,
+            profile=current.profile_id or None,
+            instance_id=current.id,
+            port=current.port or None,
+        )
 
     def create_profile(self, name: str, provider: str | None = None) -> ReverseProxyProfile:
         args = ["profiles", "create", name]

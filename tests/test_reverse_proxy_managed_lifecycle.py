@@ -98,6 +98,37 @@ class ReverseProxyManagedLifecycleTests(unittest.TestCase):
         )
         self.assertTrue(client._managed_control_refreshed)
 
+    def test_restart_recreates_instance_with_current_logging(self):
+        client = CaptureReverseProxyClient()
+        client.calls.clear()
+        client.list_instances = lambda: [
+            type(
+                "Instance",
+                (),
+                {
+                    "id": "agent-owned",
+                    "target": "chatgpt",
+                    "profile_id": "coding",
+                    "port": 3001,
+                },
+            )()
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "KITT_LOG_LEVEL": "2",
+                "KITT_LOG_CONTENT": "full",
+                "KITT_LOG_FILE": "/tmp/kitt/agent-cli.log",
+            },
+            clear=False,
+        ):
+            restarted = client.restart_instance("agent-owned")
+
+        self.assertEqual(restarted.log_file, "/tmp/kitt/reverse-proxy-agent-owned.log")
+        actions = [action for action, _params, _fallback in client.calls]
+        self.assertEqual(actions, ["service.stop", "service.start"])
+
     def test_shutdown_stops_only_instances_started_by_this_client(self):
         client = CaptureReverseProxyClient()
         with patch.dict(os.environ, {"KITT_LOG_LEVEL": "0"}, clear=False):
