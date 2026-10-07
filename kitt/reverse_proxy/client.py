@@ -42,6 +42,8 @@ class ReverseProxyClient:
         port = int(os.environ.get("KITT_REVERSE_PROXY_CONTROL_PORT", "2999"))
         self.control_url = (control_url or f"http://127.0.0.1:{port}").rstrip("/")
         self._control_bootstrapped = False
+        self.owner_pid = os.getpid()
+        self._owned_instance_ids: set[str] = set()
 
     @property
     def available(self) -> bool:
@@ -86,6 +88,25 @@ class ReverseProxyClient:
             args.extend(["--id", instance_id])
         if port is not None:
             args.extend(["--port", str(port)])
+
+        try:
+            log_level = int((os.getenv("KITT_LOG_LEVEL", "0") or "0").strip() or "0")
+        except ValueError:
+            log_level = 0
+        log_level = max(0, min(2, log_level))
+        log_content = (os.getenv("KITT_LOG_CONTENT", "") or "").strip().lower()
+        if log_content not in {"none", "metadata", "full"}:
+            log_content = "full" if log_level >= 2 else "metadata"
+        log_file = (
+            (os.getenv("KITT_LOG_FILE", "") or "").strip()
+            or (os.getenv("KITT_DEBUG_LOG", "") or "").strip()
+        )
+
+        args.extend(["--log-level", str(log_level), "--log-content", log_content])
+        args.extend(["--owner-pid", str(self.owner_pid)])
+        if log_file:
+            args.extend(["--log-file", log_file])
+
         payload = self._request(
             "service.start",
             {
@@ -93,16 +114,22 @@ class ReverseProxyClient:
                 **({"profile": profile} if profile else {}),
                 **({"id": instance_id} if instance_id else {}),
                 **({"port": port} if port is not None else {}),
+                "log_level": log_level,
+                "log_content": log_content,
+                "owner_pid": self.owner_pid,
+                **({"log_file": log_file} if log_file else {}),
             },
             *args,
         )
         instance = payload.get("instance")
         if not isinstance(instance, dict):
             raise ReverseProxyControlError("Reverse proxy did not return a service instance.")
-        return ReverseProxyInstance.from_dict(instance)
+        parsed = ReverseProxyInstance.from_dict(instance)
+        self._owned_instance_ids.add(parsed.id)
+        return parsed
 
     def stop_instance(self, instance_id: str) -> bool:
-        return bool(
+        stopped = bool(
             self._request(
                 "service.stop",
                 {"id": instance_id},
@@ -111,6 +138,21 @@ class ReverseProxyClient:
                 instance_id,
             ).get("stopped")
         )
+        if stopped:
+            self._owned_instance_ids.discard(instance_id)
+        return stopped
+
+    def stop_owned_instances(self) -> int:
+        stopped = 0
+        for instance_id in list(self._owned_instance_ids):
+            try:
+                if self.stop_instance(instance_id):
+                    stopped += 1
+            except Exception:
+                # The owner-pid watchdog is the crash-safe fallback.
+                continue
+        self._owned_instance_ids.clear()
+        return stopped
 
     def stop_all(self) -> int:
         return int(

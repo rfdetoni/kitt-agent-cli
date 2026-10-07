@@ -387,6 +387,12 @@ class KittUIApp:
             await asyncio.gather(self._animation_task, return_exceptions=True)
         if self.bridge:
             await self.bridge.shutdown()
+        try:
+            await self._run_blocking(self.reverse_proxy_client.stop_owned_instances)
+        except Exception:
+            # Managed proxy children also watch this Agent PID and will exit if
+            # the explicit shutdown call cannot reach the control plane.
+            pass
         app = self.application
         if app is not None:
             for stream_name in ("input", "output"):

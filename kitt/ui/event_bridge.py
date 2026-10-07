@@ -243,8 +243,14 @@ class TurnEventBridge:
         self._event_loop = loop
         self._queue_signal = asyncio.Event()
         self._consumer = loop.create_task(self._consume(gen))
+        if mode == "auto" and not no_history:
+            from kitt.goals.auto_contract import iter_automatic_contract
+
+            events = iter_automatic_contract(self.runtime, cmd)
+        else:
+            events = self.runtime.processor.run_turn(cmd)
         self._producer_future = loop.run_in_executor(
-            self._executor, self._produce, gen, self.runtime.processor.run_turn(cmd)
+            self._executor, self._produce, gen, events
         )
         return cmd.turn_id
 
@@ -255,6 +261,27 @@ class TurnEventBridge:
                 raise RuntimeError("Daemon rejected approved continuation")
             self._active_turn_id = turn_id
             return
+
+        from kitt.goals.auto_contract import (
+            goal_id_for_pending_turn,
+            resolve_goal_approval,
+        )
+
+        goal_id = goal_id_for_pending_turn(self.runtime, turn_id)
+        if goal_id:
+            loop = asyncio.get_running_loop()
+            resolution = await loop.run_in_executor(
+                self._executor,
+                resolve_goal_approval,
+                self.runtime,
+                grant,
+            )
+            if not resolution.success:
+                raise RuntimeError(
+                    resolution.error or "Approved contract action failed"
+                )
+            return
+
         if self._consumer and not self._consumer.done():
             await self._consumer
         self._turn_generation += 1
@@ -361,10 +388,26 @@ class TurnEventBridge:
         # run. Any old worker that returns from a blocking provider/tool call will
         # hit the processor's cooperative cancellation checks.
         if turn_id:
-            for event in self.runtime.processor.cancel_turn(
-                turn_id, reason, conversation_id=self._active_conversation_id
-            ):
-                self._deliver(event)
+            cancelled_contract = False
+            if self._active_conversation_id:
+                try:
+                    from kitt.goals.auto_contract import cancel_automatic_contract
+
+                    cancelled_contract = cancel_automatic_contract(
+                        self.runtime,
+                        self._active_conversation_id,
+                        turn_id,
+                        reason,
+                    )
+                except Exception:
+                    cancelled_contract = False
+            if cancelled_contract:
+                self._deliver(TurnCancelled(reason=reason))
+            else:
+                for event in self.runtime.processor.cancel_turn(
+                    turn_id, reason, conversation_id=self._active_conversation_id
+                ):
+                    self._deliver(event)
         else:
             self._deliver(TurnCancelled(reason=reason))
 

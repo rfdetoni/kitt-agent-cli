@@ -318,7 +318,12 @@ class PlainLineUI:
             prompt=prompt,
             no_history=not self.runtime.config.history_enabled,
         )
-        iterator = self.runtime.processor.run_turn(command)
+        if command.mode == "auto" and not command.no_history:
+            from kitt.goals.auto_contract import iter_automatic_contract
+
+            iterator = iter_automatic_contract(self.runtime, command)
+        else:
+            iterator = self.runtime.processor.run_turn(command)
         full_response = ""
         async for event in _stream_iterator(iterator):
             if isinstance(event, TextDelta):
@@ -383,7 +388,12 @@ class HeadlessUI:
         )
         failed = False
         full_response = ""
-        iterator = self.runtime.processor.run_turn(command)
+        if command.mode == "auto" and not command.no_history:
+            from kitt.goals.auto_contract import iter_automatic_contract
+
+            iterator = iter_automatic_contract(self.runtime, command)
+        else:
+            iterator = self.runtime.processor.run_turn(command)
         async for event in _stream_iterator(iterator):
             if isinstance(event, TextDelta):
                 write(event.delta)

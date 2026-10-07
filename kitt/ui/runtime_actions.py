@@ -182,7 +182,7 @@ async def _recover_model_turn(ui, action: str = "continue") -> None:
     mode = (
         "plan"
         if (ui.state.planning_mode or ui.state.turn_mode == "plan")
-        else ("ask" if ui.state.turn_mode == "ask" else "auto")
+        else ("ask" if ui.state.turn_mode == "ask" else "resume")
     )
     try:
         await ui.bridge.start(
