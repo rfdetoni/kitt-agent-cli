@@ -328,6 +328,19 @@ class GoalScheduler:
             if not lease_id:
                 continue
 
+            if self.executor is None:
+                self._release(
+                    goal.id,
+                    lease_id,
+                    state="ACTIVE",
+                    next_run=now + self.poll_interval,
+                    error="scheduler executor unavailable",
+                )
+                results.append(
+                    {"goal_id": goal.id, "status": "DUE_NO_EXECUTOR"}
+                )
+                continue
+
             try:
                 contract_item = self.goals.begin_contract_attempt(
                     goal.id,
@@ -348,19 +361,6 @@ class GoalScheduler:
                 )
                 results.append(
                     {"goal_id": goal.id, "status": "ITEM_EXHAUSTED", "error": str(exc)}
-                )
-                continue
-
-            if self.executor is None:
-                self._release(
-                    goal.id,
-                    lease_id,
-                    state="ACTIVE",
-                    next_run=now + self.poll_interval,
-                    error="scheduler executor unavailable",
-                )
-                results.append(
-                    {"goal_id": goal.id, "status": "DUE_NO_EXECUTOR"}
                 )
                 continue
 
