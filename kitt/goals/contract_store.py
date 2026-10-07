@@ -299,6 +299,37 @@ class ContractStore:
                 "local_id": item.local_id,
             }
 
+    def resume_after_approval(
+        self,
+        goal_id: str,
+        *,
+        conversation_id: str | None = None,
+    ) -> ContractItem | None:
+        now = time.time()
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            where = "id=? AND state='WAITING_APPROVAL' AND lease_id IS NULL"
+            args: list[Any] = [goal_id]
+            if conversation_id:
+                where += " AND conversation_id=?"
+                args.append(conversation_id)
+            goal = conn.execute(
+                f"SELECT * FROM goals WHERE {where}",
+                args,
+            ).fetchone()
+            if goal is None:
+                return None
+            item = self.current(goal_id, conn)
+            if item is None or item.status != "PENDING":
+                return None
+            conn.execute(
+                """UPDATE goals
+                   SET state='ACTIVE',last_error=NULL,next_run_at=?,updated_at=?
+                   WHERE id=?""",
+                (now, now, goal_id),
+            )
+            return item
+
     def block_waiting(
         self,
         goal_id: str,
