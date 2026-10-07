@@ -187,12 +187,6 @@ class GoalService:
     def resume_contract(self, gid, conversation_id=None):
         return self.contracts.resume(gid, conversation_id=conversation_id)
 
-    def resume_after_approval(self, gid, conversation_id=None):
-        return self.contracts.resume_after_approval(
-            gid,
-            conversation_id=conversation_id,
-        )
-
     def block_waiting_contract(self, gid, feedback, conversation_id=None):
         return self.contracts.block_waiting(
             gid,
@@ -251,6 +245,17 @@ class GoalService:
         return self.update_state(gid, "ACTIVE", conversation_id=conversation_id)
 
     def resume_after_approval(self, gid, conversation_id=None):
+        if self.contract_items(gid):
+            item = self.contracts.resume_after_approval(
+                gid,
+                conversation_id=conversation_id,
+            )
+            return (
+                self.get_scoped(gid, conversation_id)
+                if item is not None and conversation_id
+                else (self.get(gid) if item is not None else None)
+            )
+
         now = time.time()
         with self.db.get_connection() as c:
             where, args = "id=?", [gid]
