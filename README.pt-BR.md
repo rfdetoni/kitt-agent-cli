@@ -1,5 +1,9 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.84.1 — verificação de steps com responsabilidades focadas
+
+O comportamento de contratos duráveis da 0.84.0 permanece igual, mas a implementação foi reduzida estruturalmente: `GoalStepExecutor` executa o turno e delega a verificação pós-turno. Snapshot de mutações, runtime de review adversarial e verificação de conclusão ficam em módulos focados, sem concentrar tudo no executor. Veja [as notas da versão](docs/RELEASE_0.84.1.md).
+
 ## Agent CLI 0.84.0 — contratos duráveis Plan → Execute → Validate → Retry
 
 Pedidos grandes agora podem ser decompostos em um contrato persistente e limitado de tarefas sobre o scheduler de Goals já existente. Cada item é executado, passa por verificações pertencentes ao host, recebe validação independente e é reiterado no mesmo item até passar ou esgotar o orçamento de tentativas. O scheduler mantém a autoridade sobre lease/fencing e um contrato só chega a `SUCCEEDED` quando todos os itens, inclusive a validação final integrada, estão `DONE`.
