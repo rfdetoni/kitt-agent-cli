@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.4 — durable loop hardening
+
+Automatic contracts now require at least one executable task plus final integration validation, and HIGH/CRITICAL planned paths receive a bounded read-only semantic review before the first mutation. Host-owned resolvable blocks retry the same contract item instead of consuming global scheduler failure budgets; terminal blocks are committed explicitly.
+
+Existing LSP operations for definition, hover, semantic references, diagnostics, outline and call hierarchy are now wired to the runtime instead of being dead registrations. ContextEpoch/cache-region reconciliation remains authoritative, with provider-reported cache hits recorded as durable telemetry when available. See [release notes](docs/RELEASE_0.84.4.md).
+
 ## Release 0.84.3 — refresh stale managed Reverse Proxy control plane
 
 Managed Reverse Proxy start/restart now refreshes a resident control plane once per Agent process before creating services. This fixes upgrades where an older control-plane process remained on port 2999 and silently ignored the newer `log_file` and ownership fields even though the installed Reverse Proxy binary was current.

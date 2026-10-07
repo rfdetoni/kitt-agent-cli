@@ -31,6 +31,24 @@ from kitt_protocol import KittRequestMetadata
 class TurnModelMixin:
     """Execution-model routing, streaming and visible-response phase."""
 
+    @staticmethod
+    def _cached_prompt_tokens(usage: Dict[str, object]) -> Optional[int]:
+        for key in (
+            "cached_tokens",
+            "cache_read_input_tokens",
+            "prompt_cache_hit_tokens",
+        ):
+            value = usage.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return max(0, int(value))
+        for key in ("prompt_tokens_details", "input_tokens_details"):
+            details = usage.get(key)
+            if isinstance(details, dict):
+                value = details.get("cached_tokens")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return max(0, int(value))
+        return None
+
     # Composition contract supplied by TurnProcessor. These annotations create
     # no runtime attributes; they make the mixin's dependencies explicit.
     root_path: Any
@@ -183,15 +201,53 @@ class TurnModelMixin:
                 pass
 
         provider_usage: Dict[str, object] = {}
+        cache_observation_recorded = False
 
         is_proxy = _reverse_proxy_identity(profile) is not None
         attempt_grant = 1
         attempt_settled = False
 
         def _observe_usage(usage: Dict[str, object]) -> None:
-            nonlocal attempt_settled
+            nonlocal attempt_settled, cache_observation_recorded
             provider_usage.clear()
             provider_usage.update(dict(usage))
+            cached_tokens = self._cached_prompt_tokens(provider_usage)
+            if cached_tokens is not None and not cache_observation_recorded:
+                cache_observation_recorded = True
+                prefix_tokens = 0
+                segments = (context_envelope or {}).get("segments")
+                if isinstance(segments, list):
+                    for segment in segments:
+                        if not isinstance(segment, dict):
+                            continue
+                        region = str(segment.get("cache_region") or "").casefold()
+                        if "prefix" not in region:
+                            continue
+                        try:
+                            prefix_tokens += max(
+                                0, int(segment.get("token_cost") or 0)
+                            )
+                        except (TypeError, ValueError):
+                            continue
+                ledger = getattr(self, "event_ledger", None)
+                if ledger is not None:
+                    ledger.append_event(
+                        conversation_id,
+                        "ContextCacheObserved",
+                        {
+                            "cached_tokens": cached_tokens,
+                            "prefix_tokens": prefix_tokens,
+                            "route": route,
+                            "provider": str(
+                                getattr(profile, "backend", "") or ""
+                            ),
+                            "model": str(getattr(profile, "model", "") or ""),
+                        },
+                        turn_id=turn_id,
+                        source="model-usage",
+                        durability="DURABLE",
+                        replayable=True,
+                    )
             if is_proxy and execution_budget is not None and not attempt_settled:
                 attempts = usage.get("upstream_attempts")
                 if isinstance(attempts, int) and not isinstance(attempts, bool):

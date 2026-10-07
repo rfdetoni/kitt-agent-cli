@@ -26,6 +26,21 @@ class GoalStepExecutor:
 
     RESUME_KEY_PREFIX = "goal.resume:"
 
+    @staticmethod
+    def _blocked_category(reason: str) -> str:
+        """Classify host-owned block reasons without asking the model to authorize stopping."""
+        value = str(reason or "")
+        if value.startswith("No progress:") or value.startswith(
+            "Host evidence does not satisfy"
+        ):
+            return "RESOLVABLE"
+        if value.startswith("Unresolved prior execution receipt:"):
+            return "ENVIRONMENT"
+        lowered = value.casefold()
+        if "execution denied by policyengine" in lowered or "capability is not granted" in lowered:
+            return "POLICY"
+        return "UNSPECIFIED"
+
     def __init__(self, runtime_getter, reviewer_factory=None):
         self.runtime_getter = runtime_getter
         self.reviewer_factory = reviewer_factory
@@ -139,9 +154,18 @@ class GoalStepExecutor:
                             + list(getattr(edit_result, "created_files", None) or [])
                         )
                 elif isinstance(event, TurnBlocked):
-                    result.update(status="BLOCKED", error=event.reason)
+                    category = self._blocked_category(event.reason)
+                    result.update(
+                        status="INCOMPLETE" if category == "RESOLVABLE" else "BLOCKED",
+                        error=event.reason,
+                        block_reason=category,
+                    )
                 elif isinstance(event, TurnFailed):
-                    result.update(status="FAILED", error=event.error)
+                    result.update(
+                        status="INCOMPLETE" if event.recoverable else "FAILED",
+                        error=event.error,
+                        block_reason="ENVIRONMENT" if event.recoverable else "",
+                    )
         finally:
             state.delete(active_turn_key)
 

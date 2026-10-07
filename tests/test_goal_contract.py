@@ -178,6 +178,64 @@ class GoalContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             planner.validate(no_final)
 
+        final_only = {"items": [_item("FINAL", kind="final")]}
+        with self.assertRaisesRegex(ValueError, "at least one task plus FINAL"):
+            planner.validate(final_only)
+
+    def test_high_risk_plan_is_reviewed_before_acceptance(self):
+        runtime = SimpleNamespace(
+            canonical_root=Path(self.tmp.name),
+            workspace_id="ws",
+            processor=SimpleNamespace(),
+        )
+        planner = ContractPlanner(runtime)
+        risky = {
+            "items": [
+                _item("T01", paths=["security/policy.py"]),
+                _item("FINAL", kind="final", depends_on=["T01"]),
+            ]
+        }
+        responses = (
+            f"KITT_CONTRACT: {json.dumps(risky)}",
+            'KITT_PLAN_REVIEW: {"verdict":"OK","issues":[]}',
+        )
+        with patch.object(
+            planner, "_run_plan_turn", side_effect=responses
+        ) as run:
+            items = planner.plan("conv", "Harden the security policy")
+        self.assertEqual(items[0]["local_id"], "T01")
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            run.call_args_list[1].kwargs["principal_type"],
+            "CONTRACT_REVIEWER",
+        )
+
+    def test_scheduler_commits_terminal_host_block_without_global_retry(self):
+        goal = self._contract()
+
+        def executor(_goal, **_kwargs):
+            return {
+                "status": "BLOCKED",
+                "tokens": 0,
+                "cost": 0.0,
+                "error": "Write capability is not granted",
+                "block_reason": "POLICY",
+            }
+
+        scheduler = GoalScheduler(
+            self.db,
+            self.goals,
+            runtime_step_executor=executor,
+            poll_interval_seconds=0.01,
+        )
+        scheduler.schedule_goal(goal.id, heartbeat_enabled=True)
+        result = scheduler.check_and_execute_due()
+        self.assertEqual(result[0]["status"], "BLOCKED")
+        updated = self.goals.get(goal.id)
+        self.assertEqual(updated.state, "FAILED")
+        self.assertEqual(updated.retries_used, 0)
+        self.assertEqual(updated.failures_used, 0)
+
     def test_validation_report_is_fail_closed(self):
         malformed = parse_validation_report("not a report")
         self.assertFalse(malformed.ok)

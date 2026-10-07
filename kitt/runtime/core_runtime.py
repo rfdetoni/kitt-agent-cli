@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from kitt.context_engine.context_map import ContextMapBuilder
 from kitt.domain.entities import FileSnapshot
+from kitt.integrations.lsp import LanguageServerClient
 from kitt.runtime.handles import ContextHandleResolver
 from kitt.runtime.operation_registry import RuntimeOperationRegistry
 from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
@@ -297,9 +298,6 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "repo.call_hierarchy", CAP_REPO_SEARCH, "search"
     ),
     "repo.outline": RuntimeOperationSpec("repo.outline", CAP_REPO_READ, "read_file"),
-    "repo.ast_search": RuntimeOperationSpec(
-        "repo.ast_search", CAP_REPO_SEARCH, "search"
-    ),
     "repo.list": RuntimeOperationSpec("repo.list", CAP_REPO_READ, "list_files"),
     "repo.write_file": RuntimeOperationSpec(
         "repo.write_file",
@@ -817,6 +815,24 @@ class SafeRuntime:
             "repo.inspect_symbol": lambda: self._op_repo_inspect_symbol(args, turn_id, origin, security_context),
             "repo.read_symbol": lambda: self._op_repo_read_symbol(args, security_context),
             "repo.references": lambda: self._op_repo_references(args, security_context),
+            "repo.definition": lambda: self._op_repo_lsp(
+                "repo.definition", "textDocument/definition", args, security_context
+            ),
+            "repo.hover": lambda: self._op_repo_lsp(
+                "repo.hover", "textDocument/hover", args, security_context
+            ),
+            "repo.references_semantic": lambda: self._op_repo_lsp(
+                "repo.references_semantic", "textDocument/references", args, security_context
+            ),
+            "repo.diagnostics": lambda: self._op_repo_lsp(
+                "repo.diagnostics", "textDocument/diagnostic", args, security_context
+            ),
+            "repo.outline": lambda: self._op_repo_lsp(
+                "repo.outline", "textDocument/documentSymbol", args, security_context
+            ),
+            "repo.call_hierarchy": lambda: self._op_repo_call_hierarchy(
+                args, security_context
+            ),
             "repo.context_map": lambda: self._op_repo_context_map(
                 args, security_context
             ),
@@ -1512,6 +1528,88 @@ class SafeRuntime:
                 "returned": len(bounded),
                 "total_allowed": len(allowed),
                 "truncated": len(bounded) < len(allowed),
+            },
+        )
+
+    def _op_repo_lsp(
+        self,
+        operation: str,
+        method: str,
+        args: dict,
+        security_context,
+    ) -> SafeRuntimeResult:
+        path = str(args.get("path") or args.get("file") or "").strip()
+        if not path:
+            return SafeRuntimeResult(False, operation, error="path is required")
+        self._assert_native_path_allowed(security_context, path)
+        try:
+            result = LanguageServerClient(self.root).request(
+                path,
+                method,
+                line=_runtime_int(args.get("line", 1), 1, 1, 10_000_000),
+                column=_runtime_int(args.get("column", 0), 0, 0, 10_000_000),
+                timeout_seconds=float(args.get("timeout_seconds", 8.0) or 8.0),
+            )
+        except (FileNotFoundError, PermissionError, TimeoutError, RuntimeError) as exc:
+            return SafeRuntimeResult(False, operation, error=str(exc))
+        return SafeRuntimeResult(True, operation, data=result)
+
+    def _op_repo_call_hierarchy(
+        self,
+        args: dict,
+        security_context,
+    ) -> SafeRuntimeResult:
+        path = str(args.get("path") or args.get("file") or "").strip()
+        if not path:
+            return SafeRuntimeResult(
+                False, "repo.call_hierarchy", error="path is required"
+            )
+        self._assert_native_path_allowed(security_context, path)
+        line = _runtime_int(args.get("line", 1), 1, 1, 10_000_000)
+        column = _runtime_int(args.get("column", 0), 0, 0, 10_000_000)
+        direction = str(args.get("direction") or "incoming").strip().lower()
+        if direction not in {"incoming", "outgoing"}:
+            return SafeRuntimeResult(
+                False,
+                "repo.call_hierarchy",
+                error="direction must be incoming or outgoing",
+            )
+        client = LanguageServerClient(self.root)
+        try:
+            prepared = client.request(
+                path,
+                "textDocument/prepareCallHierarchy",
+                line=line,
+                column=column,
+            )
+            items = prepared.get("result") if isinstance(prepared, dict) else None
+            if (
+                not isinstance(prepared, dict)
+                or not prepared.get("available")
+                or not isinstance(items, list)
+                or not items
+            ):
+                return SafeRuntimeResult(
+                    True, "repo.call_hierarchy", data=prepared
+                )
+            calls = client.request(
+                path,
+                f"callHierarchy/{direction}Calls",
+                params={"item": items[0]},
+            )
+        except (FileNotFoundError, PermissionError, TimeoutError, RuntimeError) as exc:
+            return SafeRuntimeResult(
+                False, "repo.call_hierarchy", error=str(exc)
+            )
+        return SafeRuntimeResult(
+            True,
+            "repo.call_hierarchy",
+            data={
+                "backend": prepared.get("backend"),
+                "available": True,
+                "direction": direction,
+                "item": items[0],
+                "calls": calls.get("result"),
             },
         )
 
