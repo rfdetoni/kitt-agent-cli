@@ -9,6 +9,7 @@ from kitt.core.turn_events import TurnBlocked, TurnCompleted, TurnFailed
 from kitt.security.capabilities import CAP_ARTIFACT_READ, CAP_REPO_READ, CAP_REPO_SEARCH
 from kitt.security.context import ExecutionSecurityContext
 from kitt.security.workspace_fs import WorkspaceFileSystem
+from kitt.validation.contract import VerificationContractManager
 
 
 CONTRACT_PREFIX = "KITT_CONTRACT:"
@@ -41,6 +42,9 @@ class ContractPlanner:
     def __init__(self, runtime):
         self.runtime = runtime
         self.fs = WorkspaceFileSystem(runtime.canonical_root)
+        self.known_check_ids = VerificationContractManager(
+            runtime.canonical_root
+        ).known_step_ids()
 
     @staticmethod
     def _bounded_strings(
@@ -121,6 +125,11 @@ class ContractPlanner:
             )
             if any(not _CHECK_ID_RE.fullmatch(check_id) for check_id in check_ids):
                 raise ValueError(f"Item {local_id} has invalid check_ids")
+            unknown_checks = sorted(set(check_ids) - set(self.known_check_ids))
+            if unknown_checks:
+                raise ValueError(
+                    f"Item {local_id} references unknown host check ids: {unknown_checks}"
+                )
             if not criteria and not check_ids:
                 raise ValueError(
                     f"Item {local_id} needs at least one success criterion or host check id"
@@ -193,6 +202,10 @@ class ContractPlanner:
         final["paths"] = list(
             dict.fromkeys(path for item in normalized for path in item["paths"])
         )
+        if len(final["paths"]) > 64:
+            raise ValueError("Contract exceeds 64 distinct final validation paths")
+        if len(final["check_ids"]) > 12:
+            raise ValueError("Contract exceeds 12 distinct host verification checks")
         return normalized
 
     @staticmethod
