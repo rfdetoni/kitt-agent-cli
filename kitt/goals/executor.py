@@ -12,6 +12,7 @@ from kitt.core.turn_events import (
     TurnFailed,
 )
 from kitt.goals.completion import AutonomousCompletionEngine
+from kitt.goals.auto_contract import goal_active_turn_key
 from kitt.goals.contract_execution import build_contract_prompt, prepare_contract_step
 from kitt.goals.gates import QualityGateRunner
 from kitt.runtime.state import RuntimeStateStore
@@ -102,38 +103,47 @@ class GoalStepExecutor:
             prior_review_paths.extend(list(resume.get("affected_paths") or []))
         current_review_paths = []
         pending_mutation_paths = {}
-        for event in runtime.processor.run_turn(command):
-            if isinstance(event, ToolStarted):
-                paths = paths_from_tool_start(runtime, event)
-                if paths:
-                    pending_mutation_paths[event.call_id] = paths
-            elif isinstance(event, ToolCompleted):
-                paths = pending_mutation_paths.pop(event.call_id, [])
-                if event.success and paths:
-                    current_review_paths.extend(paths)
-            elif isinstance(event, EditApplied):
-                current_review_paths.extend(list(event.applied_files) + list(event.created_files))
-            elif isinstance(event, MetricsRecorded):
-                result["tokens"] += event.input_tokens + event.output_tokens
-                result["cost"] += float(event.estimated_usd or 0.0)
-            elif isinstance(event, ApprovalRequired):
-                result.update(
-                    status="WAITING_APPROVAL",
-                    approval_id=event.approval_request_id,
-                )
-                return result
-            elif isinstance(event, TurnCompleted):
-                result.update(status="SUCCEEDED", response=event.response)
-                edit_result = getattr(event, "edit_result", None)
-                if edit_result is not None and getattr(edit_result, "success", False):
-                    current_review_paths.extend(
-                        list(getattr(edit_result, "applied_files", None) or [])
-                        + list(getattr(edit_result, "created_files", None) or [])
+        active_turn_key = goal_active_turn_key(goal.id)
+        state.set(
+            active_turn_key,
+            {"turn_id": command.turn_id},
+            ttl_seconds=24 * 60 * 60,
+        )
+        try:
+            for event in runtime.processor.run_turn(command):
+                if isinstance(event, ToolStarted):
+                    paths = paths_from_tool_start(runtime, event)
+                    if paths:
+                        pending_mutation_paths[event.call_id] = paths
+                elif isinstance(event, ToolCompleted):
+                    paths = pending_mutation_paths.pop(event.call_id, [])
+                    if event.success and paths:
+                        current_review_paths.extend(paths)
+                elif isinstance(event, EditApplied):
+                    current_review_paths.extend(list(event.applied_files) + list(event.created_files))
+                elif isinstance(event, MetricsRecorded):
+                    result["tokens"] += event.input_tokens + event.output_tokens
+                    result["cost"] += float(event.estimated_usd or 0.0)
+                elif isinstance(event, ApprovalRequired):
+                    result.update(
+                        status="WAITING_APPROVAL",
+                        approval_id=event.approval_request_id,
                     )
-            elif isinstance(event, TurnBlocked):
-                result.update(status="BLOCKED", error=event.reason)
-            elif isinstance(event, TurnFailed):
-                result.update(status="FAILED", error=event.error)
+                    return result
+                elif isinstance(event, TurnCompleted):
+                    result.update(status="SUCCEEDED", response=event.response)
+                    edit_result = getattr(event, "edit_result", None)
+                    if edit_result is not None and getattr(edit_result, "success", False):
+                        current_review_paths.extend(
+                            list(getattr(edit_result, "applied_files", None) or [])
+                            + list(getattr(edit_result, "created_files", None) or [])
+                        )
+                elif isinstance(event, TurnBlocked):
+                    result.update(status="BLOCKED", error=event.reason)
+                elif isinstance(event, TurnFailed):
+                    result.update(status="FAILED", error=event.error)
+        finally:
+            state.delete(active_turn_key)
 
         if result["status"] == "SUCCEEDED":
             return verifier.finalize(
