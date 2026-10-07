@@ -9,6 +9,11 @@ class CaptureReverseProxyClient(ReverseProxyClient):
     def __init__(self):
         super().__init__(executable="kitt-reverse-proxy")
         self.calls = []
+        self.refreshes = 0
+
+    def _refresh_managed_control_plane(self):
+        self.refreshes += 1
+        self._managed_control_refreshed = True
 
     def _request(self, action, params, *fallback_args):
         self.calls.append((action, dict(params), tuple(fallback_args)))
@@ -25,6 +30,7 @@ class CaptureReverseProxyClient(ReverseProxyClient):
                     "pid": 321,
                     "status": "running",
                     "startedAt": "now",
+                    "logFile": "/tmp/kitt/reverse-proxy-agent-owned.log",
                 }
             }
         if action == "service.stop":
@@ -51,6 +57,8 @@ class ReverseProxyManagedLifecycleTests(unittest.TestCase):
             )
 
         self.assertEqual(instance.id, "agent-owned")
+        self.assertEqual(instance.log_file, "/tmp/kitt/reverse-proxy-agent-owned.log")
+        self.assertEqual(client.refreshes, 1)
         action, params, fallback = client.calls[0]
         self.assertEqual(action, "service.start")
         self.assertEqual(params["log_level"], 2)
@@ -64,6 +72,62 @@ class ReverseProxyManagedLifecycleTests(unittest.TestCase):
         self.assertIn("--owner-pid", fallback)
         self.assertIn(str(os.getpid()), fallback)
         self.assertIn("agent-owned", client._owned_instance_ids)
+
+    def test_refreshes_resident_control_plane_once_before_managed_start(self):
+        client = ReverseProxyClient(executable="kitt-reverse-proxy")
+        commands = []
+        ready = iter([True, False])
+
+        def fake_call(*args):
+            commands.append(args)
+            if args[:2] == ("control", "ensure"):
+                return {"schema_version": 1, "ready": True, "started": True}
+            return {"schema_version": 1, "stopped": True}
+
+        with patch.object(client, "_call", side_effect=fake_call), patch.object(
+            client,
+            "_control_server_ready",
+            side_effect=lambda: next(ready, False),
+        ), patch("kitt.reverse_proxy.client.time.sleep"):
+            client._refresh_managed_control_plane()
+            client._refresh_managed_control_plane()
+
+        self.assertEqual(
+            commands,
+            [("control", "stop"), ("control", "ensure")],
+        )
+        self.assertTrue(client._managed_control_refreshed)
+
+    def test_restart_recreates_instance_with_current_logging(self):
+        client = CaptureReverseProxyClient()
+        client.calls.clear()
+        client.list_instances = lambda: [
+            type(
+                "Instance",
+                (),
+                {
+                    "id": "agent-owned",
+                    "target": "chatgpt",
+                    "profile_id": "coding",
+                    "port": 3001,
+                },
+            )()
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "KITT_LOG_LEVEL": "2",
+                "KITT_LOG_CONTENT": "full",
+                "KITT_LOG_FILE": "/tmp/kitt/agent-cli.log",
+            },
+            clear=False,
+        ):
+            restarted = client.restart_instance("agent-owned")
+
+        self.assertEqual(restarted.log_file, "/tmp/kitt/reverse-proxy-agent-owned.log")
+        actions = [action for action, _params, _fallback in client.calls]
+        self.assertEqual(actions, ["service.stop", "service.start"])
 
     def test_shutdown_stops_only_instances_started_by_this_client(self):
         client = CaptureReverseProxyClient()

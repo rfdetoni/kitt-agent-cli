@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.84.3 — refresh do control plane residente do Reverse Proxy
+
+Start/restart gerenciado do Reverse Proxy agora recicla uma vez por processo do Agent o control plane residente antes de criar serviços. Isso corrige upgrades em que um processo antigo continuava na porta 2999 e ignorava silenciosamente os campos novos de `log_file` e ownership mesmo com o binário atual do Reverse Proxy instalado.
+
+Quando o Agent possui logging configurado, a instância retornada também precisa informar um arquivo de log do Proxy no mesmo diretório; caso contrário o start falha explicitamente em vez de gravar silenciosamente em outro local. Restart recria a instância com as configurações de logging atuais do Agent. Veja [as notas da versão](docs/RELEASE_0.84.3.md).
+
 ## Agent CLI 0.84.2 — contratos duráveis automáticos
 
 Turns persistidos em `mode=auto` agora usam por padrão o contrato durável Plan → Execute → Validate → Retry. O planner decompõe o pedido, o GoalScheduler executa um item por vez, falhas de validação reiteram o mesmo item e a conclusão continua exigindo todos os itens e a validação final integrada.
