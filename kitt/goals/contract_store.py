@@ -273,7 +273,7 @@ class ContractStore:
                     (item_status, feedback or None, serialized_evidence, now, item.id),
                 )
 
-            conn.execute(
+            cursor = conn.execute(
                 """UPDATE goals
                    SET state=?,next_run_at=?,last_error=?,completed_at=?,updated_at=?,
                        lease_id=NULL,lease_owner_id=NULL,lease_expires_at=NULL,
@@ -290,6 +290,8 @@ class ContractStore:
                     lease_owner_id,
                 ),
             )
+            if cursor.rowcount != 1:
+                raise ContractLeaseError("Contract outcome lost the goal lease before commit")
             return {
                 "goal_state": goal_state,
                 "item_status": item_status,
