@@ -167,6 +167,14 @@ class VerificationContractManager:
         self._cached = _merge(global_doc, project)
         return self._cached
 
+    def known_step_ids(self) -> frozenset[str]:
+        """Return host-owned verification step ids accepted by this workspace."""
+        effective = self.effective()
+        steps = effective.get("steps") if isinstance(effective, dict) else {}
+        if not isinstance(steps, dict):
+            return frozenset()
+        return frozenset(str(name) for name in steps)
+
     def apply_plan(self, steps: Iterable[Any]) -> list[Any]:
         contract = self.effective()
         configs = contract.get("steps") or {}
