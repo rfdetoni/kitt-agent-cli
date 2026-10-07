@@ -214,9 +214,13 @@ class GoalService:
         state = state.upper()
         if state not in allowed:
             raise ValueError(f"Invalid goal state {state}")
-        if state == "SUCCEEDED" and not self.contracts.is_complete(gid):
-            raise ValueError("Cannot mark a contract goal SUCCEEDED with unfinished items")
         with self.db.get_connection() as c:
+            if state == "SUCCEEDED":
+                c.execute("BEGIN IMMEDIATE")
+                if not self.contracts.is_complete(gid, c):
+                    raise ValueError(
+                        "Cannot mark a contract goal SUCCEEDED with unfinished items"
+                    )
             where, args = "id=?", [gid]
             if conversation_id:
                 where += " AND conversation_id=?"
