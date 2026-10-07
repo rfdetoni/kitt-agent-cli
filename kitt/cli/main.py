@@ -79,6 +79,10 @@ def _configure_debug_log(args) -> Path | None:
 
     path = configure_logging(level=level, path=requested or None)
     os.environ["KITT_LOG_LEVEL"] = str(level)
+    log_content = str(getattr(args, "log_content", "") or "").strip().lower()
+    if not log_content:
+        log_content = "full" if level >= 2 else "metadata"
+    os.environ["KITT_LOG_CONTENT"] = log_content
     if path is not None:
         os.environ["KITT_LOG_FILE"] = str(path)
         os.environ["KITT_DEBUG_LOG"] = str(path)
@@ -86,6 +90,7 @@ def _configure_debug_log(args) -> Path | None:
         logger,
         "cli.logging.configured",
         level=level,
+        content=log_content,
         path=str(path) if path is not None else None,
         root=str(Path(args.root).resolve()),
     )
@@ -138,6 +143,15 @@ def _add_common_options(parser: argparse.ArgumentParser, *, defaults: bool) -> N
             or None
         ),
         help="Diagnostic log file (default with level>0: <workspace>/.kitt/logs/agent-cli.log)",
+    )
+    parser.add_argument(
+        "--log-content",
+        choices=["none", "metadata", "full"],
+        default=default(os.getenv("KITT_LOG_CONTENT", "").strip() or None),
+        help=(
+            "Managed reverse-proxy log content policy "
+            "(default: full with --log-level 2, otherwise metadata)"
+        ),
     )
 
 
