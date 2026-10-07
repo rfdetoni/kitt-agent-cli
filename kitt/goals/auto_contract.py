@@ -30,6 +30,8 @@ _TERMINAL_GOAL_STATES = {
     "CANCELLED",
     "PAUSED_BUDGET_EXCEEDED",
 }
+
+
 def _outer_state(runtime, conversation_id: str) -> RuntimeStateStore:
     return RuntimeStateStore(
         runtime.database,
@@ -151,6 +153,12 @@ def cancel_automatic_contract(
     goal = runtime.goals.get_scoped(goal_id, conversation_id)
     if goal is None or goal.state in _TERMINAL_GOAL_STATES:
         return False
+    waiting = _pending_action_for_goal(runtime, goal_id, conversation_id)
+    if waiting is not None:
+        request, action, _security = waiting
+        runtime.approval.deny(request.approval_id, reason)
+        runtime.history.repo.cancel_pending_action(action.id)
+
     state = _outer_state(runtime, conversation_id)
     active_turn = state.get(goal_active_turn_key(goal_id))
     if isinstance(active_turn, dict):
@@ -211,6 +219,10 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
             owner_session_id=command.conversation_id,
         ):
             raise RuntimeError(f"Unable to schedule automatic contract {goal.id}")
+        if not bool(getattr(runtime.goal_scheduler, "_running", False)):
+            raise RuntimeError(
+                "Automatic contract requires the GoalScheduler to be running"
+            )
     except Exception as exc:
         yield TurnFailed(
             error=f"Automatic contract planning failed: {exc}",
