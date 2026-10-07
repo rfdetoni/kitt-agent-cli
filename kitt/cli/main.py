@@ -573,7 +573,16 @@ async def async_main(args) -> int:
     resident_available = _module_available("kitt.daemon.client")
     daemon_enabled = bool(base_config.daemon_enabled and resident_available)
     daemon_authoritative = bool(daemon_enabled and persistent)
-    contract_mode = bool(args.contract or args.contract_resume)
+    contract_mode = bool(
+        getattr(args, "contract", False)
+        or getattr(args, "contract_resume", None)
+    )
+    if contract_mode and not persistent:
+        print(
+            "Contract mode requires persistent state; --no-history is incompatible.",
+            file=sys.stderr,
+        )
+        return 2
     if contract_mode and daemon_authoritative:
         print(
             "Contract mode requires the local runtime to own the GoalScheduler. "
