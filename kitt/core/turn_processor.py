@@ -1235,11 +1235,20 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             security_context = self._security_context_for_turn(cmd, planned_authorities)
             prompt_plan = replace(plan, enabled_tools=planned_authorities)
 
-            sys_prompt, base_sys, allocated, request = self._build_system_prompt(
-                cmd, task, prompt_plan, exe_profile, context_map_str, explicit_str, agents_str,
-                skills_str, agent_addressed, workspace_id, budget, exposed_tools=exposed_tools,
-                execution_slice=execution_slice,
-            )
+            prompt_build_started_at = time.perf_counter()
+            try:
+                sys_prompt, base_sys, allocated, request = self._build_system_prompt(
+                    cmd, task, prompt_plan, exe_profile, context_map_str, explicit_str, agents_str,
+                    skills_str, agent_addressed, workspace_id, budget, exposed_tools=exposed_tools,
+                    execution_slice=execution_slice,
+                )
+            finally:
+                self._record_latency(
+                    cmd.turn_id,
+                    "prompt_build",
+                    (time.perf_counter() - prompt_build_started_at) * 1000,
+                    elapsed_ms=(time.time() - turn_started_at) * 1000,
+                )
             self._emit("BudgetApplied", {"allocated": allocated})
             yield BudgetApplied(
                 total_input_tokens=allocated["total_input_tokens"],
