@@ -4,9 +4,11 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from kitt.reverse_proxy.contracts import (
@@ -42,6 +44,7 @@ class ReverseProxyClient:
         port = int(os.environ.get("KITT_REVERSE_PROXY_CONTROL_PORT", "2999"))
         self.control_url = (control_url or f"http://127.0.0.1:{port}").rstrip("/")
         self._control_bootstrapped = False
+        self._managed_control_refreshed = False
         self.owner_pid = os.getpid()
         self._owned_instance_ids: set[str] = set()
 
@@ -81,6 +84,7 @@ class ReverseProxyClient:
         instance_id: str | None = None,
         port: int | None = None,
     ) -> ReverseProxyInstance:
+        self._refresh_managed_control_plane()
         args = ["service", "start", target]
         if profile:
             args.extend(["--profile", profile])
@@ -125,6 +129,22 @@ class ReverseProxyClient:
         if not isinstance(instance, dict):
             raise ReverseProxyControlError("Reverse proxy did not return a service instance.")
         parsed = ReverseProxyInstance.from_dict(instance)
+        if log_file:
+            expected_dir = Path(log_file).expanduser().resolve().parent
+            actual_log = (
+                Path(parsed.log_file).expanduser().resolve()
+                if parsed.log_file
+                else None
+            )
+            if actual_log is None or actual_log.parent != expected_dir:
+                try:
+                    self.stop_instance(parsed.id)
+                except Exception:
+                    pass
+                raise ReverseProxyControlError(
+                    "Managed reverse proxy did not honor the Agent log directory. "
+                    "Restart KITT after updating kitt-reverse-proxy."
+                )
         self._owned_instance_ids.add(parsed.id)
         return parsed
 
@@ -166,6 +186,7 @@ class ReverseProxyClient:
         )
 
     def restart_instance(self, instance_id: str) -> ReverseProxyInstance:
+        self._refresh_managed_control_plane()
         payload = self._request(
             "service.restart",
             {"id": instance_id},
@@ -205,6 +226,46 @@ class ReverseProxyClient:
                 profile_id,
             ).get("removed")
         )
+
+    def _control_server_ready(self) -> bool:
+        try:
+            request = urllib.request.Request(
+                f"{self.control_url}/healthz",
+                method="GET",
+            )
+            with urllib.request.urlopen(
+                request,
+                timeout=min(self.timeout_seconds, 1.0),
+            ) as response:
+                return response.status == 200
+        except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError):
+            return False
+
+    def _refresh_managed_control_plane(self) -> None:
+        if self._managed_control_refreshed:
+            return
+
+        # The resident control plane can outlive a package upgrade. Older
+        # revisions accept service.start but silently ignore newer fields such
+        # as log_file and owner_pid. Recycle it once before managed start/restart
+        # so the process matches the installed reverse-proxy binary.
+        try:
+            self._call("control", "stop")
+        except ReverseProxyControlError:
+            pass
+
+        for _attempt in range(40):
+            if not self._control_server_ready():
+                break
+            time.sleep(0.05)
+
+        result = self._call("control", "ensure")
+        if not bool(result.get("ready")):
+            raise ReverseProxyControlError(
+                "Could not start the current reverse proxy control plane."
+            )
+        self._control_bootstrapped = True
+        self._managed_control_refreshed = True
 
     def _request(
         self,
