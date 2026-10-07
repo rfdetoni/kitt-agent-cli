@@ -48,6 +48,21 @@ class TurnProcessorDecompositionTests(unittest.TestCase):
                 getattr(TurnModelMixin, method_name),
             )
 
+    def test_model_cache_usage_accepts_common_provider_shapes(self):
+        self.assertEqual(
+            TurnModelMixin._cached_prompt_tokens(
+                {"prompt_tokens_details": {"cached_tokens": 321}}
+            ),
+            321,
+        )
+        self.assertEqual(
+            TurnModelMixin._cached_prompt_tokens(
+                {"cache_read_input_tokens": 77}
+            ),
+            77,
+        )
+        self.assertIsNone(TurnModelMixin._cached_prompt_tokens({}))
+
     def test_finalization_is_owned_by_dedicated_phase_mixin(self):
         self.assertTrue(issubclass(TurnProcessor, TurnFinalizationMixin))
         self.assertNotIn("_finalize_turn", TurnProcessor.__dict__)
