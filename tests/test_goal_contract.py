@@ -9,7 +9,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 from kitt.core.turn_command import TurnCommand
-from kitt.core.turn_events import TurnCompleted
+from kitt.core.turn_events import ToolStarted, TurnCompleted
 from kitt.core.turn_processor import TurnProcessor
 from kitt.core.turn_tool_loop import (
     _goal_contract_uses_outer_verification,
@@ -23,6 +23,7 @@ from kitt.goals.auto_contract import (
     iter_automatic_contract,
 )
 from kitt.goals.contract_validation import ContractValidator, parse_validation_report
+from kitt.goals.progress import publish_goal_progress
 from kitt.goals.scheduler import GoalScheduler
 from kitt.goals.service import GoalService
 from kitt.history.database import HistoryDatabase
@@ -579,6 +580,14 @@ class GoalContractTests(unittest.TestCase):
 
             def schedule_goal(self, goal_id, **kwargs):
                 self.scheduled = (goal_id, kwargs)
+                publish_goal_progress(
+                    goal_id,
+                    ToolStarted(
+                        tool_name="repo.read",
+                        args={"path": "package.json"},
+                        call_id="call-progress",
+                    ),
+                )
                 return True
 
         runtime = SimpleNamespace(
@@ -611,6 +620,9 @@ class GoalContractTests(unittest.TestCase):
         self.assertEqual(type(events[0]).__name__, "TurnStarted")
         self.assertEqual(type(events[-1]).__name__, "TurnCompleted")
         self.assertEqual(events[-1].response, "contract complete")
+        live_tools = [event for event in events if isinstance(event, ToolStarted)]
+        self.assertEqual(len(live_tools), 1)
+        self.assertEqual(live_tools[0].tool_name, "repo.read")
         self.assertEqual(runtime.goal_scheduler.scheduled[0], "goal-auto")
         self.assertIn(CAP_MCP_CALL, automatic_contract_capabilities())
         capabilities = runtime.goals.created[0][3]
