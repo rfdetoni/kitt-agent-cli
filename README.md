@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.5 — goal-contract loop verification ownership
+
+Goal-owned durable contract items no longer pass through the nested per-turn TaskPlan completion gate when that turn has no TaskPlan. The Goals contract already owns post-turn deterministic checks, independent validation and retry; forcing the inner turn through TaskPlan verification produced a false `plan.verify` path, consumed the remaining tool budget, and prevented the contract from advancing.
+
+Contract item prompts now explicitly keep `plan.submit/plan.verify` out of that nested path. Real TaskPlans still retain the existing host completion gate unchanged. See [release notes](docs/RELEASE_0.84.5.md).
+
 ## Release 0.84.4 — durable loop hardening
 
 Automatic contracts now require at least one executable task plus final integration validation, and HIGH/CRITICAL planned paths receive a bounded read-only semantic review before the first mutation. Host-owned resolvable blocks retry the same contract item instead of consuming global scheduler failure budgets; terminal blocks are committed explicitly.

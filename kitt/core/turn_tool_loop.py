@@ -173,6 +173,22 @@ def _completion_recovery_exhausted(attempts: int) -> bool:
     return int(attempts) > _MAX_COMPLETION_RECOVERIES
 
 
+def _goal_contract_uses_outer_verification(
+    plans,
+    security_context: ExecutionSecurityContext,
+    conversation_id: str,
+    turn_id: str,
+) -> bool:
+    """Let the GoalStepVerifier own completion when no nested TaskPlan exists."""
+    if str(getattr(security_context, "principal_type", "") or "").upper() != "GOAL":
+        return False
+    try:
+        return plans.inspect(conversation_id, turn_id) is None
+    except Exception:
+        # Fail closed: an unreadable plan state must keep the normal host gate.
+        return False
+
+
 def _observational_fingerprint(
     tool_name: str,
     tool_args: object,
@@ -574,18 +590,25 @@ class TurnToolLoopMixin:
                         return
                     plans = getattr(self, "task_plans", None)
                     if effective_agent_route == "agent-loop" and plans is not None:
-                        host = plans.host_state(cmd.conversation_id, cmd.turn_id)
-                        if not host["completion_ready"]:
-                            completion_recoveries += 1
-                            if _completion_recovery_exhausted(completion_recoveries):
-                                yield TurnBlocked(reason="Host evidence does not satisfy pending tasks or verification"), None, None
-                                return
-                            execution_messages.extend([
-                                {"role": "assistant", "content": full_response},
-                                {"role": "user", "content": json.dumps({"host_completion": "BLOCKED", "host_execution": host,
-                                    "next_action": "Inspect the plan and run registered verification; report blockers if execution cannot continue."})},
-                            ])
-                            continue
+                        outer_verification = _goal_contract_uses_outer_verification(
+                            plans,
+                            security_context,
+                            cmd.conversation_id,
+                            cmd.turn_id,
+                        )
+                        if not outer_verification:
+                            host = plans.host_state(cmd.conversation_id, cmd.turn_id)
+                            if not host["completion_ready"]:
+                                completion_recoveries += 1
+                                if _completion_recovery_exhausted(completion_recoveries):
+                                    yield TurnBlocked(reason="Host evidence does not satisfy pending tasks or verification"), None, None
+                                    return
+                                execution_messages.extend([
+                                    {"role": "assistant", "content": full_response},
+                                    {"role": "user", "content": json.dumps({"host_completion": "BLOCKED", "host_execution": host,
+                                        "next_action": "Inspect the plan and run registered verification; report blockers if execution cannot continue."})},
+                                ])
+                                continue
                     break
 
             enforce_limits = getattr(exe_profile, "enforce_local_limits", True)

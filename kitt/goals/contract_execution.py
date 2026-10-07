@@ -45,7 +45,10 @@ def build_contract_prompt(runtime, goal, step: ContractStep, resume) -> str:
         )
         prompt = (
             f"{prompt}\n\n[KITT CONTRACT PROGRESS]\n{progress}\n"
-            "Work only on the current item. Do not redo DONE items."
+            "Work only on the current item. Do not redo DONE items. "
+            "This item is already owned by the durable Goals contract; do not call "
+            "plan.submit/plan.verify for it. The host performs authoritative "
+            "post-turn checks and independent validation after your final response."
         )
     if isinstance(resume, dict):
         approved_output = str(resume.get("tool_output") or "")[:32768]
