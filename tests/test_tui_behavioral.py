@@ -137,7 +137,68 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
         with create_pipe_input() as pipe:
             app_ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
             self.assertFalse(app_ui.state.sidebar_open)
-    async def test_06_event_bridge_is_active_and_double_submit_guard(self):
+    async def test_06_submit_enters_session_before_bridge_start_finishes(self):
+        """A slow daemon/bootstrap must not leave the TUI looking frozen on home."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class SlowBridge:
+            def __init__(self):
+                self.is_active = False
+
+            async def start(
+                self,
+                prompt,
+                conversation_id,
+                explicit_files=frozenset(),
+                no_history=False,
+                mode="auto",
+            ):
+                self.is_active = True
+                started.set()
+                await release.wait()
+                self.is_active = False
+                return "turn-ui-start"
+
+        with create_pipe_input() as pipe:
+            app_ui = KittUIApp(
+                self.runtime,
+                "tui",
+                input=pipe,
+                output=DummyOutput(),
+                no_animation=True,
+            )
+            app_ui.bridge = SlowBridge()
+
+            submit_task = asyncio.create_task(app_ui.submit("Implement feature"))
+            await asyncio.wait_for(started.wait(), 1)
+
+            self.assertEqual(app_ui.state.route, "session")
+            self.assertTrue(app_ui.state.is_thinking)
+            self.assertEqual(app_ui.state.status_text, "STARTING")
+            self.assertEqual(
+                [block.text for block in app_ui.state.transcript if block.kind == "user"],
+                ["Implement feature"],
+            )
+            self.assertTrue(app_ui.state.active_tasks)
+
+            app_ui._on_event(
+                TurnStarted(
+                    turn_id="turn-ui-start",
+                    conversation_id=app_ui.state.active_conversation_id,
+                    prompt="Implement feature",
+                )
+            )
+            self.assertEqual(
+                [block.text for block in app_ui.state.transcript if block.kind == "user"],
+                ["Implement feature"],
+            )
+            self.assertEqual(app_ui.state.status_text, "SCANNING")
+
+            release.set()
+            await asyncio.wait_for(submit_task, 1)
+
+    async def test_07_event_bridge_is_active_and_double_submit_guard(self):
         """Verify bridge.is_active status and submit error handling when turn is active."""
         class SlowProcessor:
             def run_turn(self, cmd):
