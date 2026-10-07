@@ -309,15 +309,27 @@ class ContractStore:
             goal = conn.execute(f"SELECT * FROM goals WHERE {where}", args).fetchone()
             if goal is None:
                 return None
+            if str(goal["state"] or "").upper() not in {
+                "FAILED",
+                "PAUSED",
+                "PAUSED_BUDGET_EXCEEDED",
+                "WAITING_APPROVAL",
+            }:
+                raise ValueError(
+                    f"Contract goal cannot be resumed from state {goal['state']}"
+                )
+            if goal["lease_id"] is not None:
+                raise ContractLeaseError("Contract cannot be resumed while a lease is active")
             item = self.current(goal_id, conn)
             if item is None:
                 raise ValueError("Completed contract cannot be resumed")
-            conn.execute(
-                """UPDATE goal_contract_items
-                   SET status='PENDING',attempts=0,last_feedback=NULL,updated_at=?
-                   WHERE id=?""",
-                (now, item.id),
-            )
+            if item.status == "BLOCKED":
+                conn.execute(
+                    """UPDATE goal_contract_items
+                       SET status='PENDING',attempts=0,last_feedback=NULL,updated_at=?
+                       WHERE id=?""",
+                    (now, item.id),
+                )
             conn.execute(
                 """UPDATE goals
                    SET state='ACTIVE',last_error=NULL,completed_at=NULL,next_run_at=?,
