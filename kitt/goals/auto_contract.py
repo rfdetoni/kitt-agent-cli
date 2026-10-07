@@ -18,8 +18,13 @@ from kitt.core.turn_events import (
 )
 from kitt.goals.contract import ContractPlanner
 from kitt.goals.contract_commands import render_contract
+from kitt.context_filter.semantic_filter import LLM_FIRST_CAPABILITY_TOOLS
 from kitt.runtime.state import RuntimeStateStore
-from kitt.security.capabilities import ALL_CAPABILITIES
+from kitt.security.capabilities import (
+    CAP_BROWSER_READ,
+    CAP_BROWSER_WRITE,
+    capabilities_for_tools,
+)
 from kitt.security.context import ExecutionSecurityContext
 
 
@@ -53,8 +58,10 @@ def goal_active_turn_key(goal_id: str) -> str:
 
 
 def automatic_contract_capabilities() -> list[str]:
-    """Host-owned capability ceiling for normal autonomous coding requests."""
-    return sorted(ALL_CAPABILITIES)
+    """Mirror the canonical auto tool surface without inventing new authority."""
+    capabilities = capabilities_for_tools(LLM_FIRST_CAPABILITY_TOOLS)
+    capabilities.update({CAP_BROWSER_READ, CAP_BROWSER_WRITE})
+    return sorted(capabilities)
 
 
 def _pending_action_for_goal(runtime, goal_id: str, conversation_id: str):
