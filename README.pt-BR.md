@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Agent CLI 0.84.2 — contratos duráveis automáticos
+
+Turns persistidos em `mode=auto` agora usam por padrão o contrato durável Plan → Execute → Validate → Retry. O planner decompõe o pedido, o GoalScheduler executa um item por vez, falhas de validação reiteram o mesmo item e a conclusão continua exigindo todos os itens e a validação final integrada.
+
+Instâncias do Reverse Proxy iniciadas pelo Agent herdam nível/conteúdo de log, gravam arquivo próprio no mesmo diretório de logs e ficam vinculadas ao ciclo de vida do processo do Agent. Veja [as notas da versão](docs/RELEASE_0.84.2.md).
+
 ## Agent CLI 0.84.1 — verificação de steps com responsabilidades focadas
 
 O comportamento de contratos duráveis da 0.84.0 permanece igual, mas a implementação foi reduzida estruturalmente: `GoalStepExecutor` executa o turno e delega a verificação pós-turno. Snapshot de mutações, runtime de review adversarial e verificação de conclusão ficam em módulos focados, sem concentrar tudo no executor. Veja [as notas da versão](docs/RELEASE_0.84.1.md).
