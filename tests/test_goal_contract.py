@@ -18,6 +18,28 @@ from kitt.history.database import HistoryDatabase
 from kitt.history.migrations import CURRENT_SCHEMA_VERSION, MigrationRunner
 
 
+def _done_result(paths=None):
+    return {
+        "status": "ITEM_DONE",
+        "tokens": 0,
+        "cost": 0.0,
+        "contract_evidence": {
+            "changed_paths": list(paths or []),
+            "host_checks": {},
+            "validation": {
+                "verdict": "OK",
+                "evidence": ["independent validation passed"],
+                "issues": [],
+            },
+            "verification": {
+                "success": True,
+                "score": 1.0,
+                "checks": [],
+            },
+        },
+    }
+
+
 def _item(
     local_id: str,
     *,
@@ -222,12 +244,9 @@ class GoalContractTests(unittest.TestCase):
         def executor(current_goal, **_kwargs):
             current = self.goals.current_item(current_goal.id)
             calls.append(current.local_id)
-            return {
-                "status": "ITEM_DONE",
-                "tokens": 1,
-                "cost": 0.0,
-                "contract_evidence": {"changed_paths": ["kitt/a.py"]},
-            }
+            result = _done_result(["kitt/a.py"])
+            result["tokens"] = 1
+            return result
 
         scheduler = GoalScheduler(
             self.db,
@@ -258,12 +277,7 @@ class GoalContractTests(unittest.TestCase):
         def executor(current_goal, **_kwargs):
             current = self.goals.current_item(current_goal.id)
             if current.local_id == "T01":
-                return {
-                    "status": "ITEM_DONE",
-                    "tokens": 0,
-                    "cost": 0.0,
-                    "contract_evidence": {},
-                }
+                return _done_result()
             return {
                 "status": "INCOMPLETE",
                 "tokens": 0,
