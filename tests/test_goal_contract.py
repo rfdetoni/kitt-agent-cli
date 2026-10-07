@@ -5,17 +5,24 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from types import SimpleNamespace
 
+from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import TurnCompleted
 from kitt.core.turn_processor import TurnProcessor
 from kitt.goals.contract import ContractPlanner
 from kitt.goals.contract_store import ContractLeaseError
+from kitt.goals.auto_contract import (
+    automatic_contract_capabilities,
+    iter_automatic_contract,
+)
 from kitt.goals.contract_validation import ContractValidator, parse_validation_report
 from kitt.goals.scheduler import GoalScheduler
 from kitt.goals.service import GoalService
 from kitt.history.database import HistoryDatabase
 from kitt.history.migrations import CURRENT_SCHEMA_VERSION, MigrationRunner
+from kitt.security.capabilities import CAP_MCP_CALL
 
 
 def _done_result(paths=None):
@@ -354,6 +361,141 @@ class GoalContractTests(unittest.TestCase):
         self.assertIsNotNone(lease_id)
         with self.assertRaises((ValueError, ContractLeaseError)):
             self.goals.resume_contract(goal.id, conversation_id="conv")
+
+    def test_automatic_contract_wraps_normal_auto_turn(self):
+        created_goal = SimpleNamespace(
+            id="goal-auto",
+            conversation_id="conv",
+            state="ACTIVE",
+            max_wall_seconds=60,
+            last_error=None,
+        )
+        completed_goal = SimpleNamespace(
+            id="goal-auto",
+            conversation_id="conv",
+            state="SUCCEEDED",
+            max_wall_seconds=60,
+            last_error=None,
+        )
+        contract_items = [
+            SimpleNamespace(
+                local_id="T01",
+                status="DONE",
+                attempts=1,
+                max_attempts=5,
+                title="Implement",
+                last_feedback=None,
+            ),
+            SimpleNamespace(
+                local_id="FINAL",
+                status="DONE",
+                attempts=1,
+                max_attempts=5,
+                title="Validate",
+                last_feedback=None,
+            ),
+        ]
+
+        class Goals:
+            def __init__(self):
+                self.created = None
+
+            def create_contract(self, *args, **kwargs):
+                self.created = (args, kwargs)
+                return created_goal
+
+            def get(self, _goal_id):
+                return completed_goal
+
+            def contract_items(self, _goal_id):
+                return contract_items
+
+        class Scheduler:
+            def __init__(self):
+                self.scheduled = None
+
+            def schedule_goal(self, goal_id, **kwargs):
+                self.scheduled = (goal_id, kwargs)
+                return True
+
+        runtime = SimpleNamespace(
+            canonical_root=Path(self.tmp.name),
+            database=self.db,
+            workspace_id="ws",
+            goals=Goals(),
+            goal_scheduler=Scheduler(),
+        )
+        command = TurnCommand(
+            conversation_id="conv",
+            prompt="implement and validate the request",
+            mode="auto",
+            turn_id="turn-auto",
+        )
+        planned = [
+            _item("T01"),
+            _item("FINAL", kind="final", depends_on=["T01"]),
+        ]
+
+        with patch(
+            "kitt.goals.auto_contract.ContractPlanner.plan",
+            return_value=planned,
+        ), patch(
+            "kitt.goals.auto_contract.render_contract",
+            return_value="contract complete",
+        ):
+            events = list(iter_automatic_contract(runtime, command))
+
+        self.assertEqual(type(events[0]).__name__, "TurnStarted")
+        self.assertEqual(type(events[-1]).__name__, "TurnCompleted")
+        self.assertEqual(events[-1].response, "contract complete")
+        self.assertEqual(runtime.goal_scheduler.scheduled[0], "goal-auto")
+        self.assertIn(CAP_MCP_CALL, automatic_contract_capabilities())
+        capabilities = runtime.goals.created[0][3]
+        self.assertIn(CAP_MCP_CALL, capabilities)
+
+    def test_contract_approval_resume_keeps_attempt_count(self):
+        goal = self._contract(max_attempts=4)
+        with self.db.get_connection() as connection:
+            connection.execute(
+                "UPDATE goals SET state='WAITING_APPROVAL',lease_id=NULL,"
+                "lease_owner_id=NULL,lease_expires_at=NULL WHERE id=?",
+                (goal.id,),
+            )
+            item = self.goals.current_item(goal.id)
+            connection.execute(
+                "UPDATE goal_contract_items SET status='PENDING',attempts=2 WHERE id=?",
+                (item.id,),
+            )
+
+        resumed = self.goals.resume_after_approval(
+            goal.id,
+            conversation_id="conv",
+        )
+
+        self.assertIsNotNone(resumed)
+        self.assertEqual(resumed.state, "ACTIVE")
+        current = self.goals.current_item(goal.id)
+        self.assertEqual(current.status, "PENDING")
+        self.assertEqual(current.attempts, 2)
+
+    def test_denied_contract_approval_blocks_current_item(self):
+        goal = self._contract()
+        with self.db.get_connection() as connection:
+            connection.execute(
+                "UPDATE goals SET state='WAITING_APPROVAL',lease_id=NULL,"
+                "lease_owner_id=NULL,lease_expires_at=NULL WHERE id=?",
+                (goal.id,),
+            )
+
+        blocked = self.goals.block_waiting_contract(
+            goal.id,
+            "denied",
+            conversation_id="conv",
+        )
+
+        self.assertIsNotNone(blocked)
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertEqual(self.goals.get(goal.id).state, "FAILED")
 
     def test_no_history_turns_get_isolated_provider_session_keys(self):
         processor = object.__new__(TurnProcessor)
