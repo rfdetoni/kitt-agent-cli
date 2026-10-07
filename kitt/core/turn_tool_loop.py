@@ -392,7 +392,9 @@ class TurnToolLoopMixin:
                     "turn_id": cmd.turn_id,
                     "started_at": thinking_started_at,
                     "session_key": self._provider_session_key(
-                        exe_profile, cmd.conversation_id
+                        exe_profile,
+                        cmd.conversation_id,
+                        isolated_turn_id=cmd.turn_id if cmd.no_history else None,
                     ),
                     "route": effective_agent_route,
                     "conversation_id": cmd.conversation_id,
