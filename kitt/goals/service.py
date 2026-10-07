@@ -187,6 +187,13 @@ class GoalService:
     def resume_contract(self, gid, conversation_id=None):
         return self.contracts.resume(gid, conversation_id=conversation_id)
 
+    def cancel_contract(self, gid, reason, conversation_id=None):
+        return self.contracts.cancel(
+            gid,
+            reason,
+            conversation_id=conversation_id,
+        )
+
     def block_waiting_contract(self, gid, feedback, conversation_id=None):
         return self.contracts.block_waiting(
             gid,
