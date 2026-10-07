@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from dataclasses import replace
 from kitt.llm.privacy import profile_processing_is_local
 
 from pathlib import PurePosixPath
@@ -24,6 +25,8 @@ from kitt.goals.completion import (
     AutonomousCompletionEngine,
     completion_state_key,
 )
+from kitt.goals.contract_checks import ContractCheckRunner
+from kitt.goals.contract_validation import ContractValidator
 from kitt.goals.gates import QualityGateRunner
 from kitt.goals.evidence import EvidenceLedger
 from kitt.goals.risk import ReviewRisk, classify_review_risk
@@ -66,12 +69,12 @@ class GoalStepExecutor:
     @staticmethod
     def _completion_engine(runtime, goal) -> AutonomousCompletionEngine:
         def authorize_gate(argv):
-            command = shlex.join(list(argv))
             return runtime.policy.evaluate_tool(
                 "run_command",
-                {"command": command},
+                {"argv": list(argv)},
                 origin="SCHEDULE",
                 conversation_id=goal.conversation_id,
+                workspace_id=runtime.workspace_id,
             )
 
         return AutonomousCompletionEngine(
@@ -549,22 +552,51 @@ class GoalStepExecutor:
             goal.conversation_id,
         )
         resume = state.get(self._resume_key(goal.id))
-        completion_key = completion_state_key(goal.id)
+        contract_item = runtime.goals.current_item(goal.id)
+        step_goal = goal
+        if contract_item is not None:
+            step_goal = replace(
+                goal,
+                objective=contract_item.prompt,
+                success_criteria=list(contract_item.criteria),
+                gates=[],
+            )
+            completion_key = completion_state_key(
+                f"{goal.id}:{contract_item.local_id}"
+            )
+        else:
+            completion_key = completion_state_key(goal.id)
         completion_state = state.get(completion_key)
-        completion = self._completion_engine(runtime, goal)
+        if (
+            contract_item is not None
+            and contract_item.attempts == 1
+            and contract_item.last_feedback is None
+            and completion_state is not None
+        ):
+            state.delete(completion_key)
+            completion_state = None
+        completion = self._completion_engine(runtime, step_goal)
 
-        prompt = goal.objective
+        prompt = step_goal.objective
+        if contract_item is not None:
+            progress = " | ".join(
+                f"{item.local_id}:{item.status}"
+                for item in runtime.goals.contract_items(goal.id)
+            )
+            prompt = (
+                f"{prompt}\n\n[KITT CONTRACT PROGRESS]\n{progress}\n"
+                "Work only on the current item. Do not redo DONE items."
+            )
         if isinstance(resume, dict):
             approved_output = str(resume.get("tool_output") or "")[:32768]
             prompt = (
                 "Continue the existing persistent goal after an approved host "
                 "action. The approved action already succeeded; do not repeat "
-                "it. Use the existing conversation/history and complete only "
-                "the remaining work.\n\n"
+                "it. Use only the remaining work for the current contract item.\n\n"
                 f"Approved host result:\n{approved_output}\n\n"
-                f"Original objective:\n{goal.objective}"
+                f"Current objective:\n{prompt}"
             )
-        prompt = completion.build_execution_prompt(goal, prompt, completion_state)
+        prompt = completion.build_execution_prompt(step_goal, prompt, completion_state)
 
         security = ExecutionSecurityContext(
             workspace_id=runtime.workspace_id,
@@ -638,7 +670,47 @@ class GoalStepExecutor:
                 for path in dict.fromkeys([*prior_review_paths, *current_review_paths])
                 if self._is_reviewable_path(path)
             ]
-            verification = completion.verify(goal, result["response"])
+            contract_history_paths = []
+            if contract_item is not None:
+                for previous_item in runtime.goals.contract_items(goal.id):
+                    if previous_item.status == "DONE":
+                        contract_history_paths.extend(
+                            list(previous_item.evidence.get("changed_paths") or [])
+                        )
+                if contract_item.kind == "final":
+                    prior_review_paths.extend(contract_history_paths)
+                review_paths = [
+                    path
+                    for path in dict.fromkeys([*prior_review_paths, *current_review_paths])
+                    if self._is_reviewable_path(path)
+                ]
+
+            verification = completion.verify(step_goal, result["response"])
+            contract_check_result = None
+            if contract_item is not None:
+                verification_paths = list(
+                    dict.fromkeys(
+                        [
+                            *contract_item.paths,
+                            *(
+                                contract_history_paths
+                                if contract_item.kind == "final"
+                                else []
+                            ),
+                            *review_paths,
+                        ]
+                    )
+                )
+                contract_check_result = ContractCheckRunner(runtime).run(
+                    goal,
+                    contract_item,
+                    verification_paths,
+                )
+                verification = completion.include_checks(
+                    verification,
+                    contract_check_result.checks,
+                )
+                result["contract_checks"] = contract_check_result.evidence
             risk_name = ""
             if verification.success and review_paths:
                 snapshot, snapshot_complete = self._collect_review_snapshot(
@@ -680,7 +752,7 @@ class GoalStepExecutor:
                         }
                         reviewer = self._build_reviewer(
                             runtime,
-                            goal,
+                            step_goal,
                             completion_state,
                             pass_usage,
                             route=route,
@@ -688,9 +760,9 @@ class GoalStepExecutor:
                             turn_id=command.turn_id,
                         )
                         review = reviewer.review(
-                            objective=goal.objective,
+                            objective=step_goal.objective,
                             success_criteria=list(
-                                getattr(goal, "success_criteria", None) or []
+                                getattr(step_goal, "success_criteria", None) or []
                             ),
                             verification=verification,
                             change_snapshot=snapshot,
@@ -784,6 +856,47 @@ class GoalStepExecutor:
                         ),
                     }
 
+            if contract_item is not None and verification.success:
+                if review_paths and not locals().get("snapshot"):
+                    snapshot, snapshot_complete = self._collect_review_snapshot(
+                        runtime,
+                        goal,
+                        security,
+                        command.turn_id,
+                        review_paths,
+                    )
+                validation_snapshot, _, snapshot_redactions = self._redact_for_review(
+                    runtime,
+                    locals().get("snapshot", "") or "",
+                )
+                deterministic_text = (
+                    contract_check_result.evidence_text
+                    if contract_check_result is not None
+                    else "No host verification step was applicable."
+                )
+                deterministic_text, _, evidence_redactions = self._redact_for_review(
+                    runtime,
+                    deterministic_text,
+                )
+                validation, validation_tokens, validation_cost = ContractValidator(
+                    runtime
+                ).validate(
+                    goal=goal,
+                    item=contract_item,
+                    deterministic_evidence=deterministic_text,
+                    changed_paths=review_paths,
+                    snapshot=validation_snapshot,
+                )
+                result["tokens"] += validation_tokens
+                result["cost"] += validation_cost
+                result["validation_redactions"] = snapshot_redactions + evidence_redactions
+                result["contract_validation"] = {
+                    "verdict": validation.verdict,
+                    "evidence": list(validation.evidence),
+                    "issues": list(validation.issues),
+                }
+                verification = completion.include_validation(verification, validation)
+
             result["verification"] = verification.to_dict()
             result["evidence"] = EvidenceLedger.from_verification(
                 verification,
@@ -793,6 +906,15 @@ class GoalStepExecutor:
                 state.delete(completion_key)
                 if resume is not None:
                     state.delete(self._resume_key(goal.id))
+                if contract_item is not None:
+                    result["status"] = "ITEM_DONE"
+                    result["contract_item_id"] = contract_item.id
+                    result["contract_evidence"] = {
+                        "changed_paths": review_paths[: self.MAX_REVIEW_FILES],
+                        "host_checks": result.get("contract_checks", {}),
+                        "validation": result.get("contract_validation", {}),
+                        "verification": verification.to_dict(),
+                    }
             else:
                 next_state = completion.next_state(completion_state, verification)
                 next_state["review_paths"] = review_paths[: self.MAX_REVIEW_FILES]
@@ -816,7 +938,12 @@ class GoalStepExecutor:
                         + verification.feedback
                     )
                 else:
-                    terminal_status = "INCOMPLETE"
+                    terminal_status = (
+                        "ITEM_EXHAUSTED"
+                        if contract_item is not None
+                        and contract_item.attempts >= contract_item.max_attempts
+                        else "INCOMPLETE"
+                    )
                     terminal_error = verification.feedback
                 result.update(
                     status=terminal_status,
