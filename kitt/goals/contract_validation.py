@@ -105,6 +105,24 @@ class ContractValidator:
     def __init__(self, runtime):
         self.runtime = runtime
 
+    def _redact_report(self, report: ContractValidationReport) -> ContractValidationReport:
+        scanner = getattr(self.runtime, "sensitive_scanner", None)
+        if scanner is None:
+            return report
+
+        def redact(value: str) -> str:
+            return scanner.scan_and_redact(str(value or "")).clean_text
+
+        return ContractValidationReport(
+            verdict=report.verdict,
+            evidence=[redact(item) for item in report.evidence],
+            issues=[
+                {key: redact(value) for key, value in item.items()}
+                for item in report.issues
+            ],
+            raw_response="",
+        )
+
     def validate(
         self,
         *,
@@ -172,4 +190,4 @@ class ContractValidator:
                 return _invalid_report(f"Validation turn failed: {event.error}"), tokens, cost
         if not response:
             return _invalid_report("Validation turn produced no final response"), tokens, cost
-        return parse_validation_report(response), tokens, cost
+        return self._redact_report(parse_validation_report(response)), tokens, cost
