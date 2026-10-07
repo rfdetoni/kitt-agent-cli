@@ -234,6 +234,23 @@ class GoalScheduler:
         return cursor.rowcount == 1
 
     @staticmethod
+    def _contract_done_evidence_valid(result) -> bool:
+        if not isinstance(result, dict):
+            return False
+        evidence = result.get("contract_evidence")
+        if not isinstance(evidence, dict):
+            return False
+        verification = evidence.get("verification")
+        validation = evidence.get("validation")
+        return (
+            isinstance(verification, dict)
+            and verification.get("success") is True
+            and isinstance(validation, dict)
+            and str(validation.get("verdict") or "").upper() == "OK"
+            and bool(validation.get("evidence"))
+        )
+
+    @staticmethod
     def _recurrence_seconds(value):
         if not value:
             return None
@@ -389,9 +406,18 @@ class GoalScheduler:
 
                 if contract_item is not None:
                     retry_in = max(0.1, min(self.poll_interval, 1.0))
-                    if status in {"ITEM_DONE", "SUCCEEDED"}:
+                    if status == "ITEM_DONE":
+                        if not self._contract_done_evidence_valid(result):
+                            raise RuntimeError(
+                                "Contract executor returned ITEM_DONE without "
+                                "authoritative verification and validation evidence"
+                            )
                         outcome = "DONE"
                         next_run = time.time()
+                    elif status == "SUCCEEDED":
+                        raise RuntimeError(
+                            "Unqualified SUCCEEDED cannot advance a contract item"
+                        )
                     elif status == "WAITING_APPROVAL":
                         outcome = "WAITING_APPROVAL"
                         next_run = None
