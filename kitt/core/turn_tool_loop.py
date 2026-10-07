@@ -189,6 +189,24 @@ def _goal_contract_uses_outer_verification(
         return False
 
 
+def _task_plan_context(
+    plans,
+    security_context: ExecutionSecurityContext,
+    envelope,
+    conversation_id: str,
+    turn_id: str,
+):
+    """Attach TaskPlan host state only when TaskPlan owns this turn."""
+    if plans is None or _goal_contract_uses_outer_verification(
+        plans,
+        security_context,
+        conversation_id,
+        turn_id,
+    ):
+        return envelope
+    return plans.context(envelope, conversation_id, turn_id)
+
+
 def _observational_fingerprint(
     tool_name: str,
     tool_args: object,
@@ -388,17 +406,10 @@ class TurnToolLoopMixin:
                     exe_profile,
                 )
                 plans = getattr(self, "task_plans", None)
-                uses_outer_verification = (
-                    plans is not None
-                    and _goal_contract_uses_outer_verification(
+                context_envelope = (
+                    _task_plan_context(
                         plans,
                         security_context,
-                        cmd.conversation_id,
-                        cmd.turn_id,
-                    )
-                )
-                context_envelope = (
-                    plans.context(
                         request.context_envelope,
                         cmd.conversation_id,
                         cmd.turn_id,
@@ -410,8 +421,6 @@ class TurnToolLoopMixin:
                         "code-edit",
                         "validate-diff",
                     }
-                    and plans is not None
-                    and not uses_outer_verification
                     else request.context_envelope
                 )
                 model_round_started_at = time.perf_counter()
