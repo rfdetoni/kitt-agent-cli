@@ -2,6 +2,7 @@ import json
 import time
 import uuid
 
+from kitt.goals.contract_store import ContractStore
 from kitt.goals.models import Goal, QualityGate
 from kitt.history.database import HistoryDatabase
 from kitt.security.capabilities import (
@@ -17,6 +18,7 @@ class GoalService:
 
     def __init__(self, db: HistoryDatabase):
         self.db = db
+        self.contracts = ContractStore(db)
 
     def _get_gates(self, conn, goal_id):
         rows = conn.execute("SELECT * FROM quality_gates WHERE goal_id=?", (goal_id,)).fetchall()
@@ -78,6 +80,100 @@ class GoalService:
             )
         return self.get(gid)
 
+    def create_contract(
+        self,
+        conversation_id,
+        objective,
+        items,
+        capabilities=None,
+        token_budget=None,
+        max_wall_seconds=1800,
+        max_attempts=5,
+        *,
+        start_paused=False,
+    ):
+        objective = str(objective or "").strip()
+        contract_items = list(items or [])
+        if not objective:
+            raise ValueError("Goal objective required")
+        if not 1 <= len(contract_items) <= 12:
+            raise ValueError("Contract must contain 1..12 items")
+        attempts = max(1, int(max_attempts))
+        caps = capabilities or [CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ]
+        caps = sorted(canonicalize_capabilities(caps))
+        gid, now = f"goal_{uuid.uuid4().hex}", time.time()
+        initial_state = "PAUSED" if start_paused else "ACTIVE"
+        with self.db.get_connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute(
+                """INSERT INTO goals(
+                    id,conversation_id,objective,state,token_budget,max_turns,max_wall_seconds,
+                    success_criteria_json,started_at,updated_at,capabilities_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    gid,
+                    conversation_id,
+                    objective,
+                    initial_state,
+                    token_budget,
+                    len(contract_items) * attempts,
+                    max(1, int(max_wall_seconds)),
+                    "[]",
+                    now,
+                    now,
+                    json.dumps(caps),
+                ),
+            )
+            self.contracts.insert_items(
+                c,
+                gid,
+                contract_items,
+                max_attempts=attempts,
+            )
+        return self.get(gid)
+
+    def contract_items(self, gid):
+        return self.contracts.items(gid)
+
+    def current_item(self, gid):
+        return self.contracts.current(gid)
+
+    def contract_complete(self, gid):
+        return self.contracts.is_complete(gid)
+
+    def begin_contract_attempt(self, gid, *, lease_id, lease_owner_id):
+        return self.contracts.begin_attempt(
+            gid,
+            lease_id=lease_id,
+            lease_owner_id=lease_owner_id,
+        )
+
+    def commit_contract_outcome(
+        self,
+        gid,
+        item_id,
+        *,
+        lease_id,
+        lease_owner_id,
+        outcome,
+        feedback="",
+        evidence=None,
+        next_run=None,
+    ):
+        return self.contracts.commit_outcome(
+            gid,
+            item_id,
+            lease_id=lease_id,
+            lease_owner_id=lease_owner_id,
+            outcome=outcome,
+            feedback=feedback,
+            evidence=evidence,
+            next_run=next_run,
+        )
+
+    def resume_contract(self, gid, conversation_id=None):
+        return self.contracts.resume(gid, conversation_id=conversation_id)
+
     def get(self, gid):
         with self.db.get_connection() as c:
             r = c.execute("SELECT * FROM goals WHERE id=?", (gid,)).fetchone()
@@ -105,6 +201,8 @@ class GoalService:
         state = state.upper()
         if state not in allowed:
             raise ValueError(f"Invalid goal state {state}")
+        if state == "SUCCEEDED" and not self.contracts.is_complete(gid):
+            raise ValueError("Cannot mark a contract goal SUCCEEDED with unfinished items")
         with self.db.get_connection() as c:
             where, args = "id=?", [gid]
             if conversation_id:
