@@ -70,7 +70,21 @@ def handle_turn_started(state: UIState, event: TurnStarted) -> None:
     state.pending_recovery = None
     state.is_thinking = True
     state.status_text = "SCANNING"
-    state.append_message("user", event.prompt)
+
+    pending_prompt = next(
+        (
+            block
+            for block in reversed(state.transcript)
+            if block.kind == "user"
+            and block.metadata.get("pending_turn_start") is True
+        ),
+        None,
+    )
+    if pending_prompt is not None and pending_prompt.text == safe_text(event.prompt):
+        pending_prompt.metadata.pop("pending_turn_start", None)
+    else:
+        state.append_message("user", event.prompt)
+
     state.init_turn_tasks(event.prompt)
     state.turn_started_at = time.time()
 

@@ -239,11 +239,44 @@ class KittUIApp:
         if inline_files:
             self.explicit_files.update(inline_files)
         combined_explicit = set(self.explicit_files)
+
+        # Transition out of the home screen before daemon/bootstrap work starts.
+        # TurnStarted can arrive only after bridge.start() has connected/attached
+        # the execution authority, which may take long enough to look frozen.
+        self.state.route = "session"
+        self.state.active_conversation_id = str(conversation["id"])
+        self.state.is_thinking = True
+        self.state.status_text = "STARTING"
+        self.state.append_message("user", text)
+        if self.state.transcript:
+            self.state.transcript[-1].metadata["pending_turn_start"] = True
+        self.state.init_turn_tasks(text)
+        if self.application:
+            self.application.invalidate()
+
         try:
-            await self.bridge.start(text, conversation["id"], explicit_files=combined_explicit, no_history=not self.runtime.config.history_enabled, mode=mode)
+            turn_id = await self.bridge.start(
+                text,
+                conversation["id"],
+                explicit_files=combined_explicit,
+                no_history=not self.runtime.config.history_enabled,
+                mode=mode,
+            )
+            if not self.state.active_turn_id:
+                self.state.active_turn_id = turn_id
         except Exception as err:
             self.state.is_thinking = False
-            self.state.add_toast(f"Turn Error: {err}")
+            self.state.status_text = "ERROR"
+            for block in reversed(self.state.transcript):
+                if block.metadata.get("pending_turn_start") is True:
+                    block.metadata.pop("pending_turn_start", None)
+                    break
+            if self.state.active_tasks:
+                core_task = self.state.active_tasks[0]
+                core_task.status = "error"
+                core_task.error_message = str(err)
+                core_task.summary = "Falha ao iniciar execução."
+            self.state.add_toast(f"Turn Error: {err}", persistent=True)
 
     def _on_event(self, event) -> None:
         from kitt.core.turn_events import TurnCompleted, TurnFailed, TurnCancelled, TurnBlocked
