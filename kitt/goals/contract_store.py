@@ -299,6 +299,51 @@ class ContractStore:
                 "local_id": item.local_id,
             }
 
+    def cancel(
+        self,
+        goal_id: str,
+        reason: str,
+        *,
+        conversation_id: str | None = None,
+    ) -> bool:
+        now = time.time()
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            where = "id=?"
+            args: list[Any] = [goal_id]
+            if conversation_id:
+                where += " AND conversation_id=?"
+                args.append(conversation_id)
+            goal = conn.execute(
+                f"SELECT * FROM goals WHERE {where}",
+                args,
+            ).fetchone()
+            if goal is None:
+                return False
+            if str(goal["state"] or "").upper() in {
+                "SUCCEEDED",
+                "FAILED",
+                "CANCELLED",
+            }:
+                return False
+            item = self.current(goal_id, conn)
+            if item is not None and item.status != "DONE":
+                conn.execute(
+                    """UPDATE goal_contract_items
+                       SET status='BLOCKED',last_feedback=?,updated_at=?
+                       WHERE id=?""",
+                    (str(reason or "Cancelled"), now, item.id),
+                )
+            conn.execute(
+                """UPDATE goals
+                   SET state='CANCELLED',last_error=?,completed_at=?,next_run_at=NULL,
+                       lease_id=NULL,lease_owner_id=NULL,lease_expires_at=NULL,
+                       lease_heartbeat_at=NULL,updated_at=?
+                   WHERE id=?""",
+                (str(reason or "Cancelled"), now, now, goal_id),
+            )
+            return True
+
     def resume_after_approval(
         self,
         goal_id: str,
