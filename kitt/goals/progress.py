@@ -18,7 +18,6 @@ _PROGRESS_EVENT_NAMES = {
     "ToolStarted",
     "ToolCompleted",
     "EditApplied",
-    "MetricsRecorded",
     "ChildAgentSpawned",
     "ChildAgentProgress",
     "ChildAgentFinished",
