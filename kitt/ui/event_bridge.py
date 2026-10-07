@@ -261,6 +261,27 @@ class TurnEventBridge:
                 raise RuntimeError("Daemon rejected approved continuation")
             self._active_turn_id = turn_id
             return
+
+        from kitt.goals.auto_contract import (
+            goal_id_for_pending_turn,
+            resolve_goal_approval,
+        )
+
+        goal_id = goal_id_for_pending_turn(self.runtime, turn_id)
+        if goal_id:
+            loop = asyncio.get_running_loop()
+            resolution = await loop.run_in_executor(
+                self._executor,
+                resolve_goal_approval,
+                self.runtime,
+                grant,
+            )
+            if not resolution.success:
+                raise RuntimeError(
+                    resolution.error or "Approved contract action failed"
+                )
+            return
+
         if self._consumer and not self._consumer.done():
             await self._consumer
         self._turn_generation += 1
