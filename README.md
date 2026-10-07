@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.2 — automatic durable contracts
+
+Persisted user turns in `mode=auto` now use the durable Plan → Execute → Validate → Retry contract by default. The planner decomposes the request, GoalScheduler executes one item at a time, validation failures retry the same item, and completion still requires every item plus final integration validation to pass.
+
+Managed Reverse Proxy instances started from the Agent inherit the Agent logging level/content, write their own log file in the same log directory, and are tied to the Agent process lifecycle. See [release notes](docs/RELEASE_0.84.2.md).
+
 ## Release 0.84.1 — focused goal-step verification
 
 The durable task-contract behavior from 0.84.0 is unchanged, but the implementation is now structurally smaller: `GoalStepExecutor` only executes turns and delegates post-turn verification. Mutation snapshots, adversarial-review runtime and completion verification live in focused modules instead of one oversized executor. See [release notes](docs/RELEASE_0.84.1.md).
