@@ -11,7 +11,10 @@ from types import SimpleNamespace
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import TurnCompleted
 from kitt.core.turn_processor import TurnProcessor
-from kitt.core.turn_tool_loop import _goal_contract_uses_outer_verification
+from kitt.core.turn_tool_loop import (
+    _goal_contract_uses_outer_verification,
+    _task_plan_context,
+)
 from kitt.goals.contract import ContractPlanner
 from kitt.goals.contract_execution import ContractStep, build_contract_prompt
 from kitt.goals.contract_store import ContractLeaseError
@@ -267,6 +270,54 @@ class GoalContractTests(unittest.TestCase):
                 NestedPlans(), security, "conv", "turn-goal"
             )
         )
+
+    def test_goal_contract_omits_task_plan_host_context_without_nested_plan(self):
+        original = {"schema_version": 1, "segments": [{"id": "base"}]}
+
+        class Plans:
+            def __init__(self, plan):
+                self.plan = plan
+                self.context_calls = 0
+
+            def inspect(self, _conversation_id, _turn_id):
+                return self.plan
+
+            def context(self, envelope, _conversation_id, _turn_id):
+                self.context_calls += 1
+                return {**envelope, "task_plan_context": True}
+
+        no_plan = Plans(None)
+        result = _task_plan_context(
+            no_plan,
+            SimpleNamespace(principal_type="GOAL"),
+            original,
+            "conv",
+            "turn-goal",
+        )
+        self.assertIs(result, original)
+        self.assertEqual(no_plan.context_calls, 0)
+
+        real_plan = Plans({"tasks": []})
+        result = _task_plan_context(
+            real_plan,
+            SimpleNamespace(principal_type="GOAL"),
+            original,
+            "conv",
+            "turn-goal",
+        )
+        self.assertTrue(result["task_plan_context"])
+        self.assertEqual(real_plan.context_calls, 1)
+
+        user_turn = Plans(None)
+        result = _task_plan_context(
+            user_turn,
+            SimpleNamespace(principal_type="USER"),
+            original,
+            "conv",
+            "turn-user",
+        )
+        self.assertTrue(result["task_plan_context"])
+        self.assertEqual(user_turn.context_calls, 1)
 
     def test_contract_step_prompt_rejects_nested_task_plan_verification(self):
         item = SimpleNamespace(local_id="T01", status="RUNNING")

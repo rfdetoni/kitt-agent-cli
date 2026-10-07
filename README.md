@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.6 — complete Goals/TaskPlan verification separation
+
+GOAL-owned durable contract items without a nested TaskPlan no longer receive TaskPlan host-execution/verification state in their model context. This removes the remaining contradictory instruction that could still tell the model to run registered TaskPlan verification even though `GoalStepVerifier` owns post-turn validation.
+
+Agent 0.84.5 already stopped the generic TaskPlan gate from rejecting such final responses; 0.84.6 completes the same root-cause fix at context construction. Real TaskPlans retain their host context and completion gate unchanged. Tool budgets are unchanged. See [release notes](docs/RELEASE_0.84.6.md).
+
 ## Release 0.84.5 — goal-contract loop verification ownership
 
 Goal-owned durable contract items no longer pass through the nested per-turn TaskPlan completion gate when that turn has no TaskPlan. The Goals contract already owns post-turn deterministic checks, independent validation and retry; forcing the inner turn through TaskPlan verification produced a false `plan.verify` path, consumed the remaining tool budget, and prevented the contract from advancing.
