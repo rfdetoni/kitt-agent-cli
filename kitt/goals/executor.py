@@ -915,7 +915,18 @@ class GoalStepExecutor:
                         "changed_paths": review_paths[: self.MAX_REVIEW_FILES],
                         "host_checks": result.get("contract_checks", {}),
                         "validation": result.get("contract_validation", {}),
-                        "verification": verification.to_dict(),
+                        "verification": {
+                            "success": bool(verification.success),
+                            "score": float(verification.score),
+                            "checks": [
+                                {
+                                    "kind": check.kind,
+                                    "name": check.name,
+                                    "passed": bool(check.passed),
+                                }
+                                for check in verification.checks
+                            ],
+                        },
                     }
             else:
                 next_state = completion.next_state(completion_state, verification)
