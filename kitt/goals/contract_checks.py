@@ -23,6 +23,13 @@ class ContractCheckRunner:
 
     def run(self, goal, item, paths: list[str]) -> ContractCheckResult:
         unique_paths = list(dict.fromkeys(str(path) for path in paths if str(path).strip()))[:64]
+        scanner = getattr(self.runtime, "sensitive_scanner", None)
+
+        def redact(value: str) -> str:
+            text = str(value or "")
+            if scanner is None:
+                return text
+            return scanner.scan_and_redact(text).clean_text
 
         def authorize(step):
             if CAP_PROCESS_RUN not in set(goal.capabilities or []):
@@ -53,7 +60,7 @@ class ContractCheckRunner:
                     "deterministic",
                     f"{diagnostic.validator}:{diagnostic.path}",
                     bool(diagnostic.ok),
-                    str(diagnostic.message or diagnostic.validator),
+                    redact(str(diagnostic.message or diagnostic.validator)),
                 )
             )
         for step in report.steps:
@@ -63,8 +70,10 @@ class ContractCheckRunner:
                     step.name,
                     bool(step.passed),
                     (
-                        f"status={step.status}; returncode={step.returncode}; "
-                        f"argv={step.argv!r}\n{step.output}"
+                        redact(
+                            f"status={step.status}; returncode={step.returncode}; "
+                            f"argv={step.argv!r}\n{step.output}"
+                        )
                     )[:6000],
                 )
             )
@@ -76,8 +85,10 @@ class ContractCheckRunner:
                     "Host verification",
                     bool(report.ok),
                     (
-                        f"status={report.status}; checked_paths={unique_paths!r}; "
-                        f"{report.command_output or report.failure_message()}"
+                        redact(
+                            f"status={report.status}; checked_paths={unique_paths!r}; "
+                            f"{report.command_output or report.failure_message()}"
+                        )
                     )[:6000],
                 )
             )
@@ -87,12 +98,28 @@ class ContractCheckRunner:
                     "deterministic",
                     "Host verification",
                     False,
-                    report.failure_message()[:6000],
+                    redact(report.failure_message())[:6000],
                 )
             )
 
-        evidence = report.as_dict()
-        evidence_text = (
+        raw_evidence = report.as_dict()
+        evidence = {
+            "ok": bool(raw_evidence.get("ok")),
+            "status": str(raw_evidence.get("status") or ""),
+            "checked_paths": list(raw_evidence.get("checked_paths") or [])[:64],
+            "full_verification": bool(raw_evidence.get("full_verification")),
+            "steps": [
+                {
+                    "name": str(step.get("name") or ""),
+                    "status": str(step.get("status") or ""),
+                    "passed": bool(step.get("passed")),
+                    "output": redact(str(step.get("output") or ""))[:4000],
+                }
+                for step in list(raw_evidence.get("steps") or [])[:12]
+                if isinstance(step, dict)
+            ],
+        }
+        evidence_text = redact(
             f"status={report.status}; ok={report.ok}; full={report.full_verification}; "
             f"checked_paths={unique_paths!r}\n"
             + (report.failure_message() if not report.ok else report.command_output)
