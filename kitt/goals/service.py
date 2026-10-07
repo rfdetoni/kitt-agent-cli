@@ -138,6 +138,19 @@ class GoalService:
     def current_item(self, gid):
         return self.contracts.current(gid)
 
+    def latest_contract(self, conversation_id):
+        with self.db.get_connection() as c:
+            row = c.execute(
+                """SELECT g.* FROM goals g
+                   WHERE g.conversation_id=?
+                   AND EXISTS(
+                       SELECT 1 FROM goal_contract_items i WHERE i.goal_id=g.id
+                   )
+                   ORDER BY g.started_at DESC LIMIT 1""",
+                (conversation_id,),
+            ).fetchone()
+            return self._goal(row, c) if row else None
+
     def contract_complete(self, gid):
         return self.contracts.is_complete(gid)
 
