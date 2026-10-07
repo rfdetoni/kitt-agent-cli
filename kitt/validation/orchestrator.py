@@ -100,6 +100,7 @@ class VerificationOrchestrator:
         process_runner=None,
         *,
         full_enabled: bool | Callable[[], bool] | None = None,
+        authorize_step: Callable[[VerificationStep], str] | None = None,
     ):
         self.root = Path(root).resolve()
         self.process_runner = process_runner
@@ -107,6 +108,7 @@ class VerificationOrchestrator:
         self.detector = BuildDetector(str(self.root))
         self.contracts = VerificationContractManager(self.root)
         self.full_enabled = full_enabled
+        self.authorize_step = authorize_step
 
     def _full_enabled(self) -> bool:
         if callable(self.full_enabled):
@@ -119,10 +121,17 @@ class VerificationOrchestrator:
         planned = self.detector.plan_verification(paths, full=full)
         return self.contracts.apply_plan(planned)
 
-    def verify(self, paths: Iterable[str], *, check_ids: Iterable[str] | None = None, cancellation=None) -> VerificationReport:
+    def verify(
+        self,
+        paths: Iterable[str],
+        *,
+        check_ids: Iterable[str] | None = None,
+        cancellation=None,
+        force_full: bool = False,
+    ) -> VerificationReport:
         unique = list(dict.fromkeys(str(path) for path in paths if path))[:64]
         required = set(check_ids or ())
-        full = self._full_enabled() or bool(required)
+        full = bool(force_full) or self._full_enabled() or bool(required)
         syntax = self.validator.validate_paths(unique)
         diagnostics = list(syntax.diagnostics)
         if not syntax.ok:
@@ -148,6 +157,37 @@ class VerificationOrchestrator:
 
         step_results: list[VerificationStepResult] = []
         for step in plan:
+            if self.authorize_step is not None:
+                try:
+                    decision = str(self.authorize_step(step) or "DENY").upper()
+                except Exception as exc:
+                    decision = f"ERROR:{type(exc).__name__}:{exc}"
+                if decision != "ALLOW":
+                    status = "APPROVAL_REQUIRED" if decision == "ASK" else "DENIED"
+                    output = f"Host policy rejected verification step {step.name}: {decision}"
+                    step_result = VerificationStepResult(
+                        step.name,
+                        step.kind,
+                        list(step.argv),
+                        False,
+                        None,
+                        output,
+                        status,
+                    )
+                    step_results.append(step_result)
+                    diagnostics.append(
+                        GateDiagnostic("<project>", f"verification.{step.kind}", False, output)
+                    )
+                    return VerificationReport(
+                        False,
+                        diagnostics=diagnostics,
+                        command=list(step.argv),
+                        command_output=output,
+                        full_verification=full,
+                        steps=step_results,
+                        status=status,
+                        checked_paths=unique,
+                    )
             try:
                 result = self.process_runner.run(
                     step.argv,
