@@ -387,8 +387,18 @@ class TurnToolLoopMixin:
                     request.system_prompt,
                     exe_profile,
                 )
+                plans = getattr(self, "task_plans", None)
+                uses_outer_verification = (
+                    plans is not None
+                    and _goal_contract_uses_outer_verification(
+                        plans,
+                        security_context,
+                        cmd.conversation_id,
+                        cmd.turn_id,
+                    )
+                )
                 context_envelope = (
-                    self.task_plans.context(
+                    plans.context(
                         request.context_envelope,
                         cmd.conversation_id,
                         cmd.turn_id,
@@ -400,7 +410,8 @@ class TurnToolLoopMixin:
                         "code-edit",
                         "validate-diff",
                     }
-                    and getattr(self, "task_plans", None) is not None
+                    and plans is not None
+                    and not uses_outer_verification
                     else request.context_envelope
                 )
                 model_round_started_at = time.perf_counter()
