@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import re
+import time
 from difflib import SequenceMatcher
 from dataclasses import replace
 from typing import Any, Callable, List, Optional
@@ -30,6 +31,7 @@ from kitt.context.recovery import recoverable_text_body
 from kitt.context.reconcile import reconcile_context_envelope
 from kitt_protocol import CacheRegion, ContextKind, ContextStability, ContextTrust, RecoveryMode
 from kitt.llm.client import LLMClient
+from kitt.memory.shared_client import KittMemoryUnavailable
 from kitt.metrics.cost_estimator import estimate_execution_cost
 from kitt.prompts import (
     CONTEXT_SUMMARY_SYSTEM as CONTEXT_SUMMARY_PROMPT,
@@ -644,18 +646,33 @@ class TurnContextMixin:
         )
         memory_context = ""
         if plan.enabled_tools and not cmd.no_history:
+            memory_started = time.perf_counter()
+            memory_status = "ok"
             try:
-                memory_context = self.memory.get_memory_context(
-                    cmd.prompt,
-                    max_tokens=600,
-                    turn_id=cmd.turn_id,
-                )
-            except TypeError:
-                # Preserve compatibility with injected test/facade memory providers
-                # that implement the historical two-argument contract.
-                memory_context = self.memory.get_memory_context(
-                    cmd.prompt,
-                    max_tokens=600,
+                try:
+                    memory_context = self.memory.get_memory_context(
+                        cmd.prompt,
+                        max_tokens=600,
+                        turn_id=cmd.turn_id,
+                    )
+                except TypeError:
+                    # Preserve compatibility with injected test/facade memory providers
+                    # that implement the historical two-argument contract.
+                    memory_context = self.memory.get_memory_context(
+                        cmd.prompt,
+                        max_tokens=600,
+                    )
+            except KittMemoryUnavailable:
+                # Recall enriches context but is never execution authority. A local
+                # memory outage must not block or fail the coding hot path.
+                memory_context = ""
+                memory_status = "unavailable"
+            finally:
+                self._record_latency(
+                    cmd.turn_id,
+                    "memory_context",
+                    (time.perf_counter() - memory_started) * 1000,
+                    detail={"status": memory_status},
                 )
         harness_context = (
             self.harness_service.prompt(

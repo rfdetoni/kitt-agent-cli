@@ -9,6 +9,8 @@ from kitt.core.turn_events import (
     ApprovalRequired,
     EditApplied,
     TextDelta,
+    ThinkingCompleted,
+    ThinkingStarted,
     TurnBlocked,
     TurnCancelled,
     TurnCompleted,
@@ -18,6 +20,7 @@ from kitt.core.turn_events import (
 )
 from kitt.goals.contract import ContractPlanner
 from kitt.goals.contract_commands import render_contract
+from kitt.goals.progress import close_goal_progress, drain_goal_progress, open_goal_progress
 from kitt.context_filter.semantic_filter import LLM_FIRST_CAPABILITY_TOOLS
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.capabilities import (
@@ -204,11 +207,29 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
         )
         return
 
+    planning_started = time.perf_counter()
+    yield ThinkingStarted()
     try:
         items = ContractPlanner(runtime).plan(
             command.conversation_id,
             command.prompt,
         )
+    except Exception as exc:
+        yield ThinkingCompleted(
+            duration_ms=max(1, int((time.perf_counter() - planning_started) * 1000)),
+        )
+        yield TurnFailed(
+            error=f"Automatic contract planning failed: {exc}",
+            turn_id=command.turn_id,
+            conversation_id=command.conversation_id,
+        )
+        return
+    yield ThinkingCompleted(
+        duration_ms=max(1, int((time.perf_counter() - planning_started) * 1000)),
+    )
+
+    goal = None
+    try:
         goal = runtime.goals.create_contract(
             command.conversation_id,
             command.prompt,
@@ -219,6 +240,7 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
             5,
             start_paused=False,
         )
+        open_goal_progress(goal.id)
         if not runtime.goal_scheduler.schedule_goal(
             goal.id,
             heartbeat_enabled=True,
@@ -231,6 +253,8 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
                 "Automatic contract requires the GoalScheduler to be running"
             )
     except Exception as exc:
+        if goal is not None:
+            close_goal_progress(goal.id)
         yield TurnFailed(
             error=f"Automatic contract planning failed: {exc}",
             turn_id=command.turn_id,
@@ -257,6 +281,9 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
 
     try:
         while True:
+            for progress_event in drain_goal_progress(goal.id):
+                yield progress_event
+
             current_goal = runtime.goals.get(goal.id)
             if current_goal is None:
                 yield TurnFailed(
@@ -285,9 +312,13 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
                     yield approval
 
             if current_goal.state == "SUCCEEDED":
+                for progress_event in drain_goal_progress(goal.id):
+                    yield progress_event
                 yield TurnCompleted(response=render_contract(runtime, goal.id))
                 return
             if current_goal.state in _TERMINAL_GOAL_STATES:
+                for progress_event in drain_goal_progress(goal.id):
+                    yield progress_event
                 yield TurnFailed(
                     error=(
                         current_goal.last_error
@@ -308,6 +339,7 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
                 return
             time.sleep(0.2)
     finally:
+        close_goal_progress(goal.id)
         state.delete(_outer_state_key(command.turn_id))
 
 
