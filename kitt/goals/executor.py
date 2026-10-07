@@ -712,6 +712,8 @@ class GoalStepExecutor:
                 )
                 result["contract_checks"] = contract_check_result.evidence
             risk_name = ""
+            snapshot = ""
+            snapshot_complete = True
             if verification.success and review_paths:
                 snapshot, snapshot_complete = self._collect_review_snapshot(
                     runtime,
@@ -857,7 +859,7 @@ class GoalStepExecutor:
                     }
 
             if contract_item is not None and verification.success:
-                if review_paths and not locals().get("snapshot"):
+                if review_paths and not snapshot:
                     snapshot, snapshot_complete = self._collect_review_snapshot(
                         runtime,
                         goal,
@@ -867,7 +869,7 @@ class GoalStepExecutor:
                     )
                 validation_snapshot, _, snapshot_redactions = self._redact_for_review(
                     runtime,
-                    locals().get("snapshot", "") or "",
+                    snapshot,
                 )
                 deterministic_text = (
                     contract_check_result.evidence_text
