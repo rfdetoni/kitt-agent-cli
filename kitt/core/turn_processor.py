@@ -665,7 +665,7 @@ class TurnProcessor(
             "repo.read", "repo.list", "repo.search", "repo.inspect_symbol",
             "repo.read_symbol", "repo.references",
             "flow.execute", "program.execute",
-            "plan.submit", "plan.inspect", "plan.next", "plan.dispatch", "plan.verify", "plan.checkpoint",
+            "plan.submit", "plan.inspect", "plan.next", "plan.dispatch", "plan.dispatch_ready", "plan.verify", "plan.checkpoint",
             *edits,
             "process.run", "artifacts.store", "artifacts.read",
             "children.spawn", "children.send", "children.inspect",
