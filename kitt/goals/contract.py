@@ -294,7 +294,6 @@ class ContractPlanner:
             "risk": risk_name,
             "items": items,
         }
-        example = {"verdict": "OK", "issues": []}
         return (
             "Review this already host-validated execution contract before any mutation. "
             "Do not implement it. Check for missing acceptance criteria, unsafe ordering, "
