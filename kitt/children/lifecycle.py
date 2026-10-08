@@ -281,7 +281,6 @@ class ChildAgentManager:
         if depth > self.max_depth:
             raise ValueError("Child depth limit exceeded")
 
-        now = time.time()
         # Active-worker capacity and the parent budget already bound admission.
         # A per-conversation sleep prevents genuine parallel fan-out.
         existing = self.repo.list(parent_conversation_id, 100)
