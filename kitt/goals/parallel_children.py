@@ -62,6 +62,8 @@ def parallel_contract_result(runtime, goal, current, state, security):
         if not batch:
             return None
         available = max(1, int(children.max_children))
+        if available < 2:
+            return None
         launched = []
         for item in batch[:available]:
             try:
@@ -96,6 +98,13 @@ def parallel_contract_result(runtime, goal, current, state, security):
                 for child_id in launched:
                     children.cancel(child_id)
                 if launched:
+                    launched_ids = set(launched)
+                    roster = {name: cid for name, cid in roster.items() if cid not in launched_ids}
+                    state.set(key, roster, ttl_seconds=24 * 60 * 60)
+                    state.set(
+                        f"goal.parallel_failed:{goal.id}:{current.local_id}",
+                        True, ttl_seconds=24 * 60 * 60,
+                    )
                     raise
                 return None
             roster[item.local_id] = child_id
