@@ -9,9 +9,11 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 from kitt.core.turn_command import TurnCommand
-from kitt.core.turn_events import ToolStarted, TurnCancelled, TurnCompleted
+from kitt.core.turn_events import ToolStarted, TurnCancelled, TurnCompleted, TurnFailed
 from kitt.core.cancellation import CancellationRegistry
 from kitt.core.turn_processor import TurnProcessor
+from kitt.core.runtime_config import RuntimeConfig
+from kitt.domain.entities import ModelProfile
 from kitt.core.turn_tool_loop import (
     _goal_contract_uses_outer_verification,
     _task_plan_context,
@@ -218,6 +220,90 @@ class GoalContractTests(unittest.TestCase):
             run.call_args_list[1].kwargs["principal_type"],
             "CONTRACT_REVIEWER",
         )
+
+    def test_long_high_risk_contract_reaches_review_with_8k_proxy_context(self):
+        # The real prompt builder failed here after planning succeeded: the
+        # global 4096-token output floor starved the required tool schema.
+        objective = ("Implement authentication and isolated user journeys. " * 125).strip()
+        tasks = [
+            _item(f"T{index:02}", paths=["src/auth/domain.ts"])
+            for index in range(1, 8)
+        ]
+        for item in tasks:
+            item["prompt"] = "Implement the scoped domain behavior. " * 9
+            item["validation_prompt"] = "Verify authorization and acceptance criteria. " * 4
+            item["success_criteria"] = ["Role boundaries hold", "Domain behavior works"]
+        payload = {"items": [*tasks, _item("FINAL", kind="final", depends_on=["T07"])]}
+        dispatched = []
+        output_limits = []
+        allocations = []
+
+        class Client:
+            profile = ModelProfile(
+                backend="kitt-reverse-proxy", protocol="kitt-reverse-proxy",
+                model="gemini-web", base_url="http://127.0.0.1:3000",
+                context_window=8192, max_output_tokens=4096, supports_tools=True,
+            )
+
+            def chat_stream(self, messages, **kwargs):
+                dispatched.append(messages[-1]["content"])
+                output_limits.append(kwargs["max_output_tokens"])
+                if len(dispatched) == 1:
+                    yield f"KITT_CONTRACT: {json.dumps(payload)}"
+                else:
+                    yield 'KITT_PLAN_REVIEW: {"verdict":"OK","issues":[]}'
+
+        processor = TurnProcessor(
+            root_dir=self.tmp.name, workspace_id="ws", execution_client=Client(),
+            config=RuntimeConfig(history_enabled=False, persistence_enabled=False),
+            event_callback=lambda name, payload: allocations.append(payload["allocated"])
+            if name == "BudgetApplied" else None,
+        )
+        try:
+            planner = ContractPlanner(SimpleNamespace(
+                canonical_root=Path(self.tmp.name), workspace_id="ws", processor=processor,
+            ))
+            accepted = planner.plan("conv", objective)
+            self.assertEqual(len(accepted), 8)
+            self.assertEqual(len(dispatched), 2)
+            self.assertEqual(output_limits, [4096, 2048])
+            self.assertEqual(len(allocations), 2)
+            for allocation in allocations:
+                self.assertLessEqual(
+                    allocation["total_input_tokens"] + allocation["reserved_output_tokens"], 8192,
+                )
+            self.assertIn(json.dumps(objective), dispatched[1])
+            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nEmit exactly", 1)[0])
+            self.assertEqual(review["objective"], objective)
+            self.assertEqual(review["items"], accepted)
+        finally:
+            processor.close()
+            processor.registry.close()
+
+    def test_oversized_prompt_fails_with_scoped_diagnostic_without_prompt_content(self):
+        profile = ModelProfile(
+            backend="kitt-reverse-proxy", protocol="kitt-reverse-proxy",
+            model="gemini-web", base_url="http://127.0.0.1:3000",
+            context_window=8192, max_output_tokens=4096, supports_tools=True,
+        )
+        processor = TurnProcessor(
+            root_dir=self.tmp.name, workspace_id="ws",
+            execution_client=SimpleNamespace(profile=profile),
+            config=RuntimeConfig(history_enabled=False, persistence_enabled=False),
+        )
+        command = TurnCommand("conv", "PRIVATE_REQUEST " * 2000, mode="plan", no_history=True)
+        try:
+            with self.assertLogs("kitt.core.turn_processor", level="DEBUG") as captured:
+                events = list(processor.run_turn(command))
+            self.assertIsInstance(events[-1], TurnFailed)
+            self.assertEqual(events[-1].turn_id, command.turn_id)
+            failure = next(record for record in captured.records if record.msg == "turn.failure")
+            self.assertEqual(failure.extra_data["turn_id"], command.turn_id)
+            self.assertEqual(failure.extra_data["error_type"], "PromptTooLargeError")
+            self.assertNotIn("PRIVATE_REQUEST", str(failure.extra_data))
+        finally:
+            processor.close()
+            processor.registry.close()
 
     def test_scheduler_commits_terminal_host_block_without_global_retry(self):
         goal = self._contract()

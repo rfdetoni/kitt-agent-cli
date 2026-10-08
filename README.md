@@ -1,5 +1,11 @@
 # K.I.T.T. Agent CLI
 
+## Release 0.84.10 — High-risk contract review context
+
+High-risk automatic contracts now reserve at most 2,048 output tokens for the concise pre-mutation review, leaving room for the complete objective, contract and required tool schema on 8K reverse-proxy profiles. The selected output ceiling reaches the LLM request without mutating the shared client. Prompt budgets count user intent once, and diagnostics distinguish failed prompt preparation from a successful build.
+
+See [release notes](docs/RELEASE_0.84.10.md).
+
 ## Release 0.84.9 — Cancellation, selected inputs and build verification
 
 Automatic contracts register the planning turn for cancellation and refuse work after cancellation. Selected text files and attachment references survive planning and durable execution. Full Node verification includes check/build scripts and directory targets, and reports whether workspace verification actually ran. The native bridge invalidates changed files and validates symbol paths before scoped reads. Tool argument limits come from kitt-protocol.

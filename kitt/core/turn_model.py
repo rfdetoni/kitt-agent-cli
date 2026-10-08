@@ -152,6 +152,7 @@ class TurnModelMixin:
         tool_definitions: Optional[List[Dict[str, object]]] = None,
         loop_action_budget: int = 4,
         context_envelope: Optional[Dict[str, object]] = None,
+        max_output_tokens: Optional[int] = None,
     ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         conversation_id = str(conversation_id or "").strip()
@@ -324,6 +325,8 @@ class TurnModelMixin:
                 "usage_callback": _observe_usage,
                 "attempt_callback": _reserve_retry_attempt,
             }
+            if max_output_tokens is not None:
+                kwargs["max_output_tokens"] = max_output_tokens
             if is_proxy:
                 kwargs["request_metadata"].update({
                     "max_upstream_attempts": attempt_grant,
@@ -602,6 +605,17 @@ class TurnModelMixin:
                 llm_first_profile.max_output_tokens,
                 min(4096, max(1024, llm_first_profile.context_window // 2)),
             )
+            security = cmd.security_context
+            principal_type = (
+                security.get("principal_type")
+                if isinstance(security, dict)
+                else getattr(security, "principal_type", None)
+            )
+            if cmd.mode == "plan" and principal_type == "CONTRACT_REVIEWER":
+                # This read-only turn returns a verdict and concise issues,
+                # not code. Reserving the coding output floor can leave no
+                # room for the original objective, contract and tool schema.
+                desired_output = min(desired_output, 2048)
             safe_output = min(
                 desired_output,
                 llm_first_profile.context_window - PromptBudget.MIN_INPUT_TOKENS,

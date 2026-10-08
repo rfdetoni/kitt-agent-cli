@@ -414,6 +414,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                         [{"role": "user", "content": "one"}],
                         session_key="conversation-a",
                         reasoning_effort=80,
+                        max_output_tokens=512,
                     )),
                     "ok",
                 )
@@ -429,11 +430,16 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                     "".join(client.chat_stream(
                         [{"role": "user", "content": "other"}],
                         session_key="conversation-b",
+                        max_output_tokens=profile.max_output_tokens + 1000,
                     )),
                     "ok",
                 )
 
         first = captured[0].extra_headers
+        self.assertEqual(captured[0].max_output_tokens, 512)
+        self.assertEqual(captured[1].max_output_tokens, profile.max_output_tokens)
+        self.assertEqual(captured[2].max_output_tokens, profile.max_output_tokens)
+        self.assertEqual(client.profile, profile)
         second = captured[1].extra_headers
         third = captured[2].extra_headers
         self.assertEqual(first["X-Kitt-Session-Id"], second["X-Kitt-Session-Id"])

@@ -987,7 +987,12 @@ class TurnContextMixin:
         allocated["total_input_tokens"] = (
             TokenCounter.count_tokens(principal_task_prompt)
             + (
-                envelope_token_cost(context_envelope)
+                # USER_INTENT is retained for provenance; the proxy lowers it
+                # from the user message, so it must not be charged twice.
+                sum(
+                    segment.token_cost for segment in context_envelope.segments
+                    if segment.kind != ContextKind.USER_INTENT
+                )
                 if llm_first_proxy
                 else TokenCounter.count_tokens(sys_prompt)
             )

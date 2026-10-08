@@ -63,7 +63,7 @@ from kitt.core.turn_events import (
 )
 from kitt.core.pending_action import PendingAction
 from kitt.core.runtime_config import RuntimeConfig
-from kitt.core.logging import trace_event
+from kitt.core.logging import debug_event, trace_event
 from kitt.core.turn_execution_guard import TurnExecutionGuard
 from kitt.core.turn_helpers import (
     _attachment_retrieval_prompt as _attachment_retrieval_prompt,
@@ -1236,18 +1236,21 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             prompt_plan = replace(plan, enabled_tools=planned_authorities)
 
             prompt_build_started_at = time.perf_counter()
+            prompt_built = False
             try:
                 sys_prompt, base_sys, allocated, request = self._build_system_prompt(
                     cmd, task, prompt_plan, exe_profile, context_map_str, explicit_str, agents_str,
                     skills_str, agent_addressed, workspace_id, budget, exposed_tools=exposed_tools,
                     execution_slice=execution_slice,
                 )
+                prompt_built = True
             finally:
                 self._record_latency(
                     cmd.turn_id,
                     "prompt_build",
                     (time.perf_counter() - prompt_build_started_at) * 1000,
                     elapsed_ms=(time.time() - turn_started_at) * 1000,
+                    detail={"status": "ok" if prompt_built else "failed"},
                 )
             self._emit("BudgetApplied", {"allocated": allocated})
             yield BudgetApplied(
@@ -1327,6 +1330,10 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 recovery_action=getattr(e, "recovery_action", "continue"),
             )
         except Exception as e:
+            debug_event(
+                logger, "turn.failure", turn_id=cmd.turn_id,
+                conversation_id=cmd.conversation_id, error_type=type(e).__name__,
+            )
             yield TurnFailed(
                 error=str(e),
                 turn_id=cmd.turn_id,
