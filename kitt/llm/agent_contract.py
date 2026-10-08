@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 import re
-from kitt_protocol import decode_json_object
+from kitt_protocol import decode_json_object, decode_kap_content
 
 
 
@@ -37,4 +37,6 @@ def parse_structured_result(response: str) -> dict:
     """Decode one complete model result, optionally protected by a JSON fence."""
     text = str(response or "").strip()
     fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```", text, re.IGNORECASE)
+    if text.startswith('KITT/1') or text.lower().startswith('```kap'):
+        return decode_kap_content(text)
     return decode_json_object(fenced[1] if fenced else text)
