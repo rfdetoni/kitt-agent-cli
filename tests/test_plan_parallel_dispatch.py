@@ -1,8 +1,8 @@
 """Release guard: one host plan action admits independent child workers safely."""
 from types import SimpleNamespace
 
-from kitt.runtime.core_runtime import CoreSafeRuntime
-from kitt.runtime.safe_runtime import SafeRuntimeResult
+from kitt.runtime.core_runtime import SafeRuntime
+from kitt.runtime.core_runtime import SafeRuntimeResult
 
 
 class Plans:
@@ -25,7 +25,7 @@ class Plans:
 
 def _runtime(max_children=4, approved=True):
     plans = Plans()
-    runtime = object.__new__(CoreSafeRuntime)
+    runtime = object.__new__(SafeRuntime)
     runtime.registry = SimpleNamespace(task_plans=plans)
     runtime.children = SimpleNamespace(max_children=max_children)
     runtime.conversation_id = "conversation"
