@@ -85,6 +85,8 @@ class ToolRegistry(_core.ToolRegistry):
 
     def execute_tool(self, tool_name, args=None, *positional, **kwargs):
         """Run one canonical policy-governed tool execution path."""
+        if args is not None and not isinstance(args, dict):
+            return ToolResult(False, "", f"Invalid arguments for {tool_name}: expected an object.")
         normalized_args = args or {}
         if tool_name == "run_command":
             argv = normalized_args.get("argv")
