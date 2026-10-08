@@ -11,7 +11,7 @@ from prompt_toolkit.output import DummyOutput
 
 from kitt.core.runtime import KittRuntime
 from kitt.core.runtime_config import RuntimeConfig
-from kitt.core.turn_events import TextDelta, TurnCompleted, TurnStarted
+from kitt.core.turn_events import BudgetApplied, TextDelta, TurnCompleted, TurnStarted
 from kitt.ui.app import KittUIApp
 from kitt.ui.capabilities import create_backend
 from kitt.ui.event_bridge import TurnEventBridge
@@ -20,6 +20,19 @@ from kitt.ui.state import UIState
 
 
 class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
+    async def test_provider_managed_context_renders_webchat_without_local_percentage(self):
+        from kitt.ui.components.sidebar import SidebarComponent
+        from kitt.ui.reducer import reduce_ui_event
+        from kitt.ui.snapshot import render_snapshot
+
+        state = UIState()
+        reduce_ui_event(state, BudgetApplied(total_input_tokens=50_000, reserved_output_tokens=0, window_size=0))
+        text = SidebarComponent().render(state)
+        self.assertIn("WebChat", text)
+        self.assertIn("50000 tokens estimados", text)
+        self.assertNotIn("100%", text)
+        self.assertIn("WebChat", render_snapshot(state, 120, 30))
+
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.runtime = KittRuntime.build(self.tmp.name, RuntimeConfig(history_enabled=True, persistence_enabled=True))

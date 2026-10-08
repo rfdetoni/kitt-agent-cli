@@ -24,7 +24,10 @@ class SidebarComponent:
         bar_len = 10
         filled = (ctx_pct * bar_len) // 100
         bar = "█" * filled + "░" * (bar_len - filled)
-        lines.append(f"  [{t.format_primary(bar)}] {ctx_pct}% ({ctx_used}/{ctx_max})")
+        lines.append(
+            f"  WebChat · {ctx_used} tokens estimados" if state.context_window <= 0
+            else f"  [{t.format_primary(bar)}] {ctx_pct}% ({ctx_used}/{ctx_max})"
+        )
         if state.net_saved_tokens > 0:
             lines.append(t.format_muted(f"  Economizados: {state.net_saved_tokens} tokens"))
 

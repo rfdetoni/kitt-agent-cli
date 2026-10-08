@@ -53,7 +53,15 @@ class PromptBudget:
     MIN_INPUT_TOKENS = 128
     MIN_OUTPUT_TOKENS = 64
 
-    def __init__(self, window_size: int = 8192, reserved_output: int = 1200):
+    def __init__(self, window_size: int = 8192, reserved_output: int = 1200, *, enforce_limits: bool = True):
+        self.enforce_limits = enforce_limits
+        if not enforce_limits:
+            # Zero denotes provider-managed capacity, not an empty window.
+            self.window_size = 0
+            self.reserved_output = 0
+            self.max_input_tokens = 0
+            self.last_telemetry = None
+            return
         self.window_size = int(window_size)
         if self.window_size < self.MIN_INPUT_TOKENS + self.MIN_OUTPUT_TOKENS:
             raise ValueError(
@@ -193,7 +201,7 @@ class PromptBudget:
         constraints_tokens = TokenCounter.count_tokens(constraints_str)
 
         mandatory_total = sys_tokens + task_tokens + constraints_tokens
-        if mandatory_total > max_allowed_input:
+        if self.enforce_limits and mandatory_total > max_allowed_input:
             raise PromptTooLargeError(
                 f"System, task and mandatory constraints ({mandatory_total}t) "
                 f"exceed available input context ({max_allowed_input}t) after reserving "
@@ -211,6 +219,8 @@ class PromptBudget:
             return mandatory_total + sum(c["tokens"] for c in components)
 
         for comp in components:
+            if not self.enforce_limits:
+                break
             excess = get_total() - max_allowed_input
             if excess <= 0 or comp["tokens"] <= 0:
                 continue
@@ -220,13 +230,13 @@ class PromptBudget:
             truncated.append(comp["name"])
 
         total_input_tokens = get_total()
-        if total_input_tokens > max_allowed_input:
+        if self.enforce_limits and total_input_tokens > max_allowed_input:
             raise PromptTooLargeError(
                 "Prompt allocation could not satisfy the context-window invariant: "
                 f"input={total_input_tokens}, reserved_output={self.reserved_output}, "
                 f"window={self.window_size}."
             )
-        if total_input_tokens + self.reserved_output > self.window_size:
+        if self.enforce_limits and total_input_tokens + self.reserved_output > self.window_size:
             raise AssertionError("PromptBudget invariant violated")
 
         telemetry.section_tokens = {

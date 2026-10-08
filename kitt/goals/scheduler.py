@@ -32,10 +32,12 @@ class GoalScheduler:
         poll_interval_seconds=5.0,
         event_callback=None,
         lease_duration_seconds: float = 30.0,
+        token_budget_enforced=None,
     ):
         self.db = db
         self.goals = goal_service
         self.executor = runtime_step_executor
+        self._token_budget_enforced = token_budget_enforced or (lambda: True)
         self.poll_interval = max(0.1, float(poll_interval_seconds))
         self.lease_duration = max(1.0, float(lease_duration_seconds))
         self._running = False
@@ -265,9 +267,9 @@ class GoalScheduler:
             "recurrence must be integer seconds, every:<seconds>, or seconds:<seconds>"
         )
 
-    @staticmethod
-    def _budget_reason(goal, now):
-        if goal.token_budget is not None and goal.tokens_used >= goal.token_budget:
+    def _budget_reason(self, goal, now):
+        if (self._token_budget_enforced() and goal.token_budget is not None
+                and goal.tokens_used >= goal.token_budget):
             return "token budget exceeded"
         if goal.turns_used >= goal.max_turns:
             return "turn budget exceeded"

@@ -12,9 +12,9 @@ from kitt_protocol import ExecutionBudget
 def _budget() -> ExecutionBudget:
     return ExecutionBudget(
         max_model_calls=6,
-        max_input_tokens=1000,
-        max_output_tokens=1000,
-        max_total_tokens=2000,
+        max_input_tokens=1,
+        max_output_tokens=1,
+        max_total_tokens=2,
         max_cost=10.0,
         max_duration_ms=60_000,
         max_tool_calls=4,
@@ -63,8 +63,8 @@ def test_reverse_proxy_reserves_actual_prompt_usage_not_full_allowance(tmp_path)
             captured["request_metadata"] = dict(kwargs["request_metadata"])
             kwargs["usage_callback"](
                 {
-                    "prompt_tokens": 9,
-                    "completion_tokens": 1,
+                    "prompt_tokens": 5000,
+                    "completion_tokens": 6000,
                     "upstream_attempts": 1,
                 }
             )
@@ -121,5 +121,7 @@ def test_reverse_proxy_reserves_actual_prompt_usage_not_full_allowance(tmp_path)
     assert output[-1][0] == "ok"
     dispatched = captured["budget_at_dispatch"]
     assert dispatched["usage"]["input_tokens"] == expected_estimate
-    assert captured["request_metadata"]["max_prompt_tokens"] == 1000
-    assert dispatched["usage"]["input_tokens"] < captured["request_metadata"]["max_prompt_tokens"]
+    assert "max_prompt_tokens" not in captured["request_metadata"]
+    assert ledger.snapshot()["usage"]["input_tokens"] == 5000
+    assert ledger.snapshot()["usage"]["output_tokens"] == 6000
+    assert not ledger.token_limits_enforced

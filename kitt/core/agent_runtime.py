@@ -95,7 +95,8 @@ def _new_execution_budget(processor) -> ExecutionBudgetLedger:
             max_subagents=max(
                 0, int(getattr(config, "max_subagents_per_turn", 4))
             ),
-        )
+        ),
+        enforce_token_limits=not getattr(processor, "_provider_manages_tokens", lambda: False)(),
     )
 
 
@@ -213,7 +214,7 @@ def settle_child_budget(
     # excess did not happen. Charge the full lease in that case; otherwise
     # charge the exact reported usage.
     charge_tokens = (
-        token_cap if reported_tokens > token_cap else reported_tokens
+        token_cap if ledger.token_limits_enforced and reported_tokens > token_cap else reported_tokens
     )
     charge_calls = call_cap if reported_calls > call_cap else reported_calls
     charge_cost = cost_cap if reported_cost > cost_cap else reported_cost

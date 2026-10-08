@@ -23,5 +23,6 @@ def render_snapshot(state: UIState, width: int, height: int) -> str:
         lines.append(f"OVERLAY: {state.active_overlay}")
     if state.toasts:
         lines.append("NOTICE: " + state.toasts[-1].text)
-    lines.append(f"{state.status_text} | {state.large_model} | {state.tokens_used}/{state.context_window}"[:width])
+    context_usage = "WebChat" if state.context_window <= 0 else f"{state.tokens_used}/{state.context_window}"
+    lines.append(f"{state.status_text} | {state.large_model} | {context_usage}"[:width])
     return "\n".join(lines[:height])

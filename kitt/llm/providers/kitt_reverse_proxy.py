@@ -274,7 +274,6 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             "messages": messages,
             "stream": True,
             "temperature": request.temperature,
-            "max_tokens": request.max_output_tokens,
         }
         if request.context_envelope:
             payload["kitt_context"] = request.context_envelope

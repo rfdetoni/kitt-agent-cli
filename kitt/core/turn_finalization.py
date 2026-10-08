@@ -10,6 +10,7 @@ from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.pending_action import PendingAction
 from kitt.core.turn_command import TurnCommand
+from kitt.core.turn_helpers import _reverse_proxy_identity
 from kitt.core.turn_events import (
     ApprovalRequired,
     EditApplied,
@@ -196,7 +197,8 @@ class TurnFinalizationMixin:
             output_tokens=output_tokens, saved_tokens=saved,
             estimated_usd=cost.estimated_usd,
         )
-        if self.compaction_service and self.history_service and hasattr(self.history_service, "tree"):
+        if (_reverse_proxy_identity(exe_profile) is None and self.compaction_service
+                and self.history_service and hasattr(self.history_service, "tree")):
             try:
                 path = [
                     entry

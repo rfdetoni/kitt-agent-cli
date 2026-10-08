@@ -741,7 +741,7 @@ class TurnContextMixin:
         )
         builder = ContextEnvelopeBuilder(
             epoch=context_epoch.epoch_id,
-            max_tokens=context_budget,
+            max_tokens=None if llm_first_proxy else context_budget,
         )
         builder.add(
             ContextKind.SYSTEM_INSTRUCTION,
@@ -1004,7 +1004,7 @@ class TurnContextMixin:
             messages=[{"role": "user", "content": principal_task_prompt}],
             enabled_tools=tools_for_contract,
             tool_definitions=tool_definitions,
-            max_output_tokens=exe_profile.max_output_tokens,
+            max_output_tokens=0 if llm_first_proxy else exe_profile.max_output_tokens,
             estimated_input_tokens=allocated["total_input_tokens"],
             agent_role=str(
                 getattr(

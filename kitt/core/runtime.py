@@ -478,6 +478,7 @@ class KittRuntime:
             db=database,
             goal_service=goals,
             runtime_step_executor=GoalStepExecutor(lambda: runtime_holder["runtime"]),
+            token_budget_enforced=lambda: not processor._provider_manages_tokens(),
             event_callback=lambda name, payload: events.publish(name, payload),
         )
         wake_scheduler = PersistentWakeScheduler(

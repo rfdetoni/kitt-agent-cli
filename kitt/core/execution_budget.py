@@ -39,8 +39,10 @@ class ExecutionBudgetLedger:
         budget: ExecutionBudget,
         *,
         clock: Callable[[], float] = time.monotonic,
+        enforce_token_limits: bool = True,
     ) -> None:
         self.budget = budget
+        self.token_limits_enforced = enforce_token_limits
         self._clock = clock
         self._started = clock()
         self._paused_at: float | None = None
@@ -119,6 +121,8 @@ class ExecutionBudgetLedger:
             raise ExecutionBudgetExceeded("execution duration budget exceeded")
 
     def _check_tokens(self, next_input: int = 0, next_output: int = 0) -> None:
+        if not self.token_limits_enforced:
+            return
         reserved_tokens, _, _ = self._outstanding()
         next_input_total = self.input_tokens + max(0, int(next_input))
         next_output_total = self.output_tokens + max(0, int(next_output))
@@ -134,6 +138,11 @@ class ExecutionBudgetLedger:
             > self.budget.max_total_tokens
         ):
             raise ExecutionBudgetExceeded("total token budget exceeded")
+
+    def delegate_token_limits_to_provider(self) -> None:
+        """Keep usage accounting and operational caps; let WebChat own tokens."""
+        with self._lock:
+            self.token_limits_enforced = False
 
     def reserve_model_call(
         self,
@@ -311,7 +320,7 @@ class ExecutionBudgetLedger:
             requested_calls = max(0, int(call_cap))
             requested_cost = max(0.0, float(cost_cap))
             requested_tools = max(0, int(tool_cap))
-            if (
+            if self.token_limits_enforced and (
                 self.input_tokens
                 + self.output_tokens
                 + self.child_tokens
@@ -391,7 +400,7 @@ class ExecutionBudgetLedger:
             next_calls = state.calls_used + max(0, int(calls))
             next_cost = state.cost_used + max(0.0, float(cost))
             next_tools = state.tools_used + max(0, int(tools))
-            if next_tokens > state.token_cap:
+            if self.token_limits_enforced and next_tokens > state.token_cap:
                 raise ExecutionBudgetExceeded("child token lease exceeded")
             if next_calls > state.call_cap:
                 raise ExecutionBudgetExceeded("child call lease exceeded")

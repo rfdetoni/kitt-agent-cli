@@ -4,6 +4,8 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -221,10 +223,10 @@ class GoalContractTests(unittest.TestCase):
             "CONTRACT_REVIEWER",
         )
 
-    def test_long_high_risk_contract_reaches_review_with_8k_proxy_context(self):
-        # The real prompt builder failed here after planning succeeded: the
-        # global 4096-token output floor starved the required tool schema.
-        objective = ("Implement authentication and isolated user journeys. " * 125).strip()
+    def test_long_high_risk_contract_delegates_token_limits_to_webchat(self):
+        # A WebChat prompt may exceed local profile placeholders and turn token
+        # quotas. Neither planning nor the required review may truncate it.
+        objective = ("Implement authentication and isolated user journeys. " * 700).strip()
         tasks = [
             _item(f"T{index:02}", paths=["src/auth/domain.ts"])
             for index in range(1, 8)
@@ -235,8 +237,9 @@ class GoalContractTests(unittest.TestCase):
             item["success_criteria"] = ["Role boundaries hold", "Domain behavior works"]
         payload = {"items": [*tasks, _item("FINAL", kind="final", depends_on=["T07"])]}
         dispatched = []
-        output_limits = []
         allocations = []
+
+        self_outer = self
 
         class Client:
             profile = ModelProfile(
@@ -247,7 +250,7 @@ class GoalContractTests(unittest.TestCase):
 
             def chat_stream(self, messages, **kwargs):
                 dispatched.append(messages[-1]["content"])
-                output_limits.append(kwargs["max_output_tokens"])
+                self_outer.assertNotIn("max_prompt_tokens", kwargs["request_metadata"])
                 if len(dispatched) == 1:
                     yield f"KITT_CONTRACT: {json.dumps(payload)}"
                 else:
@@ -255,7 +258,8 @@ class GoalContractTests(unittest.TestCase):
 
         processor = TurnProcessor(
             root_dir=self.tmp.name, workspace_id="ws", execution_client=Client(),
-            config=RuntimeConfig(history_enabled=False, persistence_enabled=False),
+            config=RuntimeConfig(history_enabled=False, persistence_enabled=False,
+                max_input_tokens_per_turn=1, max_output_tokens_per_turn=1, max_total_tokens_per_turn=1),
             event_callback=lambda name, payload: allocations.append(payload["allocated"])
             if name == "BudgetApplied" else None,
         )
@@ -266,12 +270,10 @@ class GoalContractTests(unittest.TestCase):
             accepted = planner.plan("conv", objective)
             self.assertEqual(len(accepted), 8)
             self.assertEqual(len(dispatched), 2)
-            self.assertEqual(output_limits, [4096, 2048])
             self.assertEqual(len(allocations), 2)
             for allocation in allocations:
-                self.assertLessEqual(
-                    allocation["total_input_tokens"] + allocation["reserved_output_tokens"], 8192,
-                )
+                self.assertGreater(allocation["total_input_tokens"], 8192)
+                self.assertEqual(allocation["reserved_output_tokens"], 0)
             self.assertIn(json.dumps(objective), dispatched[1])
             review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nEmit exactly", 1)[0])
             self.assertEqual(review["objective"], objective)
@@ -280,7 +282,7 @@ class GoalContractTests(unittest.TestCase):
             processor.close()
             processor.registry.close()
 
-    def test_oversized_prompt_fails_with_scoped_diagnostic_without_prompt_content(self):
+    def test_native_oversized_prompt_fails_with_scoped_diagnostic_without_prompt_content(self):
         profile = ModelProfile(
             backend="kitt-reverse-proxy", protocol="kitt-reverse-proxy",
             model="gemini-web", base_url="http://127.0.0.1:3000",
@@ -293,8 +295,10 @@ class GoalContractTests(unittest.TestCase):
         )
         command = TurnCommand("conv", "PRIVATE_REQUEST " * 2000, mode="plan", no_history=True)
         try:
-            with self.assertLogs("kitt.core.turn_processor", level="DEBUG") as captured:
-                events = list(processor.run_turn(command))
+            native = ModelProfile(backend="ollama", protocol="ollama-chat", model="native", context_window=8192, max_output_tokens=4096)
+            with patch.object(processor, "_resolve_execution_profile", return_value=("native", native, None, None)):
+                with self.assertLogs("kitt.core.turn_processor", level="DEBUG") as captured:
+                    events = list(processor.run_turn(command))
             self.assertIsInstance(events[-1], TurnFailed)
             self.assertEqual(events[-1].turn_id, command.turn_id)
             failure = next(record for record in captured.records if record.msg == "turn.failure")
@@ -304,6 +308,17 @@ class GoalContractTests(unittest.TestCase):
         finally:
             processor.close()
             processor.registry.close()
+
+    def test_webchat_goal_ignores_token_quota_but_keeps_turn_limit(self):
+        managed = [True]
+        scheduler = GoalScheduler(self.db, self.goals, token_budget_enforced=lambda: not managed[0])
+        goal = replace(self._contract(), token_budget=1, tokens_used=50_000)
+        self.assertIsNone(scheduler._budget_reason(goal, time.time()))
+        managed[0] = False
+        self.assertEqual(scheduler._budget_reason(goal, time.time()), "token budget exceeded")
+        managed[0] = True
+        exhausted = replace(goal, turns_used=goal.max_turns)
+        self.assertEqual(scheduler._budget_reason(exhausted, time.time()), "turn budget exceeded")
 
     def test_scheduler_commits_terminal_host_block_without_global_retry(self):
         goal = self._contract()

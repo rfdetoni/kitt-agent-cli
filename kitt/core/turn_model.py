@@ -152,7 +152,6 @@ class TurnModelMixin:
         tool_definitions: Optional[List[Dict[str, object]]] = None,
         loop_action_budget: int = 4,
         context_envelope: Optional[Dict[str, object]] = None,
-        max_output_tokens: Optional[int] = None,
     ):
         """Stream normal text while capturing <think>...</think> blocks and hiding exact tool-call envelopes."""
         conversation_id = str(conversation_id or "").strip()
@@ -257,7 +256,6 @@ class TurnModelMixin:
 
         execution_budget = getattr(self, "execution_budgets", {}).get(turn_id)
         estimated_input = 0
-        prompt_allowance = 0
         estimated_input_cost = 0.0
         budget_stage = str(route or "execution")
         if execution_budget is not None:
@@ -268,15 +266,7 @@ class TurnModelMixin:
                         str(message.get("content") or "")
                     )
             if is_proxy:
-                prompt_allowance = execution_budget.gateway_prompt_allowance(
-                    min(
-                        1_000_000,
-                        max(1, int(getattr(profile, "context_window", 8192))) * 3,
-                    )
-                )
-                if estimated_input > prompt_allowance:
-                    from kitt.core.execution_budget import ExecutionBudgetExceeded
-                    raise ExecutionBudgetExceeded("input token budget exceeded")
+                execution_budget.delegate_token_limits_to_provider()
             estimated_input_cost = estimate_execution_cost(
                 str(getattr(profile, "model", "") or ""),
                 estimated_input,
@@ -325,14 +315,11 @@ class TurnModelMixin:
                 "usage_callback": _observe_usage,
                 "attempt_callback": _reserve_retry_attempt,
             }
-            if max_output_tokens is not None:
-                kwargs["max_output_tokens"] = max_output_tokens
             if is_proxy:
                 kwargs["request_metadata"].update({
                     "max_upstream_attempts": attempt_grant,
                     **(
                         {
-                            "max_prompt_tokens": prompt_allowance,
                             "deadline_ms": min(
                                 240_000,
                                 execution_budget.remaining_duration_ms(),
@@ -582,6 +569,13 @@ class TurnModelMixin:
             )
         yield full_response, None
 
+    def _provider_manages_tokens(self) -> bool:
+        explicit = getattr(self.execution_client, "profile", None)
+        if _reverse_proxy_identity(explicit) is not None:
+            return True
+        _, configured = self.router.resolve_profile_for_task("code-generation")
+        return _reverse_proxy_identity(configured) is not None
+
     def _resolve_execution_profile(self, cmd: TurnCommand, task: Optional[SemanticTask] = None) -> tuple:
         configured_exe_name, configured_exe = self.router.resolve_profile_for_task("code-generation")
         explicit_client_profile = getattr(self.execution_client, "profile", None)
@@ -601,29 +595,9 @@ class TurnModelMixin:
                 if llm_first_profile is configured_exe
                 else str(getattr(llm_first_profile, "model", "") or "reverse-proxy")
             )
-            desired_output = max(
-                llm_first_profile.max_output_tokens,
-                min(4096, max(1024, llm_first_profile.context_window // 2)),
-            )
-            security = cmd.security_context
-            principal_type = (
-                security.get("principal_type")
-                if isinstance(security, dict)
-                else getattr(security, "principal_type", None)
-            )
-            if cmd.mode == "plan" and principal_type == "CONTRACT_REVIEWER":
-                # This read-only turn returns a verdict and concise issues,
-                # not code. Reserving the coding output floor can leave no
-                # room for the original objective, contract and tool schema.
-                desired_output = min(desired_output, 2048)
-            safe_output = min(
-                desired_output,
-                llm_first_profile.context_window - PromptBudget.MIN_INPUT_TOKENS,
-            )
-            llm_first_profile = replace(
-                llm_first_profile,
-                max_output_tokens=max(64, safe_output),
-            )
+            ledger = getattr(self, "execution_budgets", {}).get(cmd.turn_id)
+            if ledger is not None:
+                ledger.delegate_token_limits_to_provider()
             decision = RoutingDecision(
                 route_id=f"llm-first-{cmd.turn_id[:12]}",
                 selected_profile=profile_name,

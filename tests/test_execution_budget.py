@@ -45,6 +45,30 @@ def test_model_and_tool_limits_are_hard():
         ledger.reserve_tool_call()
 
 
+def test_webchat_tracks_parent_and_child_tokens_but_preserves_operational_limits():
+    now = [0.0]
+    ledger = ExecutionBudgetLedger(_budget(
+        max_input_tokens=1, max_output_tokens=1, max_total_tokens=1,
+        max_model_calls=2, max_tool_calls=1, max_duration_ms=1000,
+    ), enforce_token_limits=False, clock=lambda: now[0])
+    ledger.reserve_model_call(input_tokens=50_000)
+    ledger.record_model_output(output_tokens=30_000)
+    child = ledger.reserve_subagent("web-child", token_cap=1, call_cap=1)
+    ledger.consume_child(child.id, tokens=20_000, calls=1)
+    ledger.settle_child(child.id)
+    assert ledger.input_tokens == 50_000
+    assert ledger.output_tokens == 30_000
+    assert ledger.child_tokens == 20_000
+    with pytest.raises(ExecutionBudgetExceeded, match="model call"):
+        ledger.reserve_model_call(input_tokens=1)
+    ledger.reserve_tool_call()
+    with pytest.raises(ExecutionBudgetExceeded, match="tool call"):
+        ledger.reserve_tool_call()
+    now[0] = 1.1
+    with pytest.raises(ExecutionBudgetExceeded, match="duration"):
+        ledger.record_model_output(output_tokens=1)
+
+
 def test_approval_wait_pauses_duration_without_resetting_usage():
     now = [0.0]
     ledger = ExecutionBudgetLedger(_budget(max_duration_ms=1000), clock=lambda: now[0])

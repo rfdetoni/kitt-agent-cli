@@ -343,6 +343,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         sent = json.loads(captured["request"].data.decode("utf-8"))
         self.assertEqual(sent["tool_choice"], "auto")
         self.assertFalse(sent["parallel_tool_calls"])
+        self.assertNotIn("max_tokens", sent)
         self.assertEqual(sent["tools"][0]["function"]["name"], "read_file")
         self.assertEqual(sent["messages"][0]["content"], "Memory:\nnone")
         headers = {key.lower(): value for key, value in captured["request"].header_items()}
@@ -414,7 +415,6 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                         [{"role": "user", "content": "one"}],
                         session_key="conversation-a",
                         reasoning_effort=80,
-                        max_output_tokens=512,
                     )),
                     "ok",
                 )
@@ -430,15 +430,13 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                     "".join(client.chat_stream(
                         [{"role": "user", "content": "other"}],
                         session_key="conversation-b",
-                        max_output_tokens=profile.max_output_tokens + 1000,
                     )),
                     "ok",
                 )
 
         first = captured[0].extra_headers
-        self.assertEqual(captured[0].max_output_tokens, 512)
-        self.assertEqual(captured[1].max_output_tokens, profile.max_output_tokens)
-        self.assertEqual(captured[2].max_output_tokens, profile.max_output_tokens)
+        self.assertEqual(captured[0].context_window, 0)
+        self.assertEqual(captured[0].max_output_tokens, 0)
         self.assertEqual(client.profile, profile)
         second = captured[1].extra_headers
         third = captured[2].extra_headers

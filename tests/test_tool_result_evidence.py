@@ -23,6 +23,7 @@ class ToolResultEvidenceRegressionTests(unittest.TestCase):
             'npm error code ENOENT\n'
             'npm error path /workspace/package.json\n'
             'npm error enoent Could not read package.json\n'
+            + 'Complete untrusted tool evidence.\n' * 10000
         )
 
         fitted = processor._fit_tool_output(
@@ -34,6 +35,9 @@ class ToolResultEvidenceRegressionTests(unittest.TestCase):
             wrapper_suffix="suffix",
         )
 
+        self.assertEqual(fitted, output)
+        processor._rebudget_execution_messages(messages, oversized_system, profile)
+        self.assertEqual(messages[0]["content"], "prior context " * 12000)
         self.assertIn("ENOENT", fitted)
         self.assertIn("/workspace/package.json", fitted)
 

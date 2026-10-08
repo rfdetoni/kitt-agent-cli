@@ -143,7 +143,11 @@ async def _execute_command(ui, raw: str) -> bool:
         await handle_gain_command(ui, arg)
     elif found.id == "context_stats":
         config = ui.runtime.config
-        ui._show_result(f"Context window: {config.context_window_default}\nReserved output: {config.reserved_output_tokens}")
+        ui._show_result(
+            "Contexto e saída: gerenciados pelo WebChat."
+            if ui.state.context_window <= 0
+            else f"Context window: {config.context_window_default}\nReserved output: {config.reserved_output_tokens}"
+        )
     elif found.id == "verify_full":
         from kitt.ui.verification_commands import handle_verification_mode_command
         handle_verification_mode_command(ui, arg)

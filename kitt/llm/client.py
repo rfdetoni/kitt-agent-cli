@@ -382,7 +382,6 @@ class LLMClient:
         usage_callback: Optional[Callable[[Dict[str, object]], None]] = None,
         attempt_callback: Optional[Callable[[int], None]] = None,
         transport_cancellation: TransportCancellation | None = None,
-        max_output_tokens: int | None = None,
     ) -> Generator[str, None, None]:
         cancellation = transport_cancellation or TransportCancellation()
         cancellation.check()
@@ -476,11 +475,8 @@ class LLMClient:
             request_metadata=dict(request_metadata) if request_metadata else None,
             usage_callback=usage_callback,
             temperature=self.profile.temperature,
-            context_window=self.profile.context_window,
-            max_output_tokens=(
-                self.profile.max_output_tokens if max_output_tokens is None
-                else max(1, min(int(max_output_tokens), self.profile.max_output_tokens))
-            ),
+            context_window=0 if self._is_kitt_proxy() else self.profile.context_window,
+            max_output_tokens=0 if self._is_kitt_proxy() else self.profile.max_output_tokens,
             keep_alive=self.profile.keep_alive,
             api_key=api_key,
             base_url=self.profile.base_url,
@@ -516,7 +512,7 @@ class LLMClient:
                     else 0
                 ),
                 temperature=self.profile.temperature,
-                context_window=self.profile.context_window,
+                context_window=request.context_window,
                 max_output_tokens=request.max_output_tokens,
                 timeout_seconds=self.profile.request_timeout_seconds,
                 extra_headers=extra_headers,

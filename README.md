@@ -1,8 +1,8 @@
 # K.I.T.T. Agent CLI
 
-## Release 0.84.10 — High-risk contract review context
+## Release 0.84.10 — WebChat owns token limits
 
-High-risk automatic contracts now reserve at most 2,048 output tokens for the concise pre-mutation review, leaving room for the complete objective, contract and required tool schema on 8K reverse-proxy profiles. The selected output ceiling reaches the LLM request without mutating the shared client. Prompt budgets count user intent once, and diagnostics distinguish failed prompt preparation from a successful build.
+Reverse-proxy turns leave context and output token limits to WebChat. Local profile placeholders and token quotas no longer reject or truncate prompts, reviews, conversation messages or tool observations. Token estimates remain telemetry, and operational limits stay active. Failed prompt preparation receives scoped diagnostics.
 
 See [release notes](docs/RELEASE_0.84.10.md).
 

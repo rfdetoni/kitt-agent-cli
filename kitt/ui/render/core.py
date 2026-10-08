@@ -195,6 +195,11 @@ def _transcript_cursor_position(ui):
 
 def _sidebar_text(ui):
     pct = min(100, ui.state.tokens_used * 100 // max(1, ui.state.context_window))
+    context_usage = (
+        f"WebChat · {ui.state.tokens_used} tokens estimados"
+        if ui.state.context_window <= 0
+        else f"{ui.state.tokens_used}/{ui.state.context_window} ({pct}%)"
+    )
     files_section = ""
     if ui.explicit_files:
         files_lines = "\n".join(f"  • {f}" for f in sorted(ui.explicit_files))
@@ -206,7 +211,7 @@ def _sidebar_text(ui):
         f" CONVERSATION\n {(ui.state.active_conversation_id or 'new')[:12]}\n\n"
         f" MODELS\n {ui.state.small_model}\n {ui.state.large_model}\n"
         f" 🧠 Reasoning: {ui.state.reasoning_effort}%\n\n"
-        f" CONTEXT\n {ui.state.tokens_used}/{ui.state.context_window} ({pct}%)\n"
+        f" CONTEXT\n {context_usage}\n"
         f" SAVED {ui.state.net_saved_tokens}"
         f"{files_section}"
     )
@@ -214,19 +219,20 @@ def _sidebar_text(ui):
 
 def _status_text(ui):
     pct = min(100, ui.state.tokens_used * 100 // max(1, ui.state.context_window))
+    context_usage = "WebChat" if ui.state.context_window <= 0 else f"{pct}%"
     plan_badge = "[PLAN] " if ui.state.planning_mode else ""
     if ui.state.is_thinking:
         elapsed = max(0, int(time.time() - ui.state.turn_started_at))
         active = next((t for t in ui.state.active_tasks if t.status == "running"), None)
         detail = active.summary if active else "processando solicitação"
-        return f" {plan_badge}{ui.state.status_text} {elapsed}s | {detail[:48]} | context {pct}% "
+        return f" {plan_badge}{ui.state.status_text} {elapsed}s | {detail[:48]} | context {context_usage} "
     if ui.state.width < 80:
         branch_part = (
             f" | branch:{ui.state.current_branch[:12]}"
             if ui.state.current_branch
             else ""
         )
-        return f" {plan_badge}{ui.state.status_text}{branch_part} | {ui.state.large_model[:16]} | {pct}% "
+        return f" {plan_badge}{ui.state.status_text}{branch_part} | {ui.state.large_model[:16]} | {context_usage} "
     branch_part = (
         f" | branch:{ui.state.current_branch}"
         if ui.state.current_branch
@@ -235,7 +241,7 @@ def _status_text(ui):
     return (
         f" {ui.state.workspace_name}{branch_part} | "
         f"{plan_badge}{ui.state.status_text} | "
-        f"{ui.state.large_model} | context {pct}% "
+        f"{ui.state.large_model} | context {context_usage} "
     )
 
 

@@ -425,7 +425,6 @@ class TurnToolLoopMixin:
                 )
                 model_round_started_at = time.perf_counter()
                 stream_kwargs = {
-                    "max_output_tokens": request.max_output_tokens,
                     "turn_id": cmd.turn_id,
                     "started_at": thinking_started_at,
                     "session_key": self._provider_session_key(
