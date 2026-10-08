@@ -251,7 +251,7 @@ class TaskPlanCoordinator:
             raise ValueError("Task is not ready for delegation")
         if security_context.principal_type == "CHILD":
             raise PermissionError("Leaf workers cannot delegate")
-        default_tools = (["read_file", "search", "write_file", "apply_patch", "run_command"]
+        default_tools = (["read_file", "search", "write_file", "apply_patch"]
                          if task["role"] == "IMPLEMENT" else ["read_file", "search"])
         tools = self._strings(args.get("enabled_tools", default_tools), "enabled_tools")
         return {
