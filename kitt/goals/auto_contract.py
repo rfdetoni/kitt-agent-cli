@@ -293,7 +293,7 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
         yield TextDelta(
             delta=(
                 f"[contract] {goal.id}: plano criado com {len(items)} itens; "
-                "iniciando execução sequencial.\n"
+                "iniciando execução; itens independentes poderão usar subagentes em paralelo.\n"
             )
         )
 
