@@ -99,6 +99,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "plan.next": RuntimeOperationSpec("plan.next", CAP_REPO_READ),
     "plan.checkpoint": RuntimeOperationSpec("plan.checkpoint", CAP_REPO_READ),
     "plan.dispatch": RuntimeOperationSpec("plan.dispatch", CAP_CHILD_SPAWN),
+    "plan.dispatch_ready": RuntimeOperationSpec("plan.dispatch_ready", CAP_CHILD_SPAWN),
     "plan.verify": RuntimeOperationSpec("plan.verify", CAP_PROCESS_RUN),
     "repo.read": RuntimeOperationSpec("repo.read", CAP_REPO_READ, "read_file"),
     "repo.search": RuntimeOperationSpec("repo.search", CAP_REPO_SEARCH, "search"),
@@ -943,6 +944,54 @@ class SafeRuntime:
             payload = plans.prepare_dispatch(conv, turn_id, args, security_context)
             return self._op_registry_tool(operation, "child_spawn", payload, turn_id, origin,
                                           security_context, grant, approval_id)
+        elif operation == "plan.dispatch_ready":
+            # A single authenticated host action may admit multiple independent
+            # children. Each spawn still passes normal policy and budget checks.
+            if self.children is None:
+                return SafeRuntimeResult(False, operation, error="Child manager not attached")
+            view = plans.next(conv, turn_id)
+            ready = set(view["ready"])
+            tasks = (view["plan"] or {}).get("tasks", [])
+            worker_limit = max(1, int(getattr(self.children, "max_children", 2)))
+            requested_limit = args.get("max_parallel", worker_limit)
+            count = min(worker_limit, max(1, int(requested_limit)))
+            running = [t for t in tasks if t["status"] == "RUNNING"]
+            occupied = {p for t in running for p in t["paths"]}
+            free = max(0, count - len(running))
+            started = []
+            deferred = []
+            for task in tasks:
+                if task["task_id"] not in ready or task["status"] != "PENDING":
+                    continue
+                paths = set(task["paths"])
+                if not free or occupied.intersection(paths):
+                    deferred.append(task["task_id"])
+                    continue
+                payload = plans.prepare_dispatch(
+                    conv, turn_id, {"task_id": task["task_id"], **{
+                        key: args[key] for key in ("token_budget", "timeout_seconds", "enabled_tools")
+                        if key in args
+                    }}, security_context
+                )
+                result = self._op_registry_tool(
+                    operation, "child_spawn", payload, turn_id, origin,
+                    security_context, grant, approval_id,
+                )
+                if result.requires_approval:
+                    # Return the normal approval payload; retrying dispatch_ready
+                    # after approval will skip any already admitted children.
+                    return result
+                if not result.success:
+                    return SafeRuntimeResult(False, operation,
+                        data={"started": started, "deferred": deferred},
+                        error=result.error or "Subagent admission failed")
+                started.extend(result.context_handles)
+                occupied.update(paths)
+                free -= 1
+            return SafeRuntimeResult(True, operation,
+                data={"started": started, "deferred": deferred,
+                      "running": len(running) + len(started),
+                      "requires_verification": True})
         else:
             task, steps, digest = plans.verification_steps(conv, turn_id, args.get("task_id"), security_context)
             checks = dict(task["checks"])
