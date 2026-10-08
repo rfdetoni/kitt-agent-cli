@@ -50,7 +50,7 @@ def test_leaf_capability_and_identity_enforcement(children):
     assert manager.repo.list(conv) == []
 
 
-def test_concurrent_admission_does_not_race_rate_or_slot_limits(children):
+def test_concurrent_admission_uses_available_worker_slots_without_rate_throttle(children):
     manager, conv, _ = children
     release = threading.Event()
 
@@ -65,8 +65,8 @@ def test_concurrent_admission_does_not_race_rate_or_slot_limits(children):
     try:
         with ThreadPoolExecutor(max_workers=8) as pool:
             results = list(pool.map(spawn, range(8)))
-        assert sum(r is not None for r in results) == 1
-        assert len(manager.repo.list(conv)) == 1
+        assert sum(r is not None for r in results) == manager.max_children
+        assert len(manager.repo.list(conv)) == manager.max_children
     finally:
         release.set()
 
