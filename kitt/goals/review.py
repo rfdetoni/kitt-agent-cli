@@ -137,40 +137,6 @@ class AdversarialCodeReviewer:
                 }
             )
 
-        schema = {
-            "status": "APPROVED or CHANGES_REQUIRED",
-            "summary": "concise review conclusion",
-            "reviewed_areas": [
-                "correctness",
-                "security",
-                "concurrency",
-                "performance",
-                "resource_management",
-                "data_integrity",
-                "architecture",
-                "maintainability",
-                "tests",
-                "compatibility",
-            ],
-            "findings": [
-                {
-                    "severity": "BLOCKER|HIGH|MEDIUM|LOW|INFO",
-                    "category": "one reviewed area",
-                    "title": "short title",
-                    "location": "path:line, symbol, or diff hunk",
-                    "problem": "what is wrong",
-                    "impact": "concrete production impact",
-                    "required_change": "minimal corrective action",
-                    "evidence": "short VERBATIM fragment from CHANGE SNAPSHOT",
-                    "confidence": 0.9,
-                    "required": True,
-                }
-            ],
-            "approval_evidence": (
-                "when APPROVED, briefly state which risks were actively checked and why "
-                "the supplied evidence supports approval"
-            ),
-        }
 
         blocks = [
             "[TASK OBJECTIVE]",
@@ -206,8 +172,14 @@ class AdversarialCodeReviewer:
                 "3. Prefer minimal fixes. Do not demand churn, style-only rewrites, or unrelated refactors.",
                 "4. Check tests themselves for weak assertions, mock-only validation, happy-path bias, and missing regressions.",
                 "5. If no required issue remains, APPROVE and explain the risks you checked in approval_evidence.",
-                "6. Return exactly one JSON object and no extra prose; in an execution envelope place the object directly in content:",
-                json.dumps(schema, ensure_ascii=False, separators=(",", ":")),
+                "6. Return one KAP/1 ACTION FINAL with OBJECT content. Required fields: "
+                "STRING content.status = APPROVED or CHANGES_REQUIRED, "
+                "STRING content.summary, ARRAY content.reviewed_areas, ARRAY content.findings, "
+                "STRING content.approval_evidence. Findings have severity, category, title, "
+                "location, problem, impact, required_change, evidence (STRING), "
+                "confidence (DECIMAL) and required (BOOLEAN). For an empty result, "
+                "use ARRAY content.findings. For list entries use numeric paths. "
+                "End with KITT/END. No JSON, fences or additional prose.",
             ]
         )
         return "\n".join(blocks)
