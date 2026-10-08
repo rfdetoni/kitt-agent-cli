@@ -27,7 +27,7 @@ kitt-agent-cli (Python control plane)
 
 ## LLM-first reverse-proxy boundary
 
-Browser-backed execution deliberately separates **semantic decisions** from **deterministic governance**. When the execution profile is KITT Reverse Proxy, Agent CLI does not derive intent, scope, language, technology or domain from the user's natural-language request. It carries the original request verbatim into agent-contract v2 and exposes the governed runtime surface structurally.
+Browser-backed execution deliberately separates **semantic decisions** from **deterministic governance**. When the execution profile is KITT Reverse Proxy, Agent CLI does not derive intent, scope, language, technology or domain from the user's natural-language request. It carries the original request verbatim into agent-contract v3 and exposes the governed runtime surface structurally.
 
 The Reverse Proxy presents that request to WebChat through the `agent-loop` route. The model maintains a bounded loop state (`objective`, `completion_criteria`, `status`, `validation_summary`) and selects one host action at a time. KITT counts completed host round trips rather than model prose; every `agent_loop_action_budget` actions it requires a checkpoint before another action can proceed.
 
@@ -223,3 +223,5 @@ Conversation/history (Agent)
 ```
 
 The Agent owns conversation execution history, not durable semantic memory. kitt-memory owns memory records, provenance, lifecycle status, dream-run persistence, semantic retrieval and maintenance. Any project Markdown memory file is a view generated from kitt-memory.
+
+Structured plans and review/validation/completion reports are result objects inside the Protocol-owned Agent response contract. The Proxy serializes those values into standard OpenAI message text in host code. Agent uses one strict Protocol decoder for complete objects and rejects prefixed reports, duplicate keys and trailing prose.
