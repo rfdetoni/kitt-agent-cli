@@ -179,7 +179,7 @@ class GoalStepExecutor:
                             error=event.error,
                             block_reason="ENVIRONMENT" if event.recoverable else "",
                         )
-            finally:
+        finally:
             state.delete(active_turn_key)
 
         if result["status"] == "SUCCEEDED":
