@@ -10,13 +10,10 @@ from kitt.core.turn_events import (
     TurnCompleted,
     TurnFailed,
 )
-from kitt.goals.contract import _extract_prefixed_json
+from kitt.llm.agent_contract import parse_structured_result
 from kitt.security.capabilities import CAP_ARTIFACT_READ, CAP_REPO_READ, CAP_REPO_SEARCH
 from kitt.security.context import ExecutionSecurityContext
 from kitt.runtime.state import RuntimeStateStore
-
-
-VALIDATION_PREFIX = "KITT_VALIDATION_REPORT:"
 
 
 @dataclass(frozen=True)
@@ -59,7 +56,7 @@ def _invalid_report(problem: str, raw: str = "") -> ContractValidationReport:
 
 def parse_validation_report(response: str) -> ContractValidationReport:
     try:
-        payload = _extract_prefixed_json(response, VALIDATION_PREFIX)
+        payload = parse_structured_result(response)
     except ValueError as exc:
         return _invalid_report(str(exc), response)
     if not isinstance(payload, dict) or set(payload) != {"verdict", "evidence", "issues"}:
@@ -167,8 +164,8 @@ class ContractValidator:
             + ("\n".join(f"- {path}" for path in changed_paths[:64]) or "- none recorded")
             + "\n\nBounded workspace snapshot:\n"
             + (snapshot[:24000] or "[snapshot unavailable]")
-            + "\n\nReturn FAIL for any unproven requirement. Emit exactly one line at the end:\n"
-            + f"{VALIDATION_PREFIX} {json.dumps(example, ensure_ascii=False, separators=(',', ':'))}"
+            + "\n\nReturn FAIL for any unproven requirement. Return one JSON object; in an execution envelope place it directly in content, never as a serialized string:\n"
+            + f"{json.dumps(example, ensure_ascii=False, separators=(',', ':'))}"
         )
         security = ExecutionSecurityContext(
             workspace_id=self.runtime.workspace_id,

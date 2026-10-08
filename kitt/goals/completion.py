@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from kitt.llm.agent_contract import parse_structured_result
+
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 
-COMPLETION_REPORT_PREFIX = "KITT_COMPLETION_REPORT:"
 COMPLETION_STATE_KEY_PREFIX = "goal.completion:"
 
 
@@ -88,20 +89,10 @@ class AutonomousCompletionEngine:
 
     @staticmethod
     def _extract_report(response: str) -> Optional[Dict[str, Any]]:
-        text = str(response or "")
-        idx = text.rfind(COMPLETION_REPORT_PREFIX)
-        if idx < 0:
-            return None
-        raw = text[idx + len(COMPLETION_REPORT_PREFIX) :].lstrip()
-        if raw.startswith("```"):
-            first_newline = raw.find("\n")
-            if first_newline >= 0:
-                raw = raw[first_newline + 1 :]
         try:
-            value, _ = json.JSONDecoder().raw_decode(raw)
-        except (json.JSONDecodeError, TypeError, ValueError):
+            return parse_structured_result(response)
+        except ValueError:
             return None
-        return value if isinstance(value, dict) else None
 
     def build_execution_prompt(
         self,
@@ -172,8 +163,8 @@ class AutonomousCompletionEngine:
             blocks.extend(
                 [
                     "",
-                    "Before your final response ends, emit exactly one machine-readable completion line using the exact criterion text above:",
-                    f"{COMPLETION_REPORT_PREFIX} {json.dumps(example, ensure_ascii=False, separators=(',', ':'))}",
+                    "Return one JSON completion object using the exact criterion text above; in an execution envelope place it directly in content:",
+                    f"{json.dumps(example, ensure_ascii=False, separators=(',', ':'))}",
                     "Use status INCOMPLETE and satisfied=false for any criterion that is not actually proven; KITT will iterate automatically.",
                 ]
             )
@@ -263,7 +254,7 @@ class AutonomousCompletionEngine:
                     "criterion",
                     criterion,
                     False,
-                    "Missing or invalid KITT_COMPLETION_REPORT.",
+                    "Missing or invalid structured completion report.",
                 )
                 for criterion in criteria
             ]

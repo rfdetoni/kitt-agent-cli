@@ -1,4 +1,4 @@
-"""Structural reverse-proxy agent contract identifiers.
+"""Structural reverse-proxy routes and model-result decoding.
 
 Natural-language context, workspace data and tool authority are transported by
 typed request fields. This module intentionally contains no prompt parsing or
@@ -7,11 +7,10 @@ prompt-envelope injection fallback.
 from __future__ import annotations
 
 from typing import Optional
+import re
+from kitt_protocol import decode_json_object
 
 
-AGENT_CONTRACT_HEADER = "X-Kitt-Agent-Contract"
-AGENT_CONTRACT_VERSION = "v2"
-AGENT_ROUTE_HEADER = "X-Kitt-Route"
 
 SUPPORTED_ROUTES = frozenset(
     {
@@ -32,3 +31,10 @@ def normalize_agent_route(route: Optional[str]) -> str:
     if value not in SUPPORTED_ROUTES:
         raise ValueError(f"Unsupported KITT agent route: {value!r}")
     return value
+
+
+def parse_structured_result(response: str) -> dict:
+    """Decode one complete model result, optionally protected by a JSON fence."""
+    text = str(response or "").strip()
+    fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```", text, re.IGNORECASE)
+    return decode_json_object(fenced[1] if fenced else text)

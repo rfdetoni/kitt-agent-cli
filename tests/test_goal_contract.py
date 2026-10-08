@@ -36,6 +36,9 @@ from kitt.goals.service import GoalService
 from kitt.history.database import HistoryDatabase
 from kitt.history.migrations import CURRENT_SCHEMA_VERSION, MigrationRunner
 from kitt.security.capabilities import CAP_MCP_CALL
+from kitt.llm.agent_contract import parse_structured_result
+from kitt.goals.completion import AutonomousCompletionEngine
+from kitt.goals.review import AdversarialCodeReviewer
 
 
 def _done_result(paths=None):
@@ -209,8 +212,8 @@ class GoalContractTests(unittest.TestCase):
             ]
         }
         responses = (
-            f"KITT_CONTRACT: {json.dumps(risky)}",
-            'KITT_PLAN_REVIEW: {"verdict":"OK","issues":[]}',
+            json.dumps(risky),
+            '{"verdict":"OK","issues":[]}',
         )
         with patch.object(
             planner, "_run_plan_turn", side_effect=responses
@@ -252,9 +255,9 @@ class GoalContractTests(unittest.TestCase):
                 dispatched.append(messages[-1]["content"])
                 self_outer.assertNotIn("max_prompt_tokens", kwargs["request_metadata"])
                 if len(dispatched) == 1:
-                    yield f"KITT_CONTRACT: {json.dumps(payload)}"
+                    yield json.dumps(payload)
                 else:
-                    yield 'KITT_PLAN_REVIEW: {"verdict":"OK","issues":[]}'
+                    yield '{"verdict":"OK","issues":[]}'
 
         processor = TurnProcessor(
             root_dir=self.tmp.name, workspace_id="ws", execution_client=Client(),
@@ -275,7 +278,7 @@ class GoalContractTests(unittest.TestCase):
                 self.assertGreater(allocation["total_input_tokens"], 8192)
                 self.assertEqual(allocation["reserved_output_tokens"], 0)
             self.assertIn(json.dumps(objective), dispatched[1])
-            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nEmit exactly", 1)[0])
+            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nReturn exactly", 1)[0])
             self.assertEqual(review["objective"], objective)
             self.assertEqual(review["items"], accepted)
         finally:
@@ -450,14 +453,31 @@ class GoalContractTests(unittest.TestCase):
         self.assertFalse(malformed.ok)
 
         no_evidence = parse_validation_report(
-            'KITT_VALIDATION_REPORT: {"verdict":"OK","evidence":[],"issues":[]}'
+            '{"verdict":"OK","evidence":[],"issues":[]}'
         )
         self.assertFalse(no_evidence.ok)
 
         ok = parse_validation_report(
-            'KITT_VALIDATION_REPORT: {"verdict":"OK","evidence":["pytest passed"],"issues":[]}'
+            '{"verdict":"OK","evidence":["pytest passed"],"issues":[]}'
         )
         self.assertTrue(ok.ok)
+        for invalid in ('KITT_VALIDATION_REPORT: {"verdict":"OK","evidence":["passed"],"issues":[]}',
+                        '{"verdict":"FAIL","verdict":"OK","evidence":["passed"],"issues":[]}',
+                        '{"verdict":"OK","evidence":["passed"],"issues":[]} trailing prose'):
+            self.assertFalse(parse_validation_report(invalid).ok)
+
+    def test_structured_results_have_one_shared_strict_decode_boundary(self):
+        payload = {"summary": 'Preserve "quotes", tabs\tand newlines\n', "nested": {"value": True}}
+        raw = json.dumps(payload)
+        fenced = f"```json\n{raw}\n```"
+        self.assertEqual(parse_structured_result(fenced), payload)
+        self.assertEqual(AutonomousCompletionEngine._extract_report(raw), payload)
+        self.assertEqual(AdversarialCodeReviewer._extract_payload(raw), payload)
+        for invalid in (raw + raw, 'Prefix: ' + raw, '{"summary":"first","summary":"second"}', '[]', '{"value":NaN}'):
+            with self.assertRaises(ValueError):
+                parse_structured_result(invalid)
+            self.assertIsNone(AutonomousCompletionEngine._extract_report(invalid))
+            self.assertIsNone(AdversarialCodeReviewer._extract_payload(invalid))
 
     def test_final_validation_receives_original_user_request(self):
         class Processor:
@@ -468,7 +488,6 @@ class GoalContractTests(unittest.TestCase):
                 self.command = command
                 yield TurnCompleted(
                     response=(
-                        'KITT_VALIDATION_REPORT: '
                         '{"verdict":"OK","evidence":["workspace inspected"],"issues":[]}'
                     )
                 )

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from kitt.llm.agent_contract import parse_structured_result
+
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 
-ADVERSARIAL_REVIEW_PREFIX = "KITT_ADVERSARIAL_REVIEW:"
 _ALLOWED_SEVERITIES = {"BLOCKER", "HIGH", "MEDIUM", "LOW", "INFO"}
 _MAX_RESPONSE_CHARS = 64_000
 _ALLOWED_CATEGORIES = {
@@ -205,8 +206,7 @@ class AdversarialCodeReviewer:
                 "3. Prefer minimal fixes. Do not demand churn, style-only rewrites, or unrelated refactors.",
                 "4. Check tests themselves for weak assertions, mock-only validation, happy-path bias, and missing regressions.",
                 "5. If no required issue remains, APPROVE and explain the risks you checked in approval_evidence.",
-                "6. Return exactly one JSON object after this prefix and no prose before/after it:",
-                ADVERSARIAL_REVIEW_PREFIX,
+                "6. Return exactly one JSON object and no extra prose; in an execution envelope place the object directly in content:",
                 json.dumps(schema, ensure_ascii=False, separators=(",", ":")),
             ]
         )
@@ -214,19 +214,10 @@ class AdversarialCodeReviewer:
 
     @staticmethod
     def _extract_payload(raw_response: str) -> Optional[Dict[str, Any]]:
-        text = str(raw_response or "").strip()
-        idx = text.rfind(ADVERSARIAL_REVIEW_PREFIX)
-        if idx >= 0:
-            text = text[idx + len(ADVERSARIAL_REVIEW_PREFIX) :].lstrip()
-        if text.startswith("```"):
-            newline = text.find("\n")
-            if newline >= 0:
-                text = text[newline + 1 :]
         try:
-            value, _ = json.JSONDecoder().raw_decode(text)
-        except (json.JSONDecodeError, TypeError, ValueError):
+            return parse_structured_result(raw_response)
+        except ValueError:
             return None
-        return value if isinstance(value, dict) else None
 
     def _evidence_is_anchored(self, evidence: str, snapshot: str) -> bool:
         evidence_norm = _normalize_ws(evidence)

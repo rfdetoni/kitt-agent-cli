@@ -1,3 +1,7 @@
+## Release 0.85.0 — Structured Agent results
+
+Planning and review/validation/completion reports return one JSON object without textual markers. With reverse-proxy contract v3, the model puts that object directly in content, avoiding double serialization. Protocol 0.10.0 owns the identifiers and strict result decoder; Proxy 5.0.0 is the compatible companion. WebChat continues to own token limits. See [release notes](docs/RELEASE_0.85.0.md).
+
 # K.I.T.T. Agent CLI
 
 ## Release 0.84.10 — WebChat owns token limits

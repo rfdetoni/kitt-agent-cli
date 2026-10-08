@@ -231,7 +231,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                 "route": "agent-loop",
             },
             base_url="http://127.0.0.1:3000",
-            extra_headers={"X-Kitt-Agent-Contract": "v2"},
+            extra_headers={"X-Kitt-Agent-Contract": "v3"},
         )
 
         with patch(
@@ -433,8 +433,15 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                     )),
                     "ok",
                 )
+                _discover.return_value = KittProxyCapabilities(discovered=True, raw={
+                    "kitt_agent_cli": {"agent_contract": {"version": "v2"}},
+                })
+                with self.assertRaisesRegex(ProviderProtocolError, "expected v3"):
+                    list(client.chat_stream([{"role":"user", "content":"incompatible"}]))
+                self.assertEqual(len(captured), 3)
 
         first = captured[0].extra_headers
+        self.assertEqual(first["X-Kitt-Agent-Contract"], "v3")
         self.assertEqual(captured[0].context_window, 0)
         self.assertEqual(captured[0].max_output_tokens, 0)
         self.assertEqual(client.profile, profile)

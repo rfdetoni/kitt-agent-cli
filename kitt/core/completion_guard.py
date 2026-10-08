@@ -751,7 +751,7 @@ def run_completion_guard(
         current_request = replace(current_request, agent_route=legacy_route)
 
     if getattr(current_request, "agent_route", None) == "agent-loop":
-        # agent-contract v2 delegates natural-language scope/completion
+        # agent-contract v3 delegates natural-language scope/completion
         # decisions to WebChat. The host still enforces tool policy,
         # approvals, execution status and proxy validation gates, so the
         # legacy lexical completion guard must not reinterpret the prompt.

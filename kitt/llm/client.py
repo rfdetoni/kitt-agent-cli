@@ -14,12 +14,12 @@ from typing import Callable, Dict, Generator, List, Optional, TypeAlias
 
 from kitt.domain.entities import ModelProfile
 from kitt.core.logging import TRACE_LEVEL, summarize_trace_messages, summarize_trace_text, trace_event
-from kitt.llm.agent_contract import (
+from kitt_protocol import (
     AGENT_CONTRACT_HEADER,
     AGENT_CONTRACT_VERSION,
     AGENT_ROUTE_HEADER,
-    normalize_agent_route,
 )
+from kitt.llm.agent_contract import normalize_agent_route
 from kitt.llm.auth import ProviderAuthService
 from kitt.llm.browser_gateway import KittProxyBrowserGateway
 from kitt.llm.endpoint_security import (
@@ -433,6 +433,11 @@ class LLMClient:
                 timeout=min(1.0, max(0.2, float(self.profile.request_timeout_seconds))),
             )
             self._last_kitt_proxy_capabilities = discovered
+            if discovered.discovered and discovered.agent_contract_version != AGENT_CONTRACT_VERSION:
+                raise ProviderProtocolError(
+                    f"Reverse Proxy contract is {discovered.agent_contract_version!r}; "
+                    f"expected {AGENT_CONTRACT_VERSION}. Update Agent CLI and Reverse Proxy together"
+                )
             if contract_route == "agent-loop" and discovered.discovered and "host_execution_state_v1" not in discovered.agentic_features:
                 raise ValueError("Reverse Proxy lacks host_execution_state_v1; update Agent CLI and Reverse Proxy together")
 
