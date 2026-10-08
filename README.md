@@ -1,6 +1,6 @@
 ## Release 0.86.1 — Parallel child admission and live monitoring
 
-The task-plan host can dispatch multiple **independent** child tasks using `plan.dispatch_ready` (up to four by default), sharing one parent budget while keeping per-child permissions, worktrees, browser sessions and verification requirements. `Ctrl+X, A` opens the Agent monitor; the provider endpoint chord is now `Ctrl+X, E`. The automatic durable Goals contract still executes its top-level items serially and is **not** claimed to provide DAG fan-out; further scheduler changes are required. See [release notes](docs/RELEASE_0.86.1.md).
+The task-plan host can dispatch multiple **independent** child tasks using `plan.dispatch_ready` (up to four by default), sharing one parent budget while keeping per-child permissions, worktrees, browser sessions and verification requirements. `Ctrl+X, A` opens the Agent monitor; the provider endpoint chord is now `Ctrl+X, E`. Automatic durable Goals contracts now opportunistically fan out independent file-scoped implementation items in autonomous mode, while the existing GoalScheduler retains lease ownership and independently validates each completed item. Tasks with overlapping files or unsatisfied dependencies remain sequential. See [release notes](docs/RELEASE_0.86.1.md).
 
 ## Release 0.86.0 — KAP/1 WebChat actions
 
