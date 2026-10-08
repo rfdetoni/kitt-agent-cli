@@ -24,7 +24,7 @@ class RuntimeConfig:
     max_artifact_bytes: int = 8 * 1024 * 1024
     artifact_page_bytes: int = 32768
 
-    max_children: int = 2
+    max_children: int = 4
     max_child_depth: int = 1
     child_token_budget: int = 2048
     child_timeout_seconds: float = 120.0

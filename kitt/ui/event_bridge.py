@@ -49,6 +49,35 @@ class TurnEventBridge:
         self._daemon_terminal = None
         self._event_loop = None
         self._queue_signal = None
+        self._child_unsubscribers = []
+        bus = getattr(runtime, "events", None)
+        if bus is not None:
+            for kind in ("ChildAgentSpawned", "ChildAgentProgress", "ChildAgentFinished"):
+                self._child_unsubscribers.append(bus.subscribe(kind, self._on_child_bus_event))
+
+    def _on_child_bus_event(self, name, payload):
+        """Bridge real child lifecycle notifications into the live dashboard.
+
+        A child runs on a worker thread; never mutate prompt_toolkit state
+        directly from that thread. Daemon-mode events use the IPC bridge.
+        """
+        if self._closed.is_set() or self._daemon_bridge is not None:
+            return
+        from kitt.core.turn_events import ChildAgentSpawned, ChildAgentProgress, ChildAgentFinished
+        classes = {
+            "ChildAgentSpawned": ChildAgentSpawned,
+            "ChildAgentProgress": ChildAgentProgress,
+            "ChildAgentFinished": ChildAgentFinished,
+        }
+        cls = classes.get(name)
+        if cls is None or not isinstance(payload, dict):
+            return
+        from dataclasses import fields
+        allowed = {field.name for field in fields(cls) if field.init}
+        event = cls(**{key: value for key, value in payload.items() if key in allowed})
+        loop = self._event_loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self._deliver, event)
 
     @staticmethod
     def _create_executor() -> ThreadPoolExecutor:
@@ -530,6 +559,9 @@ class TurnEventBridge:
 
     async def shutdown(self, timeout=3.0):
         self._closed.set()
+        for unsubscribe in self._child_unsubscribers:
+            unsubscribe()
+        self._child_unsubscribers.clear()
         if self._pending_invalidate:
             try:
                 self._pending_invalidate.cancel()

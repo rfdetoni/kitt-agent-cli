@@ -18,6 +18,7 @@ from kitt.goals.gates import QualityGateRunner
 from kitt.runtime.state import RuntimeStateStore
 from kitt.goals.review_snapshot import paths_from_tool_start
 from kitt.goals.progress import publish_goal_progress
+from kitt.goals.parallel_children import parallel_contract_result, forget_failed_parallel_item
 from kitt.goals.step_verifier import GoalStepVerifier
 from kitt.security.context import ExecutionSecurityContext
 
@@ -129,53 +130,60 @@ class GoalStepExecutor:
             ttl_seconds=24 * 60 * 60,
         )
         try:
-            for event in runtime.processor.run_turn(command):
-                publish_goal_progress(goal.id, event)
-                if isinstance(event, ToolStarted):
-                    paths = paths_from_tool_start(runtime, event)
-                    if paths:
-                        pending_mutation_paths[event.call_id] = paths
-                elif isinstance(event, ToolCompleted):
-                    paths = pending_mutation_paths.pop(event.call_id, [])
-                    if event.success and paths:
-                        current_review_paths.extend(paths)
-                elif isinstance(event, EditApplied):
-                    current_review_paths.extend(list(event.applied_files) + list(event.created_files))
-                elif isinstance(event, MetricsRecorded):
-                    result["tokens"] += event.input_tokens + event.output_tokens
-                    result["cost"] += float(event.estimated_usd or 0.0)
-                elif isinstance(event, ApprovalRequired):
-                    result.update(
-                        status="WAITING_APPROVAL",
-                        approval_id=event.approval_request_id,
-                    )
-                    return result
-                elif isinstance(event, TurnCompleted):
-                    result.update(status="SUCCEEDED", response=event.response)
-                    edit_result = getattr(event, "edit_result", None)
-                    if edit_result is not None and getattr(edit_result, "success", False):
-                        current_review_paths.extend(
-                            list(getattr(edit_result, "applied_files", None) or [])
-                            + list(getattr(edit_result, "created_files", None) or [])
+            parallel = parallel_contract_result(
+                runtime, goal, contract_item, state, security,
+            )
+            if parallel is not None:
+                result.update({k: v for k, v in parallel.items() if k != "paths"})
+                current_review_paths.extend(parallel.get("paths") or [])
+            else:
+                for event in runtime.processor.run_turn(command):
+                    publish_goal_progress(goal.id, event)
+                    if isinstance(event, ToolStarted):
+                        paths = paths_from_tool_start(runtime, event)
+                        if paths:
+                            pending_mutation_paths[event.call_id] = paths
+                    elif isinstance(event, ToolCompleted):
+                        paths = pending_mutation_paths.pop(event.call_id, [])
+                        if event.success and paths:
+                            current_review_paths.extend(paths)
+                    elif isinstance(event, EditApplied):
+                        current_review_paths.extend(list(event.applied_files) + list(event.created_files))
+                    elif isinstance(event, MetricsRecorded):
+                        result["tokens"] += event.input_tokens + event.output_tokens
+                        result["cost"] += float(event.estimated_usd or 0.0)
+                    elif isinstance(event, ApprovalRequired):
+                        result.update(
+                            status="WAITING_APPROVAL",
+                            approval_id=event.approval_request_id,
                         )
-                elif isinstance(event, TurnBlocked):
-                    category = self._blocked_category(event.reason)
-                    result.update(
-                        status="INCOMPLETE" if category == "RESOLVABLE" else "BLOCKED",
-                        error=event.reason,
-                        block_reason=category,
-                    )
-                elif isinstance(event, TurnFailed):
-                    result.update(
-                        status="INCOMPLETE" if event.recoverable else "FAILED",
-                        error=event.error,
-                        block_reason="ENVIRONMENT" if event.recoverable else "",
-                    )
+                        return result
+                    elif isinstance(event, TurnCompleted):
+                        result.update(status="SUCCEEDED", response=event.response)
+                        edit_result = getattr(event, "edit_result", None)
+                        if edit_result is not None and getattr(edit_result, "success", False):
+                            current_review_paths.extend(
+                                list(getattr(edit_result, "applied_files", None) or [])
+                                + list(getattr(edit_result, "created_files", None) or [])
+                            )
+                    elif isinstance(event, TurnBlocked):
+                        category = self._blocked_category(event.reason)
+                        result.update(
+                            status="INCOMPLETE" if category == "RESOLVABLE" else "BLOCKED",
+                            error=event.reason,
+                            block_reason=category,
+                        )
+                    elif isinstance(event, TurnFailed):
+                        result.update(
+                            status="INCOMPLETE" if event.recoverable else "FAILED",
+                            error=event.error,
+                            block_reason="ENVIRONMENT" if event.recoverable else "",
+                        )
         finally:
             state.delete(active_turn_key)
 
         if result["status"] == "SUCCEEDED":
-            return verifier.finalize(
+            verified_result = verifier.finalize(
                 runtime=runtime,
                 goal=goal,
                 contract_item=contract_item,
@@ -192,4 +200,9 @@ class GoalStepExecutor:
                 prior_review_paths=prior_review_paths,
                 current_review_paths=current_review_paths,
             )
+            if verified_result.get("status") != "ITEM_DONE" and contract_item is not None:
+                forget_failed_parallel_item(state, goal.id, contract_item.local_id)
+            return verified_result
+        if contract_item is not None:
+            forget_failed_parallel_item(state, goal.id, contract_item.local_id)
         return result

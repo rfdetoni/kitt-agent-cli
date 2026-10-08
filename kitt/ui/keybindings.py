@@ -74,8 +74,10 @@ def build_key_bindings(ui):
     @ui.keymap.bind(kb, "toggle_sidebar")
     def _(event): ui._toggle_sidebar()
 
-    @ui.keymap.bind(kb, "agents")
-    def _(event): ui.open_overlay("agents", ui.agents_control)
+    @ui.keymap.bind(kb, "agents", eager=True)
+    def _(event):
+        ui.open_overlay("agents", ui.agents_control)
+        event.app.invalidate()
 
     @ui.keymap.bind(kb, "collapse_tool", filter=~palette & ~auth_login & ~model_setup)
     def _(event): ui.state.toggle_last_tool_collapse(); event.app.invalidate()
@@ -259,7 +261,7 @@ def build_key_bindings(ui):
     def _(event): asyncio.create_task(ui._move_model_provider(-1))
 
     @kb.add("escape", "c-@", filter=model_setup)
-    @kb.add("c-x", "a", filter=model_setup)
+    @kb.add("c-x", "e", filter=model_setup)
     def _(event): ui._open_provider_endpoint_overlay()
 
     @kb.add("enter", filter=model_setup)

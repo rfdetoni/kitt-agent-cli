@@ -140,6 +140,22 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
             app_ui.request_exit()
             await asyncio.wait_for(task, 2)
 
+    async def test_ctrl_x_a_opens_live_agent_dashboard(self):
+        """The global agent chord must not be shadowed by the model editor."""
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            task = asyncio.create_task(ui.run_async())
+            try:
+                await asyncio.sleep(0.05)
+                pipe.send_text("\x18a")
+                await asyncio.sleep(0.08)
+                self.assertEqual(ui.state.active_overlay, "agents")
+                self.assertIs(ui.application.layout.current_control, ui.agents_control)
+            finally:
+                ui.request_exit()
+                await asyncio.wait_for(task, 2)
+
     async def test_04_create_backend_mode_plain(self):
         """Verify create_backend mode=plain returns PlainLineUI."""
         backend = create_backend(self.runtime, mode="plain")

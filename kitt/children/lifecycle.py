@@ -73,7 +73,6 @@ class ChildAgentManager:
         self._pool = ThreadPoolExecutor(
             max_workers=max_children, thread_name_prefix="kitt-child"
         )
-        self._last_spawn_time: dict[str, float] = {}
         self.messaging = messaging_repo or ChildMessageRepository(repository.db)
         self.allow_peer_agent_messages = allow_peer_agent_messages
         self.enabled = bool(enabled)
@@ -282,11 +281,8 @@ class ChildAgentManager:
         if depth > self.max_depth:
             raise ValueError("Child depth limit exceeded")
 
-        now = time.time()
-        last_spawn = self._last_spawn_time.get(parent_conversation_id, 0.0)
-        if now - last_spawn < 2.0:
-            raise ValueError("Child spawn rate limit: please wait 2 seconds")
-
+        # Active-worker capacity and the parent budget already bound admission.
+        # A per-conversation sleep prevents genuine parallel fan-out.
         existing = self.repo.list(parent_conversation_id, 100)
         resident_states = {
             "CREATED", "RUNNING", "QUEUED", "WAITING_APPROVAL", "RETAINED", "IDLE"
@@ -347,7 +343,6 @@ class ChildAgentManager:
         if not math.isfinite(requested_timeout) or requested_timeout <= 0:
             raise ValueError("Child timeout must be positive and finite")
         timeout = min(requested_timeout, self.max_worker_seconds)
-        self._last_spawn_time[parent_conversation_id] = now
         child_id = f"child_{uuid.uuid4().hex}"
         budget_lease: dict[str, object] = {}
         if self._budget_allocator is not None:

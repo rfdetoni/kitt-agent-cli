@@ -85,13 +85,21 @@ class ToolRegistry(_core.ToolRegistry):
 
     def execute_tool(self, tool_name, args=None, *positional, **kwargs):
         """Run one canonical policy-governed tool execution path."""
+        if args is not None and not isinstance(args, dict):
+            return ToolResult(False, "", f"Invalid arguments for {tool_name}: expected an object.")
         normalized_args = args or {}
         if tool_name == "run_command":
-            if self.policy.evaluate_argv(normalized_args.get("argv")) == "DENY":
+            argv = normalized_args.get("argv")
+            if self.policy.evaluate_argv(argv) == "DENY":
+                # Allow All removes routine approval prompts, not process
+                # sandbox/path-scope or shell-execution restrictions.
+                reason = "Use a direct executable and argv; shell wrappers and unsafe paths are forbidden."
+                if not isinstance(argv, (list, tuple)) or not argv:
+                    reason = "Expected argv as a non-empty list of executable and argument strings."
                 return ToolResult(
                     False,
                     "",
-                    "Execution denied by PolicyEngine for tool 'run_command'.",
+                    f"Execution denied by PolicyEngine for tool 'run_command'. {reason}",
                 )
 
         processor = getattr(self, "_processor", None)

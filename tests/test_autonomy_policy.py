@@ -36,6 +36,28 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("ask")).evaluate_tool("run_command", command), "ASK")
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("deny")).evaluate_tool("run_command", command), "DENY")
 
+    def test_allow_all_executes_direct_argv_without_asking(self):
+        """A safe direct argv command must run under autonomous policy."""
+        import tempfile
+        from kitt.tools.registry import ToolRegistry
+
+        with tempfile.TemporaryDirectory() as root:
+            registry = ToolRegistry(root_dir=root)
+            try:
+                registry.policy.autonomy = AutonomyPolicy.preset("allow_all")
+                result = registry.execute_tool(
+                    "run_command",
+                    {"argv": [sys.executable, "--version"]},
+                    turn_id="autonomy-command",
+                    conversation_id="autonomy-conversation",
+                    workspace_id="autonomy-workspace",
+                    origin="AGENT",
+                )
+                self.assertFalse(result.requires_approval, result.error)
+                self.assertTrue(result.success, result.error)
+            finally:
+                registry.close()
+
     def test_policy_engine_read_only_mode(self):
         engine = PolicyEngine(autonomy=AutonomyPolicy.preset("read_only"))
         self.assertEqual(engine.evaluate_tool("read_file", {"path": "src/app.py"}), "ALLOW")
