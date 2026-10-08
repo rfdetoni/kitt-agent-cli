@@ -52,6 +52,7 @@ class KeyMap:
             KeyBinding("new_session", (("c-x", "n"),), "Nova conversa", command_id="new"),
             KeyBinding("toggle_sidebar", (("c-x", "b"),), "Alternar sidebar", command_id="sidebar"),
             KeyBinding("agents", (("c-x", "a"),), "Painel de agentes", command_id="tasks"),
+            KeyBinding("provider_endpoint", (("c-x", "e"),), "Editar endpoint do provedor", scope="model_setup", discoverable=False),
             KeyBinding("help", (("f1",),), "Ajuda", command_id="help"),
             KeyBinding("models", (("f12",),), "Configurar modelos e provedores", command_id="setup_models"),
             KeyBinding("mode", (("f4",), ("c-t",)), "Alternar modo CODE/PLAN/ASK", command_id="mode"),
