@@ -85,6 +85,33 @@ def _item(
     }
 
 
+
+def _as_kap_final(payload):
+    """Fake WebChat response using the current KAP/1 transport contract."""
+    lines = ["KITT/1", "ACTION FINAL"]
+    def emit(path, value):
+        if isinstance(value, dict):
+            lines.append("OBJECT " + path)
+            for key, item in value.items():
+                emit(path + "." + str(key), item)
+        elif isinstance(value, list):
+            lines.append("ARRAY " + path)
+            for index, item in enumerate(value):
+                emit(path + "." + str(index), item)
+        elif isinstance(value, str):
+            if "\n" in value:
+                lines.extend(["TEXT " + path, value, "KITT/ENDTEXT"])
+            else:
+                lines.append("STRING " + path + " = " + value)
+        elif isinstance(value, bool):
+            lines.append("BOOLEAN " + path + " = " + str(value).lower())
+        elif value is None:
+            lines.append("NULL " + path)
+        else:
+            lines.append(("INTEGER " if isinstance(value, int) else "DECIMAL ") + path + " = " + str(value))
+    emit("content", payload)
+    return "\n".join(lines + ["KITT/END"])
+
 class GoalContractTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -255,9 +282,9 @@ class GoalContractTests(unittest.TestCase):
                 dispatched.append(messages[-1]["content"])
                 self_outer.assertNotIn("max_prompt_tokens", kwargs["request_metadata"])
                 if len(dispatched) == 1:
-                    yield json.dumps(payload)
+                    yield _as_kap_final(payload)
                 else:
-                    yield '{"verdict":"OK","issues":[]}'
+                    yield _as_kap_final({"verdict": "OK", "issues": []})
 
         processor = TurnProcessor(
             root_dir=self.tmp.name, workspace_id="ws", execution_client=Client(),
@@ -278,7 +305,7 @@ class GoalContractTests(unittest.TestCase):
                 self.assertGreater(allocation["total_input_tokens"], 8192)
                 self.assertEqual(allocation["reserved_output_tokens"], 0)
             self.assertIn(json.dumps(objective), dispatched[1])
-            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nReturn exactly", 1)[0])
+            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nReturn one KAP/1", 1)[0])
             self.assertEqual(review["objective"], objective)
             self.assertEqual(review["items"], accepted)
         finally:
