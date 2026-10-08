@@ -86,6 +86,7 @@ class AgentRolePolicy:
             "state.set",
             "children.spawn",
             "plan.dispatch",
+            "plan.dispatch_ready",
             "goal.update",
             "memory.correct",
             "memory.concept",
