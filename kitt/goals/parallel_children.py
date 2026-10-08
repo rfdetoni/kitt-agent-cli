@@ -56,6 +56,8 @@ def parallel_contract_result(runtime, goal, current, state, security):
     key = _roster_key(goal.id)
     roster = dict(state.get(key) or {})
     if current.local_id not in roster:
+        if state.get(f"goal.parallel_failed:{goal.id}:{current.local_id}"):
+            return None
         batch = _ready_batch(runtime, goal, current)
         if not batch:
             return None
@@ -63,37 +65,50 @@ def parallel_contract_result(runtime, goal, current, state, security):
         launched = []
         for item in batch[:available]:
             try:
-                child = children.spawn(
-                    parent_conversation_id=goal.conversation_id,
-                    parent_turn_id=goal.id,
-                    name=item.local_id,
-                    task=(
-                        item.prompt + "\n\nAcceptance criteria:\n"
-                        + "\n".join(f"- {x}" for x in item.criteria)
-                        + "\nImplement only the allocated paths. The parent handles build "
-                        "and integration checks; do not invoke shell commands."
-                    ),
+                admitted = runtime.registry.execute_tool(
+                    "child_spawn",
+                    {
+                        "name": item.local_id,
+                        "task": (
+                            item.prompt + "\n\nAcceptance criteria:\n"
+                            + "\n".join(f"- {x}" for x in item.criteria)
+                            + "\nImplement only the allocated paths. The parent handles build "
+                            "and integration checks; do not invoke shell commands."
+                        ),
+                        "allowed_paths": list(item.paths),
+                        "enabled_tools": ["read_file", "search", "repository_map", "write_file", "apply_patch"],
+                        "token_budget": max(2048, int(runtime.config.child_token_budget)),
+                        "timeout_seconds": float(runtime.config.child_timeout_seconds),
+                        "agent_role": "IMPLEMENT",
+                    },
+                    turn_id=goal.id,
+                    conversation_id=goal.conversation_id,
                     workspace_id=runtime.workspace_id,
-                    allowed_paths=list(item.paths),
-                    enabled_tools=["read_file", "search", "repository_map", "write_file", "apply_patch"],
-                    token_budget=max(2048, int(runtime.config.child_token_budget)),
-                    timeout_seconds=float(runtime.config.child_timeout_seconds),
+                    origin="SCHEDULE",
                     security_context=security,
-                    agent_role="IMPLEMENT",
                 )
+                child_id = str((admitted.metadata or {}).get("child_id") or "")
+                if not admitted.success or admitted.requires_approval or not child_id:
+                    raise RuntimeError(
+                        admitted.error or "Parallel child admission requires approval or was denied"
+                    )
             except Exception:
+                for child_id in launched:
+                    children.cancel(child_id)
                 if launched:
-                    for child_id in launched:
-                        children.cancel(child_id)
                     raise
                 return None
-            roster[item.local_id] = child.id
-            launched.append(child.id)
+            roster[item.local_id] = child_id
+            launched.append(child_id)
             state.set(key, roster, ttl_seconds=24 * 60 * 60)
 
         # Keep the scheduler fencing lease valid until *all* children finish.
         deadline = time.monotonic() + float(runtime.config.child_timeout_seconds) + 5.0
         while time.monotonic() < deadline:
+            if runtime.goals.get(goal.id).state != "RUNNING":
+                for cid in launched:
+                    children.cancel(cid)
+                raise RuntimeError("Automatic goal cancelled while child batch was running")
             if all(
                 (child := children.repo.get(cid)) is not None
                 and child.state in _TERMINAL
@@ -131,3 +146,4 @@ def forget_failed_parallel_item(state, goal_id: str, local_id: str) -> None:
     roster = dict(state.get(key) or {})
     if roster.pop(local_id, None) is not None:
         state.set(key, roster, ttl_seconds=24 * 60 * 60)
+        state.set(f"goal.parallel_failed:{goal_id}:{local_id}", True, ttl_seconds=24 * 60 * 60)
