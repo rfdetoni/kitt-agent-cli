@@ -196,6 +196,51 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(ui.state.pending_approvals)
             self.assertNotEqual(ui.state.active_overlay, "permission")
 
+    async def test_permission_mouse_click_dispatches_exactly_one_decision(self):
+        from prompt_toolkit.mouse_events import MouseEventType
+
+        class ConfirmingDaemon:
+            daemon_mode = True
+            is_active = False
+
+            def __init__(self):
+                self.calls = []
+
+            async def remember_approval(self, tool_name, scope, executable_identity=""):
+                self.calls.append(("remember", tool_name, scope))
+                return {"status": "ok"}
+
+            async def resolve_approval(self, approval_id, allow):
+                self.calls.append(("approval", approval_id, allow))
+                return {"status": "ok"}
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            daemon = ConfirmingDaemon()
+            ui.bridge = daemon
+            ui.state.pending_approvals.append({
+                "approval_id": "clicked", "tool_name": "run_command",
+                "executable_identity": "USER:local",
+            })
+            ui.open_overlay("permission", ui.permission_control)
+            ui._permission_text()
+            regions = ui.interactions._regions["permission"]
+            hit = next(region for region in regions if region.action == "permission.action"
+                       and region.value[1] == "always_workspace")
+            def event(kind):
+                return SimpleNamespace(event_type=kind,
+                                       position=SimpleNamespace(x=hit.x_start + 1, y=hit.y))
+            ui._interactive_mouse_handler("permission", event(MouseEventType.MOUSE_DOWN))
+            ui._interactive_mouse_handler("permission", event(MouseEventType.MOUSE_UP))
+            await asyncio.sleep(0.02)
+            self.assertEqual(daemon.calls, [
+                ("remember", "run_command", "workspace"),
+                ("approval", "clicked", True),
+            ])
+            self.assertFalse(ui.state.pending_approvals)
+            self.assertNotEqual(ui.state.active_overlay, "permission")
+
     async def test_failed_daemon_approval_reopens_current_request(self):
         class FailedDaemon:
             daemon_mode = True
