@@ -311,6 +311,22 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
             ui.application.invalidate()
 
 
+def _require_daemon_approval_ack(response: dict, *, allow: bool) -> None:
+    """Keep an approval pending unless the RPC response is successful."""
+    if not isinstance(response, dict):
+        raise RuntimeError("Daemon did not acknowledge approval")
+    status = response.get("status")
+    valid = {"ok", "success", "accepted", "approved" if allow else "denied"}
+    if (
+        (status is not None and str(status).lower() not in valid)
+        or response.get("success") is False
+        or response.get("ok") is False
+        or (allow and response.get("approved") is False)
+        or response.get("error")
+    ):
+        raise RuntimeError(str(response.get("error") or status or "Daemon rejected approval"))
+
+
 async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
     pending = ui.state.pending_approval
     if not pending:
@@ -354,17 +370,19 @@ async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
         try:
             tool_name = pending.get("tool_name", "apply_patch")
             if remember_scope:
-                await ui.bridge.remember_approval(
+                saved = await ui.bridge.remember_approval(
                     tool_name,
                     remember_scope,
                     executable_identity=str(
                         pending.get("executable_identity") or ""
                     ),
                 )
+                _require_daemon_approval_ack(saved, allow=True)
                 ui.state.add_toast(
                     f"Sempre permitir {tool_name} ativado para este {remember_scope}."
                 )
-            await ui.bridge.resolve_approval(pending["approval_id"], allow)
+            acknowledgment = await ui.bridge.resolve_approval(pending["approval_id"], allow)
+            _require_daemon_approval_ack(acknowledgment, allow=allow)
             ui.state.pending_approvals[:] = [
                 item for item in ui.state.pending_approvals
                 if item.get("approval_id") != pending["approval_id"]
