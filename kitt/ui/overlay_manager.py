@@ -248,7 +248,7 @@ class OverlayManager:
         except (ValueError, KeyError):
             pass
 
-    def close(self) -> Optional[str]:
+    def close(self, *, cancel_pending: bool = True) -> Optional[str]:
         if not self.frames:
             self._sync_state()
             return None
@@ -257,7 +257,7 @@ class OverlayManager:
         was_permission = (top.spec.name == "permission")
 
         # Clean up denied permissions if permission modal is closed by cancel/Esc
-        if was_permission and self.app.state.pending_approvals:
+        if cancel_pending and was_permission and self.app.state.pending_approvals:
             for req in list(self.app.state.pending_approvals):
                 try:
                     self.app.runtime.approval.deny(
@@ -323,6 +323,7 @@ class OverlayManager:
             "agents": getattr(self.app, "agents_control", None),
             "autonomy_control": getattr(self.app, "autonomy_control", None),
             "help": getattr(self.app, "help_control", None),
+            "reverse_proxy": getattr(self.app, "reverse_proxy_control", None),
         }
         frame.preferred_focus = controls.get(target)
         self._sync_state()
