@@ -96,7 +96,19 @@ def build_root_container(ui):
         from prompt_toolkit.mouse_events import MouseEventType
         if event_type == MouseEventType.SCROLL_UP:
             ui.state.follow_tail = False
-            ui.state.expand_transcript_window()
+            # The transcript is rendered from a bounded tail window. Loading
+            # older blocks prepends lines: preserve the viewport anchor when
+            # that window is extended near its top.
+            info = getattr(window, "render_info", None)
+            if (
+                info is not None
+                and info.vertical_scroll <= 6
+                and ui.state.transcript_window_blocks < len(ui.state.transcript)
+            ):
+                old_lines = sum(fragment.count("\n") for _, fragment in ui._transcript_text())
+                ui.state.expand_transcript_window()
+                new_lines = sum(fragment.count("\n") for _, fragment in ui._transcript_text())
+                window.vertical_scroll += max(0, new_lines - old_lines)
         elif event_type == MouseEventType.SCROLL_DOWN:
             info = getattr(window, "render_info", None)
             if info is not None and info.bottom_visible:
