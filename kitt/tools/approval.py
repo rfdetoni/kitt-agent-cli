@@ -235,6 +235,9 @@ class ApprovalManager:
         for rule in reversed(rules):
             if rule.tool_name != tool_name:
                 continue
+            # Process authority must be explicitly bound to this executor.
+            if tool_name == "run_command" and (not identity or rule.executable_identity != identity):
+                continue
             if rule.scope == "session" and rule.conversation_id != conv:
                 continue
             if (
