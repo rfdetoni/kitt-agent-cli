@@ -265,6 +265,14 @@ class PolicyEngine:
             command_decision = self.evaluate_argv(argv)
             if command_decision == "DENY":
                 return "DENY"
+            if self.approval_manager:
+                remembered = self.approval_manager.check_remembered(
+                    tool_name, None, conversation_id,
+                    workspace_id=workspace_id,
+                    executable_identity=executable_identity,
+                )
+                if remembered in {"allow", "deny"}:
+                    return "ALLOW" if remembered == "allow" else "DENY"
             if self._requires_explicit_approval_argv(argv):
                 return "ASK"
             # Repository autonomy is user-owned; model commands cannot change it.
