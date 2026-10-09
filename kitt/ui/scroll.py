@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 from prompt_toolkit.mouse_events import MouseEventType
 
@@ -133,6 +136,16 @@ def register_scrollable_window(
         invalidate=invalidate,
         after_scroll=after_scroll,
     )
+    def traced_wheel(mouse_event):
+        handled = wheel(mouse_event)
+        if handled is not NotImplemented:
+            logger.debug(
+                "tui.mouse.wheel surface=%s direction=%s scroll=%s",
+                name, mouse_event.event_type.name,
+                getattr(window, "vertical_scroll", None),
+            )
+        return handled
+
     existing = getattr(target_control, "mouse_handler", None)
-    target_control.mouse_handler = compose_mouse_handlers(wheel, existing)
+    target_control.mouse_handler = compose_mouse_handlers(traced_wheel, existing)
     return window
