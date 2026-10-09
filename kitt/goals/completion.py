@@ -3,7 +3,6 @@ from __future__ import annotations
 from kitt.llm.agent_contract import parse_structured_result
 
 import hashlib
-import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
