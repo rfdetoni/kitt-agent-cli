@@ -217,6 +217,42 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ui.state.pending_approval["approval_id"], "still-pending")
             self.assertEqual(ui.state.status_text, "ERROR")
 
+    async def test_daemon_negative_ack_does_not_discard_approval(self):
+        class RejectedDaemon:
+            daemon_mode = True
+            is_active = False
+
+            async def resolve_approval(self, approval_id, allow):
+                return {"status": "rejected", "error": "stale request"}
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            ui.bridge = RejectedDaemon()
+            ui.state.pending_approvals.append({
+                "approval_id": "still-pending", "tool_name": "run_command"
+            })
+            ui.open_overlay("permission", ui.permission_control)
+            await ui.resolve_approval("once")
+            self.assertEqual(ui.state.active_overlay, "permission")
+            self.assertEqual(ui.state.pending_approval["approval_id"], "still-pending")
+            self.assertEqual(ui.state.status_text, "ERROR")
+
+    async def test_reverse_proxy_tab_switch_refreshes_data_and_focus(self):
+        from unittest.mock import AsyncMock
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            refresh = AsyncMock()
+            ui._refresh_reverse_proxy = refresh
+            ui.open_overlay("autonomy_control", ui.autonomy_control)
+            selected = ui.overlay_manager.cycle_context_tab(1)
+            await asyncio.sleep(0)
+            self.assertEqual(selected, "reverse_proxy")
+            refresh.assert_awaited_once()
+            self.assertIs(ui.application.layout.current_control, ui.reverse_proxy_control)
+
     async def test_workarea_mouse_and_scroll_are_independent_of_input_history(self):
         from kitt.ui.interaction import InteractionMap
         from kitt.ui.scroll import make_wheel_scroll_handler
