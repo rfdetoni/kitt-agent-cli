@@ -262,6 +262,8 @@ async def _set_autonomy_profile(ui, preset: str, *, notify: bool = True) -> None
         ui.runtime.processor.registry.policy.autonomy = policy
     if notify:
         ui.state.add_toast(f"Perfil de autonomia: {effective}")
+    if ui.state.active_overlay == "autonomy_control":
+        ui.close_overlay()
     if ui.application:
         ui.application.invalidate()
 
