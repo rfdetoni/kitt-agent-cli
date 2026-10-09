@@ -132,6 +132,37 @@ class TestAutonomyPolicy(unittest.TestCase):
 
         self.assertEqual(engine.evaluate_argv(["python", "scripts/check.py"]), "ASK")
 
+    def test_workspace_remembered_process_approval_is_enforced_by_identity(self):
+        from kitt.tools.approval import ApprovalManager
+
+        manager = ApprovalManager(workspace_id="ws-approved")
+        manager.remember(
+            "run_command", "**", "allow", "workspace",
+            workspace_id="ws-approved", executable_identity="MODEL:agent",
+        )
+        engine = PolicyEngine(
+            autonomy=AutonomyPolicy.preset("allow_all"), approval_manager=manager,
+        )
+        command = {"argv": ["node", "-e", "console.log('approved')"]}
+        self.assertEqual(engine.evaluate_tool(
+            "run_command", command, workspace_id="ws-approved",
+            executable_identity="MODEL:agent"), "ALLOW")
+        self.assertEqual(engine.evaluate_tool(
+            "run_command", command, workspace_id="ws-other",
+            executable_identity="MODEL:agent"), "ASK")
+        self.assertEqual(engine.evaluate_tool(
+            "run_command", command, workspace_id="ws-approved",
+            executable_identity="MODEL:other"), "ASK")
+        self.assertEqual(engine.evaluate_tool(
+            "run_command", command, workspace_id="ws-approved"), "ASK")
+        self.assertEqual(engine.evaluate_tool(
+            "run_command", {"argv": ["git", "push"]}, workspace_id="ws-approved",
+            executable_identity="MODEL:agent"), "DENY")
+        engine.autonomy = AutonomyPolicy.preset("read_only")
+        self.assertEqual(engine.evaluate_tool(
+            "run_command", command, workspace_id="ws-approved",
+            executable_identity="MODEL:agent"), "DENY")
+
     def test_allow_all_changes_approval_ux_not_runtime_authority(self):
         import tempfile
         from pathlib import Path
