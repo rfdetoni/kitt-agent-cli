@@ -197,7 +197,6 @@ def build_root_container(ui):
         Window(ui.palette_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
         wheel_handler=make_index_wheel_handler(
             ui._move_palette,
-            get_window=lambda: ui.scrollable_windows.get("palette"),
             invalidate=lambda: ui.application.invalidate() if ui.application else None,
         ),
     )
@@ -212,7 +211,6 @@ def build_root_container(ui):
         Window(ui.model_setup_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
         wheel_handler=make_index_wheel_handler(
             ui.model_setup_model.move_model,
-            get_window=lambda: ui.scrollable_windows.get("model_setup"),
             invalidate=lambda: ui.application.invalidate() if ui.application else None,
         ),
     )
@@ -222,7 +220,6 @@ def build_root_container(ui):
         Window(ui.provider_popup_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
         wheel_handler=make_index_wheel_handler(
             ui.model_setup_model.move_popup_selection,
-            get_window=lambda: ui.scrollable_windows.get("provider_popup"),
             invalidate=lambda: ui.application.invalidate() if ui.application else None,
         ),
     )
@@ -280,7 +277,6 @@ def build_root_container(ui):
             Window(ui.session_picker_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
             wheel_handler=make_index_wheel_handler(
                 ui.session_picker_model.move_selection,
-                get_window=lambda: ui.scrollable_windows.get("session_picker"),
                 invalidate=lambda: ui.application.invalidate() if ui.application else None,
             ),
         ),
@@ -290,7 +286,6 @@ def build_root_container(ui):
             Window(ui.timeline_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
             wheel_handler=make_index_wheel_handler(
                 ui.timeline_model.move_selection,
-                get_window=lambda: ui.scrollable_windows.get("timeline"),
                 invalidate=lambda: ui.application.invalidate() if ui.application else None,
             ),
         ),
@@ -300,7 +295,6 @@ def build_root_container(ui):
             Window(ui.diff_control, wrap_lines=False, right_margins=[ScrollbarMargin(display_arrows=True)]),
             wheel_handler=make_index_wheel_handler(
                 ui.diff_model.scroll,
-                get_window=lambda: ui.scrollable_windows.get("diff"),
                 invalidate=lambda: ui.application.invalidate() if ui.application else None,
             ),
         ),
@@ -320,7 +314,6 @@ def build_root_container(ui):
             Window(ui.reverse_proxy_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
             wheel_handler=make_index_wheel_handler(
                 ui.reverse_proxy_model.move,
-                get_window=lambda: ui.scrollable_windows.get("reverse_proxy"),
                 invalidate=lambda: ui.application.invalidate() if ui.application else None,
             ),
         ),
