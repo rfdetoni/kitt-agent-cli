@@ -287,6 +287,29 @@ async def _clear_remembered_approvals(ui, scope: str = "session") -> None:
 
 
 async def resolve_approval(ui, mode: str | bool = "once") -> None:
+    """Serialize modal decisions and keep daemon acknowledgment as authority."""
+    if getattr(ui, "_approval_in_flight", False):
+        return
+    pending = ui.state.pending_approval
+    if not pending:
+        return
+    ui._approval_in_flight = True
+    if ui.state.active_overlay == "permission":
+        ui.close_overlay(cancel_pending=False)
+    try:
+        await _resolve_approval_once(ui, mode)
+    except Exception as exc:
+        ui.state.add_toast(f"Approval failed: {exc}", persistent=True)
+        ui.state.status_text = "ERROR"
+    finally:
+        ui._approval_in_flight = False
+        if ui.state.pending_approvals and ui.state.active_overlay != "permission":
+            ui.open_overlay("permission", ui.permission_control)
+        if ui.application:
+            ui.application.invalidate()
+
+
+async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
     pending = ui.state.pending_approval
     if not pending:
         return
@@ -316,7 +339,6 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
                 except Exception:
                     pass
         ui.state.pending_approvals.clear()
-        ui.close_overlay()
         if ui.bridge and ui.bridge.is_active:
             await ui.bridge.cancel("Denied all in queue")
         if ui.application:
@@ -341,9 +363,10 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
                     f"Sempre permitir {tool_name} ativado para este {remember_scope}."
                 )
             await ui.bridge.resolve_approval(pending["approval_id"], allow)
-            if ui.state.pending_approvals:
-                ui.state.pending_approvals.pop(0)
-            ui.close_overlay()
+            ui.state.pending_approvals[:] = [
+                item for item in ui.state.pending_approvals
+                if item.get("approval_id") != pending["approval_id"]
+            ]
             ui.state.status_text = "PROCESSING" if allow else "SYSTEM ONLINE"
         except Exception as exc:
             ui.state.add_toast(f"Approval failed: {exc}", persistent=True)
@@ -378,8 +401,10 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
                 pending["turn_id"], pending["conversation_id"], pending["workspace_id"], pending["action_hash"],
                 approval_id=pending["approval_id"],
             )
-            ui.state.pending_approvals.pop(0)
-            ui.close_overlay()
+            ui.state.pending_approvals[:] = [
+                item for item in ui.state.pending_approvals
+                if item.get("approval_id") != pending["approval_id"]
+            ]
             if pending.get("direct_tool"):
                 security_context = _direct_user_security_context(
                     ui,
@@ -416,8 +441,10 @@ async def resolve_approval(ui, mode: str | bool = "once") -> None:
             ui.runtime.approval.deny(pending["approval_id"], "Approval denied")
         except Exception:
             pass
-        ui.state.pending_approvals.pop(0)
-        ui.close_overlay()
+        ui.state.pending_approvals[:] = [
+                item for item in ui.state.pending_approvals
+                if item.get("approval_id") != pending["approval_id"]
+            ]
         if pending.get("direct_tool"):
             ui._show_result("Command denied.")
             ui.state.status_text = "SYSTEM ONLINE"
