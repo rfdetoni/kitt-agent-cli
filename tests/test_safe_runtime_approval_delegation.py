@@ -106,6 +106,34 @@ class TestSafeRuntimeApprovalDelegation(unittest.TestCase):
         self.assertTrue(approved.success, approved.error)
         self.assertEqual(str(approved.data).strip(), "delegated-approved")
 
+    def test_remembered_workspace_command_is_honored_through_runtime_preflight(self):
+        turn_id = "turn-remembered"
+        context = ExecutionSecurityContext.create_user_context(
+            workspace_id=self.runtime.workspace_id,
+            conversation_id=self.runtime.conversation_id,
+            turn_id=turn_id,
+            capabilities={CAP_PROCESS_RUN},
+        )
+        identity = f"{context.principal_type}:{context.principal_id}"
+        self.registry.approval_manager.remember(
+            "run_command", "**", "allow", "workspace",
+            workspace_id=self.runtime.workspace_id,
+            executable_identity=identity,
+        )
+        with patch.object(
+            self.registry.process_runner.sandbox, "is_strong_available", return_value=False
+        ):
+            result = self.runtime.execute(
+                "process.run",
+                {"argv": [sys.executable, "-c", "print('remembered-approval')"]},
+                turn_id=turn_id,
+                origin="MODEL",
+                security_context=context,
+            )
+        self.assertTrue(result.success, result.error)
+        self.assertFalse(result.requires_approval)
+        self.assertIn("remembered-approval", str(result.data))
+
     def test_registry_wrapper_defers_effective_grant_consumption_to_nested_tool(self):
         args = {
             "argv": [sys.executable, "-c", "print('wrapper-approved')"],
