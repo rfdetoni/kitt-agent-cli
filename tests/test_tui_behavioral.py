@@ -298,6 +298,56 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
             refresh.assert_awaited_once()
             self.assertIs(ui.application.layout.current_control, ui.reverse_proxy_control)
 
+    async def test_real_terminal_mouse_wheel_scrolls_transcript_not_editor(self):
+        """SGR mouse wheel must reach the transcript Window through prompt_toolkit."""
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.state.route = "session"
+            for index in range(35):
+                ui.state.append_message("assistant", f"History {index}: " + "long output " * 20)
+            ui.build_application()
+            runner = asyncio.create_task(ui.run_async())
+            try:
+                await asyncio.sleep(0.08)
+                window = ui.transcript_window
+                self.assertIsNotNone(window.render_info)
+                before = window.render_info.vertical_scroll
+                self.assertGreater(before, 0)
+                ui.prompt_buffer.text = "keep editor text"
+                pipe.send_text("\\x1b[<64;5;5M")  # SGR wheel up inside transcript (x=5,y=5).
+                await asyncio.sleep(0.08)
+                after = window.render_info.vertical_scroll
+                self.assertLess(after, before)
+                self.assertGreaterEqual(after, before - 5)
+                self.assertFalse(ui.state.follow_tail)
+                self.assertEqual(ui.prompt_buffer.text, "keep editor text")
+            finally:
+                ui.request_exit()
+                await asyncio.wait_for(runner, 2)
+
+    async def test_modal_click_does_not_double_apply_scroll_offset(self):
+        from prompt_toolkit.mouse_events import MouseEventType
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            ui.state.pending_approvals.append({
+                "approval_id": "mouse-target", "tool_name": "run_command",
+            })
+            ui.open_overlay("permission", ui.permission_control)
+            ui._permission_text()
+            hit = next(
+                region for region in ui.interactions._regions["permission"]
+                if region.action == "permission.action" and region.value[1] == "always_workspace"
+            )
+            ui.scrollable_windows["permission"].vertical_scroll = 6
+            event = SimpleNamespace(
+                event_type=MouseEventType.MOUSE_MOVE,
+                position=SimpleNamespace(x=hit.x_start + 1, y=hit.y),
+            )
+            ui._interactive_mouse_handler("permission", event)
+            self.assertEqual(ui.approval_menu_index, hit.value[0])
+
     async def test_workarea_mouse_and_scroll_are_independent_of_input_history(self):
         from kitt.ui.interaction import InteractionMap
         from kitt.ui.scroll import make_wheel_scroll_handler
@@ -310,7 +360,7 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(ui.state.active_overlay)
         window = SimpleNamespace(
             vertical_scroll=10**9,
-            render_info=SimpleNamespace(content_height=130, window_height=30)
+            render_info=SimpleNamespace(content_height=130, window_height=30, vertical_scroll=100)
         )
         wheel = make_wheel_scroll_handler(lambda: window, step=3)
         wheel(SimpleNamespace(event_type=MouseEventType.SCROLL_UP))
