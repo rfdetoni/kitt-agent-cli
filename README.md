@@ -1,3 +1,7 @@
+## Release 0.86.4 — Rendered mouse coordinates and accurate transcript scrolling
+
+Fixed the follow-up mouse regression: prompt_toolkit already translates screen clicks to content coordinates, so a second KITT scroll offset incorrectly targeted modal actions. Transcript wheel scrolling now uses the renderer's actual viewport instead of subtracting visual window height from logical line count (which breaks wrapped output). History expansion preserves the visible position, and debug logs record received wheel events by surface. Includes terminal-level SGR wheel and scrolled-modal tests, without adding a TUI framework or changing the proxy. See [release notes](docs/RELEASE_0.86.4.md).
+
 ## Release 0.86.3 — TUI approvals, workarea scrolling and Reverse Proxy controls
 
 Selections in the approval modal dismiss it immediately without canceling the pending decision; concurrent mouse/keyboard submissions are serialized, and failed daemon acknowledgments restore the request. Workspace-scoped remembered `run_command` rules now apply only to the matching executor identity; explicit denials remain authoritative. Transcript scrolling is routed to the workarea even without an overlay, and Reverse Proxy context tabs restore focus and refresh data. OpenTUI-inspired interaction principles are implemented using the existing `prompt_toolkit` stack. See [release notes](docs/RELEASE_0.86.3.md).
