@@ -1,3 +1,7 @@
+## Release 0.86.3 — TUI approvals, workarea scrolling and Reverse Proxy controls
+
+Selections in the approval modal dismiss it immediately without canceling the pending decision; concurrent mouse/keyboard submissions are serialized, and failed daemon acknowledgments restore the request. Workspace-scoped remembered `run_command` rules now apply only to the matching executor identity; explicit denials remain authoritative. Transcript scrolling is routed to the workarea even without an overlay, and Reverse Proxy context tabs restore focus and refresh data. OpenTUI-inspired interaction principles are implemented using the existing `prompt_toolkit` stack. See [release notes](docs/RELEASE_0.86.3.md).
+
 ## Release 0.86.2 — Consistent KAP reports and provider fallback
 
 Completion and independent validation request structured KAP fields, including typed issue objects. Validation receives the item's current planned files as explicit inputs. Invalid nested process argv is reported as an input error before policy evaluation. Untrusted fallback endpoints are excluded from provider selection without granting new endpoint trust. See [release notes](docs/RELEASE_0.86.2.md).
