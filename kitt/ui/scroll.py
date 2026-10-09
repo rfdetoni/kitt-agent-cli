@@ -42,9 +42,10 @@ def make_wheel_scroll_handler(
         if window is None:
             return None
         info = getattr(window, "render_info", None)
-        current = int(window.vertical_scroll)
-        if info is not None:
-            current = min(current, max(0, info.content_height - info.window_height))
+        # render_info.content_height counts *logical* lines, while window_height
+        # counts visual rows. Subtracting them breaks scrolling with wrapped text.
+        # Use the actual rendered viewport offset, and let Window clamp on render.
+        current = int(info.vertical_scroll) if info is not None else int(window.vertical_scroll)
         if event_type == MouseEventType.SCROLL_UP:
             window.vertical_scroll = max(min_scroll, current - step)
         else:
