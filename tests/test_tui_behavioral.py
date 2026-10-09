@@ -380,6 +380,26 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
         hits.press("permission", 3, 0)
         self.assertIsNotNone(hits.release("permission", 3, 0))
 
+    async def test_mouse_wheel_on_virtualized_session_list_does_not_double_scroll(self):
+        from prompt_toolkit.mouse_events import MouseEventType
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            ui.session_picker_model.sessions = [
+                {"id": str(i), "title": f"Session {i}"} for i in range(30)
+            ]
+            ui.session_picker_model.selected_index = 15
+            window = ui.scrollable_windows["session_picker"]
+            window.vertical_scroll = 4
+            previous_text = ui._session_picker_text()
+
+            event = SimpleNamespace(event_type=MouseEventType.SCROLL_DOWN)
+            self.assertIsNone(window.content.mouse_handler(event))
+            self.assertEqual(ui.session_picker_model.selected_index, 16)
+            self.assertEqual(window.vertical_scroll, 4)
+            self.assertNotEqual(previous_text, ui._session_picker_text())
+
     async def test_04_create_backend_mode_plain(self):
         """Verify create_backend mode=plain returns PlainLineUI."""
         backend = create_backend(self.runtime, mode="plain")
