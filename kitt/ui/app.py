@@ -151,12 +151,11 @@ class KittUIApp:
         build_controls(self)
 
     def _mouse_capture_enabled(self) -> bool:
-        """Capture mouse only on interactive overlays.
+        """Mouse wheel belongs to the hovered workarea even outside overlays.
 
-        The main transcript intentionally leaves terminal mouse reporting disabled
-        so users can select and copy text with their terminal normally.
+        Use Shift+drag for native terminal selection, or toggle capture off.
         """
-        return bool(self.mouse_support_enabled and self.state.active_overlay is not None)
+        return bool(self.mouse_support_enabled)
 
     def build_application(self):
         from prompt_toolkit.application import Application
@@ -368,8 +367,8 @@ class KittUIApp:
     def open_overlay(self, name: str, control=None, parent_name: str | None = None) -> None:
         self.overlay_manager.open(name, control, parent_name=parent_name)
 
-    def close_overlay(self) -> None:
-        self.overlay_manager.close()
+    def close_overlay(self, *, cancel_pending: bool = True) -> None:
+        self.overlay_manager.close(cancel_pending=cancel_pending)
 
     _open_session_picker_overlay = _navigation._open_session_picker_overlay
     _open_timeline_overlay = _navigation._open_timeline_overlay
