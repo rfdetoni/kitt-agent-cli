@@ -316,6 +316,13 @@ class OverlayManager:
         current = CONTEXT_TABS.index(frame.spec.name)
         target = CONTEXT_TABS[(current + delta) % len(CONTEXT_TABS)]
         frame.spec = self.get_spec(target)
+        if target == "reverse_proxy":
+            self.app.reverse_proxy_model.show("instances")
+            self.app.reverse_proxy_model.loading = True
+            try:
+                asyncio.create_task(self.app._refresh_reverse_proxy())
+            except RuntimeError:
+                self.app.reverse_proxy_model.loading = False
         controls = {
             "session_picker": getattr(self.app, "session_picker_control", None),
             "timeline": getattr(self.app, "timeline_control", None),
