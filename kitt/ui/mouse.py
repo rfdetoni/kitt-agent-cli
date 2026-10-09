@@ -47,9 +47,13 @@ def _scroll_transcript(ui, delta: int) -> None:
     if not hasattr(ui, "transcript_window"):
         return
     window = ui.transcript_window
+    info = getattr(window, "render_info", None)
     if delta < 0:
         ui.state.follow_tail = False
         ui.state.expand_transcript_window()
+        if info is not None:
+            bottom = max(0, info.content_height - info.window_height)
+            window.vertical_scroll = min(int(window.vertical_scroll), bottom)
         window.vertical_scroll = max(0, window.vertical_scroll + delta)
     else:
         info = getattr(window, "render_info", None)
@@ -196,9 +200,12 @@ def interactive_surface_mouse_handler(ui, surface: str, mouse_event) -> Any:
     position = getattr(mouse_event, "position", None)
     if position is None:
         return NotImplemented
+    window = ui.scrollable_windows.get(surface)
+    offset = int(getattr(window, "vertical_scroll", 0)) if window else 0
+    x, y = position.x, position.y + offset
 
     if event_type == MouseEventType.MOUSE_MOVE:
-        region = ui.interactions.hover(surface, position.x, position.y)
+        region = ui.interactions.hover(surface, x, y)
         _preview_interaction(ui, surface, region)
         return None if region is not None else NotImplemented
 
@@ -206,7 +213,7 @@ def interactive_surface_mouse_handler(ui, surface: str, mouse_event) -> Any:
         _focus_surface(ui, surface)
         # Keep the rendered geometry stable until release. Updating selection
         # on press can virtualize the list and move the target before MOUSE_UP.
-        region = ui.interactions.press(surface, position.x, position.y)
+        region = ui.interactions.press(surface, x, y)
         # Permission is a security modal: even a blank click belongs to the
         # modal and must never fall through to the transcript/composer below.
         if surface == "permission":
@@ -214,7 +221,7 @@ def interactive_surface_mouse_handler(ui, surface: str, mouse_event) -> Any:
         return None if region is not None else NotImplemented
 
     if event_type == MouseEventType.MOUSE_UP:
-        region = ui.interactions.release(surface, position.x, position.y)
+        region = ui.interactions.release(surface, x, y)
         _preview_interaction(ui, surface, region)
         _activate_interaction(ui, region)
         if surface == "permission":
