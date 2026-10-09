@@ -80,9 +80,9 @@ def toggle_mouse_support(ui) -> bool:
         except Exception:
             pass
     msg = (
-        "Mouse TUI ativo em menus/modais; transcript mantém seleção/cópia nativa"
+        "Mouse TUI ativo: roda do mouse no histórico; Shift+arrastar para copiar"
         if ui.mouse_support_enabled
-        else "Mouse TUI desativado; seleção/cópia nativa disponível em toda a interface"
+        else "Mouse TUI desativado: seleção/cópia nativa disponível em toda a interface"
     )
     ui.state.add_toast(msg)
     if ui.application:
@@ -200,9 +200,9 @@ def interactive_surface_mouse_handler(ui, surface: str, mouse_event) -> Any:
     position = getattr(mouse_event, "position", None)
     if position is None:
         return NotImplemented
-    window = ui.scrollable_windows.get(surface)
-    offset = int(getattr(window, "vertical_scroll", 0)) if window else 0
-    x, y = position.x, position.y + offset
+    # prompt_toolkit's Window has *already* converted screen coordinates
+    # to content coordinates (including scrolling and wrapped lines).
+    x, y = position.x, position.y
 
     if event_type == MouseEventType.MOUSE_MOVE:
         region = ui.interactions.hover(surface, x, y)
