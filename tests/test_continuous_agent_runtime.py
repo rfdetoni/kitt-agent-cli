@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import time
 import unittest
@@ -14,6 +15,7 @@ from kitt.harness.repository import HarnessRepository
 from kitt.history.database import HistoryDatabase
 from kitt.history.repository import HistoryRepository, resolve_workspace_identity
 from kitt.llm.domain import ProviderConnectionError
+from kitt.llm.endpoint_security import ProviderEndpointTrustStore
 from kitt.llm.failover import ProviderCircuitPool
 from kitt.runtime.persistent_program import PersistentProgramSessions
 from kitt.runtime.program_runtime import BoundedProgramRuntime
@@ -184,6 +186,39 @@ class ContinuousAgentRuntimeTests(unittest.TestCase):
         try:
             self.assertEqual(client.chat([{"role": "user", "content": "hello"}]), "fallback-ok")
             self.assertEqual(pool.state(primary)["failures"], 1)
+        finally:
+            client.close()
+
+        # Configured loopback fallback does not authorize a different port.
+        # Exercise all dispatch paths with the real trust store and primary error.
+        primary.base_url = "http://127.0.0.1:3000"
+        fallback.base_url = "http://127.0.0.1:3001"
+        trust = ProviderEndpointTrustStore(self.root / "provider-trust.json")
+        trust.trust("openai", primary.base_url)
+        called = []
+
+        class TrustedClient(FakeClient):
+            endpoint_policy = trust
+
+            def chat(self, *args, **kwargs):
+                called.append(self.profile.model)
+                return super().chat(*args, **kwargs)
+
+            def chat_stream(self, *args, **kwargs):
+                yield self.chat(*args, **kwargs)
+
+        async def consume(client):
+            return [chunk async for chunk in client.achat_stream([])]
+
+        client = ProviderCircuitPool().wrap(primary, [fallback], client_factory=TrustedClient)
+        try:
+            for invoke in (lambda: client.chat([]), lambda: list(client.chat_stream([])), lambda: asyncio.run(consume(client))):
+                with self.assertRaisesRegex(ProviderConnectionError, "temporarily unavailable"):
+                    invoke()
+            self.assertEqual(called, ["primary"] * 3)
+            trust.trust("openai", fallback.base_url)
+            self.assertEqual(client.chat([]), "fallback-ok")
+            self.assertEqual(called[-1], "fallback")
         finally:
             client.close()
 

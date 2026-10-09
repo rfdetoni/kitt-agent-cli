@@ -1,3 +1,7 @@
+## Release 0.86.2 — Consistent KAP reports and provider fallback
+
+Completion and independent validation request structured KAP fields, including typed issue objects. Validation receives the item's current planned files as explicit inputs. Invalid nested process argv is reported as an input error before policy evaluation. Untrusted fallback endpoints are excluded from provider selection without granting new endpoint trust. See [release notes](docs/RELEASE_0.86.2.md).
+
 ## Release 0.86.1 — Parallel child admission and live monitoring
 
 The task-plan host can dispatch multiple **independent** child tasks using `plan.dispatch_ready` (up to four by default), sharing one parent budget while keeping per-child permissions, worktrees, browser sessions and verification requirements. `Ctrl+X, A` opens the Agent monitor; the provider endpoint chord is now `Ctrl+X, E`. Automatic durable Goals contracts now opportunistically fan out independent file-scoped implementation items in autonomous mode, while the existing GoalScheduler retains lease ownership and independently validates each completed item. Tasks with overlapping files or unsatisfied dependencies remain sequential. See [release notes](docs/RELEASE_0.86.1.md).

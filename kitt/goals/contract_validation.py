@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import (
@@ -128,11 +127,6 @@ class ContractValidator:
         changed_paths: list[str],
         snapshot: str,
     ) -> tuple[ContractValidationReport, int, float]:
-        example = {
-            "verdict": "OK",
-            "evidence": ["specific evidence observed in the current workspace"],
-            "issues": [],
-        }
         original_objective = ""
         if str(getattr(item, "kind", "") or "").lower() == "final":
             original_objective = (
@@ -164,8 +158,17 @@ class ContractValidator:
             + ("\n".join(f"- {path}" for path in changed_paths[:64]) or "- none recorded")
             + "\n\nBounded workspace snapshot:\n"
             + (snapshot[:24000] or "[snapshot unavailable]")
-            + "\n\nReturn FAIL for any unproven requirement. Return one JSON object; in an execution envelope place it directly in content, never as a serialized string:\n"
-            + f"{json.dumps(example, ensure_ascii=False, separators=(',', ':'))}"
+            + "\n\nReturn FAIL for any unproven requirement. Return exactly one KAP/1 ACTION FINAL "
+            "with OBJECT content, STRING content.verdict, ARRAY content.evidence and ARRAY content.issues. "
+            "Use numbered evidence strings. Each issue is an OBJECT with STRING severity, location, "
+            "problem and fix; do not use plain strings for issues. For OK use an empty ARRAY content.issues. "
+            "Do not put JSON inside TEXT content. FAIL example:\n"
+            "KITT/1\nACTION FINAL\nOBJECT content\nSTRING content.verdict = FAIL\n"
+            "ARRAY content.evidence\nSTRING content.evidence.0 = specific current workspace evidence\n"
+            "ARRAY content.issues\nOBJECT content.issues.0\nSTRING content.issues.0.severity = P1\n"
+            "STRING content.issues.0.location = affected file or requirement\n"
+            "STRING content.issues.0.problem = concrete unproven requirement\n"
+            "STRING content.issues.0.fix = smallest required correction\nKITT/END"
         )
         security = ExecutionSecurityContext(
             workspace_id=self.runtime.workspace_id,
@@ -186,7 +189,7 @@ class ContractValidator:
             mode="plan",
             no_history=True,
             security_context=security,
-            explicit_files=set(inputs.get("explicit_files") or []),
+            explicit_files=set(inputs.get("explicit_files") or []) | set(changed_paths[:64]) | set(getattr(item, "paths", [])[:64]),
             attachments=set(inputs.get("attachments") or []),
         )
         response = ""

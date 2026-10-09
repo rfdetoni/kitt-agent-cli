@@ -148,23 +148,18 @@ class AutonomousCompletionEngine:
                 )
 
         if criteria:
-            example = {
-                "status": "SUCCEEDED",
-                "criteria": [
-                    {
-                        "criterion": criterion,
-                        "satisfied": True,
-                        "evidence": "specific command/test/file/runtime evidence",
-                    }
-                    for criterion in criteria
-                ],
-                "summary": "concise completion summary",
-            }
             blocks.extend(
                 [
                     "",
-                    "Return one JSON completion object using the exact criterion text above; in an execution envelope place it directly in content:",
-                    f"{json.dumps(example, ensure_ascii=False, separators=(',', ':'))}",
+                    "Return one KAP/1 ACTION FINAL with structured OBJECT content. "
+                    "Use the exact criterion text above for each indexed entry; add entries for all criteria. "
+                    "Do not put JSON inside TEXT content. Example:",
+                    "KITT/1\nACTION FINAL\nOBJECT content\n"
+                    "STRING content.status = SUCCEEDED\nARRAY content.criteria\n"
+                    "OBJECT content.criteria.0\nSTRING content.criteria.0.criterion = exact criterion text above\n"
+                    "BOOLEAN content.criteria.0.satisfied = true\n"
+                    "STRING content.criteria.0.evidence = specific command/test/file/runtime evidence\n"
+                    "STRING content.summary = concise completion summary\nKITT/END",
                     "Use status INCOMPLETE and satisfied=false for any criterion that is not actually proven; KITT will iterate automatically.",
                 ]
             )

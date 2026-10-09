@@ -111,13 +111,23 @@ class FailoverLLMClient:
             self._clients[key] = client
         return client
 
+    def _candidates(self):
+        # Configured profiles are not endpoint authorization. An untrusted
+        # fallback must not mask the selected provider's connection error.
+        alternatives = []
+        for profile in self.alternatives:
+            policy = getattr(self._client(profile), "endpoint_policy", None)
+            if policy is None or policy.is_trusted(profile.backend, profile.base_url):
+                alternatives.append(profile)
+        return self.pool.candidates(self.profile, alternatives)
+
     @property
     def capabilities(self):
         return getattr(self._client(self.profile), "capabilities", None)
 
     def chat(self, *args, **kwargs):
         last = None
-        for profile in self.pool.candidates(self.profile, self.alternatives):
+        for profile in self._candidates():
             try:
                 result = self._client(profile).chat(*args, **kwargs)
                 self.pool.mark_success(profile)
@@ -133,7 +143,7 @@ class FailoverLLMClient:
 
     def chat_stream(self, *args, **kwargs):
         last = None
-        for profile in self.pool.candidates(self.profile, self.alternatives):
+        for profile in self._candidates():
             emitted = False
             try:
                 for chunk in self._client(profile).chat_stream(*args, **kwargs):
@@ -151,7 +161,7 @@ class FailoverLLMClient:
 
     async def achat_stream(self, *args, **kwargs):
         last = None
-        for profile in self.pool.candidates(self.profile, self.alternatives):
+        for profile in self._candidates():
             emitted = False
             try:
                 client = self._client(profile)

@@ -50,6 +50,19 @@ class TestSafeRuntimeApprovalDelegation(unittest.TestCase):
         return turn_id, grant
 
     def test_process_run_delegates_exact_approved_grant_to_run_command(self):
+        # The logged nested argv must be reported as invalid input, not as an
+        # autonomy denial. No malformed value may reach policy or subprocesses.
+        for operation in ("process.run", "process.start"):
+            with self.subTest(operation=operation), patch.object(self.registry.policy, "evaluate_tool") as evaluate:
+                malformed = self.runtime.execute(
+                    operation, {"argv": ["npx", "tsc", "--noEmit", []]},
+                    effective_capabilities={CAP_PROCESS_RUN},
+                )
+                self.assertFalse(malformed.success)
+                self.assertFalse(malformed.requires_approval)
+                self.assertIn("nested arrays are invalid", malformed.error)
+                evaluate.assert_not_called()
+
         args = {
             "argv": [sys.executable, "-c", "print('delegated-approved')"],
             "network": True,

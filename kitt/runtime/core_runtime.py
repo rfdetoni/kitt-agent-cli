@@ -494,6 +494,19 @@ class SafeRuntime:
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
 
+        if op in {"process.run", "process.start"}:
+            argv = args.get("argv")
+            if (
+                not isinstance(argv, list) or not argv
+                or not all(isinstance(arg, str) and arg and "\x00" not in arg for arg in argv)
+            ):
+                return self._result(
+                    start, SafeRuntimeResult(
+                        False, op,
+                        error=f"{op} requires argv as a non-empty array of non-empty strings; nested arrays are invalid.",
+                    ),
+                )
+
         # A grant returned after a delegated tool requested approval must follow
         # the resume path back to that exact tool. The nested ToolRegistry remains
         # the authority that validates/consumes the grant against tool+args+scope.

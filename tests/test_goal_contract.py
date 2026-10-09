@@ -30,6 +30,7 @@ from kitt.goals.auto_contract import (
     iter_automatic_contract,
 )
 from kitt.goals.contract_validation import ContractValidator, parse_validation_report
+from kitt_protocol import decode_kap_content
 from kitt.goals.progress import publish_goal_progress
 from kitt.goals.scheduler import GoalScheduler
 from kitt.goals.service import GoalService
@@ -531,6 +532,7 @@ class GoalContractTests(unittest.TestCase):
             local_id="FINAL",
             title="Final validation",
             validation_prompt="Validate the integrated result.",
+            paths=["src/domain.ts"],
         )
 
         report, _, _ = ContractValidator(runtime).validate(
@@ -544,6 +546,19 @@ class GoalContractTests(unittest.TestCase):
         self.assertTrue(report.ok)
         self.assertIn(goal.objective, processor.command.prompt)
         self.assertTrue(processor.command.no_history)
+        self.assertIn("src/domain.ts", processor.command.explicit_files)
+        prompt = processor.command.prompt
+        example = prompt[prompt.index("KITT/1\n"):]
+        failure = parse_validation_report(json.dumps(decode_kap_content(example)))
+        self.assertFalse(failure.ok)
+        self.assertEqual(failure.issues[0]["severity"], "P1")
+        self.assertNotIn("Return one JSON", prompt)
+        completion = AutonomousCompletionEngine().build_execution_prompt(
+            SimpleNamespace(success_criteria=["Compile domain models"], gates=[]), "Implement models"
+        )
+        example = completion[completion.index("KITT/1\n"):completion.index("KITT/END") + len("KITT/END")]
+        self.assertEqual(decode_kap_content(example)["criteria"][0]["satisfied"], True)
+        self.assertNotIn("Return one JSON", completion)
 
     def test_contract_creation_is_atomic_and_guards_success(self):
         goal = self._contract(max_attempts=4)
