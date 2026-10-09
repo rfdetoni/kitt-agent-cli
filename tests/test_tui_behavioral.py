@@ -156,6 +156,91 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
                 ui.request_exit()
                 await asyncio.wait_for(task, 2)
 
+    async def test_permission_click_closes_modal_without_revoking_daemon_grant(self):
+        opened = asyncio.Event()
+        release = asyncio.Event()
+        calls = []
+
+        class PendingDaemon:
+            daemon_mode = True
+            is_active = False
+
+            async def remember_approval(self, tool, scope, executable_identity=""):
+                calls.append(("remember", tool, scope))
+                return {"status": "ok"}
+
+            async def resolve_approval(self, approval_id, allow):
+                calls.append(("approve", approval_id, allow))
+                opened.set()
+                await release.wait()
+                return {"status": "ok"}
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            ui.bridge = PendingDaemon()
+            ui.state.pending_approvals.append({
+                "approval_id": "requested-once", "tool_name": "run_command",
+                "turn_id": "turn", "conversation_id": "conv", "workspace_id": "ws",
+                "action_hash": "test", "executable_identity": "model:testing"
+            })
+            ui.open_overlay("permission", ui.permission_control)
+            task = asyncio.create_task(ui.resolve_approval("always_workspace"))
+            await asyncio.wait_for(opened.wait(), 1)
+            self.assertNotEqual(ui.state.active_overlay, "permission")
+            self.assertEqual(len(ui.state.pending_approvals), 1)
+            await ui.resolve_approval("always_workspace")
+            self.assertEqual([c[0] for c in calls], ["remember", "approve"])
+            release.set()
+            await asyncio.wait_for(task, 1)
+            self.assertFalse(ui.state.pending_approvals)
+            self.assertNotEqual(ui.state.active_overlay, "permission")
+
+    async def test_failed_daemon_approval_reopens_current_request(self):
+        class FailedDaemon:
+            daemon_mode = True
+            is_active = False
+
+            async def resolve_approval(self, approval_id, allow):
+                raise RuntimeError("daemon refused approval")
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            ui.bridge = FailedDaemon()
+            ui.state.pending_approvals.append({
+                "approval_id": "still-pending", "tool_name": "run_command"
+            })
+            ui.open_overlay("permission", ui.permission_control)
+            await ui.resolve_approval("once")
+            self.assertEqual(ui.state.active_overlay, "permission")
+            self.assertEqual(ui.state.pending_approval["approval_id"], "still-pending")
+            self.assertEqual(ui.state.status_text, "ERROR")
+
+    async def test_workarea_mouse_and_scroll_are_independent_of_input_history(self):
+        from kitt.ui.interaction import InteractionMap
+        from kitt.ui.scroll import make_wheel_scroll_handler
+        from prompt_toolkit.mouse_events import MouseEventType
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            self.assertTrue(ui._mouse_capture_enabled())
+            self.assertIsNone(ui.state.active_overlay)
+        window = SimpleNamespace(
+            vertical_scroll=10**9,
+            render_info=SimpleNamespace(content_height=130, window_height=30)
+        )
+        wheel = make_wheel_scroll_handler(lambda: window, step=3)
+        wheel(SimpleNamespace(event_type=MouseEventType.SCROLL_UP))
+        self.assertEqual(window.vertical_scroll, 97)
+
+        hits = InteractionMap()
+        hits.add("permission", 0, 1, 8, "permission.action", "allow")
+        self.assertIsNone(hits.release("permission", 3, 0))
+        hits.press("permission", 3, 0)
+        self.assertIsNotNone(hits.release("permission", 3, 0))
+
     async def test_04_create_backend_mode_plain(self):
         """Verify create_backend mode=plain returns PlainLineUI."""
         backend = create_backend(self.runtime, mode="plain")
