@@ -314,7 +314,7 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
                 before = window.render_info.vertical_scroll
                 self.assertGreater(before, 0)
                 ui.prompt_buffer.text = "keep editor text"
-                pipe.send_text("\\x1b[<64;5;5M")  # SGR wheel up inside transcript (x=5,y=5).
+                pipe.send_text("\x1b[<64;5;5M")  # SGR wheel up inside transcript (x=5,y=5).
                 await asyncio.sleep(0.08)
                 after = window.render_info.vertical_scroll
                 self.assertLess(after, before)
