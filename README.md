@@ -1,3 +1,7 @@
+## Release 0.86.5 — Virtualized list mouse wheel
+
+Fixes a second mouse-wheel movement in virtualized TUI panels (Conversations, Timeline, command palette, model selection, diff and Reverse Proxy): selecting the next/previous item already refreshes the visible slice, so scrolling the underlying Window as well moved the content twice. The wheel handler now changes the model index only, leaving ordinary transcript and nonvirtual scroll handlers unchanged. Includes a behavioral regression test. Full notes: [v0.86.5](docs/RELEASE_0.86.5.md).
+
 ## Release 0.86.4 — Rendered mouse coordinates and accurate transcript scrolling
 
 Fixed the follow-up mouse regression: prompt_toolkit already translates screen clicks to content coordinates, so a second KITT scroll offset incorrectly targeted modal actions. Transcript wheel scrolling now uses the renderer's actual viewport instead of subtracting visual window height from logical line count (which breaks wrapped output). History expansion preserves the visible position, and debug logs record received wheel events by surface. Includes terminal-level SGR wheel and scrolled-modal tests, without adding a TUI framework or changing the proxy. See [release notes](docs/RELEASE_0.86.4.md).
