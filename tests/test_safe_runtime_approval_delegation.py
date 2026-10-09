@@ -107,6 +107,8 @@ class TestSafeRuntimeApprovalDelegation(unittest.TestCase):
         self.assertEqual(str(approved.data).strip(), "delegated-approved")
 
     def test_remembered_workspace_command_is_honored_through_runtime_preflight(self):
+        # Production KittRuntime.build wires one approval manager to both layers.
+        self.registry.policy.approval_manager = self.registry.approval_manager
         turn_id = "turn-remembered"
         context = ExecutionSecurityContext.create_user_context(
             workspace_id=self.runtime.workspace_id,
