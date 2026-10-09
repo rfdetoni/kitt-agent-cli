@@ -366,6 +366,14 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
         wheel(SimpleNamespace(event_type=MouseEventType.SCROLL_UP))
         self.assertEqual(window.vertical_scroll, 97)
 
+        # A long wrapped line can occupy more visual rows than there are
+        # logical lines. This must not clamp the current viewport to zero.
+        window.render_info = SimpleNamespace(
+            vertical_scroll=9, content_height=12, window_height=30
+        )
+        wheel(SimpleNamespace(event_type=MouseEventType.SCROLL_UP))
+        self.assertEqual(window.vertical_scroll, 6)
+
         hits = InteractionMap()
         hits.add("permission", 0, 1, 8, "permission.action", "allow")
         self.assertIsNone(hits.release("permission", 3, 0))
