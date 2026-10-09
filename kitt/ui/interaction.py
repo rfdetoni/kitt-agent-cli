@@ -107,7 +107,7 @@ class InteractionMap:
         region = self.hover(surface, x, y)
         pressed = self._pressed.pop(surface, None)
         if pressed is None:
-            return region
+            return None  # A release without a matching press cannot activate a control.
         if region is not None and region.key == pressed.key:
             return region
         return None
