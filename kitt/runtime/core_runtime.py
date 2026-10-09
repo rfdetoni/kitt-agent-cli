@@ -625,8 +625,15 @@ class SafeRuntime:
                 )
 
             if spec.policy_tool_action:
+                identity = (
+                    f"{security_context.principal_type}:{security_context.principal_id}"
+                    if security_context is not None else None
+                )
                 permission = policy.evaluate_tool(
-                    spec.policy_tool_action, args, origin=origin
+                    spec.policy_tool_action, args, origin=origin,
+                    conversation_id=self.conversation_id,
+                    workspace_id=self.workspace_id,
+                    executable_identity=identity,
                 )
                 if control_plane_elevation and permission != "DENY":
                     permission = "ASK"
