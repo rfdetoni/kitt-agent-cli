@@ -1,4 +1,4 @@
-## Security and lifecycle changes in 0.86.9
+## Security and lifecycle changes in 0.86.10
 
 The noVNC endpoint is **HTTP Basic-authenticated**, including WebSocket upgrades
 from other containers on the bridge. The random per-VM password is stored in
@@ -52,22 +52,22 @@ interactive use; `--distro` and `--tools` are rejected with a container
 backend because these options do not install RE tools inside arbitrary
 Linux guest ISOs. Use `kitt vm container toolbox --profile full` separately.
 
-**Migration:** profile schema has changed in 0.86.9 (immutable runner image
+**Migration:** profile schema has changed in 0.86.10 (immutable runner image
 ID, SSH probe port and viewer secrets). VMs created with 0.86.8 should
 be exported/backed up while stopped and recreated using the new wizard;
 do not edit JSON and guess missing secrets.
 # QEMU VMs in Docker/Podman and prebuilt Linux RE images
 
-**Agent 0.86.9 (optional)**. These are two distinct execution modes: a QEMU VM running *inside* a container, and a Linux **toolbox container** with tools already installed. Neither replaces the ordinary KITT coding agent or its native QEMU supervisor.
+**Agent 0.86.10 (optional)**. These are two distinct execution modes: a QEMU VM running *inside* a container, and a Linux **toolbox container** with tools already installed. Neither replaces the ordinary KITT coding agent or its native QEMU supervisor.
 
 ## Container images
 
 | Image | Purpose | Included tools |
 | --- | --- | --- |
-| `kitt/qemu-vm:0.86.9` | QEMU guest runner with web browser noVNC | QEMU, OVMF UEFI, TPM 2.0, noVNC |
-| `kitt/linux-re:base-0.86.9` | Linux RE toolbox | GDB, LLDB, clang, GCC, binutils, strace, ltrace, Python, Git, Java, CMake |
-| `kitt/linux-re:wine-0.86.9` | Linux RE toolbox | Base plus Wine64 and MinGW |
-| `kitt/linux-re:full-0.86.9` | Linux RE toolbox | Wine plus Frida 17.23.3, Frida Tools 14.11.0 and Ghidra 12.1.4 with SHA-256 verified |
+| `kitt/qemu-vm:0.86.10` | QEMU guest runner with web browser noVNC | QEMU, OVMF UEFI, TPM 2.0, noVNC |
+| `kitt/linux-re:base-0.86.10` | Linux RE toolbox | GDB, LLDB, clang, GCC, binutils, strace, ltrace, Python, Git, Java, CMake |
+| `kitt/linux-re:wine-0.86.10` | Linux RE toolbox | Base plus Wine64 and MinGW |
+| `kitt/linux-re:full-0.86.10` | Linux RE toolbox | Wine plus Frida 17.23.3, Frida Tools 14.11.0, Ghidra 12.1.4 and REA 6.4.0 (Node 24.11) with SHA-256 verified |
 
 **Important:** the RE toolbox runs directly as a container. Its tools do **not** appear automatically in an arbitrary Linux guest ISO. Use a disposable QEMU guest for binaries that might be hostile. An installed QEMU guest OS is separate from the container's Debian userspace.
 
@@ -146,3 +146,9 @@ frida --version
 CI covers argument/permission boundaries, shell syntax and image build. Real Docker/Podman QEMU Windows boots, KVM and rootless Podman behavior on your hardware are separate acceptance gates. This backend does not yet automate VM snapshots, export a verified source patch from the guest, configure Windows SSH runners, or install its RE toolbox tools inside an arbitrary Linux ISO guest.
 
 See [native VM guide](VM_CREATION_HELPER.md) and [VM security model](VM_AUTONOMY_SECURITY.md).
+
+## REA in the full toolbox
+
+The `full` profile now includes the published `rea-agents@6.4.0` CLI and a compatible Node.js 24 runtime, installed at build time. No Node/REA dependencies are added to the lighter `base` or `wine` profiles, nor to KITT's ordinary coding agent. Verify the installed image by running `rea --version` and `rea doctor --provider ghidra --json` **inside** a full toolbox shell. `GHIDRA_INSTALL_DIR` points at the pinned Ghidra in the container.
+
+For host-side governed MCP, install REA independently and explicitly enable `kitt-rea`; the toolbox executable is not automatically reachable from the host's MCP registration. See [REA integration](REA.md) for native, JavaScript/Electron, .NET and evidence comparisons. Toolboxes are containers, not a safe sandbox for executing untrusted binaries.
