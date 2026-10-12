@@ -3,7 +3,7 @@
 Optional VM containers can run a user-provided Windows/Linux ISO or QCOW2 through
 QEMU plus localhost noVNC, without modifying regular `kitt` coding-agent
 execution. Prebuilt Debian RE toolbox tiers (`base`, `wine`, `full`) include
-GDB/LLDB, Wine/MinGW, and (full) pinned Ghidra/Frida.
+GDB/LLDB, Wine/MinGW, and (full) pinned Ghidra/Frida plus REA 6.4.0/Node 24.
 
 ```sh
 kitt vm container build --runtime podman --image qemu
@@ -12,7 +12,7 @@ kitt vm container start --profile ~/.local/share/kitt/vm-containers/windows-podm
 ```
 
 Read [the Docker/Podman VM guide](docs/VM_DOCKER_PODMAN.md) for image build/pull,
-local web viewer, runtime permissions, network limitations and toolbox usage.
+local web viewer, runtime permissions, network limitations and toolbox usage. See also [REA MCP and investigation workflows](docs/REA.md).
 ## Release 0.86.5 — Virtualized list mouse wheel
 
 Fixes a second mouse-wheel movement in virtualized TUI panels (Conversations, Timeline, command palette, model selection, diff and Reverse Proxy): selecting the next/previous item already refreshes the visible slice, so scrolling the underlying Window as well moved the content twice. The wheel handler now changes the model index only, leaving ordinary transcript and nonvirtual scroll handlers unchanged. Includes a behavioral regression test. Full notes: [v0.86.5](docs/RELEASE_0.86.5.md).
