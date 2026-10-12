@@ -51,6 +51,7 @@ jobs:
           tests/test_reverse_engineering_probe_runner.py
           tests/test_reverse_engineering_probe_evidence.py
           tests/test_reverse_engineering_plugin_registration.py
+          tests/test_reverse_engineering_guest_adapters.py
       - name: Clean-room provenance guard
         run: python packaging/verify_cleanroom.py
       - name: Static critical checks
