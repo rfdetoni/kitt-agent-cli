@@ -6,12 +6,10 @@ on the developer host. Use a disposable VM with filesystem/network quotas.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
 import signal
-import stat
 import subprocess
 import tempfile
 import time
@@ -64,6 +62,8 @@ def _read_report(path: Path) -> dict:
 
 def analyze_guest(root: Path, relative_path: str, headless: Path) -> dict:
     """Called from CLI inside disposable VM; no model-provided tool execution."""
+    if os.name == "nt":
+        raise GhidraError("Use a Linux guest for analyzeHeadless; Windows batch launcher is not supported")
     root = root.resolve(strict=True)
     # Ensure input is inside workspace and parse header before passing to analyzer.
     meta = inspect(root, relative_path)
