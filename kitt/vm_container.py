@@ -29,7 +29,7 @@ import tempfile
 from .vm_supervisor import VMError
 from .vm_windows import _path, _sha256
 
-VERSION = "0.86.9"
+VERSION = "0.86.10"
 IMAGES = {
     "qemu": f"kitt/qemu-vm:{VERSION}",
     "base": f"kitt/linux-re:base-{VERSION}",
