@@ -191,14 +191,14 @@ def credentials(profile_file: Path) -> dict:
             "viewer": f"http://127.0.0.1:{info['port']}/vnc.html"}
 
 
-def _qcow2_validate(binary: str, path: Path) -> None:
+def _qcow2_validate(binary: str, path: Path, image_id: str) -> None:
     """Inspect QCOW2 inside locally built runner, without opening it as a host drive."""
     _image_ready(binary)
     argv = [
         binary, "run", "--rm", "--network", "none", "--read-only",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--mount", f"type=bind,src={path},dst=/disk.qcow2,readonly",
-        "--entrypoint", "qemu-img", IMAGES["qemu"], "info", "--output=json", "/disk.qcow2",
+        "--entrypoint", "qemu-img", image_id, "info", "--output=json", "/disk.qcow2",
     ]
     result = subprocess.run(argv, capture_output=True, timeout=30, check=False)
     if result.returncode or len(result.stdout) > 65536:
@@ -243,7 +243,7 @@ def prepare_vm(*, runtime: str, system: str, source: Path, destination: Path,
             or stat.S_IMODE(parent.stat().st_mode) & 0o077):
         raise VMError("VM destination parent must be owned by user and mode 0700")
     if kind == "qcow2":
-        _qcow2_validate(binary, src)
+        _qcow2_validate(binary, src, image_id)
     with tempfile.TemporaryDirectory(dir=parent, prefix=".kitt-container-") as temp:
         stage = Path(temp)
         if kind == "qcow2":
