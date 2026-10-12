@@ -514,6 +514,23 @@ def build_parser() -> argparse.ArgumentParser:
         windows_command = windows_commands.add_parser(vm_action)
         windows_command.add_argument("--profile", type=Path, required=True)
         windows_command.add_argument("--vnc-display", type=int, default=1)
+    linux_parser = vm_commands.add_parser("linux", help="Create a separate Linux reverse-engineering guest")
+    linux_commands = linux_parser.add_subparsers(dest="linux_action", required=True)
+    linux_prepare = linux_commands.add_parser("prepare", help="Create Linux RE guest from user ISO/QCOW2")
+    linux_prepare.add_argument("--source", type=Path)
+    linux_prepare.add_argument("--kind", choices=["iso", "qcow2"])
+    linux_prepare.add_argument("--distro", choices=["debian", "ubuntu", "kali", "fedora", "arch", "other"])
+    linux_prepare.add_argument("--tools", choices=["minimal", "re", "wine", "full"])
+    linux_prepare.add_argument("--destination", type=Path)
+    linux_prepare.add_argument("--memory-mib", type=int, default=4096)
+    linux_prepare.add_argument("--cpus", type=int, default=2)
+    linux_prepare.add_argument("--disk-gib", type=int, default=64)
+    linux_prepare.add_argument("--yes", action="store_true")
+    for linux_action in ("install", "start"):
+        linux_command = linux_commands.add_parser(linux_action)
+        linux_command.add_argument("--profile", type=Path, required=True)
+        linux_command.add_argument("--vnc-display", type=int, default=2)
+        linux_command.add_argument("--network", action="store_true", help="Explicit temporary NAT for package setup only")
 
     doctor_parser = subparsers.add_parser(
         "doctor",
@@ -821,6 +838,21 @@ def main(argv=None) -> int:
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
         try:
+            if args.vm_action == "linux":
+                from kitt.vm_linux import wizard as linux_wizard, boot as linux_boot
+                if args.linux_action == "prepare":
+                    profile = linux_wizard(
+                        source=args.source, kind=args.kind, distro=args.distro,
+                        tools=args.tools, destination=args.destination,
+                        memory_mib=args.memory_mib, cpus=args.cpus,
+                        disk_gib=args.disk_gib, yes=args.yes,
+                    )
+                    print(_json.dumps({"created": True, "profile": str(profile),
+                                       "next": "kitt vm linux install --profile " + str(profile)}))
+                    return 0
+                linux_boot(args.profile, install=args.linux_action == "install",
+                           vnc_display=args.vnc_display, network=args.network)
+                return 0
             if args.vm_action == "windows":
                 from kitt.vm_windows import wizard, boot
                 if args.windows_action == "prepare":
