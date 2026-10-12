@@ -209,6 +209,32 @@ def run_mission(workspace: Path, mission_file: Path, hosts_file: Path,
     return report
 
 
+def plan_mission(workspace: Path, relative_mission: str) -> dict:
+    """Read-only helper. KITT must execute argv via host policy, never via MCP."""
+    from pathlib import PureWindowsPath
+    if not isinstance(relative_mission, str) or not relative_mission:
+        raise MissionError("Mission path is required")
+    path = Path(relative_mission)
+    windows = PureWindowsPath(relative_mission)
+    if path.is_absolute() or windows.is_absolute() or windows.drive or ".." in path.parts:
+        raise MissionError("Mission path must be workspace-relative")
+    root = workspace.resolve(strict=True)
+    selected = root / path
+    probes = _mission(selected, root)
+    hosts = Path.home() / ".kitt" / "reverse-engineering" / "hosts.json"
+    # Only operator-owned private configuration is accepted.
+    if not hosts.is_file():
+        return {"ready": False, "probes": probes,
+                "reason": "Operator must provision private ~/.kitt/reverse-engineering/hosts.json"}
+    _hosts(hosts)
+    return {"ready": True, "probes": probes,
+            "requires_host_approval": True,
+            "argv": [sys.executable, "-m",
+                     "kitt.extensions.builtin_plugins.reverse_engineering.mission",
+                     "--workspace", str(root), "--mission", str(selected),
+                     "--hosts", str(hosts)]}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Unattended approved guest differential mission")
     parser.add_argument("--workspace", type=Path, required=True)
