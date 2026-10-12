@@ -5,7 +5,6 @@ Never registered as a model-callable MCP tool. No arbitrary JS or PID attach.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import threading
