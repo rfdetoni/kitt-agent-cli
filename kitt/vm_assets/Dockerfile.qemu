@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system-x86 qemu-utils ovmf swtpm novnc websockify nginx-light ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY vm-entrypoint.sh /usr/local/bin/kitt-vm-entrypoint
+RUN mkdir -p /run/secrets
 COPY vm-nginx.conf /etc/nginx/kitt-vm.conf
 RUN chmod 0755 /usr/local/bin/kitt-vm-entrypoint
 EXPOSE 8006
