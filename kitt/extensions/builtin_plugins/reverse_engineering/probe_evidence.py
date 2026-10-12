@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 from typing import Any
 
 from .evidence import EvidenceError, compare
@@ -28,8 +30,23 @@ def _verify(receipt: Any) -> dict:
     if set(receipt) != required or receipt["schema_version"] != 1:
         raise EvidenceError("Unrecognized probe receipt schema")
     sha = receipt["sha256"]
-    if not isinstance(sha, str) or len(sha) != 64:
+    if not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{64}", sha):
         raise EvidenceError("Invalid probe receipt digest")
+    if (type(receipt["schema_version"]) is not int
+            or type(receipt["exit_code"]) is not int
+            or type(receipt["timed_out"]) is not bool
+            or type(receipt["truncated"]) is not bool
+            or not isinstance(receipt["probe"], str)
+            or not receipt["probe"]
+            or not isinstance(receipt["probe_sha256"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", receipt["probe_sha256"])
+            or not isinstance(receipt["platform"], str)
+            or not isinstance(receipt["release"], str)
+            or not isinstance(receipt["stderr"], str)
+            or type(receipt["duration_ms"]) not in (int, float)
+            or not math.isfinite(receipt["duration_ms"])
+            or receipt["duration_ms"] < 0):
+        raise EvidenceError("Invalid probe receipt field types")
     original = dict(receipt)
     original.pop("sha256")
     try:
