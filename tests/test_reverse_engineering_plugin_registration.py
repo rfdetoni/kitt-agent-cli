@@ -5,9 +5,18 @@ import unittest
 from unittest.mock import Mock
 
 from kitt.extensions.builtin_plugins.reverse_engineering import setup
+from kitt.extensions.manifest import parse_manifest_file
+import kitt.extensions.builtin_plugins.reverse_engineering as plugin_package
 
 
 class PluginRegistrationTests(unittest.IsolatedAsyncioTestCase):
+    def test_manifest_is_compatible_and_opt_in(self):
+        manifest_path = Path(plugin_package.__file__).with_name('plugin.toml')
+        manifest = parse_manifest_file(manifest_path, source='bundled')
+        self.assertEqual(manifest.name, 'kitt-reverse-engineering')
+        self.assertFalse(manifest.enabled_by_default)
+        self.assertEqual(manifest.permissions, {'mcp.manage'})
+
     async def test_register_stdio_and_unregister_owned(self):
         with tempfile.TemporaryDirectory() as root:
             api = Mock()
