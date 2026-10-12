@@ -261,6 +261,15 @@ def boot(profile_path: Path, *, install: bool = False, vnc_display: int = 1) -> 
                 _terminate_group(tpm)
 
 
+def _ask_positive(prompt: str, current: int) -> int:
+    raw = input(f"{prompt} [{current}]: ").strip()
+    if not raw:
+        return current
+    if not raw.isdecimal():
+        raise VMError("Resources must be positive integers")
+    return int(raw)
+
+
 def wizard(*, source: Path | None = None, kind: str | None = None,
            destination: Path | None = None, variant: str | None = None,
            memory_mib: int = 4096, cpus: int = 2, disk_gib: int = 64,
@@ -273,13 +282,24 @@ def wizard(*, source: Path | None = None, kind: str | None = None,
         source = Path(input("Caminho da sua ISO Windows ou disco QCOW2: ").strip())
     if kind is None:
         kind = "qcow2" if source.suffix.lower() == ".qcow2" else "iso"
+    if not yes:
+        if not sys.stdin.isatty():
+            raise VMError("Use --yes in noninteractive mode")
+        if variant is None:
+            selected = input("Tipo da imagem (official/tiny11/tiny11-core/custom) [custom]: ").strip()
+            variant = selected or "custom"
+        memory_mib = _ask_positive("RAM (MiB)", memory_mib)
+        cpus = _ask_positive("Núcleos virtuais", cpus)
+        if kind == "iso":
+            disk_gib = _ask_positive("Disco (GiB)", disk_gib)
+        if destination is None:
+            selected = input(f"Diretório da VM [{DEFAULT_DIR}]: ").strip()
+            destination = Path(selected).expanduser() if selected else DEFAULT_DIR
     if variant is None:
         variant = "custom"
     if destination is None:
         destination = DEFAULT_DIR
     if not yes:
-        if not sys.stdin.isatty():
-            raise VMError("Use --yes in noninteractive mode")
         summary = f"{kind.upper()}={source}; variante={variant}; RAM={memory_mib}MiB; CPU={cpus}; disco={disk_gib}GiB; destino={destination}"
         print(summary)
         if input("Criar VM Windows offline com estes parâmetros? [s/N] ").strip().lower() not in ("s", "sim", "y", "yes"):
