@@ -12,6 +12,7 @@ from pathlib import Path, PureWindowsPath
 import platform
 import re
 import subprocess
+import tempfile
 import time
 
 MAX_MANIFEST_BYTES = 64 * 1024
@@ -71,19 +72,27 @@ def run_probe(root: Path, manifest_file: Path, name: str) -> dict:
     path = _pin_file(root, entry['path'], entry['sha256'])
     t0 = time.monotonic()
     timeout = False
-    try:
-        result = subprocess.run([str(path)], cwd=root, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=MAX_SECONDS, check=False,
-                                env={k: v for k, v in os.environ.items() if k in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP')})
-        output = result.stdout[:MAX_OUTPUT_BYTES]
-        error = result.stderr[:MAX_OUTPUT_BYTES]
-        code = result.returncode
-        truncated = len(result.stdout) > MAX_OUTPUT_BYTES or len(result.stderr) > MAX_OUTPUT_BYTES
-    except subprocess.TimeoutExpired as ex:
-        output = (ex.stdout or b'')[:MAX_OUTPUT_BYTES]
-        error = (ex.stderr or b'')[:MAX_OUTPUT_BYTES]
-        code, truncated, timeout = None, True, True
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        try:
+            result = subprocess.run(
+                [str(path)], cwd=root, stdin=subprocess.DEVNULL,
+                stdout=stdout_file, stderr=stderr_file,
+                timeout=MAX_SECONDS, check=False,
+                env={k: v for k, v in os.environ.items()
+                     if k in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP')},
+            )
+            code = result.returncode
+        except subprocess.TimeoutExpired:
+            code, timeout = None, True
+        stdout_file.seek(0, os.SEEK_END)
+        stdout_size = stdout_file.tell()
+        stderr_file.seek(0, os.SEEK_END)
+        stderr_size = stderr_file.tell()
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        output = stdout_file.read(MAX_OUTPUT_BYTES)
+        error = stderr_file.read(MAX_OUTPUT_BYTES)
+        truncated = stdout_size > MAX_OUTPUT_BYTES or stderr_size > MAX_OUTPUT_BYTES
     # Receipts identify observations, but are not cryptographic attestation of the guest.
     record = {'schema_version': 1, 'probe': name, 'probe_sha256': entry['sha256'],
               'platform': platform.system(), 'release': platform.release(),
