@@ -92,7 +92,7 @@ def _read_profile(path: Path) -> dict:
             or not (1024 <= obj["memory_mib"] <= 16384 and 1 <= obj["cpus"] <= 8
                     and 16 <= obj["disk_gib"] <= 256 and 1024 <= obj["port"] <= 65535
                     and (obj["probe_port"] == 0 or 1024 <= obj["probe_port"] <= 65535)
-                    and obj["probe_port"] != obj["port"]):
+                    and obj["probe_port"] != obj["port"])):
         raise VMError("Invalid VM profile values")
     if obj["os"] == "windows" and (obj["memory_mib"] < 4096 or obj["cpus"] < 2 or obj["disk_gib"] < 32):
         raise VMError("Windows VM requires at least 4 GiB, 2 vCPUs and 32 GiB disk")
@@ -101,7 +101,7 @@ def _read_profile(path: Path) -> dict:
         raise VMError("Profile state must be its own private directory")
     if state.is_symlink() or (stat.S_IMODE(state.stat().st_mode) & 0o077):
         raise VMError("VM state directory must be private")
-    if obj["kind"] == "iso":
+    if obj["kind"] == "iso" and not (state / "disk.qcow2").is_file():
         source = _path(obj["source"], exists=True)
         if _sha256(source) != obj["source_sha256"]:
             raise VMError("Guest installation ISO changed since creation")
