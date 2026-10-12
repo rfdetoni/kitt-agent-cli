@@ -31,7 +31,7 @@ set -- -nodefaults -no-user-config -machine q35,accel=kvm:tcg \
   -display none -vnc 127.0.0.1:1 -monitor none -serial none -vga std \
   -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 \
   -device usb-tablet,bus=xhci.0 \
-  -drive file=/state/disk.qcow2,format=qcow2,if=ide,index=0,media=disk \
+  -drive file=/state/disk.qcow2,format=qcow2,if=ide,index=0,media=disk
 if [ "${KITT_PROBE_SSH:-0}" = 1 ]; then
   # Only host -> guest SSH. QEMU user networking blocks guest egress.
   set -- "$@" -netdev user,id=kitt-probe,restrict=on,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 \
