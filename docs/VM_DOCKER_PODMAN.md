@@ -1,15 +1,73 @@
+## Security and lifecycle changes in 0.86.9
+
+The noVNC endpoint is **HTTP Basic-authenticated**, including WebSocket upgrades
+from other containers on the bridge. The random per-VM password is stored in
+an owner-only file; retrieve it explicitly:
+
+```sh
+kitt vm container credentials --profile ~/.local/share/kitt/vm-containers/windows-podman/profile.json
+```
+
+The runner starts by its immutable `sha256:` image ID (recorded in the VM
+profile). Container startup is considered successful **only after** the
+authenticated noVNC endpoint responds, and a second simultaneous start is
+blocked. Stopped containers retain accessible logs; when restarting, the
+previous run logs are archived as `previous-run.log` in the VM directory.
+
+Take an offline baseline **after OS setup**, while the guest is shut down:
+
+```sh
+kitt vm container snapshot --profile /path/to/profile.json --action save --name clean
+kitt vm container snapshot --profile /path/to/profile.json --action list
+kitt vm container snapshot --profile /path/to/profile.json --action restore --name clean --yes
+```
+
+Snapshots copy the guest QCOW2 and available UEFI/TPM state. A large disk
+requires sufficient free host storage. Disk restoration is staged and
+replaces the original; UEFI/TPM restoration requires the same guest to be
+stopped and should be protected by an additional external backup for
+critical data.
+
+**Optional probe channel:** provide `--probe-port 18008` to `kitt vm create`
+to expose guest SSH only at host `127.0.0.1:18008`, using QEMU user
+`restrict=on` networking (guest egress blocked). Without that flag the guest
+has **no network interface**. This port is not a shell authorization: install
+and configure an OpenSSH forced-command `guest_rpc` endpoint and pin
+host identities yourself before using it. The broker uses the existing
+authenticated SSH differential probe contract:
+
+```sh
+kitt vm lab doctor --hosts /path/to/host-guests.json
+kitt vm lab run --workspace /path/to/authorized-workspace \
+  --hosts /path/to/host-guests.json --mission /path/to/authorized-workspace/mission.json
+```
+
+The lab broker does **not** give the agent a general VM shell or network
+access. The operator still has to provision SSH guest accounts, trusted
+host keys and signed/pinned probes. Automated guest OS setup and a real
+cross-guest KVM lab acceptance run remain separate requirements.
+
+**Wizard behavior:** `kitt vm create` now asks native/Docker/Podman in
+interactive use; `--distro` and `--tools` are rejected with a container
+backend because these options do not install RE tools inside arbitrary
+Linux guest ISOs. Use `kitt vm container toolbox --profile full` separately.
+
+**Migration:** profile schema has changed in 0.86.9 (immutable runner image
+ID, SSH probe port and viewer secrets). VMs created with 0.86.8 should
+be exported/backed up while stopped and recreated using the new wizard;
+do not edit JSON and guess missing secrets.
 # QEMU VMs in Docker/Podman and prebuilt Linux RE images
 
-**Agent 0.86.8 (optional)**. These are two distinct execution modes: a QEMU VM running *inside* a container, and a Linux **toolbox container** with tools already installed. Neither replaces the ordinary KITT coding agent or its native QEMU supervisor.
+**Agent 0.86.9 (optional)**. These are two distinct execution modes: a QEMU VM running *inside* a container, and a Linux **toolbox container** with tools already installed. Neither replaces the ordinary KITT coding agent or its native QEMU supervisor.
 
 ## Container images
 
 | Image | Purpose | Included tools |
 | --- | --- | --- |
-| `kitt/qemu-vm:0.86.8` | QEMU guest runner with web browser noVNC | QEMU, OVMF UEFI, TPM 2.0, noVNC |
-| `kitt/linux-re:base-0.86.8` | Linux RE toolbox | GDB, LLDB, clang, GCC, binutils, strace, ltrace, Python, Git, Java, CMake |
-| `kitt/linux-re:wine-0.86.8` | Linux RE toolbox | Base plus Wine64 and MinGW |
-| `kitt/linux-re:full-0.86.8` | Linux RE toolbox | Wine plus Frida 17.23.3, Frida Tools 14.11.0 and Ghidra 12.1.4 with SHA-256 verified |
+| `kitt/qemu-vm:0.86.9` | QEMU guest runner with web browser noVNC | QEMU, OVMF UEFI, TPM 2.0, noVNC |
+| `kitt/linux-re:base-0.86.9` | Linux RE toolbox | GDB, LLDB, clang, GCC, binutils, strace, ltrace, Python, Git, Java, CMake |
+| `kitt/linux-re:wine-0.86.9` | Linux RE toolbox | Base plus Wine64 and MinGW |
+| `kitt/linux-re:full-0.86.9` | Linux RE toolbox | Wine plus Frida 17.23.3, Frida Tools 14.11.0 and Ghidra 12.1.4 with SHA-256 verified |
 
 **Important:** the RE toolbox runs directly as a container. Its tools do **not** appear automatically in an arbitrary Linux guest ISO. Use a disposable QEMU guest for binaries that might be hostile. An installed QEMU guest OS is separate from the container's Debian userspace.
 

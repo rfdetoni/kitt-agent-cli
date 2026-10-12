@@ -31,8 +31,14 @@ set -- -nodefaults -no-user-config -machine q35,accel=kvm:tcg \
   -display none -vnc 127.0.0.1:1 -monitor none -serial none -vga std \
   -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 \
   -device usb-tablet,bus=xhci.0 \
-  -drive file=/state/disk.qcow2,format=qcow2,if=ide,index=0,media=disk \
-  -nic none
+  -drive file=/state/disk.qcow2,format=qcow2,if=ide,index=0,media=disk
+if [ "${KITT_PROBE_SSH:-0}" = 1 ]; then
+  # Only host -> guest SSH. QEMU user networking blocks guest egress.
+  set -- "$@" -netdev user,id=kitt-probe,restrict=on,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 \
+    -device e1000,netdev=kitt-probe
+else
+  set -- "$@" -nic none
+fi
 if [ "$KITT_SOURCE_KIND" = iso ] && [ "$KITT_INSTALL" = 1 ]; then
   test -f /input/installer.iso || { echo "User ISO missing" >&2; exit 2; }
   set -- "$@" -boot order=d \
@@ -40,6 +46,7 @@ if [ "$KITT_SOURCE_KIND" = iso ] && [ "$KITT_INSTALL" = 1 ]; then
 fi
 cleanup() {
   if [ -n "${WEBSOCKIFY_PID:-}" ]; then kill "$WEBSOCKIFY_PID" 2>/dev/null || :; fi
+  if [ -n "${NGINX_PID:-}" ]; then kill "$NGINX_PID" 2>/dev/null || :; fi
   if [ -n "${TPM_PID:-}" ]; then kill "$TPM_PID" 2>/dev/null || :; fi
 }
 trap cleanup EXIT INT TERM
@@ -74,6 +81,10 @@ if [ "$KITT_GUEST_OS" = windows ]; then
     -tpmdev emulator,id=tpm0,chardev=chrtpm \
     -device tpm-tis,tpmdev=tpm0
 fi
-websockify --web=/usr/share/novnc 0.0.0.0:8006 127.0.0.1:5901 &
+test -r /run/secrets/kitt-vnc.htpasswd ||
+  { echo "Authenticated noVNC credentials are required" >&2; exit 2; }
+websockify --web=/usr/share/novnc 127.0.0.1:8007 127.0.0.1:5901 &
 WEBSOCKIFY_PID=$!
+nginx -c /etc/nginx/kitt-vm.conf -g 'daemon off;' &
+NGINX_PID=$!
 qemu-system-x86_64 "$@"

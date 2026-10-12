@@ -19,7 +19,8 @@ def create_vm(
     memory_mib: int = 4096, cpus: int = 2, disk_gib: int = 64,
     variant: str | None = None, distro: str | None = None,
     tools: str | None = None, yes: bool = False,
-    backend: str = "native", port: int = 18006,
+    backend: str | None = None, port: int = 18006,
+    probe_port: int = 0,
 ) -> tuple[str, Path]:
     """Ask which guest to create, request the media path, delegate safely."""
     if system is None:
@@ -60,8 +61,19 @@ def create_vm(
         raise VMError("--kind não corresponde à extensão do arquivo fornecido")
     selected_kind = kind or inferred
 
+    if backend is None:
+        if not yes and sys.stdin.isatty():
+            answer = input("Backend (native/docker/podman) [native]: ").strip().lower()
+            backend = answer or "native"
+        else:
+            backend = "native"
     if backend not in ("native", "docker", "podman"):
         raise VMError("Backend deve ser native, docker ou podman")
+    if backend != "native" and (tools is not None or distro is not None):
+        raise VMError(
+            "--distro/--tools apply to native Linux guests only; use "
+            "'kitt vm container toolbox' for prebuilt reverse-engineering tools"
+        )
     if backend != "native":
         from .vm_container import prepare_vm
         default_dest = Path.home() / ".local/share/kitt/vm-containers" / f"{system}-{backend}"
@@ -74,7 +86,8 @@ def create_vm(
         result = prepare_vm(
             runtime=backend, system=system, source=path,
             kind=selected_kind, destination=destination or default_dest,
-            memory_mib=memory_mib, cpus=cpus, disk_gib=disk_gib, port=port,
+            memory_mib=memory_mib, cpus=cpus, disk_gib=disk_gib,
+            port=port, probe_port=probe_port,
         )
         return system, result
     if system == "windows":

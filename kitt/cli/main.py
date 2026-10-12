@@ -505,8 +505,9 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--distro", choices=["debian", "ubuntu", "kali", "fedora", "arch", "other"])
     create.add_argument("--tools", choices=["minimal", "re", "wine", "full"])
     create.add_argument("--yes", action="store_true", help="Skip prompts; requires --os and --source")
-    create.add_argument("--backend", choices=["native", "docker", "podman"], default="native")
+    create.add_argument("--backend", choices=["native", "docker", "podman"])
     create.add_argument("--port", type=int, default=18006, help="Host-only noVNC web port for Docker/Podman guests")
+    create.add_argument("--probe-port", type=int, default=0, help="Optional host-only SSH guest probe port (0=disabled)")
     containers = vm_commands.add_parser("container", help="QEMU guests and Linux RE toolbox in Docker/Podman")
     container_commands = containers.add_subparsers(dest="container_action", required=True)
     container_build = container_commands.add_parser("build", help="Build QEMU runner or preinstalled Linux RE toolbox image")
@@ -519,16 +520,30 @@ def build_parser() -> argparse.ArgumentParser:
     container_pull.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_doctor = container_commands.add_parser("doctor", help="Check Docker/Podman and KVM")
     container_doctor.add_argument("--runtime", choices=["docker", "podman"], default="podman")
-    for op in ("start", "stop", "logs", "status"):
+    for op in ("start", "stop", "logs", "status", "credentials"):
         command = container_commands.add_parser(op)
         command.add_argument("--profile", type=Path, required=True)
         if op == "start":
             command.add_argument("--install", action="store_true", help="Boot ISO for first OS installation")
             command.add_argument("--allow-tcg", action="store_true", help="Allow very slow software emulation")
+    container_snapshot = container_commands.add_parser("snapshot", help="Offline VM baseline save/restore/list")
+    container_snapshot.add_argument("--profile", type=Path, required=True)
+    container_snapshot.add_argument("--action", choices=["save", "restore", "list"], required=True)
+    container_snapshot.add_argument("--name", default="baseline")
+    container_snapshot.add_argument("--yes", action="store_true", help="Explicit approval required for restore")
     container_toolbox = container_commands.add_parser("toolbox", help="Open RE tools shell (trusted files only)")
     container_toolbox.add_argument("--runtime", choices=["docker", "podman"], default="podman")
     container_toolbox.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_toolbox.add_argument("--workspace", type=Path, required=True)
+
+    vm_lab = vm_commands.add_parser("lab", help="Host-controlled Windows/Linux differential probe broker")
+    vm_lab_commands = vm_lab.add_subparsers(dest="lab_action", required=True)
+    lab_doctor = vm_lab_commands.add_parser("doctor")
+    lab_doctor.add_argument("--hosts", type=Path, required=True)
+    lab_run = vm_lab_commands.add_parser("run")
+    lab_run.add_argument("--hosts", type=Path, required=True)
+    lab_run.add_argument("--mission", type=Path, required=True)
+    lab_run.add_argument("--workspace", type=Path, required=True)
 
     vm_run = vm_commands.add_parser("run", help="Start a disposable, pinned guest")
     vm_run.add_argument("--profile", type=Path, required=True)
@@ -876,6 +891,13 @@ def main(argv=None) -> int:
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
         try:
+            if args.vm_action == "lab":
+                from kitt import vm_broker
+                report = (vm_broker.doctor(args.hosts) if args.lab_action == "doctor" else
+                          vm_broker.run_lab_mission(workspace=args.workspace,
+                                                    mission=args.mission, hosts=args.hosts))
+                print(_json.dumps(report, ensure_ascii=False))
+                return 2 if report.get("blocked", 0) else 0
             if args.vm_action == "container":
                 from kitt import vm_container
                 if args.container_action == "build":
@@ -887,6 +909,12 @@ def main(argv=None) -> int:
                 elif args.container_action == "toolbox":
                     return vm_container.toolbox(runtime=args.runtime, profile=args.profile,
                                                 workspace=args.workspace)
+                elif args.container_action == "credentials":
+                    result = vm_container.credentials(args.profile)
+                elif args.container_action == "snapshot":
+                    if args.action == "restore" and not args.yes:
+                        raise VMError("Restoring replaces the VM disk; pass --yes to confirm")
+                    result = vm_container.snapshot(args.profile, action=args.action, name=args.name)
                 elif args.container_action == "start":
                     result = vm_container.start_vm(args.profile, install=args.install,
                                                     allow_tcg=args.allow_tcg)
@@ -901,13 +929,17 @@ def main(argv=None) -> int:
                     destination=args.destination, memory_mib=args.memory_mib,
                     cpus=args.cpus, disk_gib=args.disk_gib, variant=args.variant,
                     distro=args.distro, tools=args.tools, yes=args.yes,
-                    backend=args.backend, port=args.port,
+                    backend=args.backend, port=args.port, probe_port=args.probe_port,
                 )
+                config = _json.loads(profile.read_text("utf-8")) if profile.is_file() else {}
+                is_container = config.get("runtime") in ("docker", "podman")
+                already_installed = args.kind == "qcow2" or (args.source is not None and args.source.suffix.lower() == ".qcow2")
+                action = "start" if already_installed else "install"
+                next_cmd = (f"kitt vm container start --profile {profile}" +
+                            (" --install" if action == "install" else "")
+                            if is_container else f"kitt vm {system} {action} --profile {profile}")
                 print(_json.dumps({"created": True, "system": system,
-                                   "profile": str(profile),
-                                   "next": (f"kitt vm container start --profile {profile} --install"
-                                            if args.backend != "native" else
-                                            f"kitt vm {system} install --profile {profile}")},
+                                   "profile": str(profile), "next": next_cmd},
                                   ensure_ascii=False))
                 return 0
             if args.vm_action == "linux":

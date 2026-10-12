@@ -24,7 +24,7 @@ class VMHelperTests(unittest.TestCase):
 
     def test_interactive_windows_prompts_os_then_iso_path(self):
         with patch("sys.stdin.isatty", return_value=True), \
-             patch("builtins.input", side_effect=["1", str(self.iso)]), \
+             patch("builtins.input", side_effect=["1", str(self.iso), "native"]), \
              patch("kitt.vm_windows.wizard", return_value=self.output) as wizard:
             system, path = create_vm()
         self.assertEqual(system, "windows")
@@ -34,7 +34,7 @@ class VMHelperTests(unittest.TestCase):
 
     def test_interactive_linux_prompts_os_then_qcow2_path(self):
         with patch("sys.stdin.isatty", return_value=True), \
-             patch("builtins.input", side_effect=["2", str(self.disk)]), \
+             patch("builtins.input", side_effect=["2", str(self.disk), "native"]), \
              patch("kitt.vm_linux.wizard", return_value=self.output) as wizard:
             system, path = create_vm()
         self.assertEqual(system, "linux")
