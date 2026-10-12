@@ -44,6 +44,13 @@ jobs:
         run: python -m compileall -q kitt assistant-source/packages/kitt-assistant-runtime/kitt
       - name: Run release-critical regression contracts
         run: python scripts/run_release_critical.py
+      - name: Reverse engineering MCP safety contracts
+        run: >-
+          python -m pytest -q
+          tests/test_reverse_engineering_mcp.py
+          tests/test_reverse_engineering_probe_runner.py
+          tests/test_reverse_engineering_probe_evidence.py
+          tests/test_reverse_engineering_plugin_registration.py
       - name: Clean-room provenance guard
         run: python packaging/verify_cleanroom.py
       - name: Static critical checks
