@@ -40,6 +40,7 @@ if [ "$KITT_SOURCE_KIND" = iso ] && [ "$KITT_INSTALL" = 1 ]; then
 fi
 cleanup() {
   if [ -n "${WEBSOCKIFY_PID:-}" ]; then kill "$WEBSOCKIFY_PID" 2>/dev/null || :; fi
+  if [ -n "${NGINX_PID:-}" ]; then kill "$NGINX_PID" 2>/dev/null || :; fi
   if [ -n "${TPM_PID:-}" ]; then kill "$TPM_PID" 2>/dev/null || :; fi
 }
 trap cleanup EXIT INT TERM
@@ -74,6 +75,10 @@ if [ "$KITT_GUEST_OS" = windows ]; then
     -tpmdev emulator,id=tpm0,chardev=chrtpm \
     -device tpm-tis,tpmdev=tpm0
 fi
-websockify --web=/usr/share/novnc 0.0.0.0:8006 127.0.0.1:5901 &
+test -r /run/secrets/kitt-vnc.htpasswd ||
+  { echo "Authenticated noVNC credentials are required" >&2; exit 2; }
+websockify --web=/usr/share/novnc 127.0.0.1:8007 127.0.0.1:5901 &
 WEBSOCKIFY_PID=$!
+nginx -c /etc/nginx/kitt-vm.conf -g 'daemon off;' &
+NGINX_PID=$!
 qemu-system-x86_64 "$@"
