@@ -53,6 +53,7 @@ jobs:
           tests/test_reverse_engineering_plugin_registration.py
           tests/test_reverse_engineering_guest_adapters.py
           tests/test_reverse_engineering_mission.py
+          tests/test_vm_supervisor.py
       - name: Clean-room provenance guard
         run: python packaging/verify_cleanroom.py
       - name: Static critical checks
