@@ -55,6 +55,7 @@ jobs:
           tests/test_reverse_engineering_mission.py
           tests/test_vm_supervisor.py
           tests/test_vm_windows_wizard.py
+          tests/test_vm_helper.py
           tests/test_vm_linux_wizard.py
       - name: Clean-room provenance guard
         run: python packaging/verify_cleanroom.py
