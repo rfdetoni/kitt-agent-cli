@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import base64
+import fcntl
 import secrets
 import time
 import urllib.request
@@ -298,18 +299,91 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
     return args
 
 
+def _status(binary: str, name: str) -> str:
+    result = subprocess.run(
+        [binary, "inspect", "--format", "{{.State.Status}}", name],
+        capture_output=True, timeout=15, check=False,
+    )
+    if result.returncode:
+        return "missing"
+    value = result.stdout.decode("ascii", "replace").strip()
+    if value not in ("created", "running", "exited", "dead", "paused", "restarting"):
+        raise VMError("Unexpected QEMU container status")
+    return value
+
+
+def _archive_logs(binary: str, profile: dict) -> None:
+    """Preserve bounded evidence before deleting a stopped container."""
+    result = subprocess.run([binary, "logs", "--tail", "500", profile["name"]],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            timeout=20, check=False)
+    data = result.stdout[-128 * 1024:] if result.returncode == 0 else b""
+    if data:
+        path = Path(profile["state"]) / "previous-run.log"
+        with path.open("wb") as stream:
+            stream.write(data)
+        path.chmod(0o600)
+
+
+def _http_ready(port: int, password: str) -> bool:
+    headers = {"Authorization": "Basic " + base64.b64encode(
+        f"kitt:{password}".encode("ascii")).decode("ascii")}
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/vnc.html",
+                                 headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=1.5) as response:
+            return response.status == 200 and "html" in response.headers.get("Content-Type", "")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
 def start_vm(profile_file: Path, *, install: bool = False, allow_tcg: bool = False) -> dict:
     profile = _read_profile(profile_file)
     binary = _runtime(profile["runtime"])
-    _image_ready(binary)
-    argv = _run_args(profile, binary=binary, install=install, allow_tcg=allow_tcg)
-    result = subprocess.run(argv, capture_output=True, timeout=45, check=False)
-    if result.returncode:
-        raise VMError(f"Container could not start (code={result.returncode}): "
-                      + result.stderr.decode("utf-8", "replace")[:300])
-    return {"name": profile["name"], "runtime": profile["runtime"],
-            "viewer": f"http://127.0.0.1:{profile['port']}/vnc.html",
-            "container_id": result.stdout.decode().strip()[:64]}
+    if _image_id(binary, profile["image_id"]) != profile["image_id"]:
+        raise VMError("Pinned image ID is unavailable")
+    state = Path(profile["state"])
+    if install:
+        source = _path(profile["source"], exists=True)
+        if _sha256(source) != profile["source_sha256"]:
+            raise VMError("Installation ISO changed")
+    password = _private_file(state / "viewer-password").read_text("ascii").strip()
+    with (state / ".lifecycle.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        status = _status(binary, profile["name"])
+        if status in ("running", "paused", "restarting"):
+            raise VMError(f"Guest already active ({status}); refuse concurrent disk access")
+        if status != "missing":
+            _archive_logs(binary, profile)
+            result = subprocess.run([binary, "rm", profile["name"]],
+                                    capture_output=True, timeout=30, check=False)
+            if result.returncode:
+                raise VMError("Cannot remove stopped guest container before restarting")
+        argv = _run_args(profile, binary=binary, install=install, allow_tcg=allow_tcg)
+        result = subprocess.run(argv, capture_output=True, timeout=45, check=False)
+        if result.returncode:
+            raise VMError(f"Container could not start (code={result.returncode}): "
+                          + result.stderr.decode("utf-8", "replace")[:300])
+        deadline = time.monotonic() + 35
+        while time.monotonic() < deadline:
+            status = _status(binary, profile["name"])
+            if status != "running":
+                if status == "created":
+                    time.sleep(0.5)
+                    continue
+                _archive_logs(binary, profile)
+                raise VMError(f"QEMU/noVNC process exited before ready ({status})")
+            if _http_ready(profile["port"], password):
+                return {"name": profile["name"], "runtime": profile["runtime"],
+                        "viewer": f"http://127.0.0.1:{profile['port']}/vnc.html",
+                        "credentials": f"kitt vm container credentials --profile {profile_file}",
+                        "status": "ready"}
+            time.sleep(0.5)
+        subprocess.run([binary, "stop", "-t", "5", profile["name"]],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=15, check=False)
+        _archive_logs(binary, profile)
+        raise VMError("QEMU web console readiness timeout; inspect previous-run.log")
 
 
 def operate(profile_file: Path, action: str) -> dict:
@@ -317,14 +391,22 @@ def operate(profile_file: Path, action: str) -> dict:
         raise VMError("Unsupported container action")
     profile = _read_profile(profile_file)
     binary = _runtime(profile["runtime"])
-    commands = {"stop": ["stop", "-t", "20"], "logs": ["logs", "--tail", "120"],
-                "status": ["inspect", "--format", "{{.State.Status}}"]}
-    argv = [binary, *commands[action], profile["name"]]
+    status = _status(binary, profile["name"])
+    if action == "status":
+        return {"name": profile["name"], "status": status}
+    if action == "logs" and status == "missing":
+        path = Path(profile["state"]) / "previous-run.log"
+        output = path.read_bytes()[-16000:].decode("utf-8", "replace") if path.is_file() else ""
+        return {"name": profile["name"], "action": "logs", "output": output}
+    if action == "stop" and status != "running":
+        return {"name": profile["name"], "action": "stop", "status": status}
+    argv = [binary, "stop", "-t", "20", profile["name"]] if action == "stop" else [
+        binary, "logs", "--tail", "120", profile["name"]]
     result = subprocess.run(argv, capture_output=True, timeout=50, check=False)
     if result.returncode:
-        if action == "status":
-            return {"name": profile["name"], "action": action, "output": "stopped"}
         raise VMError(f"VM container {action} failed (exit {result.returncode})")
+    if action == "stop":
+        _archive_logs(binary, profile)
     return {"name": profile["name"], "action": action,
             "output": result.stdout.decode("utf-8", "replace")[:16000]}
 
