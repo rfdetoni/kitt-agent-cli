@@ -113,6 +113,14 @@ class VMWorkerTests(unittest.TestCase):
             self.assertIn("--contract-yes", recorded["argv"])
             self.assertEqual(hashlib.sha256(result["output"].encode()).hexdigest(), result["output_sha256"])
 
+    def test_health_request_is_read_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch("pathlib.Path.is_file", return_value=True), \
+                 patch("kitt.vm_worker.os.geteuid", return_value=1000):
+                result = handle({"version": 1, "method": "vm.health"}, Path(temp))
+            self.assertEqual(result["status"], "READY")
+            self.assertEqual(result["python_minor"], f"{os.sys.version_info.major}.{os.sys.version_info.minor}")
+            self.assertNotIn("output", result)
     def test_rejects_extra_shell_fields(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(ValueError):

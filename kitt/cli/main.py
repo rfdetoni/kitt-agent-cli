@@ -497,6 +497,11 @@ def build_parser() -> argparse.ArgumentParser:
     vm_run.add_argument("--goal", required=True)
     vm_doctor = vm_commands.add_parser("doctor", help="Check VM tools and pinned image")
     vm_doctor.add_argument("--profile", type=Path, required=True)
+    vm_prepare = vm_commands.add_parser("prepare", help="Automatically provision a minimal Debian 13 agent guest")
+    vm_prepare.add_argument("--destination", type=Path, default=Path.home() / ".local/share/kitt/vm/debian-agent")
+    vm_prepare.add_argument("--gateway-port", type=int, default=3000)
+    vm_prepare.add_argument("--agent-sha", default=None, help="Immutable Agent commit to install in guest")
+    vm_prepare.add_argument("--timeout", type=int, default=1200, help="Guest bootstrap deadline in seconds")
 
     doctor_parser = subparsers.add_parser(
         "doctor",
@@ -804,6 +809,14 @@ def main(argv=None) -> int:
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
         try:
+            if args.vm_action == "prepare":
+                from kitt.vm_debian import prepare_debian
+                profile = prepare_debian(
+                    args.destination, gateway_port=args.gateway_port,
+                    timeout_seconds=args.timeout, agent_sha=args.agent_sha,
+                )
+                print(_json.dumps({"ready": True, "profile": str(profile)}))
+                return 0
             if args.vm_action == "doctor":
                 result = inspect_profile(args.profile)
                 print(_json.dumps(result))
