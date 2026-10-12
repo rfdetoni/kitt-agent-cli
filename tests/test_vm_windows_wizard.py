@@ -85,7 +85,8 @@ class WindowsWizardTests(unittest.TestCase):
         self.assertIn("if=pflash", joined)
         self.assertNotIn("hostfwd", joined)
         self.assertNotIn("virtiofs", joined)
-        self.assertNotIn("9p", joined)
+        self.assertNotIn("-fsdev", cmd)
+        self.assertFalse(any("virtio-9p" in arg for arg in cmd))
         installed = _qemu_args(info, 1, False, self.root / "s", "qemu")
         self.assertNotIn("media=cdrom", " ".join(installed))
         with self.assertRaises(VMError):
