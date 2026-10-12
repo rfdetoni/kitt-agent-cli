@@ -175,6 +175,11 @@ def _health(key: Path, known: Path, port: int, ssh: str, version: str) -> bool:
         return False
 
 
+def _file_sha256(path: Path) -> str:
+    with path.open("rb") as file:
+        return hashlib.file_digest(file, "sha256").hexdigest()
+
+
 def prepare_debian(destination: Path, *, gateway_port: int = 3000,
                    timeout_seconds: int = 1200, agent_sha: str | None = None) -> Path:
     """Create an immutable Debian guest and private supervisor profile once.
@@ -214,6 +219,11 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if destination.parent.is_symlink():
         raise VMError("Destination parent must not be a symlink")
+    if os.name == "posix" and (
+        destination.parent.stat().st_uid != os.getuid()
+        or stat.S_IMODE(destination.parent.stat().st_mode) & 0o077
+    ):
+        raise VMError("VM destination parent must be private (0700)")
     expected = expected_sha512()
     with tempfile.TemporaryDirectory(prefix=".kitt-debian-", dir=destination.parent) as tmp:
         stage = Path(tmp)
@@ -272,7 +282,7 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
             (stage / name).unlink(missing_ok=True)
         profile = {
             "version": 1, "image": str(destination / image.name),
-            "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+            "sha256": _file_sha256(image),
             "ssh_key": str(destination / key.name),
             "known_hosts": str(destination / "known_hosts"),
             "ssh_user": "kitt", "host_key_alias": "kitt-sandbox",
