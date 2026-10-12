@@ -114,7 +114,8 @@ def _check_image(info: dict, qemu_img: str) -> None:
     except (ValueError, UnicodeError) as error:
         raise VMError("Invalid qemu-img response") from error
     if (metadata.get("format") != "qcow2" or metadata.get("backing-filename")
-            or metadata.get("backing-filename-format") or metadata.get("encrypted", False)):
+            or metadata.get("backing-filename-format") or metadata.get("encrypted", False)
+            or metadata.get("data-file") or metadata.get("data-file-raw")):
         raise VMError("Only unencrypted, standalone qcow2 images are accepted")
 
 
@@ -152,7 +153,7 @@ def _vm_args(info: dict, qemu: str, local_port: int, identifier: str) -> list[st
         qemu, "-name", f"kitt-{identifier}", "-nodefaults",
         "-no-user-config", "-no-reboot", "-display", "none",
         "-monitor", "none", "-serial", "none",
-        "-machine", "q35", "-m", str(info["memory_mib"]),
+        "-machine", "q35,accel=kvm:tcg", "-m", str(info["memory_mib"]),
         "-smp", str(info["cpus"]),
         "-drive", f"file={info['image']},format=qcow2,if=virtio,snapshot=on",
         "-netdev", network, "-device", "virtio-net-pci,netdev=kittnet",
@@ -242,13 +243,38 @@ def run_vm_job(profile: Path, goal: str, *, qemu: str | None = None,
                 raise VMError("Guest did not return a single JSON result") from error
             if (not isinstance(result, dict) or set(result) !=
                 {"version", "status", "exit_code", "output_sha256", "output", "truncated"}
-                    or result["version"] != 1):
+                    or type(result["version"]) is not int or result["version"] != 1
+                    or result["status"] not in ("PASS", "BLOCKED")
+                    or type(result["exit_code"]) is not int
+                    or not isinstance(result["output"], str)
+                    or type(result["truncated"]) is not bool
+                    or result["truncated"]
+                    or not isinstance(result["output_sha256"], str)
+                    or hashlib.sha256(result["output"].encode("utf-8")).hexdigest() != result["output_sha256"]
+                    or (result["status"] == "PASS" and result["exit_code"] != 0)):
                 raise VMError("Invalid guest result")
             return {"mission_id": identifier, "guest": result,
                     "artifact_requires_host_review": True}
         finally:
             _terminate_group(vm)
     # The base image is never committed. QEMU snapshot overlay disappears.
+
+
+def inspect_profile(profile: Path) -> dict:
+    """Operator-owned preflight: image digest and tool availability only."""
+    if sys.platform != "linux":
+        raise VMError("VM supervisor needs Linux host")
+    info = _profile(profile)
+    for program in ("qemu-system-x86_64", "qemu-img", "ssh"):
+        if not shutil.which(program):
+            raise VMError(f"Missing prerequisite: {program}")
+    _check_image(info, shutil.which("qemu-img"))
+    return {"ready": True, "isolation": "qemu-user-restrict-on",
+            "guest_image_sha256": info["sha256"],
+            "memory_mib": info["memory_mib"], "cpus": info["cpus"],
+            "gateway_forward": bool(info["gateway_port"]),
+            "guest_provisioned_by_operator": True,
+            "live_guest_attestation": False}
 
 
 def main() -> None:
