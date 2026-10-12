@@ -505,6 +505,27 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--distro", choices=["debian", "ubuntu", "kali", "fedora", "arch", "other"])
     create.add_argument("--tools", choices=["minimal", "re", "wine", "full"])
     create.add_argument("--yes", action="store_true", help="Skip prompts; requires --os and --source")
+    create.add_argument("--backend", choices=["native", "docker", "podman"], default="native")
+    create.add_argument("--port", type=int, default=18006, help="Host-only noVNC web port for Docker/Podman guests")
+    containers = vm_commands.add_parser("container", help="QEMU guests and Linux RE toolbox in Docker/Podman")
+    container_commands = containers.add_subparsers(dest="container_action", required=True)
+    container_build = container_commands.add_parser("build", help="Build QEMU runner or preinstalled Linux RE toolbox image")
+    container_build.add_argument("--runtime", choices=["docker", "podman"], default="podman")
+    container_build.add_argument("--image", choices=["qemu", "toolbox"], required=True)
+    container_build.add_argument("--profile", choices=["base", "wine", "full"], default="full")
+    container_doctor = container_commands.add_parser("doctor", help="Check Docker/Podman and KVM")
+    container_doctor.add_argument("--runtime", choices=["docker", "podman"], default="podman")
+    for op in ("start", "stop", "logs", "status"):
+        command = container_commands.add_parser(op)
+        command.add_argument("--profile", type=Path, required=True)
+        if op == "start":
+            command.add_argument("--install", action="store_true", help="Boot ISO for first OS installation")
+            command.add_argument("--allow-tcg", action="store_true", help="Allow very slow software emulation")
+    container_toolbox = container_commands.add_parser("toolbox", help="Open RE tools shell (trusted files only)")
+    container_toolbox.add_argument("--runtime", choices=["docker", "podman"], default="podman")
+    container_toolbox.add_argument("--profile", choices=["base", "wine", "full"], default="full")
+    container_toolbox.add_argument("--workspace", type=Path, required=True)
+
     vm_run = vm_commands.add_parser("run", help="Start a disposable, pinned guest")
     vm_run.add_argument("--profile", type=Path, required=True)
     vm_run.add_argument("--goal", required=True)
@@ -851,6 +872,22 @@ def main(argv=None) -> int:
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
         try:
+            if args.vm_action == "container":
+                from kitt import vm_container
+                if args.container_action == "build":
+                    result = vm_container.build_image(runtime=args.runtime, image=args.image, profile=args.profile)
+                elif args.container_action == "doctor":
+                    result = vm_container.doctor(args.runtime)
+                elif args.container_action == "toolbox":
+                    return vm_container.toolbox(runtime=args.runtime, profile=args.profile,
+                                                workspace=args.workspace)
+                elif args.container_action == "start":
+                    result = vm_container.start_vm(args.profile, install=args.install,
+                                                    allow_tcg=args.allow_tcg)
+                else:
+                    result = vm_container.operate(args.profile, args.container_action)
+                print(_json.dumps(result, ensure_ascii=False))
+                return 0
             if args.vm_action in ("create", "wizard"):
                 from kitt.vm_helper import create_vm
                 system, profile = create_vm(
@@ -858,10 +895,13 @@ def main(argv=None) -> int:
                     destination=args.destination, memory_mib=args.memory_mib,
                     cpus=args.cpus, disk_gib=args.disk_gib, variant=args.variant,
                     distro=args.distro, tools=args.tools, yes=args.yes,
+                    backend=args.backend, port=args.port,
                 )
                 print(_json.dumps({"created": True, "system": system,
                                    "profile": str(profile),
-                                   "next": f"kitt vm {system} install --profile {profile}"},
+                                   "next": (f"kitt vm container start --profile {profile} --install"
+                                            if args.backend != "native" else
+                                            f"kitt vm {system} install --profile {profile}")},
                                   ensure_ascii=False))
                 return 0
             if args.vm_action == "linux":
