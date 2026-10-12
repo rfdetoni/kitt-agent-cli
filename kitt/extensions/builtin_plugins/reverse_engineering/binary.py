@@ -78,7 +78,8 @@ def _elf(data: bytes) -> dict:
 
 def _read_bounded(root: Path, parts: tuple[str, ...]) -> bytes:
     """Traverse directory descriptors without following symlinks on POSIX."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0) |
+             getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     if os.name == "posix" and os.open in os.supports_dir_fd:
         directory = os.open(root, flags | getattr(os, "O_DIRECTORY", 0))
         try:
