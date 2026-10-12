@@ -1,0 +1,9 @@
+FROM debian:trixie-slim
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    qemu-system-x86 qemu-utils ovmf swtpm novnc websockify ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY vm-entrypoint.sh /usr/local/bin/kitt-vm-entrypoint
+RUN chmod 0755 /usr/local/bin/kitt-vm-entrypoint
+EXPOSE 8006
+ENTRYPOINT ["/usr/local/bin/kitt-vm-entrypoint"]
