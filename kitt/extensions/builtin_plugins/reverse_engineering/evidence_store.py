@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-from urllib.parse import quote
 
 from .evidence import EvidenceError
 from .probe_evidence import _verify
