@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import base64
-import fcntl
+try:
+    import fcntl  # Linux-only VM lifecycle locking
+except ImportError:
+    fcntl = None
 import secrets
 import time
 import urllib.request
@@ -346,6 +349,8 @@ def _http_ready(port: int, password: str) -> bool:
 
 def start_vm(profile_file: Path, *, install: bool = False, allow_tcg: bool = False) -> dict:
     profile = _read_profile(profile_file)
+    if sys.platform != "linux" or fcntl is None:
+        raise VMError("Container QEMU requires Linux host")
     binary = _runtime(profile["runtime"])
     if _image_id(binary, profile["image_id"]) != profile["image_id"]:
         raise VMError("Pinned image ID is unavailable")
@@ -422,6 +427,8 @@ def snapshot(profile_file: Path, *, action: str, name: str = "baseline") -> dict
     """Offline snapshot and restore of guest disk, UEFI and virtual TPM state."""
     if action not in ("save", "restore", "list") or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", name):
         raise VMError("Invalid snapshot action or name")
+    if sys.platform != "linux" or fcntl is None:
+        raise VMError("Container VM snapshots require Linux host")
     profile = _read_profile(profile_file)
     state = Path(profile["state"])
     binary = _runtime(profile["runtime"])
