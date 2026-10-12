@@ -166,3 +166,5 @@ Bundled plugins must remain dependency-light, bounded and deterministic. New fir
 - keep optional external integrations opt-in;
 - return structured evidence that can feed verification/review;
 - add tests for discovery, trust, enablement and representative output.
+
+VM autonomy: see [VM_SUPERVISOR.md](VM_SUPERVISOR.md). Guest RE lab: see [VM_AUTONOMY_SECURITY.md](VM_AUTONOMY_SECURITY.md).
