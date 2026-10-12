@@ -79,16 +79,14 @@ class ContainerVMTests(unittest.TestCase):
 
     def test_qemu_args_are_bounded_localhost_only_and_drop_caps(self):
         with patch("kitt.vm_container.os.access", return_value=True), \
-             patch("kitt.vm_container.Path.stat", wraps=Path.stat) as stat:
-            # Mock group ID without mutating an actual /dev/kvm.
-            with patch("kitt.vm_container.Path.stat", return_value=SimpleNamespace(st_gid=99)):
-                args = _run_args(
+             patch("kitt.vm_container.Path.stat", return_value=SimpleNamespace(st_gid=99)):
+            args = _run_args(
                     {"os": "linux", "name": "kitt-vm-test", "kind": "iso",
                      "state": str(self.root), "runtime": "podman", "port": 18006,
                      "source": str(self.iso), "memory_mib": 2048,
                      "cpus": 2, "disk_gib": 32},
-                    binary="podman", install=True, allow_tcg=False,
-                )
+                binary="podman", install=True, allow_tcg=False,
+            )
         self.assertIn("127.0.0.1:18006:8006", args)
         self.assertIn("no-new-privileges", " ".join(args))
         self.assertIn("--cap-drop=ALL", args)
