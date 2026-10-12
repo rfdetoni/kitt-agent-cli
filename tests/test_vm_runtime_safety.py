@@ -28,7 +28,7 @@ class VMRuntimeSafety(unittest.TestCase):
             "source": str(self.root / "no-image.qcow2"), "source_sha256": "a"*64,
             "state": str(self.root), "os": "linux", "port": 18006,
             "memory_mib": 2048, "cpus": 2, "disk_gib": 32,
-            "image_id": "sha256:" + "a"*64
+            "image_id": "sha256:" + "a"*64, "probe_port": 0
         }
 
     def test_viewer_secret_is_private_and_never_put_in_runtime_env(self):
