@@ -32,6 +32,7 @@ include = ["kitt*"]
 
 [tool.setuptools.package-data]
 "*" = ["plugin.toml"]
+"kitt.extensions.builtin_plugins.reverse_engineering" = ["plugin.toml", "ghidra_scripts/*.java", "frida_scripts/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
