@@ -35,7 +35,7 @@ External plugins continue to use API version 1 and require explicit content trus
 | `kitt-cloud` | `cloud_inspect` | disabled | Detect Terraform/cloud/Kubernetes signals without credentials or network. |
 | `kitt-observability` | `observability_inspect` | disabled | Detect local observability libraries/configuration. |
 | `kitt-figma` | `figma_inspect` + `mcp.figma-desktop.*` | disabled | Parse Figma design targets and bridge the official Figma desktop MCP server through KITT policy. |
-| `kitt-reverse-engineering` | `mcp.reverse-engineering.binary_inspect`, `mcp.reverse-engineering.evidence_compare`, `mcp.reverse-engineering.evidence_probe_compare` | disabled | Read-only PE/ELF inspection and deterministic result comparison; no binary execution. |
+| `kitt-reverse-engineering` | `mcp.reverse-engineering.binary_inspect`, `mcp.reverse-engineering.evidence_compare`, `mcp.reverse-engineering.evidence_probe_compare`, `mcp.reverse-engineering.evidence_query` | disabled | Read-only PE/ELF inspection and deterministic result comparison; no binary execution. |
 
 All bundled handlers are lazy and read-only. They do not open database connections, contact cloud/GitHub services, launch browsers, start LSP processes, modify Git state, or read credentials.
 
