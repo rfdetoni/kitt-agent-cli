@@ -120,6 +120,22 @@ def build_image(*, runtime: str, image: str, profile: str = "full") -> dict:
     return {"image": tag, "runtime": runtime, "built": True}
 
 
+def pull_image(*, runtime: str, image: str, profile: str = "full") -> dict:
+    """Explicitly fetch prebuilt GHCR image; never auto-pull during VM execution."""
+    executable = _runtime(runtime)
+    if image not in ("qemu", "toolbox"):
+        raise VMError("Choose image qemu or toolbox")
+    if image == "toolbox" and profile not in ("base", "wine", "full"):
+        raise VMError("Unsupported RE image profile")
+    published = ("ghcr.io/rfdetoni/kitt-qemu-vm:" + VERSION if image == "qemu"
+                 else "ghcr.io/rfdetoni/kitt-linux-re:" + profile + "-" + VERSION)
+    local = IMAGES["qemu"] if image == "qemu" else IMAGES[profile]
+    for argv in ([executable, "pull", published], [executable, "tag", published, local]):
+        result = subprocess.run(argv, check=False, timeout=1200)
+        if result.returncode:
+            raise VMError("Container image pull/tag failed; build the image locally if unavailable")
+    return {"pulled": published, "local_image": local, "runtime": runtime}
+
 def _image_ready(binary: str) -> None:
     try:
         response = subprocess.run([binary, "image", "inspect", IMAGES["qemu"]],
