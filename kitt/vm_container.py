@@ -226,7 +226,7 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
         raise VMError("No accessible /dev/kvm; use native QEMU or explicit --allow-tcg")
     state = Path(profile["state"])
     args = [
-        binary, "run", "-d", "--name", profile["name"],
+        binary, "run", "--rm", "-d", "--name", profile["name"],
         "--pull", "never",
         "--cap-drop=ALL", "--security-opt=no-new-privileges",
         "--pids-limit", "256", "--memory", f"{profile['memory_mib'] + 1024}m",
@@ -281,6 +281,8 @@ def operate(profile_file: Path, action: str) -> dict:
     argv = [binary, *commands[action], profile["name"]]
     result = subprocess.run(argv, capture_output=True, timeout=50, check=False)
     if result.returncode:
+        if action == "status":
+            return {"name": profile["name"], "action": action, "output": "stopped"}
         raise VMError(f"VM container {action} failed (exit {result.returncode})")
     return {"name": profile["name"], "action": action,
             "output": result.stdout.decode("utf-8", "replace")[:16000]}
