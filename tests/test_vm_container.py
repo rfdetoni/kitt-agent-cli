@@ -51,6 +51,7 @@ class ContainerVMTests(unittest.TestCase):
             )
         loaded = _read_profile(path)
         self.assertEqual(loaded["os"], "windows")
+        self.assertEqual(loaded["probe_port"], 0)
         self.assertEqual(loaded["runtime"], "podman")
         self.assertEqual(loaded["kind"], "iso")
         self.assertFalse((self.output / "disk.qcow2").exists())
@@ -87,7 +88,7 @@ class ContainerVMTests(unittest.TestCase):
             args = _run_args(
                     {"os": "linux", "name": "kitt-vm-test", "kind": "iso",
                      "state": str(self.root), "runtime": "podman", "port": 18006,
-                     "source": str(self.iso), "image_id": "sha256:" + "a" * 64, "memory_mib": 2048,
+                     "source": str(self.iso), "image_id": "sha256:" + "a" * 64, "probe_port": 0, "memory_mib": 2048,
                      "cpus": 2, "disk_gib": 32},
                 binary="podman", install=True, allow_tcg=False,
             )
