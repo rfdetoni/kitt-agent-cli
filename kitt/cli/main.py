@@ -513,6 +513,10 @@ def build_parser() -> argparse.ArgumentParser:
     container_build.add_argument("--runtime", choices=["docker", "podman"], default="podman")
     container_build.add_argument("--image", choices=["qemu", "toolbox"], required=True)
     container_build.add_argument("--profile", choices=["base", "wine", "full"], default="full")
+    container_pull = container_commands.add_parser("pull", help="Fetch published QEMU and Linux RE images")
+    container_pull.add_argument("--runtime", choices=["docker", "podman"], default="podman")
+    container_pull.add_argument("--image", choices=["qemu", "toolbox"], required=True)
+    container_pull.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_doctor = container_commands.add_parser("doctor", help="Check Docker/Podman and KVM")
     container_doctor.add_argument("--runtime", choices=["docker", "podman"], default="podman")
     for op in ("start", "stop", "logs", "status"):
@@ -876,6 +880,8 @@ def main(argv=None) -> int:
                 from kitt import vm_container
                 if args.container_action == "build":
                     result = vm_container.build_image(runtime=args.runtime, image=args.image, profile=args.profile)
+                elif args.container_action == "pull":
+                    result = vm_container.pull_image(runtime=args.runtime, image=args.image, profile=args.profile)
                 elif args.container_action == "doctor":
                     result = vm_container.doctor(args.runtime)
                 elif args.container_action == "toolbox":
