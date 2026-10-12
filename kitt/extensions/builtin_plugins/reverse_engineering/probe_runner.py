@@ -11,6 +11,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import platform
 import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -73,17 +74,27 @@ def run_probe(root: Path, manifest_file: Path, name: str) -> dict:
     t0 = time.monotonic()
     timeout = False
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        process = subprocess.Popen(
+            [str(path)], cwd=root, stdin=subprocess.DEVNULL,
+            stdout=stdout_file, stderr=stderr_file,
+            start_new_session=(os.name == 'posix'),
+            env={k: v for k, v in os.environ.items()
+                 if k in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP')},
+        )
         try:
-            result = subprocess.run(
-                [str(path)], cwd=root, stdin=subprocess.DEVNULL,
-                stdout=stdout_file, stderr=stderr_file,
-                timeout=MAX_SECONDS, check=False,
-                env={k: v for k, v in os.environ.items()
-                     if k in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP')},
-            )
-            code = result.returncode
+            code = process.wait(timeout=MAX_SECONDS)
         except subprocess.TimeoutExpired:
             code, timeout = None, True
+        finally:
+            # On POSIX, terminate remaining children in the guest probe process group.
+            if os.name == 'posix':
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.poll() is None:
+                process.kill()
+            process.wait()
         stdout_file.seek(0, os.SEEK_END)
         stdout_size = stdout_file.tell()
         stderr_file.seek(0, os.SEEK_END)
