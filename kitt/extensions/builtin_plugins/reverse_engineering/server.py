@@ -8,6 +8,7 @@ import sys
 
 from .binary import InspectionError, inspect
 from .evidence import EvidenceError, compare
+from .probe_evidence import compare_probe_receipts
 
 VERSION = "2024-11-05"
 TOOLS = [
@@ -16,6 +17,9 @@ TOOLS = [
                      "required": ["path"], "additionalProperties": False}},
     {"name": "evidence_compare", "description": "Compare two JSON-compatible experiment observations deterministically.",
      "inputSchema": {"type": "object", "properties": {"reference": {}, "candidate": {}},
+                     "required": ["reference", "candidate"], "additionalProperties": False}},
+    {"name": "evidence_probe_compare", "description": "Verify two hash-linked VM probe receipts and compare their JSON observations.",
+     "inputSchema": {"type": "object", "properties": {"reference": {"type": "object"}, "candidate": {"type": "object"}},
                      "required": ["reference", "candidate"], "additionalProperties": False}},
 ]
 
@@ -44,6 +48,8 @@ def respond(request: dict, workspace: Path) -> dict | None:
                 result_data = inspect(workspace, values["path"])
             elif name == "evidence_compare" and set(values) == {"reference", "candidate"}:
                 result_data = compare(values["reference"], values["candidate"])
+            elif name == "evidence_probe_compare" and set(values) == {"reference", "candidate"}:
+                result_data = compare_probe_receipts(values["reference"], values["candidate"])
             else:
                 raise EvidenceError("Unknown tool or invalid arguments")
             result = {"content": [{"type": "text", "text": json.dumps(result_data, ensure_ascii=False)}],
