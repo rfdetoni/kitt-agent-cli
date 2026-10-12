@@ -51,8 +51,6 @@ def handle(request: dict, workspace: Path, *, runner=None) -> dict:
         length = out.tell()
         out.seek(0)
         output = out.read(MAX_OUTPUT)
-        err.seek(0)
-        failure = err.read(4096)
     # A contract SUCCEEDED state returns zero; stdout claims never override exit.
     status = "PASS" if result.returncode == 0 and length <= MAX_OUTPUT else "BLOCKED"
     digest = hashlib.sha256(output).hexdigest()
