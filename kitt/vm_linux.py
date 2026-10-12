@@ -69,7 +69,7 @@ def bootstrap_script(distro: str, profile: str) -> str:
             packages.append("wine")
         if profile in ("re", "wine", "full"):
             packages.extend(("clang", "lldb"))
-        command = "pacman -Sy --noconfirm " + " ".join(packages) + "\n"
+        command = "pacman -Syu --noconfirm " + " ".join(packages) + "\n"
     if profile == "minimal":
         return header + "echo 'Minimal guest profile: install additional tools as needed.'\n"
     return header + "if [ \"$(id -u)\" -ne 0 ]; then echo 'Run as root inside guest' >&2; exit 1; fi\n" + command + (
