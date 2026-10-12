@@ -197,7 +197,7 @@ def _qemu_args(info: dict, vnc_display: int, install: bool, tpm_socket: Path,
     cmd = [
         qemu, "-name", "kitt-windows-lab", "-nodefaults", "-no-user-config",
         "-machine", "q35,accel=kvm:tcg", "-cpu", "max", "-smp", str(info["cpus"]),
-        "-m", str(info["memory_mib"]), "-no-reboot",
+        "-m", str(info["memory_mib"]),
         "-display", "none", "-vnc", f"127.0.0.1:{vnc_display}",
         "-monitor", "none", "-serial", "none",
         "-drive", f"if=pflash,format=raw,readonly=on,file={info['ovmf_code']}",
