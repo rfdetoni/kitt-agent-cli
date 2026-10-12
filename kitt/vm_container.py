@@ -411,6 +411,76 @@ def operate(profile_file: Path, action: str) -> dict:
             "output": result.stdout.decode("utf-8", "replace")[:16000]}
 
 
+def snapshot(profile_file: Path, *, action: str, name: str = "baseline") -> dict:
+    """Offline snapshot and restore of guest disk, UEFI and virtual TPM state."""
+    if action not in ("save", "restore", "list") or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", name):
+        raise VMError("Invalid snapshot action or name")
+    profile = _read_profile(profile_file)
+    state = Path(profile["state"])
+    binary = _runtime(profile["runtime"])
+    directory = state / "snapshots"
+    if directory.is_symlink():
+        raise VMError("Snapshot directory may not be a symlink")
+    if action == "list":
+        return {"snapshots": sorted(p.name for p in directory.iterdir()
+                if p.is_dir() and not p.is_symlink()) if directory.is_dir() else []}
+    directory.mkdir(mode=0o700, exist_ok=True)
+    target = directory / name
+    with (state / ".lifecycle.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if _status(binary, profile["name"]) in ("running", "paused", "restarting", "created"):
+            raise VMError("Shut down the guest before snapshot/restore")
+        source = state / "disk.qcow2"
+        if not source.is_file() or source.is_symlink():
+            raise VMError("Guest disk missing")
+        if action == "save":
+            if target.exists() or target.is_symlink():
+                raise VMError("Snapshot already exists")
+            with tempfile.TemporaryDirectory(prefix=".snapshot-", dir=directory) as temporary:
+                staging = Path(temporary)
+                shutil.copyfile(source, staging / "disk.qcow2")
+                (staging / "disk.qcow2").chmod(0o600)
+                if (state / "OVMF_VARS.fd").is_file():
+                    shutil.copyfile(state / "OVMF_VARS.fd", staging / "OVMF_VARS.fd")
+                if (state / "tpm").is_dir():
+                    shutil.copytree(state / "tpm", staging / "tpm", symlinks=False)
+                digest = _sha256(staging / "disk.qcow2")
+                (staging / "snapshot.json").write_text(
+                    json.dumps({"schema": 1, "disk_sha256": digest,
+                                "runner_image": profile["image_id"]}) + "\n")
+                staging.rename(target)
+            return {"saved": str(target), "disk_sha256": digest}
+        if not target.is_dir() or target.is_symlink():
+            raise VMError("Snapshot not found")
+        metadata = target / "snapshot.json"
+        if not metadata.is_file() or metadata.is_symlink() or metadata.stat().st_size > 2048:
+            raise VMError("Snapshot metadata unavailable")
+        record = json.loads(metadata.read_text("utf-8"))
+        expected = {"schema", "disk_sha256", "runner_image"}
+        if (not isinstance(record, dict) or set(record) != expected
+                or record["schema"] != 1 or record["runner_image"] != profile["image_id"]
+                or not isinstance(record["disk_sha256"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", record["disk_sha256"])
+                or (target / "disk.qcow2").is_symlink()
+                or _sha256(target / "disk.qcow2") != record["disk_sha256"]):
+            raise VMError("Snapshot integrity/runner mismatch")
+        # Disk replacement is atomic on the same volume; TPM/UEFI are copied offline.
+        with tempfile.TemporaryDirectory(prefix=".restore-", dir=state) as temporary:
+            nextdisk = Path(temporary) / "disk.qcow2"
+            shutil.copyfile(target / "disk.qcow2", nextdisk)
+            nextdisk.chmod(0o600)
+            os.replace(nextdisk, source)
+        saved_uefi = target / "OVMF_VARS.fd"
+        if saved_uefi.is_file() and not saved_uefi.is_symlink():
+            shutil.copyfile(saved_uefi, state / "OVMF_VARS.fd")
+        if (target / "tpm").is_dir():
+            replacement = state / "tpm"
+            if replacement.exists():
+                shutil.rmtree(replacement)
+            shutil.copytree(target / "tpm", replacement, symlinks=False)
+        return {"restored": str(target), "disk_sha256": record["disk_sha256"]}
+
+
 def doctor(runtime: str) -> dict:
     binary = _runtime(runtime)
     kvm = os.access("/dev/kvm", os.R_OK | os.W_OK)
