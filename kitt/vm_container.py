@@ -78,7 +78,7 @@ def _read_profile(path: Path) -> dict:
     except (ValueError, UnicodeError, RecursionError) as ex:
         raise VMError("Invalid VM container profile") from ex
     fields = {"version", "name", "os", "kind", "source", "source_sha256",
-              "state", "runtime", "memory_mib", "cpus", "disk_gib", "port", "image_id"}
+              "state", "runtime", "memory_mib", "cpus", "disk_gib", "port", "image_id", "probe_port"}
     if not isinstance(obj, dict) or set(obj) != fields or obj["version"] != 1:
         raise VMError("Unknown VM profile schema")
     if (obj["os"] not in ("windows", "linux") or obj["kind"] not in ("iso", "qcow2")
@@ -88,9 +88,11 @@ def _read_profile(path: Path) -> dict:
             or not re.fullmatch(r"sha256:[a-f0-9]{64}", obj["image_id"])
             or not isinstance(obj["source_sha256"], str)
             or not re.fullmatch(r"[a-f0-9]{64}", obj["source_sha256"])
-            or any(type(obj[k]) is not int for k in ("memory_mib", "cpus", "disk_gib", "port"))
+            or any(type(obj[k]) is not int for k in ("memory_mib", "cpus", "disk_gib", "port", "probe_port"))
             or not (1024 <= obj["memory_mib"] <= 16384 and 1 <= obj["cpus"] <= 8
-                    and 16 <= obj["disk_gib"] <= 256 and 1024 <= obj["port"] <= 65535)):
+                    and 16 <= obj["disk_gib"] <= 256 and 1024 <= obj["port"] <= 65535
+                    and (obj["probe_port"] == 0 or 1024 <= obj["probe_port"] <= 65535)
+                    and obj["probe_port"] != obj["port"]):
         raise VMError("Invalid VM profile values")
     if obj["os"] == "windows" and (obj["memory_mib"] < 4096 or obj["cpus"] < 2 or obj["disk_gib"] < 32):
         raise VMError("Windows VM requires at least 4 GiB, 2 vCPUs and 32 GiB disk")
@@ -210,7 +212,7 @@ def _qcow2_validate(binary: str, path: Path) -> None:
 
 def prepare_vm(*, runtime: str, system: str, source: Path, destination: Path,
                kind: str, memory_mib: int = 4096, cpus: int = 2,
-               disk_gib: int = 64, port: int = 18006) -> Path:
+               disk_gib: int = 64, port: int = 18006, probe_port: int = 0) -> Path:
     if sys.platform != "linux":
         raise VMError("QEMU container backend requires Linux host")
     binary = _runtime(runtime)
@@ -218,10 +220,12 @@ def prepare_vm(*, runtime: str, system: str, source: Path, destination: Path,
     image_id = _image_id(binary, IMAGES["qemu"])
     if system not in ("windows", "linux") or kind not in ("iso", "qcow2"):
         raise VMError("Unsupported guest format")
-    if any(type(x) is not int for x in (memory_mib, cpus, disk_gib, port)):
+    if any(type(x) is not int for x in (memory_mib, cpus, disk_gib, port, probe_port)):
         raise VMError("CPU/memory/disk/port must be integers")
     if not (1024 <= memory_mib <= 16384 and 1 <= cpus <= 8
-            and 16 <= disk_gib <= 256 and 1024 <= port <= 65535):
+            and 16 <= disk_gib <= 256 and 1024 <= port <= 65535
+            and (probe_port == 0 or 1024 <= probe_port <= 65535)
+            and probe_port != port):
         raise VMError("Container guest resource limits exceeded")
     if system == "windows" and (memory_mib < 4096 or cpus < 2 or disk_gib < 32):
         raise VMError("Windows requires >=4 GiB RAM, >=2 CPU, >=32 GiB disk")
@@ -248,7 +252,7 @@ def prepare_vm(*, runtime: str, system: str, source: Path, destination: Path,
             "source": str(src), "source_sha256": _sha256(src),
             "state": str(dest), "runtime": runtime, "image_id": image_id,
             "memory_mib": memory_mib, "cpus": cpus,
-            "disk_gib": disk_gib, "port": port,
+            "disk_gib": disk_gib, "port": port, "probe_port": probe_port,
         }
         _viewer_auth(stage)
         (stage / "profile.json").write_text(json.dumps(profile, indent=2) + "\n")
@@ -279,6 +283,8 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
         "--mount", f"type=bind,src={state},dst=/state",
         "--mount", f"type=bind,src={state / 'vnc.htpasswd'},dst=/run/secrets/kitt-vnc.htpasswd,readonly",
     ]
+    if profile["probe_port"]:
+        args.extend(["-p", f"127.0.0.1:{profile['probe_port']}:2222"])
     if profile["runtime"] == "podman":
         args.extend(["--userns=keep-id", "--group-add=keep-groups"])
     if has_kvm:
@@ -294,6 +300,7 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
         "--env", f"KITT_CPUS={profile['cpus']}",
         "--env", f"KITT_DISK_GIB={profile['disk_gib']}",
         "--env", f"KITT_INSTALL={int(install)}",
+        "--env", f"KITT_PROBE_SSH={int(bool(profile['probe_port']))}",
         profile["image_id"],
     ])
     return args
