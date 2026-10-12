@@ -94,6 +94,8 @@ def _profile(file: Path) -> dict:
         raise VMError("Base image too large")
     _regular(Path(info["ssh_key"]), private=True)
     _regular(Path(info["known_hosts"]), private=True)
+    if any(c in info["image"] for c in (",", "\\n", "\\r", "\\x00")):
+        raise VMError("Unsupported image path characters")
     return info
 
 
@@ -113,7 +115,7 @@ def _check_image(info: dict, qemu_img: str) -> None:
         metadata = json.loads(result.stdout)
     except (ValueError, UnicodeError) as error:
         raise VMError("Invalid qemu-img response") from error
-    if (metadata.get("format") != "qcow2" or metadata.get("backing-filename")
+    if (not isinstance(metadata, dict) or metadata.get("format") != "qcow2" or metadata.get("backing-filename")
             or metadata.get("backing-filename-format") or metadata.get("encrypted", False)
             or metadata.get("data-file") or metadata.get("data-file-raw")):
         raise VMError("Only unencrypted, standalone qcow2 images are accepted")
