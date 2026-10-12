@@ -535,6 +535,15 @@ def build_parser() -> argparse.ArgumentParser:
     container_toolbox.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_toolbox.add_argument("--workspace", type=Path, required=True)
 
+    vm_lab = vm_commands.add_parser("lab", help="Host-controlled Windows/Linux differential probe broker")
+    vm_lab_commands = vm_lab.add_subparsers(dest="lab_action", required=True)
+    lab_doctor = vm_lab_commands.add_parser("doctor")
+    lab_doctor.add_argument("--hosts", type=Path, required=True)
+    lab_run = vm_lab_commands.add_parser("run")
+    lab_run.add_argument("--hosts", type=Path, required=True)
+    lab_run.add_argument("--mission", type=Path, required=True)
+    lab_run.add_argument("--workspace", type=Path, required=True)
+
     vm_run = vm_commands.add_parser("run", help="Start a disposable, pinned guest")
     vm_run.add_argument("--profile", type=Path, required=True)
     vm_run.add_argument("--goal", required=True)
@@ -881,6 +890,13 @@ def main(argv=None) -> int:
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
         try:
+            if args.vm_action == "lab":
+                from kitt import vm_broker
+                report = (vm_broker.doctor(args.hosts) if args.lab_action == "doctor" else
+                          vm_broker.run_lab_mission(workspace=args.workspace,
+                                                    mission=args.mission, hosts=args.hosts))
+                print(_json.dumps(report, ensure_ascii=False))
+                return 2 if report.get("blocked", 0) else 0
             if args.vm_action == "container":
                 from kitt import vm_container
                 if args.container_action == "build":
