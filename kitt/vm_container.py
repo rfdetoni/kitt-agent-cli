@@ -519,6 +519,11 @@ def toolbox(*, runtime: str, profile: str, workspace: Path) -> int:
     argv = [binary, "run", "--rm", "-it", "--pull", "never",
             "--network", "none", "--cap-drop=ALL", "--security-opt=no-new-privileges",
             "--user", f"{os.getuid()}:{os.getgid()}",
+            # Ghidra and REA need writable cache/home even for an arbitrary UID.
+            # These paths are ephemeral; never mount host secrets or user HOME.
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g,mode=1777",
+            "--env", "HOME=/tmp", "--env", "XDG_CACHE_HOME=/tmp/.cache",
+            "--env", "XDG_CONFIG_HOME=/tmp/.config",
             "--mount", f"type=bind,src={path},dst=/workspace",
             "--workdir", "/workspace", pinned_toolbox, "/bin/sh"]
     if runtime == "podman":

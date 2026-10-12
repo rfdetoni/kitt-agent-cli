@@ -60,6 +60,7 @@ jobs:
           tests/test_vm_container.py
           tests/test_vm_runtime_safety.py
           tests/test_rea_plugin_workflows.py
+          tests/test_rea_toolbox_runtime.py
       - name: Validate QEMU container launcher shell
         run: sh -n kitt/vm_assets/vm-entrypoint.sh
       - name: Clean-room provenance guard
