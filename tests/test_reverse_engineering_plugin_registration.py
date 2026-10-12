@@ -30,7 +30,7 @@ class PluginRegistrationTests(unittest.IsolatedAsyncioTestCase):
             args, kwargs = api.register_stdio.call_args
             self.assertEqual(args[0], "reverse-engineering")
             self.assertEqual(kwargs["trust"], "restricted")
-            self.assertEqual(kwargs["allow_tools"], ["binary_inspect", "evidence_compare", "evidence_probe_compare", "evidence_query"])
+            self.assertEqual(kwargs["allow_tools"], ["binary_inspect", "evidence_compare", "evidence_probe_compare", "evidence_query", "lab_mission_plan"])
             self.assertFalse("shell" in str(kwargs))
             await handle.stop()
             api.unregister_owned.assert_awaited_once()
