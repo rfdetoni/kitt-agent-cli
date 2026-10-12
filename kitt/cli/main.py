@@ -488,6 +488,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     learn_report.add_argument("feature")
 
+    vm_parser = subparsers.add_parser(
+        "vm", parents=[common], help="Run autonomous KITT inside an isolated QEMU guest",
+    )
+    vm_commands = vm_parser.add_subparsers(dest="vm_action", required=True)
+    vm_run = vm_commands.add_parser("run", help="Start a disposable, pinned guest")
+    vm_run.add_argument("--profile", type=Path, required=True)
+    vm_run.add_argument("--goal", required=True)
+    vm_doctor = vm_commands.add_parser("doctor", help="Check VM tools and pinned image")
+    vm_doctor.add_argument("--profile", type=Path, required=True)
+
     doctor_parser = subparsers.add_parser(
         "doctor",
         parents=[common],
@@ -789,6 +799,21 @@ def main(argv=None) -> int:
         from kitt.cli.commands import handle_learn_command
 
         return handle_learn_command(args)
+
+    if args.subcommand == "vm":
+        from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
+        import json as _json
+        try:
+            if args.vm_action == "doctor":
+                result = inspect_profile(args.profile)
+                print(_json.dumps(result))
+                return 0
+            result = run_vm_job(args.profile, args.goal)
+            print(_json.dumps(result, ensure_ascii=False))
+            return 0 if result["guest"]["status"] == "PASS" else 2
+        except (VMError, OSError, ValueError) as exc:
+            print(f"VM supervision blocked: {exc}", file=sys.stderr)
+            return 2
 
     if args.subcommand == "doctor":
         from kitt.cli.commands import handle_doctor_command
