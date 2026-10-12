@@ -101,11 +101,11 @@ def _read_profile(path: Path) -> dict:
 
 
 def build_image(*, runtime: str, image: str, profile: str = "full") -> dict:
-    executable = _runtime(runtime)
     if image not in ("qemu", "toolbox"):
         raise VMError("Choose image qemu or toolbox")
     if image == "toolbox" and profile not in ("base", "wine", "full"):
         raise VMError("Unknown Linux RE toolbox profile")
+    executable = _runtime(runtime)
     dockerfile = ASSETS / ("Dockerfile.qemu" if image == "qemu" else "Dockerfile.re")
     if not dockerfile.is_file():
         raise VMError("VM container assets are missing from installation")
@@ -127,6 +127,7 @@ def pull_image(*, runtime: str, image: str, profile: str = "full") -> dict:
         raise VMError("Choose image qemu or toolbox")
     if image == "toolbox" and profile not in ("base", "wine", "full"):
         raise VMError("Unsupported RE image profile")
+    executable = _runtime(runtime)
     published = ("ghcr.io/rfdetoni/kitt-qemu-vm:" + VERSION if image == "qemu"
                  else "ghcr.io/rfdetoni/kitt-linux-re:" + profile + "-" + VERSION)
     local = IMAGES["qemu"] if image == "qemu" else IMAGES[profile]
