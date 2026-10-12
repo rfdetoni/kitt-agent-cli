@@ -35,6 +35,8 @@ class ContainerVMTests(unittest.TestCase):
     def exec_fake(self, argv, **kw):
         self.executed.append(argv)
         if "image" in argv and "inspect" in argv:
+            if "--format" in argv:
+                return SimpleNamespace(returncode=0, stdout=b"sha256:" + b"a" * 64 + b"\n", stderr=b"")
             return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
         if "info" in argv and "qemu-img" in argv:
             return SimpleNamespace(returncode=0, stdout=b'{"format":"qcow2"}', stderr=b"")
@@ -76,6 +78,8 @@ class ContainerVMTests(unittest.TestCase):
         self.disk.unlink()
         self.assertEqual(_read_profile(path)["kind"], "qcow2")
         self.assertTrue((self.output / "disk.qcow2").is_file())
+        self.assertEqual((self.output / "viewer-password").stat().st_mode & 0o777, 0o600)
+        self.assertIn("kitt:{SHA}", (self.output / "vnc.htpasswd").read_text())
 
     def test_qemu_args_are_bounded_localhost_only_and_drop_caps(self):
         with patch("kitt.vm_container.os.access", return_value=True), \
@@ -83,7 +87,7 @@ class ContainerVMTests(unittest.TestCase):
             args = _run_args(
                     {"os": "linux", "name": "kitt-vm-test", "kind": "iso",
                      "state": str(self.root), "runtime": "podman", "port": 18006,
-                     "source": str(self.iso), "memory_mib": 2048,
+                     "source": str(self.iso), "image_id": "sha256:" + "a" * 64, "memory_mib": 2048,
                      "cpus": 2, "disk_gib": 32},
                 binary="podman", install=True, allow_tcg=False,
             )
@@ -94,6 +98,9 @@ class ContainerVMTests(unittest.TestCase):
         self.assertIn("--group-add=keep-groups", args)
         self.assertIn("/dev/kvm", args)
         self.assertIn("readonly", " ".join(args))
+        self.assertIn("dst=/run/secrets/kitt-vnc.htpasswd,readonly", " ".join(args))
+        self.assertEqual(args[-1], "sha256:" + "a" * 64)
+        self.assertNotIn("--rm", args)
         self.assertNotIn("--privileged", args)
         self.assertNotIn("/var/run/docker.sock", " ".join(args))
         self.assertNotIn("--network=host", args)
