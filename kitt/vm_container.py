@@ -40,7 +40,7 @@ def _runtime(name: str, *, verify: bool = True) -> str:
     if not binary:
         raise VMError(f"{name} not installed; install it or choose native QEMU")
     if verify:
-        probe = subprocess.run([binary, "info", "--format", "{{.Host.Arch}}"],
+        probe = subprocess.run([binary, "info"],
                                capture_output=True, timeout=20, check=False)
         if probe.returncode:
             raise VMError(f"{name} runtime is not responding to current user")
@@ -91,9 +91,10 @@ def _read_profile(path: Path) -> dict:
         raise VMError("Profile state must be its own private directory")
     if state.is_symlink() or (stat.S_IMODE(state.stat().st_mode) & 0o077):
         raise VMError("VM state directory must be private")
-    source = _path(obj["source"], exists=True)
-    if _sha256(source) != obj["source_sha256"]:
-        raise VMError("Guest image has changed since creation")
+    if obj["kind"] == "iso":
+        source = _path(obj["source"], exists=True)
+        if _sha256(source) != obj["source_sha256"]:
+            raise VMError("Guest installation ISO changed since creation")
     if obj["kind"] == "qcow2" and not (state / "disk.qcow2").is_file():
         raise VMError("Imported QCOW2 disk missing")
     return obj
@@ -223,7 +224,8 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
     if profile["runtime"] == "podman":
         args.extend(["--userns=keep-id", "--group-add=keep-groups"])
     if has_kvm:
-        args.extend(["--device", "/dev/kvm"])
+        args.extend(["--device", "/dev/kvm", "--group-add",
+                     str(Path("/dev/kvm").stat().st_gid)])
     if install:
         args.extend(["--mount", f"type=bind,src={profile['source']},dst=/input/installer.iso,readonly"])
     args.extend([
