@@ -505,7 +505,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--distro", choices=["debian", "ubuntu", "kali", "fedora", "arch", "other"])
     create.add_argument("--tools", choices=["minimal", "re", "wine", "full"])
     create.add_argument("--yes", action="store_true", help="Skip prompts; requires --os and --source")
-    create.add_argument("--backend", choices=["native", "docker", "podman"], default="native")
+    create.add_argument("--backend", choices=["native", "docker", "podman"])
     create.add_argument("--port", type=int, default=18006, help="Host-only noVNC web port for Docker/Podman guests")
     containers = vm_commands.add_parser("container", help="QEMU guests and Linux RE toolbox in Docker/Podman")
     container_commands = containers.add_subparsers(dest="container_action", required=True)
@@ -519,7 +519,7 @@ def build_parser() -> argparse.ArgumentParser:
     container_pull.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_doctor = container_commands.add_parser("doctor", help="Check Docker/Podman and KVM")
     container_doctor.add_argument("--runtime", choices=["docker", "podman"], default="podman")
-    for op in ("start", "stop", "logs", "status"):
+    for op in ("start", "stop", "logs", "status", "credentials"):
         command = container_commands.add_parser(op)
         command.add_argument("--profile", type=Path, required=True)
         if op == "start":
@@ -887,6 +887,8 @@ def main(argv=None) -> int:
                 elif args.container_action == "toolbox":
                     return vm_container.toolbox(runtime=args.runtime, profile=args.profile,
                                                 workspace=args.workspace)
+                elif args.container_action == "credentials":
+                    result = vm_container.credentials(args.profile)
                 elif args.container_action == "start":
                     result = vm_container.start_vm(args.profile, install=args.install,
                                                     allow_tcg=args.allow_tcg)
@@ -903,11 +905,15 @@ def main(argv=None) -> int:
                     distro=args.distro, tools=args.tools, yes=args.yes,
                     backend=args.backend, port=args.port,
                 )
+                config = _json.loads(profile.read_text("utf-8")) if profile.is_file() else {}
+                is_container = config.get("runtime") in ("docker", "podman")
+                already_installed = args.kind == "qcow2" or (args.source is not None and args.source.suffix.lower() == ".qcow2")
+                action = "start" if already_installed else "install"
+                next_cmd = (f"kitt vm container start --profile {profile}" +
+                            (" --install" if action == "install" else "")
+                            if is_container else f"kitt vm {system} {action} --profile {profile}")
                 print(_json.dumps({"created": True, "system": system,
-                                   "profile": str(profile),
-                                   "next": (f"kitt vm container start --profile {profile} --install"
-                                            if args.backend != "native" else
-                                            f"kitt vm {system} install --profile {profile}")},
+                                   "profile": str(profile), "next": next_cmd},
                                   ensure_ascii=False))
                 return 0
             if args.vm_action == "linux":
