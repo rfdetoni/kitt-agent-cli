@@ -32,7 +32,13 @@ set -- -nodefaults -no-user-config -machine q35,accel=kvm:tcg \
   -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 \
   -device usb-tablet,bus=xhci.0 \
   -drive file=/state/disk.qcow2,format=qcow2,if=ide,index=0,media=disk \
-  -nic none
+if [ "${KITT_PROBE_SSH:-0}" = 1 ]; then
+  # Only host -> guest SSH. QEMU user networking blocks guest egress.
+  set -- "$@" -netdev user,id=kitt-probe,restrict=on,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 \
+    -device e1000,netdev=kitt-probe
+else
+  set -- "$@" -nic none
+fi
 if [ "$KITT_SOURCE_KIND" = iso ] && [ "$KITT_INSTALL" = 1 ]; then
   test -f /input/installer.iso || { echo "User ISO missing" >&2; exit 2; }
   set -- "$@" -boot order=d \
