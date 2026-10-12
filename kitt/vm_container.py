@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 from .vm_supervisor import VMError
-from .vm_windows import _path, _sha256, _qcow2_info
+from .vm_windows import _path, _sha256
 
 VERSION = "0.86.8"
 IMAGES = {
