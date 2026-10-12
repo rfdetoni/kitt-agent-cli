@@ -492,6 +492,19 @@ def build_parser() -> argparse.ArgumentParser:
         "vm", parents=[common], help="Run autonomous KITT inside an isolated QEMU guest",
     )
     vm_commands = vm_parser.add_subparsers(dest="vm_action", required=True)
+    create = vm_commands.add_parser("create", aliases=["wizard"],
+                                    help="Interactive Windows/Linux VM helper; asks for ISO/QCOW2 path")
+    create.add_argument("--os", choices=["windows", "linux"], dest="vm_os")
+    create.add_argument("--source", type=Path, help="User-provided ISO or standalone QCOW2")
+    create.add_argument("--kind", choices=["iso", "qcow2"])
+    create.add_argument("--destination", type=Path)
+    create.add_argument("--memory-mib", type=int, default=4096)
+    create.add_argument("--cpus", type=int, default=2)
+    create.add_argument("--disk-gib", type=int, default=64)
+    create.add_argument("--variant", choices=["official", "tiny11", "tiny11-core", "custom"])
+    create.add_argument("--distro", choices=["debian", "ubuntu", "kali", "fedora", "arch", "other"])
+    create.add_argument("--tools", choices=["minimal", "re", "wine", "full"])
+    create.add_argument("--yes", action="store_true", help="Skip prompts; requires --os and --source")
     vm_run = vm_commands.add_parser("run", help="Start a disposable, pinned guest")
     vm_run.add_argument("--profile", type=Path, required=True)
     vm_run.add_argument("--goal", required=True)
@@ -838,6 +851,19 @@ def main(argv=None) -> int:
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
         try:
+            if args.vm_action in ("create", "wizard"):
+                from kitt.vm_helper import create_vm
+                system, profile = create_vm(
+                    system=args.vm_os, source=args.source, kind=args.kind,
+                    destination=args.destination, memory_mib=args.memory_mib,
+                    cpus=args.cpus, disk_gib=args.disk_gib, variant=args.variant,
+                    distro=args.distro, tools=args.tools, yes=args.yes,
+                )
+                print(_json.dumps({"created": True, "system": system,
+                                   "profile": str(profile),
+                                   "next": f"kitt vm {system} install --profile {profile}"},
+                                  ensure_ascii=False))
+                return 0
             if args.vm_action == "linux":
                 from kitt.vm_linux import wizard as linux_wizard, boot as linux_boot
                 if args.linux_action == "prepare":
