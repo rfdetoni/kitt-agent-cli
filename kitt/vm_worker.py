@@ -39,10 +39,13 @@ def handle(request: dict, workspace: Path, *, runner=None) -> dict:
         "--contract", "--contract-yes", "--allow", "all", "-p", goal,
     ]
     call = runner or subprocess.run
+    child_env = dict(os.environ)
+    child_env["KITT_DAEMON"] = "0"
+    child_env["KITT_DAEMON_AUTO_START"] = "0"
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         result = call(
             args, cwd=workspace, stdin=subprocess.DEVNULL,
-            stdout=out, stderr=err, check=False, timeout=3500,
+            stdout=out, stderr=err, check=False, timeout=3500, env=child_env,
         )
         out.seek(0, os.SEEK_END)
         length = out.tell()
