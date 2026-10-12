@@ -58,7 +58,7 @@ def _pin_file(root: Path, path: str, expected: str) -> Path:
     return target
 
 
-def run_probe(root: Path, manifest_file: Path, name: str) -> dict:
+def run_probe(root: Path, manifest_file: Path, name: str, *, wine_binary: Path | None = None) -> dict:
     """Only call from an already isolated VM, never on an uncontrolled host."""
     if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         raise ProbeError('Invalid probe name')
@@ -73,40 +73,52 @@ def run_probe(root: Path, manifest_file: Path, name: str) -> dict:
     path = _pin_file(root, entry['path'], entry['sha256'])
     t0 = time.monotonic()
     timeout = False
-    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
-        process = subprocess.Popen(
-            [str(path)], cwd=root, stdin=subprocess.DEVNULL,
-            stdout=stdout_file, stderr=stderr_file,
-            start_new_session=(os.name == 'posix'),
-            env={k: v for k, v in os.environ.items()
-                 if k in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP')},
-        )
-        try:
-            code = process.wait(timeout=MAX_SECONDS)
-        except subprocess.TimeoutExpired:
-            code, timeout = None, True
-        finally:
-            # On POSIX, terminate remaining children in the guest probe process group.
-            if os.name == 'posix':
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            if process.poll() is None:
-                process.kill()
-            process.wait()
-        stdout_file.seek(0, os.SEEK_END)
-        stdout_size = stdout_file.tell()
-        stderr_file.seek(0, os.SEEK_END)
-        stderr_size = stderr_file.tell()
-        stdout_file.seek(0)
-        stderr_file.seek(0)
-        output = stdout_file.read(MAX_OUTPUT_BYTES)
-        error = stderr_file.read(MAX_OUTPUT_BYTES)
-        truncated = stdout_size > MAX_OUTPUT_BYTES or stderr_size > MAX_OUTPUT_BYTES
+    if wine_binary is not None:
+        if os.name != 'posix':
+            raise ProbeError("Wine guest execution requires Linux")
+        wine_binary = wine_binary.resolve(strict=True)
+        if not wine_binary.is_file() or not os.access(wine_binary, os.X_OK):
+            raise ProbeError("Wine executable must be installed by the VM operator")
+    with tempfile.TemporaryDirectory(prefix="kitt-wine-prefix-") as prefix:
+        guest_env = {k: v for k, v in os.environ.items()
+                     if k in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP')}
+        argv = [str(path)]
+        if wine_binary is not None:
+            argv = [str(wine_binary), str(path)]
+            guest_env['WINEPREFIX'] = prefix
+            guest_env['WINEDEBUG'] = '-all'
+            guest_env['HOME'] = prefix
+        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+            process = subprocess.Popen(
+                argv, cwd=root, stdin=subprocess.DEVNULL,
+                stdout=stdout_file, stderr=stderr_file,
+                start_new_session=(os.name == 'posix'), env=guest_env,
+            )
+            try:
+                code = process.wait(timeout=60 if wine_binary is not None else MAX_SECONDS)
+            except subprocess.TimeoutExpired:
+                code, timeout = None, True
+            finally:
+                if os.name == 'posix':
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+            stdout_file.seek(0, os.SEEK_END)
+            stdout_size = stdout_file.tell()
+            stderr_file.seek(0, os.SEEK_END)
+            stderr_size = stderr_file.tell()
+            stdout_file.seek(0)
+            stderr_file.seek(0)
+            output = stdout_file.read(MAX_OUTPUT_BYTES)
+            error = stderr_file.read(MAX_OUTPUT_BYTES)
+            truncated = stdout_size > MAX_OUTPUT_BYTES or stderr_size > MAX_OUTPUT_BYTES
     # Receipts identify observations, but are not cryptographic attestation of the guest.
     record = {'schema_version': 1, 'probe': name, 'probe_sha256': entry['sha256'],
-              'platform': platform.system(), 'release': platform.release(),
+              'platform': platform.system() + ('+Wine' if wine_binary is not None else ''), 'release': platform.release(),
               'exit_code': code, 'timed_out': timeout, 'truncated': truncated,
               'duration_ms': round((time.monotonic() - t0) * 1000, 2),
               'stdout': output.decode('utf-8', 'replace'),
@@ -121,9 +133,10 @@ def main() -> None:
     parser.add_argument('--probe-root', required=True, type=Path)
     parser.add_argument('--manifest', required=True, type=Path)
     parser.add_argument('--probe', required=True)
+    parser.add_argument('--wine-binary', type=Path, help='Operator-installed Wine binary (Linux VM only)')
     args = parser.parse_args()
     try:
-        print(json.dumps(run_probe(args.probe_root, args.manifest, args.probe)))
+        print(json.dumps(run_probe(args.probe_root, args.manifest, args.probe, wine_binary=args.wine_binary)))
     except (ProbeError, OSError, ValueError) as ex:
         print(json.dumps({'error': str(ex)}))
         raise SystemExit(2) from ex
