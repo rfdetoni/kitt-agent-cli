@@ -30,6 +30,14 @@ class ProbeEvidenceTests(unittest.TestCase):
         with self.assertRaises(EvidenceError):
             compare_probe_receipts(good, changed)
 
+    def test_boolean_exit_code_rejected(self):
+        good = receipt({"result": 1})
+        bad = dict(good, exit_code=False)
+        bad.pop("sha256")
+        bad["sha256"] = hashlib.sha256(json.dumps(bad, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        with self.assertRaises(EvidenceError):
+            compare_probe_receipts(good, bad)
+
     def test_timeout_rejected_even_with_correct_digest(self):
         good = receipt({"result": 1})
         bad = dict(good, timed_out=True)
