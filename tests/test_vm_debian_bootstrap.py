@@ -1,17 +1,14 @@
 """Fail-closed Debian bootstrap unit contracts; real QEMU boot is a separate gate."""
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 from pathlib import Path
-from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from kitt.vm_debian import (IMAGE, VMError, cloud_config, download_debian,
-                           expected_sha512, prepare_debian, _bootstrap_script)
+                           expected_sha512, prepare_debian)
 
 
 class DebianBootstrapTests(unittest.TestCase):
