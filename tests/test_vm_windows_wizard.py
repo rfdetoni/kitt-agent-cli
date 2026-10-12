@@ -104,6 +104,17 @@ class WindowsWizardTests(unittest.TestCase):
             prepare(linked, kind="iso", destination=self.out,
                     ovmf_code=self.code, ovmf_vars=self.vars)
 
+    def test_interactive_wizard_collects_resources_before_creation(self):
+        answers = ["tiny11", "6144", "4", "80", str(self.out), "sim"]
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=answers), \
+             patch("kitt.vm_windows.prepare", return_value=self.out / "profile.json") as make:
+            profile = wizard(source=self.iso, kind="iso")
+        self.assertEqual(profile, self.out / "profile.json")
+        self.assertEqual(make.call_args.kwargs["memory_mib"], 6144)
+        self.assertEqual(make.call_args.kwargs["cpus"], 4)
+        self.assertEqual(make.call_args.kwargs["disk_gib"], 80)
+        self.assertEqual(make.call_args.kwargs["variant"], "tiny11")
     def test_cli_is_opt_in_and_wizard_supports_scripts(self):
         parser = build_parser()
         normal = parser.parse_args(["-p", "Implement a REST endpoint"])
