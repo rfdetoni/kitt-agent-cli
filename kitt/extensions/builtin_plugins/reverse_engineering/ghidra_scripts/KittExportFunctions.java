@@ -2,6 +2,7 @@
 //@category KITT
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionIterator;
 import java.io.BufferedWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -34,8 +35,10 @@ public class KittExportFunctions extends GhidraScript {
         try (BufferedWriter writer = Files.newBufferedWriter(
                 Path.of(args[0]), StandardCharsets.UTF_8)) {
             writer.write("{\"language\":" + quote(currentProgram.getLanguage().toString()) + ",\"functions\":[");
-            for (Function function : currentProgram.getFunctionManager().getFunctions(true)) {
+            FunctionIterator functions = currentProgram.getFunctionManager().getFunctions(true);
+            while (functions.hasNext()) {
                 monitor.checkCancelled();
+                Function function = functions.next();
                 if (count == 512) {
                     truncated = true;
                     break;
