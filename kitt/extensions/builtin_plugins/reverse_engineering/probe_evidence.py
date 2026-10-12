@@ -11,6 +11,15 @@ from typing import Any
 from .evidence import EvidenceError, compare
 
 
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise EvidenceError("Probe observation has duplicate JSON fields")
+        result[key] = value
+    return result
+
+
 def _verify(receipt: Any) -> dict:
     if not isinstance(receipt, dict):
         raise EvidenceError("Probe receipt must be an object")
@@ -34,7 +43,8 @@ def _verify(receipt: Any) -> dict:
     if not isinstance(receipt["stdout"], str) or len(receipt["stdout"]) > 65536:
         raise EvidenceError("Invalid probe observation")
     try:
-        output = json.loads(receipt["stdout"])
+        output = json.loads(receipt["stdout"], object_pairs_hook=_unique_pairs,
+                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite JSON")))
     except (ValueError, TypeError) as ex:
         raise EvidenceError("Probe did not emit one JSON observation") from ex
     if not isinstance(output, dict):
