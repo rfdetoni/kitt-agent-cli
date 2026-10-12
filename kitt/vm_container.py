@@ -503,6 +503,7 @@ def toolbox(*, runtime: str, profile: str, workspace: Path) -> int:
     if profile not in ("base", "wine", "full"):
         raise VMError("Invalid Linux RE profile")
     binary = _runtime(runtime)
+    pinned_toolbox = _image_id(binary, IMAGES[profile])
     path = _path(workspace)
     if not path.is_dir() or path.is_symlink():
         raise VMError("Workspace must be an existing directory")
@@ -512,7 +513,7 @@ def toolbox(*, runtime: str, profile: str, workspace: Path) -> int:
             "--network", "none", "--cap-drop=ALL", "--security-opt=no-new-privileges",
             "--user", f"{os.getuid()}:{os.getgid()}",
             "--mount", f"type=bind,src={path},dst=/workspace",
-            "--workdir", "/workspace", IMAGES[profile], "/bin/sh"]
+            "--workdir", "/workspace", pinned_toolbox, "/bin/sh"]
     if runtime == "podman":
         argv[2:2] = ["--userns=keep-id"]
     return subprocess.run(argv, check=False).returncode
