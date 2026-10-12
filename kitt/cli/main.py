@@ -507,6 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--yes", action="store_true", help="Skip prompts; requires --os and --source")
     create.add_argument("--backend", choices=["native", "docker", "podman"])
     create.add_argument("--port", type=int, default=18006, help="Host-only noVNC web port for Docker/Podman guests")
+    create.add_argument("--probe-port", type=int, default=0, help="Optional host-only SSH guest probe port (0=disabled)")
     containers = vm_commands.add_parser("container", help="QEMU guests and Linux RE toolbox in Docker/Podman")
     container_commands = containers.add_subparsers(dest="container_action", required=True)
     container_build = container_commands.add_parser("build", help="Build QEMU runner or preinstalled Linux RE toolbox image")
@@ -928,7 +929,7 @@ def main(argv=None) -> int:
                     destination=args.destination, memory_mib=args.memory_mib,
                     cpus=args.cpus, disk_gib=args.disk_gib, variant=args.variant,
                     distro=args.distro, tools=args.tools, yes=args.yes,
-                    backend=args.backend, port=args.port,
+                    backend=args.backend, port=args.port, probe_port=args.probe_port,
                 )
                 config = _json.loads(profile.read_text("utf-8")) if profile.is_file() else {}
                 is_container = config.get("runtime") in ("docker", "podman")
