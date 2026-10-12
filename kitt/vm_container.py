@@ -122,7 +122,6 @@ def build_image(*, runtime: str, image: str, profile: str = "full") -> dict:
 
 def pull_image(*, runtime: str, image: str, profile: str = "full") -> dict:
     """Explicitly fetch prebuilt GHCR image; never auto-pull during VM execution."""
-    executable = _runtime(runtime)
     if image not in ("qemu", "toolbox"):
         raise VMError("Choose image qemu or toolbox")
     if image == "toolbox" and profile not in ("base", "wine", "full"):
@@ -241,8 +240,9 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
     if profile["runtime"] == "podman":
         args.extend(["--userns=keep-id", "--group-add=keep-groups"])
     if has_kvm:
-        args.extend(["--device", "/dev/kvm", "--group-add",
-                     str(Path("/dev/kvm").stat().st_gid)])
+        args.extend(["--device", "/dev/kvm"])
+        if profile["runtime"] == "docker":
+            args.extend(["--group-add", str(Path("/dev/kvm").stat().st_gid)])
     if install:
         args.extend(["--mount", f"type=bind,src={profile['source']},dst=/input/installer.iso,readonly"])
     args.extend([
