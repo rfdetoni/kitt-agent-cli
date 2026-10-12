@@ -191,6 +191,8 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
     if type(timeout_seconds) is not int or not 180 <= timeout_seconds <= 3600:
         raise VMError("Bootstrap timeout must be 180..3600 seconds")
     destination = destination.expanduser().absolute()
+    if any(c in str(destination) for c in (",", "\n", "\r", "\x00")):
+        raise VMError("Unsafe VM storage path for QEMU")
     if destination.is_symlink():
         raise VMError("VM destination may not be a symlink")
     if destination.exists():
