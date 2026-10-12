@@ -7,6 +7,11 @@ This module is exclusively an operator-invoked CLI entry point.
 from __future__ import annotations
 
 import hashlib
+import base64
+import secrets
+import time
+import urllib.request
+import urllib.error
 import json
 import os
 from pathlib import Path
@@ -20,7 +25,7 @@ import tempfile
 from .vm_supervisor import VMError
 from .vm_windows import _path, _sha256
 
-VERSION = "0.86.8"
+VERSION = "0.86.9"
 IMAGES = {
     "qemu": f"kitt/qemu-vm:{VERSION}",
     "base": f"kitt/linux-re:base-{VERSION}",
@@ -72,12 +77,14 @@ def _read_profile(path: Path) -> dict:
     except (ValueError, UnicodeError, RecursionError) as ex:
         raise VMError("Invalid VM container profile") from ex
     fields = {"version", "name", "os", "kind", "source", "source_sha256",
-              "state", "runtime", "memory_mib", "cpus", "disk_gib", "port"}
+              "state", "runtime", "memory_mib", "cpus", "disk_gib", "port", "image_id"}
     if not isinstance(obj, dict) or set(obj) != fields or obj["version"] != 1:
         raise VMError("Unknown VM profile schema")
     if (obj["os"] not in ("windows", "linux") or obj["kind"] not in ("iso", "qcow2")
             or obj["runtime"] not in RUNTIMES or not isinstance(obj["name"], str)
             or not NAME.fullmatch(obj["name"])
+            or not isinstance(obj["image_id"], str)
+            or not re.fullmatch(r"sha256:[a-f0-9]{64}", obj["image_id"])
             or not isinstance(obj["source_sha256"], str)
             or not re.fullmatch(r"[a-f0-9]{64}", obj["source_sha256"])
             or any(type(obj[k]) is not int for k in ("memory_mib", "cpus", "disk_gib", "port"))
@@ -97,6 +104,8 @@ def _read_profile(path: Path) -> dict:
             raise VMError("Guest installation ISO changed since creation")
     if obj["kind"] == "qcow2" and not (state / "disk.qcow2").is_file():
         raise VMError("Imported QCOW2 disk missing")
+    _private_file(state / "viewer-password")
+    _private_file(state / "vnc.htpasswd")
     return obj
 
 
@@ -147,6 +156,35 @@ def _image_ready(binary: str) -> None:
         raise VMError(f"Build QEMU image first: kitt vm container build --runtime {Path(binary).name} --image qemu")
 
 
+def _image_id(binary: str, tag: str) -> str:
+    result = subprocess.run([binary, "image", "inspect", "--format", "{{.Id}}", tag],
+                            capture_output=True, timeout=20, check=False)
+    ref = result.stdout.decode("ascii", "replace").strip()
+    if result.returncode or not re.fullmatch(r"sha256:[a-f0-9]{64}", ref):
+        raise VMError("Image must have an inspectable immutable sha256 ID")
+    return ref
+
+
+def _viewer_auth(state: Path) -> None:
+    password = secrets.token_urlsafe(32)
+    credentials = state / "viewer-password"
+    credentials.write_text(password + "\n", encoding="ascii")
+    credentials.chmod(0o600)
+    digest = base64.b64encode(hashlib.sha1(password.encode("ascii")).digest()).decode("ascii")
+    auth = state / "vnc.htpasswd"
+    auth.write_text("kitt:{SHA}" + digest + "\n", encoding="ascii")
+    auth.chmod(0o600)
+
+
+def credentials(profile_file: Path) -> dict:
+    info = _read_profile(profile_file)
+    password = _private_file(Path(info["state"]) / "viewer-password").read_text("ascii").strip()
+    if len(password) < 32:
+        raise VMError("Missing protected viewer credentials")
+    return {"username": "kitt", "password": password,
+            "viewer": f"http://127.0.0.1:{info['port']}/vnc.html"}
+
+
 def _qcow2_validate(binary: str, path: Path) -> None:
     """Inspect QCOW2 inside locally built runner, without opening it as a host drive."""
     _image_ready(binary)
@@ -176,6 +214,7 @@ def prepare_vm(*, runtime: str, system: str, source: Path, destination: Path,
         raise VMError("QEMU container backend requires Linux host")
     binary = _runtime(runtime)
     _image_ready(binary)
+    image_id = _image_id(binary, IMAGES["qemu"])
     if system not in ("windows", "linux") or kind not in ("iso", "qcow2"):
         raise VMError("Unsupported guest format")
     if any(type(x) is not int for x in (memory_mib, cpus, disk_gib, port)):
@@ -206,10 +245,11 @@ def prepare_vm(*, runtime: str, system: str, source: Path, destination: Path,
         profile = {
             "version": 1, "name": name, "os": system, "kind": kind,
             "source": str(src), "source_sha256": _sha256(src),
-            "state": str(dest), "runtime": runtime,
+            "state": str(dest), "runtime": runtime, "image_id": image_id,
             "memory_mib": memory_mib, "cpus": cpus,
             "disk_gib": disk_gib, "port": port,
         }
+        _viewer_auth(stage)
         (stage / "profile.json").write_text(json.dumps(profile, indent=2) + "\n")
         (stage / "profile.json").chmod(0o600)
         stage.rename(dest)
@@ -226,7 +266,7 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
         raise VMError("No accessible /dev/kvm; use native QEMU or explicit --allow-tcg")
     state = Path(profile["state"])
     args = [
-        binary, "run", "--rm", "-d", "--name", profile["name"],
+        binary, "run", "-d", "--name", profile["name"],
         "--pull", "never",
         "--cap-drop=ALL", "--security-opt=no-new-privileges",
         "--pids-limit", "256", "--memory", f"{profile['memory_mib'] + 1024}m",
@@ -236,6 +276,7 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
         "-p", f"127.0.0.1:{profile['port']}:8006",
         "--user", f"{os.getuid()}:{os.getgid()}",
         "--mount", f"type=bind,src={state},dst=/state",
+        "--mount", f"type=bind,src={state / 'vnc.htpasswd'},dst=/run/secrets/kitt-vnc.htpasswd,readonly",
     ]
     if profile["runtime"] == "podman":
         args.extend(["--userns=keep-id", "--group-add=keep-groups"])
@@ -252,7 +293,7 @@ def _run_args(profile: dict, *, binary: str, install: bool, allow_tcg: bool) -> 
         "--env", f"KITT_CPUS={profile['cpus']}",
         "--env", f"KITT_DISK_GIB={profile['disk_gib']}",
         "--env", f"KITT_INSTALL={int(install)}",
-        IMAGES["qemu"],
+        profile["image_id"],
     ])
     return args
 
