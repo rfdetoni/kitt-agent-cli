@@ -20,6 +20,7 @@ def create_vm(
     variant: str | None = None, distro: str | None = None,
     tools: str | None = None, yes: bool = False,
     backend: str | None = None, port: int = 18006,
+    probe_port: int = 0,
 ) -> tuple[str, Path]:
     """Ask which guest to create, request the media path, delegate safely."""
     if system is None:
@@ -85,7 +86,8 @@ def create_vm(
         result = prepare_vm(
             runtime=backend, system=system, source=path,
             kind=selected_kind, destination=destination or default_dest,
-            memory_mib=memory_mib, cpus=cpus, disk_gib=disk_gib, port=port,
+            memory_mib=memory_mib, cpus=cpus, disk_gib=disk_gib,
+            port=port, probe_port=probe_port,
         )
         return system, result
     if system == "windows":
