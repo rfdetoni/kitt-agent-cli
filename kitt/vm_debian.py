@@ -13,19 +13,17 @@ import os
 from pathlib import Path
 import re
 import shutil
-import signal
-import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.request
-from uuid import uuid4
 
 from .vm_supervisor import VMError, _check_image, _forward_port, _profile, _ssh_args, _terminate_group
 
 BASE = "https://cloud.debian.org/images/cloud/trixie/latest/"
+MIRROR = "https://cloudfront.debian.net/cdimage/cloud/trixie/latest/"
 IMAGE = "debian-13-genericcloud-amd64.qcow2"
 MAX_IMAGE_BYTES = 2 * 1024 ** 3
 MAX_SUMS_BYTES = 128 * 1024
@@ -45,7 +43,7 @@ def _read_https(url: str, max_bytes: int) -> bytes:
     if not url.startswith(BASE):
         raise VMError("Only the official Debian Cloud image directory is accepted")
     with urllib.request.urlopen(url, timeout=40) as response:
-        if not response.url.startswith(BASE) or response.status != 200:
+        if not (response.url.startswith(BASE) or response.url.startswith(MIRROR)) or response.status != 200:
             raise VMError("Debian download redirected outside the official mirror")
         data = response.read(max_bytes + 1)
     if len(data) > max_bytes:
