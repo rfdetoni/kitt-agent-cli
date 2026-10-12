@@ -1,5 +1,4 @@
 """Ensure the opt-in plugin uses the existing MCP authority boundary."""
-import asyncio
 from pathlib import Path
 import tempfile
 import unittest
@@ -22,7 +21,7 @@ class PluginRegistrationTests(unittest.IsolatedAsyncioTestCase):
             args, kwargs = api.register_stdio.call_args
             self.assertEqual(args[0], "reverse-engineering")
             self.assertEqual(kwargs["trust"], "restricted")
-            self.assertEqual(kwargs["allow_tools"], ["binary_inspect", "evidence_compare"])
+            self.assertEqual(kwargs["allow_tools"], ["binary_inspect", "evidence_compare", "evidence_probe_compare"])
             self.assertFalse("shell" in str(kwargs))
             await handle.stop()
             api.unregister_owned.assert_awaited_once()
