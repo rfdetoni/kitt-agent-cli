@@ -11,6 +11,15 @@ from .evidence import EvidenceError, compare
 from .probe_evidence import compare_probe_receipts
 
 VERSION = "2024-11-05"
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON field")
+        result[key] = value
+    return result
+
+
 TOOLS = [
     {"name": "binary_inspect", "description": "Read-only PE/ELF headers and SHA256, maximum 64 MiB, workspace relative.",
      "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}},
@@ -30,6 +39,8 @@ def respond(request: dict, workspace: Path) -> dict | None:
     if "id" not in request:
         return None
     request_id = request["id"]
+    if isinstance(request_id, bool) or not isinstance(request_id, (int, str)):
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request ID"}}
     method = request.get("method")
     try:
         if method == "initialize":
@@ -73,7 +84,7 @@ def main() -> None:
         if len(line) > 2 * 1024 * 1024:
             continue
         try:
-            msg = json.loads(line)
+            msg = json.loads(line, object_pairs_hook=_unique_pairs, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite number")))
         except (ValueError, TypeError):
             reply = {"jsonrpc": "2.0", "id": None,
                      "error": {"code": -32700, "message": "Parse error"}}
