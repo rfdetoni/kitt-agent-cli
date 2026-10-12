@@ -19,7 +19,16 @@ MAX_OUTPUT = 256 * 1024
 
 
 def handle(request: dict, workspace: Path, *, runner=None) -> dict:
-    if not isinstance(request, dict) or set(request) != {"version", "method", "goal"}:
+    if not isinstance(request, dict) or type(request.get("version")) is not int or request["version"] != 1:
+        raise ValueError("Invalid VM worker version")
+    if request.get("method") == "vm.health" and set(request) == {"version", "method"}:
+        from kitt import __version__
+        if not Path("/var/lib/kitt-bootstrap-ok").is_file():
+            raise ValueError("Guest bootstrap not complete")
+        return {"version": 1, "status": "READY",
+                "python_minor": f"{sys.version_info.major}.{sys.version_info.minor}",
+                "agent_version": __version__}
+    if set(request) != {"version", "method", "goal"}:
         raise ValueError("Invalid VM worker request")
     if type(request["version"]) is not int or request["version"] != 1 or request["method"] != "agent.run":
         raise ValueError("Unknown VM worker request")
@@ -70,8 +79,16 @@ def main() -> None:
     raw = sys.stdin.buffer.readline(MAX_REQUEST + 1)
     if not raw or len(raw) > MAX_REQUEST or not raw.endswith(b"\n"):
         raise SystemExit(2)
+    def unique_pairs(pairs):
+        obj = {}
+        for key, value in pairs:
+            if key in obj:
+                raise ValueError("Duplicate worker request key")
+            obj[key] = value
+        return obj
     try:
-        request = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite")))
+        request = json.loads(raw, object_pairs_hook=unique_pairs,
+                             parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite")))
         result = handle(request, args.workspace)
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         result = {"version": 1, "status": "BLOCKED", "error": type(error).__name__}
