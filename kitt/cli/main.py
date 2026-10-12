@@ -525,6 +525,11 @@ def build_parser() -> argparse.ArgumentParser:
         if op == "start":
             command.add_argument("--install", action="store_true", help="Boot ISO for first OS installation")
             command.add_argument("--allow-tcg", action="store_true", help="Allow very slow software emulation")
+    container_snapshot = container_commands.add_parser("snapshot", help="Offline VM baseline save/restore/list")
+    container_snapshot.add_argument("--profile", type=Path, required=True)
+    container_snapshot.add_argument("--action", choices=["save", "restore", "list"], required=True)
+    container_snapshot.add_argument("--name", default="baseline")
+    container_snapshot.add_argument("--yes", action="store_true", help="Explicit approval required for restore")
     container_toolbox = container_commands.add_parser("toolbox", help="Open RE tools shell (trusted files only)")
     container_toolbox.add_argument("--runtime", choices=["docker", "podman"], default="podman")
     container_toolbox.add_argument("--profile", choices=["base", "wine", "full"], default="full")
@@ -889,6 +894,10 @@ def main(argv=None) -> int:
                                                 workspace=args.workspace)
                 elif args.container_action == "credentials":
                     result = vm_container.credentials(args.profile)
+                elif args.container_action == "snapshot":
+                    if args.action == "restore" and not args.yes:
+                        raise VMError("Restoring replaces the VM disk; pass --yes to confirm")
+                    result = vm_container.snapshot(args.profile, action=args.action, name=args.name)
                 elif args.container_action == "start":
                     result = vm_container.start_vm(args.profile, install=args.install,
                                                     allow_tcg=args.allow_tcg)
