@@ -14,7 +14,7 @@ class _Handle:
         self.ctx.mcp.register_stdio(
             "reverse-engineering", sys.executable,
             args=["-m", "kitt.extensions.builtin_plugins.reverse_engineering.server", "--workspace", str(workspace)],
-            enabled=True, trust="restricted", allow_tools=["binary_inspect", "evidence_compare", "evidence_probe_compare", "evidence_query"],
+            enabled=True, trust="restricted", allow_tools=["binary_inspect", "evidence_compare", "evidence_probe_compare", "evidence_query", "lab_mission_plan"],
             timeout_seconds=20.0, max_output_bytes=2 * 1024 * 1024,
         )
 
