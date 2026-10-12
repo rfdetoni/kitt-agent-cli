@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 from pathlib import Path
 import struct
 
@@ -100,8 +101,8 @@ def inspect_file(workspace: Path, relative_path: str) -> dict:
     except OSError as exc:
         raise BinaryInspectionError("Cannot open requested file") from exc
     try:
-        stat = os.fstat(fd)
-        if not os.path.isfile(target) or stat.st_size > MAX_BYTES:
+        stat_result = os.fstat(fd)
+        if not stat.S_ISREG(stat_result.st_mode) or stat_result.st_size > MAX_BYTES:
             raise BinaryInspectionError("Not a supported regular file or file exceeds size limit")
         with os.fdopen(fd, "rb", closefd=False) as stream:
             data = stream.read(MAX_BYTES + 1)
