@@ -29,7 +29,6 @@ BASE = "https://cloud.debian.org/images/cloud/trixie/latest/"
 IMAGE = "debian-13-genericcloud-amd64.qcow2"
 MAX_IMAGE_BYTES = 2 * 1024 ** 3
 MAX_SUMS_BYTES = 128 * 1024
-AGENT_SHA = "8c5bfcd4d155035ffcaaecef1b56ad53b617e9fb"
 UV_VERSION = "0.12.21"
 _ALLOWED_HEX = re.compile(r"^[0-9a-f]{128}$")
 
@@ -110,7 +109,7 @@ def _bootstrap_script(agent_sha: str) -> str:
     )
 
 
-def cloud_config(public_key: str, agent_sha: str = AGENT_SHA) -> str:
+def cloud_config(public_key: str, agent_sha: str) -> str:
     public_key = public_key.strip()
     fields = public_key.split()
     if len(fields) < 2 or fields[0] != "ssh-ed25519" or not re.fullmatch(r"[A-Za-z0-9+/=]+", fields[1]):
@@ -156,7 +155,7 @@ def _known_host(port: int, scan: str) -> str | None:
     return "kitt-sandbox ssh-ed25519 " + next(iter(keys)) + "\n"
 
 
-def _health(key: Path, known: Path, port: int, ssh: str) -> bool:
+def _health(key: Path, known: Path, port: int, ssh: str, version: str) -> bool:
     info = {"ssh_key": str(key), "known_hosts": str(known),
             "host_key_alias": "kitt-sandbox", "ssh_user": "kitt"}
     argv = _ssh_args(info, port, ssh)
@@ -170,14 +169,14 @@ def _health(key: Path, known: Path, port: int, ssh: str) -> bool:
         return (isinstance(response, dict)
                 and response.get("version") == 1
                 and response.get("status") == "READY"
-                and response.get("agent_version") == "0.86.7"
+                and response.get("agent_version") == version
                 and response.get("python_minor") == "3.14")
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return False
 
 
 def prepare_debian(destination: Path, *, gateway_port: int = 3000,
-                   timeout_seconds: int = 1200) -> Path:
+                   timeout_seconds: int = 1200, agent_sha: str | None = None) -> Path:
     """Create an immutable Debian guest and private supervisor profile once.
 
     Never edits an existing profile or installs privileged packages on host.
@@ -197,6 +196,17 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
             raise VMError("Existing VM directory is incomplete; refusing to overwrite")
         _check_image(_profile(profile), _program("qemu-img"))
         return profile
+
+    if agent_sha is None:
+        git = _program("git")
+        resolved = subprocess.run(
+            [git, "ls-remote", "https://github.com/rfdetoni/kitt-agent-cli.git",
+             "refs/heads/main"], capture_output=True, check=True, timeout=30, text=True,
+        )
+        agent_sha = resolved.stdout.partition("\t")[0]
+    if not isinstance(agent_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", agent_sha):
+        raise VMError("Cannot resolve an immutable KITT Agent revision")
+    from kitt import __version__ as expected_version
 
     dependencies = {name: _program(name) for name in
                     ("qemu-system-x86_64", "qemu-img", "cloud-localds",
@@ -220,7 +230,7 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
                        check=True, timeout=25, stdout=subprocess.DEVNULL)
         image.chmod(0o600)
         key, public = _ssh_identity(stage, dependencies["ssh-keygen"])
-        (stage / "user-data").write_text(cloud_config(public), encoding="utf-8")
+        (stage / "user-data").write_text(cloud_config(public, agent_sha), encoding="utf-8")
         (stage / "meta-data").write_text("instance-id: kitt-debian-seed\nlocal-hostname: kitt-agent\n", encoding="utf-8")
         seed = stage / "seed.iso"
         subprocess.run([dependencies["cloud-localds"], str(seed), str(stage / "user-data"),
@@ -250,7 +260,7 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
                         if line:
                             known.write_text(line, encoding="ascii")
                             known.chmod(0o600)
-                    if known.exists() and _health(key, known, port, dependencies["ssh"]):
+                    if known.exists() and _health(key, known, port, dependencies["ssh"], expected_version):
                         break
                     time.sleep(3)
                 else:
@@ -262,7 +272,7 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
             (stage / name).unlink(missing_ok=True)
         profile = {
             "version": 1, "image": str(destination / image.name),
-            "sha256": hashlib.file_digest(image.open("rb"), "sha256").hexdigest(),
+            "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
             "ssh_key": str(destination / key.name),
             "known_hosts": str(destination / "known_hosts"),
             "ssh_user": "kitt", "host_key_alias": "kitt-sandbox",
