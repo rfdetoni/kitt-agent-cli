@@ -31,10 +31,10 @@ class ProbeRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             probe = root / 'probe.exe'
-            probe.write_text('#!/bin/sh\\nprintf \'{\\\"value\\\":1}\\n\'\\n')
+            probe.write_text('#!/bin/sh\nprintf \'{"value":1}\'\n')
             probe.chmod(0o700)
             wine = root / 'fake-wine.sh'
-            wine.write_text('#!/bin/sh\\ntest -n "$WINEPREFIX" || exit 12\\nexec "$1"\\n')
+            wine.write_text('#!/bin/sh\ntest -n "$WINEPREFIX" || exit 12\nexec "$1"\n')
             wine.chmod(0o700)
             sha = hashlib.sha256(probe.read_bytes()).hexdigest()
             manifest = root / 'manifest.json'
