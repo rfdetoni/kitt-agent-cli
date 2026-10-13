@@ -5,6 +5,8 @@ from typing import Any
 from kitt.integrations.semantic import SemanticCodeIntelligence
 from kitt.runtime import core_runtime as _core
 from kitt.runtime.search_fallback import full_scan_search
+from kitt.runtime.read_batch import execute_read_batch
+from kitt.security.capabilities import CAP_REPO_READ
 from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt.security.workspace_mutations import delete_path, list_entries, move_path
 
@@ -18,7 +20,9 @@ OPERATION_SPECS = _core.OPERATION_SPECS
 class SafeRuntime(_core.SafeRuntime):
     """SafeRuntime facade adding optional semantic/security and filesystem adapters."""
 
-    operation_registry = OPERATION_REGISTRY
+    operation_registry = OPERATION_REGISTRY.extend({
+        'repo.batch_read': RuntimeOperationSpec('repo.batch_read', CAP_REPO_READ),
+    })
 
     @property
     def semantic(self) -> SemanticCodeIntelligence:
@@ -284,6 +288,11 @@ class SafeRuntime(_core.SafeRuntime):
         expected_approval_id,
         automatic_budget_reserved: bool = False,
     ):
+        if op == "repo.batch_read":
+            return execute_read_batch(
+                self, args, turn_id=turn_id, origin=origin,
+                capabilities=capabilities, security_context=security_context,
+            )
         if op == "repo.list":
             return self._op_repo_list(args, security_context)
         if op == "repo.write_file":

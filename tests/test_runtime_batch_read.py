@@ -1,0 +1,66 @@
+"""Batch never widens tool authority; responses stay correlated by identifier."""
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from kitt.runtime.safe_runtime import SafeRuntime, SafeRuntimeResult
+from kitt.security.capabilities import CAP_REPO_READ
+
+
+class ReadBatchTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runtime = SafeRuntime(Path(self.tmp.name), 'ws', 'conv')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, calls, caps=None):
+        return self.runtime.execute('repo.batch_read', {'calls': calls},
+                                    effective_capabilities=caps if caps is not None else {CAP_REPO_READ})
+
+    @staticmethod
+    def _read(identifier, path):
+        return {'id': identifier, 'operation': 'repo.read', 'arguments': {'path': path}}
+
+    def test_read_only_parallel_batch_maintains_order_and_receipts(self):
+        def fake_read(args, *_):
+            return SafeRuntimeResult(True, 'repo.read', data={'path': args['path']})
+        with patch.object(self.runtime, '_op_repo_read', side_effect=fake_read):
+            result = self._run([self._read('a', 'a.py'), self._read('b', 'b.py')])
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.metadata['parallel'], 2)
+        self.assertEqual([(x['id'], x['data']['path']) for x in result.data['calls']],
+                         [('a', 'a.py'), ('b', 'b.py')])
+
+    def test_invalid_batch_fails_before_first_execution(self):
+        bad = [
+            [self._read('a', 'a'), self._read('a', 'b')],
+            [self._read('a', 'a'), {'id': 'b', 'operation': 'repo.write_file',
+                                     'arguments': {'path': 'x', 'content': 'evil'}}],
+            [self._read('a', 'a'), {'id': 'b', 'operation': 'process.run',
+                                     'arguments': {'argv': ['sh']}}],
+            [self._read('x', 'a')] * 9,
+            [self._read('a', 'a'), self._read('b', '')],
+        ]
+        with patch.object(self.runtime, '_op_repo_read') as read:
+            for calls in bad:
+                with self.subTest(calls=calls):
+                    result = self._run(calls)
+                    self.assertFalse(result.success)
+            read.assert_not_called()
+
+    def test_missing_capability_and_per_call_error_fail_closed(self):
+        denied = self._run([self._read('a', 'a')], caps=set())
+        self.assertFalse(denied.success)
+        with patch.object(self.runtime, '_op_repo_read',
+                          return_value=SafeRuntimeResult(False, 'repo.read', error='denied')):
+            result = self._run([self._read('a', 'a')])
+        self.assertFalse(result.success)
+        self.assertFalse(result.data['calls'][0]['success'])
+        self.assertEqual(result.data['calls'][0]['error'], 'denied')
+
+
+if __name__ == '__main__':
+    unittest.main()
