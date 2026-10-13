@@ -94,6 +94,14 @@ def parse_validation_report(response: str) -> ContractValidationReport:
     return ContractValidationReport(verdict, evidence, issues, response[:12000])
 
 
+_VALIDATION_KAP2_EXAMPLE = (
+    "K2 F\nverdict: FAIL\nevidence[1]:\n  - specific current workspace evidence\n"
+    "issues[1]:\n  -\n    severity: P1\n"
+    "    location: affected file or requirement\n"
+    "    problem: concrete unproven requirement\n"
+    "    fix: smallest required correction\nK2/END"
+)
+
 class ContractValidator:
     """Run the independent read-only validation turn for one contract item."""
 
@@ -163,11 +171,7 @@ class ContractValidator:
             "n nonempty string rows; issues[n]: has exactly n objects with severity, location, "
             "problem and fix. For OK use issues[0]:. No JSON, fences or extra prose. "
             "FAIL example:\n"
-            "K2 F\nverdict: FAIL\nevidence[1]:\n  - specific current workspace evidence\n"
-            "issues[1]:\n  -\n    severity: P1\n"
-            "    location: affected file or requirement\n"
-            "    problem: concrete unproven requirement\n"
-            "    fix: smallest required correction\nK2/END"
+            _VALIDATION_KAP2_EXAMPLE
         )
         security = ExecutionSecurityContext(
             workspace_id=self.runtime.workspace_id,
