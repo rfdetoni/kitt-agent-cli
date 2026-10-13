@@ -1,3 +1,7 @@
+## Agent CLI 0.87.6 — KAP/2 host operations
+
+Host-enforced batches of read-only `repo.read`/`repo.list` calls, digest-bound positional read tables, SHA-256 revision references with CAS write receipts, and optimistic differential task-plan updates. Every operation remains subject to capability, policy, scope, replay and size limits. The textual KAP/2 grammar and HTTP JSON transport are unchanged. See [KAP/2 host operations](docs/KAP2_HOST_OPERATIONS.md) and [0.87.6 release notes](docs/RELEASE_0.87.6.md).
+
 ## Agent CLI 0.87.5 — KAP/2 independent validation
 
 Planning, contract review, independent validation, adversarial review and completion now request KAP/2 final envelopes, with typed issue objects and evidence lists. Regression tests decode the prompt examples. No host authorization changes.
