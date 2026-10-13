@@ -172,14 +172,21 @@ class AdversarialCodeReviewer:
                 "3. Prefer minimal fixes. Do not demand churn, style-only rewrites, or unrelated refactors.",
                 "4. Check tests themselves for weak assertions, mock-only validation, happy-path bias, and missing regressions.",
                 "5. If no required issue remains, APPROVE and explain the risks you checked in approval_evidence.",
-                "6. Return one KAP/1 ACTION FINAL with OBJECT content. Required fields: "
-                "STRING content.status = APPROVED or CHANGES_REQUIRED, "
-                "STRING content.summary, ARRAY content.reviewed_areas, ARRAY content.findings, "
-                "STRING content.approval_evidence. Findings have severity, category, title, "
-                "location, problem, impact, required_change, evidence (STRING), "
-                "confidence (DECIMAL) and required (BOOLEAN). For an empty result, "
-                "use ARRAY content.findings. For list entries use numeric paths. "
-                "End with KITT/END. No JSON, fences or additional prose.",
+                "6. Return exactly one KAP/2 K2 F structured envelope with required fields "
+                "status (APPROVED or CHANGES_REQUIRED), summary, reviewed_areas, findings, approval_evidence. "
+                "Every finding must include severity, category, title, location, problem, impact, "
+                "required_change, evidence, confidence (finite decimal), and required (boolean). "
+                "Use findings[n]: with exactly n indented object rows. Example:\n"
+                "K2 F\n"
+                "status: APPROVED\n"
+                "summary: No required defects\n"
+                "reviewed_areas[1]:\n"
+                "  - Tests\n"
+                "findings[0]:\n"
+                "approval_evidence: Source and validation checked\n"
+                "K2/END\n"
+                "Use nested '-'/two-space indentation for findings. No JSON, fences or additional prose."
+
             ]
         )
         return "\n".join(blocks)
