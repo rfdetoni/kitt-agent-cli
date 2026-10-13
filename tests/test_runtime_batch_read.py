@@ -1,6 +1,9 @@
 """Batch never widens tool authority; responses stay correlated by identifier."""
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -81,6 +84,39 @@ class ReadBatchTests(unittest.TestCase):
                 effective_capabilities={CAP_REPO_READ})
             self.assertFalse(denied.success)
             read.assert_not_called()
+
+    def test_parallel_batch_reads_serialize_retrieval_guard_mutations(self):
+        # Probe the state mutation critical section, not scheduling order.
+        guard = self.runtime.retrieval_guard
+        original_prune = guard._prune
+        in_prune = 0
+        max_concurrent = 0
+        counter_lock = Lock()
+
+        def instrumented_prune(now):
+            nonlocal in_prune, max_concurrent
+            with counter_lock:
+                in_prune += 1
+                max_concurrent = max(max_concurrent, in_prune)
+            try:
+                time.sleep(0.003)
+                return original_prune(now)
+            finally:
+                with counter_lock:
+                    in_prune -= 1
+
+        guard._prune = instrumented_prune
+        try:
+            def fake_read(args, *_):
+                return SafeRuntimeResult(True, 'repo.read', data={'path': args['path']})
+            with patch.object(self.runtime, '_op_repo_read', side_effect=fake_read):
+                calls = [self._read(chr(97 + i), f'{i}.txt') for i in range(8)]
+                result = self._run(calls)
+            self.assertTrue(result.success, result.error)
+            self.assertEqual(max_concurrent, 1)
+            self.assertEqual(len(result.data['calls']), 8)
+        finally:
+            guard._prune = original_prune
 
     def test_missing_capability_and_per_call_error_fail_closed(self):
         denied = self._run([self._read('a', 'a')], caps=set())
