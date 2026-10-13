@@ -46,6 +46,8 @@ class TurnEventBridge:
         self._last_invalidate = 0.0
         self._pending_invalidate = None
         self._daemon_bridge = None
+        self._daemon_setup_lock = asyncio.Lock()
+        self._turn_start_lock = asyncio.Lock()
         self._daemon_terminal = None
         self._event_loop = None
         self._queue_signal = None
@@ -167,6 +169,12 @@ class TurnEventBridge:
         )
 
     async def _ensure_daemon(self, conversation_id: str) -> bool:
+        # TUI startup, direct-tool actions and turn submission can all request
+        # the daemon concurrently. Only one may attach or configure it.
+        async with self._daemon_setup_lock:
+            return await self._ensure_daemon_unlocked(conversation_id)
+
+    async def _ensure_daemon_unlocked(self, conversation_id: str) -> bool:
         config = getattr(self.runtime, "config", None)
         if not getattr(config, "daemon_enabled", False):
             return False
@@ -239,6 +247,15 @@ class TurnEventBridge:
 
     async def start(self, prompt, conversation_id, explicit_files=frozenset(),
                     no_history=False, mode="auto"):
+        # is_active remains false while daemon bootstrap is awaiting IPC.
+        # Guard that window so simultaneous submit callbacks cannot send twice.
+        async with self._turn_start_lock:
+            return await self._start_unlocked(
+                prompt, conversation_id, explicit_files, no_history, mode
+            )
+
+    async def _start_unlocked(self, prompt, conversation_id, explicit_files,
+                              no_history, mode):
         if self._closed.is_set() or self.is_active:
             raise RuntimeError("A turn is already active")
         self._active_conversation_id = conversation_id
