@@ -5,7 +5,7 @@ from typing import Any
 from kitt.integrations.semantic import SemanticCodeIntelligence
 from kitt.runtime import core_runtime as _core
 from kitt.runtime.search_fallback import full_scan_search
-from kitt.runtime.read_batch import execute_read_batch
+from kitt.runtime.read_batch import execute_read_batch, POSITIONAL_DIGEST
 from kitt.runtime.revision_refs import execute_revision_ref
 from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_WRITE
 from kitt.security.workspace_fs import WorkspaceFileSystem
@@ -15,6 +15,7 @@ RuntimeOperationSpec = _core.RuntimeOperationSpec
 RuntimeOperationRegistry = _core.RuntimeOperationRegistry
 SafeRuntimeResult = _core.SafeRuntimeResult
 OPERATION_REGISTRY = _core.OPERATION_REGISTRY.extend({
+        'kap.capabilities': RuntimeOperationSpec('kap.capabilities', None),
         'repo.batch_read': RuntimeOperationSpec('repo.batch_read', CAP_REPO_READ),
         'repo.ref.create': RuntimeOperationSpec('repo.ref.create', CAP_REPO_READ, 'read_file'),
         'repo.ref.read': RuntimeOperationSpec('repo.ref.read', CAP_REPO_READ),
@@ -294,6 +295,20 @@ class SafeRuntime(_core.SafeRuntime):
         expected_approval_id,
         automatic_budget_reserved: bool = False,
     ):
+        if op == "kap.capabilities":
+            if args:
+                return SafeRuntimeResult(False, op, error="kap.capabilities requires no arguments")
+            return SafeRuntimeResult(True, op, data={
+                "grammar": "KAP/2",
+                "header": "K2",
+                "host_action": "K2 T kitt_runtime",
+                "features": ["repo.batch_read", "repo.ref.create", "repo.ref.read",
+                             "repo.ref.write", "plan.patch"],
+                "positional_schema_digest": POSITIONAL_DIGEST,
+                "frame_batch": False,
+                "early_stream_termination": False,
+                "metadata_version_negotiation": False,
+            })
         if op in {"repo.ref.create", "repo.ref.read", "repo.ref.write"}:
             return execute_revision_ref(self, op, args, security_context=security_context)
         if op == "repo.batch_read":
