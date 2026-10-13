@@ -1,3 +1,7 @@
+## Agent CLI 0.87.5 — KAP/2 independent validation
+
+The independent contract validator now requests typed KAP/2 final envelopes (with nested issue objects), matching planning and review. The actual output example is parsed by a regression test. No host authorization changes.
+
 ## Agent 0.87.4 — compact KAP/2 plans and reviews
 
 Planning, contract validation review and adversarial code review now request KAP/2 instead of legacy KAP/1; tests verify that the planning examples decode to the required structured task contract. Eliminates contradictory output instructions when using Reverse Proxy 5.3.0.
