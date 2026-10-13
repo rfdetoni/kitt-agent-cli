@@ -158,17 +158,16 @@ class ContractValidator:
             + ("\n".join(f"- {path}" for path in changed_paths[:64]) or "- none recorded")
             + "\n\nBounded workspace snapshot:\n"
             + (snapshot[:24000] or "[snapshot unavailable]")
-            + "\n\nReturn FAIL for any unproven requirement. Return exactly one KAP/1 ACTION FINAL "
-            "with OBJECT content, STRING content.verdict, ARRAY content.evidence and ARRAY content.issues. "
-            "Use numbered evidence strings. Each issue is an OBJECT with STRING severity, location, "
-            "problem and fix; do not use plain strings for issues. For OK use an empty ARRAY content.issues. "
-            "Do not put JSON inside TEXT content. FAIL example:\n"
-            "KITT/1\nACTION FINAL\nOBJECT content\nSTRING content.verdict = FAIL\n"
-            "ARRAY content.evidence\nSTRING content.evidence.0 = specific current workspace evidence\n"
-            "ARRAY content.issues\nOBJECT content.issues.0\nSTRING content.issues.0.severity = P1\n"
-            "STRING content.issues.0.location = affected file or requirement\n"
-            "STRING content.issues.0.problem = concrete unproven requirement\n"
-            "STRING content.issues.0.fix = smallest required correction\nKITT/END"
+            + "\n\nReturn FAIL for every unproven requirement. Respond ONLY with a single "
+            "structured KAP/2 K2 F envelope. verdict is OK or FAIL. evidence[n]: has exactly "
+            "n nonempty string rows; issues[n]: has exactly n objects with severity, location, "
+            "problem and fix. For OK use issues[0]:. No JSON, fences or extra prose. "
+            "FAIL example:\n"
+            "K2 F\nverdict: FAIL\nevidence[1]:\n  - specific current workspace evidence\n"
+            "issues[1]:\n  -\n    severity: P1\n"
+            "    location: affected file or requirement\n"
+            "    problem: concrete unproven requirement\n"
+            "    fix: smallest required correction\nK2/END"
         )
         security = ExecutionSecurityContext(
             workspace_id=self.runtime.workspace_id,
