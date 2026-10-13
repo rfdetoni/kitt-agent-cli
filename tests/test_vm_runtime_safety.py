@@ -95,6 +95,38 @@ class VMRuntimeSafety(unittest.TestCase):
             with self.assertRaises(VMError):
                 snapshot(self.profile, action="restore", name="clean")
 
+    def test_snapshot_rejects_tpm_symlinks_without_copying_outside_files(self):
+        (self.root / "disk.qcow2").write_bytes(b"guest disk")
+        outside = self.root / "secret"
+        outside.write_text("do not include in VM snapshot")
+        tpm = self.root / "tpm"
+        tpm.mkdir()
+        (tpm / "redirect").symlink_to(outside)
+        with patch("kitt.vm_container._read_profile", return_value=self.info), \
+             patch("kitt.vm_container._runtime", return_value="podman"), \
+             patch("kitt.vm_container._status", return_value="missing"):
+            with self.assertRaisesRegex(VMError, "Unsafe file"):
+                snapshot(self.profile, action="save", name="unsafe")
+        self.assertFalse((self.root / "snapshots" / "unsafe").exists())
+
+    def test_snapshot_restore_rejects_tampered_state_before_disk_change(self):
+        disk = self.root / "disk.qcow2"
+        disk.write_bytes(b"original")
+        tpm = self.root / "tpm"
+        tpm.mkdir()
+        (tpm / "data").write_text("original tpm")
+        with patch("kitt.vm_container._read_profile", return_value=self.info), \
+             patch("kitt.vm_container._runtime", return_value="podman"), \
+             patch("kitt.vm_container._status", return_value="missing"):
+            saved = snapshot(self.profile, action="save", name="clean")
+            disk.write_bytes(b"changed")
+            captured_tpm = Path(saved["saved"]) / "tpm"
+            (captured_tpm / "data").unlink()
+            (captured_tpm / "redirect").symlink_to(self.root / "disk.qcow2")
+            with self.assertRaisesRegex(VMError, "Unsafe file"):
+                snapshot(self.profile, action="restore", name="clean")
+        self.assertEqual(disk.read_bytes(), b"changed")
+
     def test_cli_lab_broker_and_snapshots_stay_explicit(self):
         parser = build_parser()
         vm = parser.parse_args(["vm", "lab", "doctor", "--hosts", str(self.profile)])
