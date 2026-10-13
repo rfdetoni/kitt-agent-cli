@@ -70,6 +70,20 @@ class TestProviderRuntimeContract(unittest.TestCase):
             res = adapter.list_models(base_url="https://api.openai.com", api_key="quota-key")
             self.assertEqual(res.status, ProviderDiscoveryStatus.RATE_LIMITED)
 
+    def test_compact_kap2_structured_final_is_decoded(self):
+        from kitt.llm.agent_contract import parse_structured_result
+
+        raw = "\n".join((
+            "K2 F", "tasks[2]{id,status}:",
+            "  T01,done", "  T02,pending", "K2/END",
+        ))
+        result = parse_structured_result(raw)
+        self.assertEqual(result["tasks"], [
+            {"id": "T01", "status": "done"},
+            {"id": "T02", "status": "pending"},
+        ])
+
+
 
 if __name__ == "__main__":
     unittest.main()
