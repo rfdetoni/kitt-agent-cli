@@ -458,6 +458,10 @@ class LLMClient:
                 extra_headers[session_header] = session_id
             metadata = dict(request_metadata or {})
             metadata.setdefault("max_upstream_attempts", 1)
+            if contract_route == "agent-loop":
+                # The proxy buffers the full KAP contract until validation.
+                # Large WebChat generations must not be cut off at 240 seconds.
+                metadata.setdefault("deadline_ms", 900_000)
             metadata["route"] = contract_route
             metadata.setdefault("session_id", session_id)
             request_id = str(metadata.get("request_id") or uuid.uuid4().hex)
@@ -470,6 +474,11 @@ class LLMClient:
             # proxy must never receive an agent-side reasoning header or prompt
             # control, even if a legacy caller still supplies reasoning_effort.
 
+        transport_timeout_seconds = (
+            max(int(self.profile.request_timeout_seconds), 960)
+            if is_kitt_proxy and contract_route == "agent-loop"
+            else self.profile.request_timeout_seconds
+        )
         request = LLMRequest(
             model=self.profile.model,
             messages=messages,
@@ -485,7 +494,7 @@ class LLMClient:
             keep_alive=self.profile.keep_alive,
             api_key=api_key,
             base_url=self.profile.base_url,
-            timeout_seconds=self.profile.request_timeout_seconds,
+            timeout_seconds=transport_timeout_seconds,
             extra_headers=extra_headers,
         )
         trace_enabled = logger.isEnabledFor(TRACE_LEVEL)
@@ -519,7 +528,7 @@ class LLMClient:
                 temperature=self.profile.temperature,
                 context_window=request.context_window,
                 max_output_tokens=request.max_output_tokens,
-                timeout_seconds=self.profile.request_timeout_seconds,
+                timeout_seconds=transport_timeout_seconds,
                 extra_headers=extra_headers,
                 api_key=api_key,
             )

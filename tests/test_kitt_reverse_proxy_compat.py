@@ -350,6 +350,34 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         self.assertEqual(headers["x-kitt-session-id"], "abc123")
         self.assertEqual(headers["x-kitt-request-id"], "req123")
 
+    @patch("kitt.llm.client.discover_kitt_proxy_capabilities", return_value=KittProxyCapabilities())
+    def test_agent_loop_waits_for_slow_webchat_contract_without_replaying(self, _discover):
+        captured = []
+
+        class CaptureAdapter:
+            def stream(self, request):
+                captured.append(request)
+                yield "done"
+
+        registry = MagicMock()
+        registry.get_adapter_for_protocol.return_value = CaptureAdapter()
+        profile = ModelProfile(
+            backend="kitt-reverse-proxy", protocol="kitt-reverse-proxy",
+            model="chatgpt-web", base_url="http://127.0.0.1:3000",
+            request_timeout_seconds=300,
+        )
+        with patch("kitt.llm.client.resolve_endpoint_credential", return_value=None):
+            with LLMClient(profile, registry=registry, auth_service=MagicMock(),
+                           endpoint_policy=MagicMock()) as client:
+                self.assertEqual("".join(client.chat_stream(
+                    [{"role": "user", "content": "slow long request"}],
+                    route="agent-loop", session_key="same-conversation",
+                )), "done")
+        self.assertEqual(len(captured), 1)
+        self.assertGreaterEqual(captured[0].timeout_seconds, 960)
+        self.assertEqual(captured[0].request_metadata["deadline_ms"], 900_000)
+        self.assertEqual(captured[0].request_metadata["max_upstream_attempts"], 1)
+
     def test_retained_children_keep_stable_proxy_sessions_without_sharing(self):
         from kitt.core.turn_processor import TurnProcessor
 

@@ -1,0 +1,3 @@
+# Agent CLI 0.86.15 — Wait for slow WebChat contracts
+
+In KITT agent-loop requests, an actively generating ChatGPT Web response may take longer than the previous 240-second end-to-end deadline. The Agent now declares a bounded 900,000-ms deadline and waits up to 960 seconds at the HTTP transport. The request retains max_upstream_attempts=1; it is never replayed merely because the browser is slow. Other routes and provider timeout defaults are unchanged. The project version, source-tree fallback version and uv.lock are synchronized. A regression test inspects the actual dispatched request metadata and timeout.
