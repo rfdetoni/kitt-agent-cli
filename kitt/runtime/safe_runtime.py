@@ -6,7 +6,8 @@ from kitt.integrations.semantic import SemanticCodeIntelligence
 from kitt.runtime import core_runtime as _core
 from kitt.runtime.search_fallback import full_scan_search
 from kitt.runtime.read_batch import execute_read_batch
-from kitt.security.capabilities import CAP_REPO_READ
+from kitt.runtime.revision_refs import execute_revision_ref
+from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_WRITE
 from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt.security.workspace_mutations import delete_path, list_entries, move_path
 
@@ -22,6 +23,11 @@ class SafeRuntime(_core.SafeRuntime):
 
     operation_registry = OPERATION_REGISTRY.extend({
         'repo.batch_read': RuntimeOperationSpec('repo.batch_read', CAP_REPO_READ),
+        'repo.ref.create': RuntimeOperationSpec('repo.ref.create', CAP_REPO_READ, 'read_file'),
+        'repo.ref.read': RuntimeOperationSpec('repo.ref.read', CAP_REPO_READ),
+        'repo.ref.write': RuntimeOperationSpec(
+            'repo.ref.write', CAP_REPO_WRITE, 'write_file', sensitive=True, risk_cost=1,
+        ),
     })
 
     @property
@@ -288,6 +294,8 @@ class SafeRuntime(_core.SafeRuntime):
         expected_approval_id,
         automatic_budget_reserved: bool = False,
     ):
+        if op in {"repo.ref.create", "repo.ref.read", "repo.ref.write"}:
+            return execute_revision_ref(self, op, args, security_context=security_context)
         if op == "repo.batch_read":
             return execute_read_batch(
                 self, args, turn_id=turn_id, origin=origin,
