@@ -306,7 +306,7 @@ class GoalContractTests(unittest.TestCase):
                 self.assertGreater(allocation["total_input_tokens"], 8192)
                 self.assertEqual(allocation["reserved_output_tokens"], 0)
             self.assertIn(json.dumps(objective), dispatched[1])
-            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nReturn one KAP/1", 1)[0])
+            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nReturn one KAP/2", 1)[0])
             self.assertEqual(review["objective"], objective)
             self.assertEqual(review["items"], accepted)
         finally:
