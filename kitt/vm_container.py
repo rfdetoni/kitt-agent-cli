@@ -423,6 +423,26 @@ def operate(profile_file: Path, action: str) -> dict:
             "output": result.stdout.decode("utf-8", "replace")[:16000]}
 
 
+
+def _snapshot_component(path: Path, *, directory: bool) -> bool:
+    """Refuse symlinks and special files in offline VM state before copying."""
+    if path.is_symlink():
+        raise VMError("Snapshot component cannot be a symlink")
+    if not path.exists():
+        return False
+    if directory:
+        if not path.is_dir():
+            raise VMError("Expected VM state directory")
+        for root, folders, files in os.walk(path, followlinks=False):
+            for name in (*folders, *files):
+                child = Path(root) / name
+                if child.is_symlink() or not (child.is_file() or child.is_dir()):
+                    raise VMError("Unsafe file in VM state directory")
+    elif not path.is_file():
+        raise VMError("Expected VM state file")
+    return True
+
+
 def snapshot(profile_file: Path, *, action: str, name: str = "baseline") -> dict:
     """Offline snapshot and restore of guest disk, UEFI and virtual TPM state."""
     if action not in ("save", "restore", "list") or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", name):
@@ -454,10 +474,11 @@ def snapshot(profile_file: Path, *, action: str, name: str = "baseline") -> dict
                 staging = Path(temporary)
                 shutil.copyfile(source, staging / "disk.qcow2")
                 (staging / "disk.qcow2").chmod(0o600)
-                if (state / "OVMF_VARS.fd").is_file():
+                if _snapshot_component(state / "OVMF_VARS.fd", directory=False):
                     shutil.copyfile(state / "OVMF_VARS.fd", staging / "OVMF_VARS.fd")
-                if (state / "tpm").is_dir():
-                    shutil.copytree(state / "tpm", staging / "tpm", symlinks=False)
+                if _snapshot_component(state / "tpm", directory=True):
+                    shutil.copytree(state / "tpm", staging / "tpm", symlinks=True)
+                    _snapshot_component(staging / "tpm", directory=True)
                 digest = _sha256(staging / "disk.qcow2")
                 (staging / "snapshot.json").write_text(
                     json.dumps({"schema": 1, "disk_sha256": digest,
@@ -478,20 +499,27 @@ def snapshot(profile_file: Path, *, action: str, name: str = "baseline") -> dict
                 or (target / "disk.qcow2").is_symlink()
                 or _sha256(target / "disk.qcow2") != record["disk_sha256"]):
             raise VMError("Snapshot integrity/runner mismatch")
+        # Validate optional state before replacing the disk: a bad TPM/UEFI tree
+        # must not leave the restored VM with a partially replaced disk.
+        saved_uefi = target / "OVMF_VARS.fd"
+        saved_tpm = target / "tpm"
+        restore_uefi = _snapshot_component(saved_uefi, directory=False)
+        restore_tpm = _snapshot_component(saved_tpm, directory=True)
+        _snapshot_component(state / "OVMF_VARS.fd", directory=False)
+        _snapshot_component(state / "tpm", directory=True)
         # Disk replacement is atomic on the same volume; TPM/UEFI are copied offline.
         with tempfile.TemporaryDirectory(prefix=".restore-", dir=state) as temporary:
             nextdisk = Path(temporary) / "disk.qcow2"
             shutil.copyfile(target / "disk.qcow2", nextdisk)
             nextdisk.chmod(0o600)
             os.replace(nextdisk, source)
-        saved_uefi = target / "OVMF_VARS.fd"
-        if saved_uefi.is_file() and not saved_uefi.is_symlink():
+        if restore_uefi:
             shutil.copyfile(saved_uefi, state / "OVMF_VARS.fd")
-        if (target / "tpm").is_dir():
+        if restore_tpm:
             replacement = state / "tpm"
             if replacement.exists():
                 shutil.rmtree(replacement)
-            shutil.copytree(target / "tpm", replacement, symlinks=False)
+            shutil.copytree(saved_tpm, replacement, symlinks=True)
         return {"restored": str(target), "disk_sha256": record["disk_sha256"]}
 
 
