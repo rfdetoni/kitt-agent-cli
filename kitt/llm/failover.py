@@ -125,6 +125,20 @@ class FailoverLLMClient:
     def capabilities(self):
         return getattr(self._client(self.profile), "capabilities", None)
 
+    def create_kitt_proxy_browser_gateway(
+        self, session_key=None, *, origin_scope=()
+    ):
+        """Expose the selected client's host-validated browser capability.
+
+        Fallback providers must not supply authority for the primary session.
+        """
+        factory = getattr(
+            self._client(self.profile), "create_kitt_proxy_browser_gateway", None
+        )
+        if factory is None:
+            return None
+        return factory(session_key, origin_scope=origin_scope)
+
     def chat(self, *args, **kwargs):
         last = None
         for profile in self._candidates():
