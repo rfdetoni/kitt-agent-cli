@@ -150,15 +150,14 @@ class AutonomousCompletionEngine:
             blocks.extend(
                 [
                     "",
-                    "Return one KAP/1 ACTION FINAL with structured OBJECT content. "
-                    "Use the exact criterion text above for each indexed entry; add entries for all criteria. "
-                    "Do not put JSON inside TEXT content. Example:",
-                    "KITT/1\nACTION FINAL\nOBJECT content\n"
-                    "STRING content.status = SUCCEEDED\nARRAY content.criteria\n"
-                    "OBJECT content.criteria.0\nSTRING content.criteria.0.criterion = exact criterion text above\n"
-                    "BOOLEAN content.criteria.0.satisfied = true\n"
-                    "STRING content.criteria.0.evidence = specific command/test/file/runtime evidence\n"
-                    "STRING content.summary = concise completion summary\nKITT/END",
+                    "Return exactly one structured KAP/2 K2 F envelope with fields status, "
+                    "criteria[n] and summary. Use the exact criterion text above for each "
+                    "criteria[n] object; include all criteria and evidence. Example:",
+                    "K2 F\nstatus: SUCCEEDED\ncriteria[1]:\n  -\n"
+                    "    criterion: exact criterion text above\n"
+                    "    satisfied: true\n"
+                    "    evidence: specific command/test/file/runtime evidence\n"
+                    "summary: concise completion summary\nK2/END",
                     "Use status INCOMPLETE and satisfied=false for any criterion that is not actually proven; KITT will iterate automatically.",
                 ]
             )
