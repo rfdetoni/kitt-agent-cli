@@ -5,6 +5,7 @@ validation precedes any child execution. Results preserve request ordering.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -16,6 +17,9 @@ _ALLOWED = frozenset({'repo.read', 'repo.list'})
 _ID = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,31}\Z')
 _MAX_CALLS = 8
 _MAX_RESULT_BYTES = 64 * 1024
+# Canonical host-owned positional schema, not an order supplied by the model.
+POSITIONAL_SCHEMA = 'repo.batch_read/v1|id,operation,path'
+POSITIONAL_DIGEST = hashlib.sha256(POSITIONAL_SCHEMA.encode('utf-8')).hexdigest()
 
 
 def execute_read_batch(
@@ -30,7 +34,15 @@ def execute_read_batch(
     raw_calls = arguments.get('calls')
     if not isinstance(raw_calls, list) or not 1 <= len(raw_calls) <= _MAX_CALLS:
         return SafeRuntimeResult(False, 'repo.batch_read', error='calls must contain 1..8 entries')
-    if set(arguments) != {'calls'}:
+    positional = set(arguments) == {'calls', 'schema_digest'}
+    if positional:
+        if arguments['schema_digest'] != POSITIONAL_DIGEST:
+            return SafeRuntimeResult(False, 'repo.batch_read', error='unknown positional schema digest')
+        if any(not isinstance(row, dict) or set(row) != {'id', 'operation', 'path'} for row in raw_calls):
+            return SafeRuntimeResult(False, 'repo.batch_read', error='positional rows do not match host schema')
+        raw_calls = [{'id': row['id'], 'operation': row['operation'],
+                      'arguments': {'path': row['path']}} for row in raw_calls]
+    elif set(arguments) != {'calls'}:
         return SafeRuntimeResult(False, 'repo.batch_read', error='unknown batch fields')
 
     prepared: list[tuple[str, str, dict[str, Any]]] = []
