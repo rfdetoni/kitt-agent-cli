@@ -5,6 +5,15 @@ KAP/2 core grammar or permissions. They can be used with an ordinary
 `K2 T kitt_runtime` envelope (one host action per model turn). The existing
 `KITT/1` and JSON HTTP transport remain independent.
 
+## Host capability discovery
+
+Call `kap.capabilities` with an empty argument object to learn which
+KAP/2 host operations are actually activated. The response includes
+`grammar: KAP/2`, the fixed positional schema digest and explicit
+`false` flags for frame-level batching, early-stream termination and
+cross-transport metadata version negotiation. This is an introspection
+action, not a grant to enable unsupported syntax or bypass policy.
+
 ## Independent read-only batches
 
 `repo.batch_read` takes 1–8 calls with unique IDs. Allowed operations are

@@ -2,6 +2,8 @@
 
 ## Included
 
+- **kap.capabilities**: host introspection of supported K2 tool operations and fixed positional schema; unsupported syntax/stream features are reported explicitly as disabled.
+
 - **repo.batch_read**: 1–8 independent `repo.read`/`repo.list` calls, max four read workers, unique IDs and 64-KiB reply bound. Each operation remains subject to original host capabilities/policies.
 - **Host-schema positional batches**: fixed `id,operation,path` order under SHA-256 digest, never model-invented field orders or unsafe actions.
 - **repo.ref.create / repo.ref.read / repo.ref.write**: opaque one-hour conversation-scoped revision refs, SHA-256 compare-and-swap guarded filesystem writes, replay and cross-path rejection, writes audited by the existing host policy.
