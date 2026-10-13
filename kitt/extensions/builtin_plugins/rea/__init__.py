@@ -10,7 +10,7 @@ REA_SERVER_ID = "rea"
 # Only suggestions: REA owns provider execution and canonical Evidence.
 WORKFLOWS = {
     "native": {
-        "tools": ["open_binary", "analyze_function", "get_call_graph"],
+        "tools": ["analyze_function", "get_call_graph", "inspect_native_load_image"],
         "preflight": "rea doctor --provider ghidra --json",
         "limitations": "Static analysis does not prove runtime behavior. Select one deep provider.",
     },
@@ -34,7 +34,7 @@ WORKFLOWS = {
     },
     "comparison": {
         "tools": ["compare_application_versions", "compare_managed_members",
-                  "compare_functions"],
+                  "inspect_analysis_view"],
         "preflight": "rea doctor --json",
         "limitations": "Use artifact-compatible comparisons and authenticated Evidence.",
     },
@@ -44,7 +44,7 @@ WORKFLOWS = {
         "limitations": "Recorded crash metadata does not authorize live debugging.",
     },
     "network": {
-        "tools": ["inspect_packet_capture"],
+        "tools": ["inspect_pcap_capture", "inspect_analysis_view"],
         "preflight": "rea doctor --json",
         "limitations": "Examine existing PCAPs only; capture acquisition requires separate authorization.",
     },
@@ -97,8 +97,8 @@ def setup(ctx):
                     "tool-policy, approval, audit and cancellation boundaries."
                 ),
                 "installation": (
-                    "KITT never downloads or updates REA implicitly. Install rea-agents "
-                    "separately, then enable kitt-rea."
+                    "The REA plugin never installs or updates REA. Install via KITT "
+                    "root --preset full, --with-rea, or upstream; enable kitt-rea."
                 ),
             },
             ensure_ascii=False,
