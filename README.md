@@ -1,3 +1,7 @@
+## KAP/2 0.13.1 synchronization — Agent 0.87.2
+
+Decode structured K2 F with quoted keys, nested object arrays, stable error codes and optional summary from the canonical Protocol SDK. Host authorization remains unchanged.
+
 ## 0.87.1 — KAP/2 contract pin
 
 Agent CLI uses Protocol 0.12.1 to reject competing actions in compact text. Host authorization and tool behavior remain unchanged.
