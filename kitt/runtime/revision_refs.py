@@ -5,6 +5,7 @@ WorkspaceFileSystem is the existing host file authority.
 """
 from __future__ import annotations
 
+import codecs
 import re
 import secrets
 from typing import Any
@@ -62,10 +63,14 @@ def execute_revision_ref(runtime: Any, operation: str, arguments: dict[str, Any]
             data = fs.read(path, max_bytes=_MAX_BYTES)
             if data.sha256 != record['sha256']:
                 return denied('Revision changed; create a new reference')
+            # Incremental decoding drops an incomplete trailing UTF-8 sequence
+            # only for truncated prefixes; an entire malformed file still gets
+            # normal replacement characters rather than silently losing bytes.
+            prefix = codecs.getincrementaldecoder('utf-8')(errors='replace').decode(
+                data.content[:limit], final=(data.size <= limit))
             return SafeRuntimeResult(True, operation,
                 data={'ref': token, 'path': path, 'revision': data.sha256,
-                      'bytes': data.size,
-                      'content': data.content[:limit].decode('utf-8', errors='replace'),
+                      'bytes': data.size, 'content': prefix,
                       'truncated': data.size > limit})
         if operation == 'repo.ref.write':
             # Cleartext path is mandatory for policy and control-plane checks.

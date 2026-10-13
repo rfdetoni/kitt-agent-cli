@@ -6,6 +6,7 @@ import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any
 
 
@@ -32,6 +33,8 @@ class RetrievalGuard:
         self.ttl_seconds = max(30.0, float(ttl_seconds))
         self._entries: OrderedDict[str, RetrievalEntry] = OrderedDict()
         self._generation = 0
+        # repo.batch_read invokes concurrent reads on this shared runtime.
+        self._lock = RLock()
 
     @staticmethod
     def _tokens(value: Any) -> int:
@@ -71,8 +74,9 @@ class RetrievalGuard:
         return hashlib.sha256(raw).hexdigest()
 
     def invalidate(self) -> None:
-        self._generation += 1
-        self._entries.clear()
+        with self._lock:
+            self._generation += 1
+            self._entries.clear()
 
     def _prune(self, now: float) -> None:
         expired = [
@@ -86,6 +90,11 @@ class RetrievalGuard:
             self._entries.popitem(last=False)
 
     def observe(self, operation: str, arguments: dict[str, Any], result):
+        # Keep generation, eviction and repeat counters atomic across batch workers.
+        with self._lock:
+            return self._observe_locked(operation, arguments, result)
+
+    def _observe_locked(self, operation: str, arguments: dict[str, Any], result):
         if not getattr(result, "success", False):
             return result
         if arguments.get("force_refresh"):

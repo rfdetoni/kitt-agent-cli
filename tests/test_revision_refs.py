@@ -65,6 +65,18 @@ class RevisionReferenceTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(self.path.read_text(), 'changed out of band')
 
+    def test_utf8_byte_limit_never_emits_spurious_replacement_character(self):
+        self.path.write_text('A€B', encoding='utf-8')
+        created = self.action('repo.ref.create', {'path': 'file.txt'})
+        self.assertTrue(created.success, created.error)
+        ref = created.data['ref']
+        for limit, expected in ((1, 'A'), (2, 'A'), (3, 'A'), (4, 'A€'), (5, 'A€B')):
+            with self.subTest(limit=limit):
+                result = self.action('repo.ref.read', {'ref': ref, 'max_bytes': limit})
+                self.assertTrue(result.success, result.error)
+                self.assertEqual(result.data['content'], expected)
+                self.assertEqual(result.data['truncated'], limit < 5)
+
     def test_path_scope_and_reference_scoping(self):
         ref = self.action('repo.ref.create', {'path': 'file.txt'}).data
         self.assertFalse(self.action('repo.ref.write', {'ref': ref['ref'], 'path': 'blocked/other',
