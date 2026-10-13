@@ -52,8 +52,14 @@ class TaskPlanCoordinator:
 
     def _save(self, conversation_id, turn_id, plan):
         plan["revision"] += 1
+        # Stable event identity is a cross-process optimistic concurrency gate:
+        # two writers cannot commit different payloads at the same revision.
+        event_key = hashlib.sha256(
+            f"{conversation_id}:{turn_id}:{plan['plan_id']}".encode("utf-8")
+        ).hexdigest()[:32]
         self.ledger.append_event(
-            conversation_id, "TaskPlanUpdated", plan, turn_id=turn_id, source="task-plan"
+            conversation_id, "TaskPlanUpdated", plan, turn_id=turn_id,
+            source="task-plan", event_id=f"task-plan-{event_key}-r{plan['revision']}",
         )
         return copy.deepcopy(plan)
 
@@ -162,6 +168,73 @@ class TaskPlanCoordinator:
                 "revision": 0,
                 "tasks": tasks,
             }
+            return self._save(conversation_id, turn_id, plan)
+
+    def patch(self, conversation_id, turn_id, expected_revision, changes, security_context):
+        """Apply bounded field deltas to pending tasks, never reset execution evidence."""
+        with self._lock:
+            plan = self.inspect(conversation_id, turn_id)
+            if not plan:
+                raise ValueError("No task plan for this turn")
+            if type(expected_revision) is not int or expected_revision != plan["revision"]:
+                raise ValueError("Stale task plan revision")
+            if not isinstance(changes, list) or not 1 <= len(changes) <= self.MAX_TASKS:
+                raise ValueError("changes must contain 1..12 task deltas")
+            seen = set()
+            by_label = {item["local_id"]: item for item in plan["tasks"]}
+            for change in changes:
+                if not isinstance(change, dict) or not (
+                    {"local_id"} < set(change) <=
+                    {"local_id", "title", "paths", "check_ids", "depends_on"}
+                ):
+                    raise ValueError("Invalid task delta fields")
+                label = change["local_id"]
+                if not isinstance(label, str) or label in seen or label not in by_label:
+                    raise ValueError("Unknown or duplicate task delta")
+                seen.add(label)
+                task = by_label[label]
+                if task["status"] != "PENDING" or task["child_id"]:
+                    raise ValueError("Only undelegated pending tasks may be patched")
+                if "title" in change:
+                    title = change["title"]
+                    if not isinstance(title, str) or not title.strip() or len(title) > 1000:
+                        raise ValueError("Invalid task title")
+                    task["title"] = title
+                for field in ("paths", "check_ids", "depends_on"):
+                    if field not in change:
+                        continue
+                    values = self._strings(change[field], field, 24 if field == "check_ids" else 12)
+                    if field == "paths":
+                        for path in values:
+                            self.fs.relative(path)
+                            security_context.assert_path_allowed(path)
+                            if path == "." or self.fs.absolute_lexical(path).is_dir():
+                                raise ValueError("Task paths must name concrete files")
+                    task[field] = values
+                if task["role"] in {"IMPLEMENT", "VERIFY"} and not task["paths"] and not task["check_ids"]:
+                    raise ValueError("Task requires scope or registered checks")
+
+            if len({p for t in plan["tasks"] for p in t["paths"]}) > 64:
+                raise ValueError("Plan exceeds 64 concrete paths")
+            if len({c for t in plan["tasks"] for c in t["check_ids"]}) > 24:
+                raise ValueError("Plan exceeds 24 distinct checks")
+            visited, active = set(), set()
+            def visit(label):
+                if label not in by_label:
+                    raise ValueError("Unknown task dependency")
+                if label in active:
+                    raise ValueError("Cyclic task dependencies")
+                if label in visited:
+                    return
+                active.add(label)
+                for previous in by_label[label]["depends_on"]:
+                    visit(previous)
+                active.remove(label)
+                visited.add(label)
+            for label in by_label:
+                visit(label)
+            if len(json.dumps(plan).encode("utf-8")) > self.MAX_BYTES:
+                raise ValueError("Patched plan exceeds wire size")
             return self._save(conversation_id, turn_id, plan)
 
     def _digest(self, paths):
