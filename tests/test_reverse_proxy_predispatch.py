@@ -16,7 +16,7 @@ def _budget() -> ExecutionBudget:
         max_output_tokens=1,
         max_total_tokens=2,
         max_cost=10.0,
-        max_duration_ms=60_000,
+        max_duration_ms=600_000,
         max_tool_calls=4,
         max_subagents=0,
     )
@@ -122,6 +122,7 @@ def test_reverse_proxy_reserves_actual_prompt_usage_not_full_allowance(tmp_path)
     dispatched = captured["budget_at_dispatch"]
     assert dispatched["usage"]["input_tokens"] == expected_estimate
     assert "max_prompt_tokens" not in captured["request_metadata"]
+    assert 540_000 <= captured["request_metadata"]["deadline_ms"] <= 600_000
     assert ledger.snapshot()["usage"]["input_tokens"] == 5000
     assert ledger.snapshot()["usage"]["output_tokens"] == 6000
     assert not ledger.token_limits_enforced

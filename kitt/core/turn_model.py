@@ -321,7 +321,7 @@ class TurnModelMixin:
                     **(
                         {
                             "deadline_ms": min(
-                                240_000,
+                                900_000,
                                 execution_budget.remaining_duration_ms(),
                             ),
                         }
