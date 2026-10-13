@@ -1,3 +1,7 @@
+## Agent 0.87.4 — compact KAP/2 plans and reviews
+
+Planning, contract validation review and adversarial code review now request KAP/2 instead of legacy KAP/1; tests verify that the planning examples decode to the required structured task contract. Eliminates contradictory output instructions when using Reverse Proxy 5.3.0.
+
 ## 0.87.3 — browser gateway forwarding
 
 FailoverLLMClient now delegates scoped browser-gateway capability discovery to the selected primary client only, without granting authority through fallback providers. Host trust and origin checks remain mandatory.
