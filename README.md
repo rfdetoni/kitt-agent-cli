@@ -1,3 +1,7 @@
+## 0.87.3 — browser gateway forwarding
+
+FailoverLLMClient now delegates scoped browser-gateway capability discovery to the selected primary client only, without granting authority through fallback providers. Host trust and origin checks remain mandatory.
+
 ## KAP/2 0.13.1 synchronization — Agent 0.87.2
 
 Decode structured K2 F with quoted keys, nested object arrays, stable error codes and optional summary from the canonical Protocol SDK. Host authorization remains unchanged.
