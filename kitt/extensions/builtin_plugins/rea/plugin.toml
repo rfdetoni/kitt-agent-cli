@@ -1,5 +1,5 @@
 name = "kitt-rea"
-version = "1.1.0"
+version = "1.1.1"
 api_version = "1"
 entrypoint = "__init__:setup"
 description = "REA reverse-engineering integration through the local MCP boundary"
