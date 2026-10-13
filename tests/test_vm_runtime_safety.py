@@ -102,8 +102,8 @@ class VMRuntimeSafety(unittest.TestCase):
         tpm = self.root / "tpm"
         tpm.mkdir()
         (tpm / "redirect").symlink_to(outside)
-        with patch("kitt.vm_container._read_profile", return_value=self.info), \\
-             patch("kitt.vm_container._runtime", return_value="podman"), \\
+        with patch("kitt.vm_container._read_profile", return_value=self.info), \
+             patch("kitt.vm_container._runtime", return_value="podman"), \
              patch("kitt.vm_container._status", return_value="missing"):
             with self.assertRaisesRegex(VMError, "Unsafe file"):
                 snapshot(self.profile, action="save", name="unsafe")
@@ -115,8 +115,8 @@ class VMRuntimeSafety(unittest.TestCase):
         tpm = self.root / "tpm"
         tpm.mkdir()
         (tpm / "data").write_text("original tpm")
-        with patch("kitt.vm_container._read_profile", return_value=self.info), \\
-             patch("kitt.vm_container._runtime", return_value="podman"), \\
+        with patch("kitt.vm_container._read_profile", return_value=self.info), \
+             patch("kitt.vm_container._runtime", return_value="podman"), \
              patch("kitt.vm_container._status", return_value="missing"):
             saved = snapshot(self.profile, action="save", name="clean")
             disk.write_bytes(b"changed")
