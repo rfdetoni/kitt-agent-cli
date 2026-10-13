@@ -406,7 +406,7 @@ class SafeRuntime:
         args: Dict[str, Any],
     ) -> tuple[str, ...]:
         candidates: list[object] = []
-        if operation in {"repo.write_file", "repo.create_directory", "repo.delete"}:
+        if operation in {"repo.write_file", "repo.create_directory", "repo.delete", "repo.ref.write"}:
             candidates.append(args.get("path") or args.get("file"))
         elif operation in {"repo.move", "repo.rename"}:
             candidates.extend(
