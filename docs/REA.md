@@ -4,7 +4,10 @@ KITT Agent CLI can expose an installed [REA](https://github.com/morluto/rea) ins
 
 ## Enable
 
-Install REA separately using its upstream instructions, then enable the bundled KITT plugin:
+The KITT root installer `--preset full` includes REA 6.4.0 in a private prefix by default; use `--skip-rea` to omit it, or `--with-rea` with other presets. You may instead install upstream REA manually. Only enabling `kitt-rea` registers it as an MCP server.
+
+
+After installing REA via KITT root installer or upstream instructions, enable the bundled KITT plugin:
 
 ```bash
 kitt plugins enable kitt-rea
