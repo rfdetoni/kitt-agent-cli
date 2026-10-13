@@ -57,6 +57,14 @@ def test_workflow_maps_evidence_based_analysis_without_executing():
         assert result["execution"].startswith("guidance_only")
         assert result["guest_access"] == "no implicit VM network or shell access"
     assert json.loads(workflow({"target_type": "unsupported"}))["error"] == "unsupported_target_type"
+    # These identifiers are published in REA 6.4.0 MCP contracts, not guesses.
+    assert "open_binary" not in WORKFLOWS["native"]["tools"]
+    assert "compare_functions" not in WORKFLOWS["comparison"]["tools"]
+    assert "inspect_packet_capture" not in WORKFLOWS["network"]["tools"]
+    assert "inspect_pcap_capture" in WORKFLOWS["network"]["tools"]
+    assert "compare_managed_members" in WORKFLOWS["comparison"]["tools"]
+    assert "inspect_native_load_image" in WORKFLOWS["native"]["tools"]
+
 
 
 def test_plugin_uses_only_local_pinned_rea_mcp_and_skips_when_absent():
