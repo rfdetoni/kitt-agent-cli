@@ -1,4 +1,6 @@
-## Security and lifecycle changes in 0.86.10
+# QEMU VMs in Docker/Podman and prebuilt Linux RE images
+
+## Security and lifecycle changes introduced in 0.86.9
 
 The noVNC endpoint is **HTTP Basic-authenticated**, including WebSocket upgrades
 from other containers on the bridge. The random per-VM password is stored in
@@ -56,7 +58,6 @@ Linux guest ISOs. Use `kitt vm container toolbox --profile full` separately.
 ID, SSH probe port and viewer secrets). VMs created with 0.86.8 should
 be exported/backed up while stopped and recreated using the new wizard;
 do not edit JSON and guess missing secrets.
-# QEMU VMs in Docker/Podman and prebuilt Linux RE images
 
 **Agent 0.86.10 (optional)**. These are two distinct execution modes: a QEMU VM running *inside* a container, and a Linux **toolbox container** with tools already installed. Neither replaces the ordinary KITT coding agent or its native QEMU supervisor.
 
