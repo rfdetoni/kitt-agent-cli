@@ -1,3 +1,7 @@
+## 0.87.1 — KAP/2 contract pin
+
+Agent CLI uses Protocol 0.12.1 to reject competing actions in compact text. Host authorization and tool behavior remain unchanged.
+
 ## KAP/2 compact output — 0.87.0
 
 The Agent decodes structured `K2 F` results from the shared kitt-protocol 0.12.0 SDK. The reverse-proxy owns tool lowering and validates host operation schemas; model responses cannot grant authorization. See [KAP/2 specification](https://github.com/rfdetoni/kitt-protocol/blob/main/docs/KAP2.md).
