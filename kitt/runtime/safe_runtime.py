@@ -14,21 +14,21 @@ from kitt.security.workspace_mutations import delete_path, list_entries, move_pa
 RuntimeOperationSpec = _core.RuntimeOperationSpec
 RuntimeOperationRegistry = _core.RuntimeOperationRegistry
 SafeRuntimeResult = _core.SafeRuntimeResult
-OPERATION_REGISTRY = _core.OPERATION_REGISTRY
-OPERATION_SPECS = _core.OPERATION_SPECS
-
-
-class SafeRuntime(_core.SafeRuntime):
-    """SafeRuntime facade adding optional semantic/security and filesystem adapters."""
-
-    operation_registry = OPERATION_REGISTRY.extend({
+OPERATION_REGISTRY = _core.OPERATION_REGISTRY.extend({
         'repo.batch_read': RuntimeOperationSpec('repo.batch_read', CAP_REPO_READ),
         'repo.ref.create': RuntimeOperationSpec('repo.ref.create', CAP_REPO_READ, 'read_file'),
         'repo.ref.read': RuntimeOperationSpec('repo.ref.read', CAP_REPO_READ),
         'repo.ref.write': RuntimeOperationSpec(
             'repo.ref.write', CAP_REPO_WRITE, 'write_file', sensitive=True, risk_cost=1,
         ),
-    })
+})
+OPERATION_SPECS = OPERATION_REGISTRY
+
+
+class SafeRuntime(_core.SafeRuntime):
+    """SafeRuntime facade adding optional semantic/security and filesystem adapters."""
+
+    operation_registry = OPERATION_REGISTRY
 
     @property
     def semantic(self) -> SemanticCodeIntelligence:
