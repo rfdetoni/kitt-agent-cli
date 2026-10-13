@@ -2,7 +2,6 @@
 import tempfile
 import time
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from pathlib import Path
 from unittest.mock import patch
