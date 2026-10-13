@@ -96,6 +96,7 @@ class RuntimeOperationSpec:
 OPERATION_REGISTRY = RuntimeOperationRegistry({
     "plan.submit": RuntimeOperationSpec("plan.submit", CAP_REPO_READ),
     "plan.inspect": RuntimeOperationSpec("plan.inspect", CAP_REPO_READ),
+    "plan.patch": RuntimeOperationSpec("plan.patch", CAP_REPO_READ),
     "plan.next": RuntimeOperationSpec("plan.next", CAP_REPO_READ),
     "plan.checkpoint": RuntimeOperationSpec("plan.checkpoint", CAP_REPO_READ),
     "plan.dispatch": RuntimeOperationSpec("plan.dispatch", CAP_CHILD_SPAWN),
@@ -952,6 +953,9 @@ class SafeRuntime:
             data = plans.submit(conv, turn_id, args.get("proposal"), security_context)
         elif operation == "plan.inspect":
             data = plans.inspect(conv, turn_id)
+        elif operation == "plan.patch":
+            data = plans.patch(conv, turn_id, args.get("expected_revision"),
+                               args.get("changes"), security_context)
         elif operation == "plan.next":
             data = plans.next(conv, turn_id)
         elif operation == "plan.checkpoint":
