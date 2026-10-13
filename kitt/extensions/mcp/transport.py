@@ -37,6 +37,7 @@ class StdioTransport:
         self.env = env or {}
         self.cwd = cwd
         self._process: Optional[asyncio.subprocess.Process] = None
+        self._max_message_bytes = 2 * 1024 * 1024
 
     @staticmethod
     def _base_env() -> Dict[str, str]:
@@ -60,6 +61,9 @@ class StdioTransport:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # asyncio's default 64 KiB StreamReader limit is smaller than
+                # our allowed 2 MiB JSON-RPC line; REA tool catalogs exceed it.
+                limit=self._max_message_bytes + 1,
                 env=full_env,
                 cwd=self.cwd,
             )
@@ -72,7 +76,7 @@ class StdioTransport:
         if not self._process or not self._process.stdin:
             raise MCPTransportError("Stdio transport is not connected")
         payload = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
-        if len(payload) > 2 * 1024 * 1024:
+        if len(payload) > self._max_message_bytes:
             raise MCPTransportError("MCP request exceeds 2 MB transport limit")
         self._process.stdin.write(payload)
         await self._process.stdin.drain()
@@ -80,7 +84,11 @@ class StdioTransport:
     async def receive(self) -> Dict[str, Any]:
         if not self._process or not self._process.stdout:
             raise MCPTransportError("Stdio transport is not connected")
-        line = await self._process.stdout.readline()
+        try:
+            line = await self._process.stdout.readline()
+        except ValueError as exc:
+            # asyncio wraps LimitOverrunError as ValueError on readline().
+            raise MCPTransportError("MCP response exceeds 2 MB transport limit") from exc
         if not line:
             error = ""
             if self._process.stderr:
@@ -93,7 +101,7 @@ class StdioTransport:
                 except Exception:
                     pass
             raise MCPTransportError(f"Stdio transport EOF. {error}".strip())
-        if len(line) > 2 * 1024 * 1024:
+        if len(line) > self._max_message_bytes:
             raise MCPTransportError("MCP response exceeds 2 MB transport limit")
         try:
             payload = json.loads(line.decode("utf-8"))

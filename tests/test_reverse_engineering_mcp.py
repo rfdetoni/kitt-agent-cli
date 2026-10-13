@@ -1,4 +1,5 @@
 """Representative safety and MCP boundary regressions."""
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -83,6 +84,44 @@ class ReverseEngineeringTests(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(p.stdout.splitlines()), 2)
         self.assertEqual(json.loads(p.stdout.splitlines()[0])['result']['protocolVersion'], '2024-11-05')
+
+
+
+class McpStdioFramingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_json_rpc_line_larger_than_asyncio_default_buffer(self):
+        from kitt.extensions.mcp.transport import StdioTransport
+
+        program = (
+            "import json,sys; sys.stdin.readline();"
+            "print(json.dumps({'jsonrpc':'2.0','id':1,"
+            "'result':{'data':'x'*131072}}),flush=True)"
+        )
+        transport = StdioTransport(sys.executable, ["-c", program])
+        await transport.connect()
+        try:
+            await transport.send({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+            response = await asyncio.wait_for(transport.receive(), timeout=5)
+            self.assertEqual(len(response["result"]["data"]), 131072)
+        finally:
+            await transport.close()
+
+    async def test_json_rpc_line_still_rejects_messages_over_two_mib(self):
+        from kitt.extensions.errors import MCPTransportError
+        from kitt.extensions.mcp.transport import StdioTransport
+
+        program = (
+            "import json,sys; sys.stdin.readline();"
+            "print(json.dumps({'jsonrpc':'2.0','id':1,"
+            "'result':{'data':'x'*(2*1024*1024)}}),flush=True)"
+        )
+        transport = StdioTransport(sys.executable, ["-c", program])
+        await transport.connect()
+        try:
+            await transport.send({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+            with self.assertRaisesRegex(MCPTransportError, "2 MB transport limit"):
+                await asyncio.wait_for(transport.receive(), timeout=5)
+        finally:
+            await transport.close()
 
 
 if __name__ == '__main__':
