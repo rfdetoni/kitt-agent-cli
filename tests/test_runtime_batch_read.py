@@ -51,6 +51,26 @@ class ReadBatchTests(unittest.TestCase):
                     self.assertFalse(result.success)
             read.assert_not_called()
 
+    def test_positional_table_requires_exact_host_schema_digest(self):
+        from kitt.runtime.read_batch import POSITIONAL_DIGEST
+        rows = [{'id': 'a', 'operation': 'repo.read', 'path': 'README.md'},
+                {'id': 'b', 'operation': 'repo.read', 'path': 'pom.xml'}]
+        with patch.object(self.runtime, '_op_repo_read',
+                          side_effect=lambda args, *_: SafeRuntimeResult(
+                              True, 'repo.read', data={'path': args['path']})) as read:
+            good = self.runtime.execute('repo.batch_read',
+                {'calls': rows, 'schema_digest': POSITIONAL_DIGEST},
+                effective_capabilities={CAP_REPO_READ})
+            self.assertTrue(good.success, good.error)
+            self.assertEqual([r['data']['path'] for r in good.data['calls']],
+                             ['README.md', 'pom.xml'])
+            read.reset_mock()
+            denied = self.runtime.execute('repo.batch_read',
+                {'calls': rows, 'schema_digest': 'invented-by-model'},
+                effective_capabilities={CAP_REPO_READ})
+            self.assertFalse(denied.success)
+            read.assert_not_called()
+
     def test_missing_capability_and_per_call_error_fail_closed(self):
         denied = self._run([self._read('a', 'a')], caps=set())
         self.assertFalse(denied.success)
