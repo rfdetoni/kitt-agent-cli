@@ -171,7 +171,7 @@ class ContractValidator:
             "n nonempty string rows; issues[n]: has exactly n objects with severity, location, "
             "problem and fix. For OK use issues[0]:. No JSON, fences or extra prose. "
             "FAIL example:\n"
-            _VALIDATION_KAP2_EXAMPLE
+            + _VALIDATION_KAP2_EXAMPLE
         )
         security = ExecutionSecurityContext(
             workspace_id=self.runtime.workspace_id,
