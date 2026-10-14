@@ -1,3 +1,10 @@
+## Agent CLI 0.87.15 — lazy RE lab cleanup and toolbox menu
+
+A host-owned mission lease prevents concurrent lazy lab runs. Mission-started
+guests are stopped on normal completion or errors, while already-running VMs
+are preserved. The Agent CLI `/re` panel can now launch the temporary RE
+toolbox shell directly. See [release 0.87.15](docs/RELEASE_0.87.15.md).
+
 ## Agent CLI 0.87.14 — host-owned lazy RE environments and TUI
 
 The Agent CLI now offers `/re` and `kitt re` for discovery, guest
