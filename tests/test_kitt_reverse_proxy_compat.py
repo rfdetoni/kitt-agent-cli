@@ -19,6 +19,38 @@ from kitt.llm.providers.kitt_reverse_proxy import (
 
 
 class TestKittReverseProxyCompatibility(unittest.TestCase):
+    def test_exact_kap_header_and_acknowledgment_for_agent_contract(self):
+        from kitt_protocol import AGENT_CONTRACT_HEADER, KAP_VERSION_HEADER
+        payload = {'choices': [{'delta': {'content': 'K2 F\nstate: done\nK2/END'}}]}
+        raw = ('data: ' + json.dumps(payload) + '\n\ndata: [DONE]\n').encode()
+
+        class Response(io.BytesIO):
+            def __init__(self, ack):
+                super().__init__(raw)
+                self.headers = {KAP_VERSION_HEADER: ack} if ack is not None else {}
+
+        captured = []
+        def fake_urlopen(req, timeout=300):
+            captured.append(req)
+            return Response('KAP/2' if len(captured) == 1 else None)
+
+        request = LLMRequest(model='fixture', messages=[{'role': 'user', 'content': 'hello'}],
+                             extra_headers={AGENT_CONTRACT_HEADER: 'v4'})
+        with patch('kitt.llm.providers.kitt_reverse_proxy.secure_urlopen', side_effect=fake_urlopen):
+            self.assertEqual(list(KittReverseProxyAdapter().stream(request)), ['K2 F\nstate: done\nK2/END'])
+            self.assertEqual(captured[0].get_header('X-kitt-kap'), 'KAP/2')
+            with self.assertRaisesRegex(ProviderProtocolError, 'acknowledge'):
+                list(KittReverseProxyAdapter().stream(request))
+
+    def test_invalid_kap_request_never_reaches_transport(self):
+        from kitt_protocol import AGENT_CONTRACT_HEADER, KAP_VERSION_HEADER
+        request = LLMRequest(model='fixture', messages=[], extra_headers={
+            AGENT_CONTRACT_HEADER: 'v4', KAP_VERSION_HEADER: 'KAP/2,KAP/1'
+        })
+        with patch('kitt.llm.providers.kitt_reverse_proxy.secure_urlopen') as opener:
+            with self.assertRaises(ProviderProtocolError):
+                list(KittReverseProxyAdapter().stream(request))
+            opener.assert_not_called()
     def test_canonical_arguments_are_never_reinterpreted_as_nested_calls(self):
         for content in [
             "read_file('secret.txt')",
@@ -181,7 +213,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
 
     def test_structural_tool_definitions_survive_compact_prompt(self):
         class FakeResponse:
-            headers = {}
+            headers = {"X-Kitt-KAP": "KAP/2"}
 
             def __init__(self):
                 self._stream = io.BytesIO(b"data: [DONE]" + bytes([10]))

@@ -34,7 +34,7 @@ class ReadBatchTests(unittest.TestCase):
         self.assertEqual(status.data['positional_schema_digest'], POSITIONAL_DIGEST)
         self.assertFalse(status.data['frame_batch'])
         self.assertFalse(status.data['early_stream_termination'])
-        self.assertFalse(status.data['metadata_version_negotiation'])
+        self.assertTrue(status.data['metadata_version_negotiation'])
         self.assertFalse(self.runtime.execute('kap.capabilities', {'enable_unsafe': True}).success)
 
     def test_read_only_parallel_batch_maintains_order_and_receipts(self):

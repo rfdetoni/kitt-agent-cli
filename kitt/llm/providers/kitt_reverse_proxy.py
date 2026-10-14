@@ -7,7 +7,10 @@ import socket
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Tuple
-from kitt_protocol import MAX_TOOL_ARGUMENT_BYTES
+from kitt_protocol import (
+    MAX_TOOL_ARGUMENT_BYTES, AGENT_CONTRACT_HEADER, KAP_CURRENT_VERSION,
+    KAP_VERSION_HEADER, KAPNegotiationError, negotiate_kap_version,
+)
 
 from kitt.llm.domain import (
     ProviderConnectionError,
@@ -190,10 +193,6 @@ def _proxy_error_details(body: str) -> Tuple[str, str, bool, str]:
     )
 
 
-def _proxy_error_message(body: str) -> str:
-    return _proxy_error_details(body)[0]
-
-
 def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Restore native assistant.tool_calls -> tool(tool_call_id) from KITT's text loop."""
     normalized: List[Dict[str, Any]] = []
@@ -249,6 +248,33 @@ def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[
     return normalized
 
 
+
+def _proxy_request_headers(request: LLMRequest) -> tuple[dict[str, str], bool]:
+    """Negotiate a single model-wire version before any provider submission."""
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        "User-Agent": "Kitt-Agent-CLI/reverse-proxy",
+    }
+    if request.api_key:
+        headers["Authorization"] = f"Bearer {request.api_key}"
+    headers.update(request.extra_headers)
+    agent_contract = any(key.lower() == AGENT_CONTRACT_HEADER.lower()
+                         for key in request.extra_headers)
+    if agent_contract:
+        try:
+            selected = [value for key, value in request.extra_headers.items()
+                        if key.lower() == KAP_VERSION_HEADER.lower()]
+            if len(selected) > 1:
+                raise KAPNegotiationError("Ambiguous KAP version headers")
+            negotiate_kap_version(selected[0] if selected else None)
+        except KAPNegotiationError as exc:
+            raise ProviderProtocolError(str(exc)) from exc
+        headers[KAP_VERSION_HEADER] = KAP_CURRENT_VERSION
+    return headers, agent_contract
+
+
+
 class KittReverseProxyAdapter(OpenAIChatAdapter):
     """OpenAI Chat Completions adapter with native KITT tool round trips."""
 
@@ -288,14 +314,7 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
         if request.response_format == "json":
             payload["response_format"] = {"type": "json_object"}
 
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-            "User-Agent": "Kitt-Agent-CLI/reverse-proxy",
-        }
-        if request.api_key:
-            headers["Authorization"] = f"Bearer {request.api_key}"
-        headers.update(request.extra_headers)
+        headers, agent_contract = _proxy_request_headers(request)
 
         http_request = urllib.request.Request(
             url,
@@ -309,6 +328,15 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
 
         try:
             with secure_urlopen(http_request, timeout=request.timeout_seconds) as response:
+                # Only agent-contract requests negotiate model wire syntax.
+                # Missing/mismatched acknowledgments are not a license to downgrade.
+                # BytesIO fixtures without HTTP metadata model legacy test streams.
+                if agent_contract and getattr(response, 'headers', None) is not None:
+                    selected = response.headers.get(KAP_VERSION_HEADER)
+                    if selected != KAP_CURRENT_VERSION:
+                        raise ProviderProtocolError(
+                            "Proxy did not acknowledge KAP/2; update Agent and Proxy together"
+                        )
                 for raw_line in iter(lambda: response.readline(4 * 1024 * 1024 + 1), b""):
                     received_bytes += len(raw_line)
                     if received_bytes > 4 * 1024 * 1024:

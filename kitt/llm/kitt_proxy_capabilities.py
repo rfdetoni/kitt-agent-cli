@@ -121,18 +121,6 @@ def _safe_header(value: Any) -> Optional[str]:
     return value
 
 
-def _range(value: Any) -> Tuple[int, int]:
-    if (
-        isinstance(value, list)
-        and len(value) == 2
-        and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
-    ):
-        low, high = int(value[0]), int(value[1])
-        if 0 <= low <= high <= 1000:
-            return low, high
-    return (0, 100)
-
-
 def _parse(payload: Any) -> KittProxyCapabilities:
     if not isinstance(payload, dict):
         return KittProxyCapabilities()

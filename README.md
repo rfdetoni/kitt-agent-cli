@@ -1,3 +1,7 @@
+## Agent CLI 0.87.8 — negotiated KAP/2 wire contract
+
+The reverse proxy adapter now sends `X-Kitt-KAP: KAP/2` whenever the request enables the Agent contract. Unknown versions fail before transmission, and an HTTP peer returning an incompatible acknowledgment is rejected rather than silently downgraded. Regular OpenAI-compatible providers do not receive this header. See [release 0.87.8](docs/RELEASE_0.87.8.md).
+
 ## Agent CLI 0.87.6 — KAP/2 host operations
 
 Host-enforced batches of read-only `repo.read`/`repo.list` calls, digest-bound positional read tables, SHA-256 revision references with CAS write receipts, and optimistic differential task-plan updates. Every operation remains subject to capability, policy, scope, replay and size limits. The textual KAP/2 grammar and HTTP JSON transport are unchanged. See [KAP/2 host operations](docs/KAP2_HOST_OPERATIONS.md) and [0.87.6 release notes](docs/RELEASE_0.87.6.md).

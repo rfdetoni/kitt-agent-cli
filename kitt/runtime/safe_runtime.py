@@ -307,7 +307,7 @@ class SafeRuntime(_core.SafeRuntime):
                 "positional_schema_digest": POSITIONAL_DIGEST,
                 "frame_batch": False,
                 "early_stream_termination": False,
-                "metadata_version_negotiation": False,
+                "metadata_version_negotiation": True,
             })
         if op in {"repo.ref.create", "repo.ref.read", "repo.ref.write"}:
             return execute_revision_ref(self, op, args, security_context=security_context)
