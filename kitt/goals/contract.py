@@ -388,6 +388,7 @@ class ContractPlanner:
         errors: list[str] = []
         previous = ""
         reviewed_items: list[dict[str, Any]] | None = None
+        review_errors: list[str] = []
         for attempt in range(3):
             self._check_cancelled()
             if attempt:
@@ -422,6 +423,7 @@ class ContractPlanner:
                     ]
                     previous = response
                     reviewed_items = items
+                    review_errors = list(errors)
                     yield ContractProgress(
                         phase="revising", attempt=attempt + 1, max_attempts=3,
                         issues=len(review_issues),
@@ -430,7 +432,7 @@ class ContractPlanner:
                 yield ContractProgress(phase="accepted", attempt=attempt + 1, max_attempts=3)
                 return items
             except ValueError as exc:
-                errors = [str(exc)]
+                errors = [*review_errors, f"Host validation: {exc}"] if reviewed_items else [str(exc)]
                 # Invalid JSON/schema is not a safe editing baseline.
                 # Preserve the previous validated proposal only if one exists.
                 previous = response
