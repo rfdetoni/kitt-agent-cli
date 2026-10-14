@@ -193,10 +193,6 @@ def _proxy_error_details(body: str) -> Tuple[str, str, bool, str]:
     )
 
 
-def _proxy_error_message(body: str) -> str:
-    return _proxy_error_details(body)[0]
-
-
 def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Restore native assistant.tool_calls -> tool(tool_call_id) from KITT's text loop."""
     normalized: List[Dict[str, Any]] = []
