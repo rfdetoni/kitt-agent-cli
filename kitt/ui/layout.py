@@ -34,6 +34,7 @@ _MODEL_STEPS = {
     "add_provider": "Modelos › Provedores › Adicionar",
     "provider_endpoint": "Modelos › Endpoint",
     "auth_login": "Modelos › Autenticação",
+    "re_setup": "RE › Preparar VM",
 }
 
 _CONTEXT_TABS = {
@@ -43,6 +44,7 @@ _CONTEXT_TABS = {
     "agents": "Agentes",
     "autonomy_control": "Autonomia",
     "reverse_proxy": "Reverse Proxy",
+    "re_panel": "Ambientes RE",
     "help": "Ajuda",
 }
 
@@ -258,6 +260,10 @@ def build_root_container(ui):
                 Window(ui.provider_endpoint_control, height=1),
             ]),
         ]),
+        "re_setup": HSplit([
+            Window(ui.re_setup_help_control, height=4),
+            Window(ui.re_setup_source_control, height=1),
+        ]),
         "auth_login": HSplit([
             Window(ui.auth_login_help_control, height=3),
             VSplit([
@@ -316,6 +322,10 @@ def build_root_container(ui):
                 ui.reverse_proxy_model.move,
                 invalidate=lambda: ui.application.invalidate() if ui.application else None,
             ),
+        ),
+        "re_panel": register_scrollable_window(
+            ui, "re_panel",
+            Window(ui.re_panel_control, wrap_lines=False, right_margins=[ScrollbarMargin()]),
         ),
         "help": register_scrollable_window(
             ui,
