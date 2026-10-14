@@ -108,7 +108,7 @@ def build_session_report(
         }
         source_rows = [
             {**row, **{k: v for k, v in daemon_rows.get(row["id"], {}).items()
-                       if k not in {"id", "title", "workspace_id"}}}
+                       if k not in {"id", "workspace_id"}}}
             for row in local_rows
         ]
         known = {row["id"] for row in source_rows}
