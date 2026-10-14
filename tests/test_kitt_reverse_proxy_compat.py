@@ -21,8 +21,8 @@ from kitt.llm.providers.kitt_reverse_proxy import (
 class TestKittReverseProxyCompatibility(unittest.TestCase):
     def test_exact_kap_header_and_acknowledgment_for_agent_contract(self):
         from kitt_protocol import AGENT_CONTRACT_HEADER, KAP_VERSION_HEADER
-        payload = {'choices': [{'delta': {'content': 'K2 F\\nstate: done\\nK2/END'}}]}
-        raw = ('data: ' + json.dumps(payload) + '\\n\\ndata: [DONE]\\n').encode()
+        payload = {'choices': [{'delta': {'content': 'K2 F\nstate: done\nK2/END'}}]}
+        raw = ('data: ' + json.dumps(payload) + '\n\ndata: [DONE]\n').encode()
 
         class Response(io.BytesIO):
             def __init__(self, ack):
@@ -37,7 +37,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         request = LLMRequest(model='fixture', messages=[{'role': 'user', 'content': 'hello'}],
                              extra_headers={AGENT_CONTRACT_HEADER: 'v4'})
         with patch('kitt.llm.providers.kitt_reverse_proxy.secure_urlopen', side_effect=fake_urlopen):
-            self.assertEqual(list(KittReverseProxyAdapter().stream(request)), ['K2 F\\nstate: done\\nK2/END'])
+            self.assertEqual(list(KittReverseProxyAdapter().stream(request)), ['K2 F\nstate: done\nK2/END'])
             self.assertEqual(captured[0].get_header('X-kitt-kap'), 'KAP/2')
             with self.assertRaisesRegex(ProviderProtocolError, 'acknowledge'):
                 list(KittReverseProxyAdapter().stream(request))
@@ -213,7 +213,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
 
     def test_structural_tool_definitions_survive_compact_prompt(self):
         class FakeResponse:
-            headers = {}
+            headers = {"X-Kitt-KAP": "KAP/2"}
 
             def __init__(self):
                 self._stream = io.BytesIO(b"data: [DONE]" + bytes([10]))
