@@ -6,6 +6,18 @@ host-owned reminder and then BLOCKED rather than repeated fictional
 WebChat sandbox preflights.
 See [release notes](docs/RELEASE_0.87.12.md).
 
+## Agent CLI 0.87.13 — lazy reverse-engineering environments
+
+The RE manager is opt-in and host-owned. Run `kitt re status` or open `/re`
+inside the Agent CLI to inspect REA, Podman/Docker, Linux/Windows guests
+and the image preparation helper. A guest must be explicitly enrolled
+before KITT may start it; auto-start for operator-run lab missions is
+disabled until enabled per guest. An interactive TUI source-image helper
+reuses the existing QEMU container profile creation, never downloading
+a Windows/Linux operating system. See
+[RE environment guide](docs/RE_LAZY_ENVIRONMENTS.md) and
+[release 0.87.13](docs/RELEASE_0.87.13.md).
+
 ## Agent CLI 0.87.11 — indentation-free KAP/2 planner
 
 The durable task planner now requests a tagged compact final
