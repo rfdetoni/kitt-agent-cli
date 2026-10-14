@@ -585,7 +585,8 @@ class GoalContractTests(unittest.TestCase):
         completion = AutonomousCompletionEngine().build_execution_prompt(
             SimpleNamespace(success_criteria=["Compile domain models"], gates=[]), "Implement models"
         )
-        example = completion[completion.index("K2 F\n"):completion.index("K2/END") + len("K2/END")]
+        final_start = completion.index("K2 F\n")
+        example = completion[final_start:completion.index("K2/END", final_start) + len("K2/END")]
         self.assertEqual(decode_kap2_content(example)["criteria"][0]["satisfied"], True)
         self.assertNotIn("Return one JSON", completion)
         self.assertIn("EXECUTION FIRST", completion)
