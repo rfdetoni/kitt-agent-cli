@@ -75,6 +75,8 @@ class SessionMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
         conv = {"id":"fork","title":"Windows (Fork)"}
         history = SimpleNamespace(fork_conversation=lambda title_suffix: conv)
         ui = SimpleNamespace(
+            state=SimpleNamespace(is_thinking=False),
+            bridge=SimpleNamespace(is_active=False),
             runtime=SimpleNamespace(history=history),
             _run_blocking=AsyncMock(side_effect=lambda fn,**kwargs: fn(**kwargs)),
             _load_conversation=AsyncMock(return_value=True),

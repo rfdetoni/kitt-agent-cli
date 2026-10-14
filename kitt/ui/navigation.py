@@ -86,6 +86,9 @@ async def _move_model_provider(ui, amount: int) -> None:
 
 
 def _new_conversation(ui) -> None:
+    if ui.state.is_thinking or (ui.bridge and ui.bridge.is_active):
+        ui.state.add_toast("Cannot start a new conversation while a turn is running.")
+        return
     conversation = ui.runtime.history.new_conversation()
     ui.state.active_conversation_id = conversation["id"]
     ui.state.route = "home"

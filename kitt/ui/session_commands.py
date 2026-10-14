@@ -25,6 +25,9 @@ async def handle_resume_command(app: KittUIApp, arg: str) -> None:
 
 
 async def handle_fork_command(app: KittUIApp, arg: str) -> None:
+    if app.state.is_thinking or (app.bridge and app.bridge.is_active):
+        app._show_result("Cannot fork while a turn is running.")
+        return
     conversation = await app._run_blocking(
         app.runtime.history.fork_conversation,
         title_suffix=f" ({arg})" if arg else " (Fork)"

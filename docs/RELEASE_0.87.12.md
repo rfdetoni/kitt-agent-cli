@@ -53,3 +53,10 @@ instead of reporting TurnCompleted. Regression tests verify both cases.
 A user-chosen /resume session is touched in the same workspace SQLite DB,
 so the next interactive invocation restores the selected older conversation
 even if newer threads also exist. No global history leak or schema migration.
+
+## Session switch safety
+
+New Conversation and Fork are blocked while an active turn is running.
+History Resume is likewise blocked until the turn reaches a terminal
+state; this prevents switching the visible transcript away from the
+actual durable execution owner.
