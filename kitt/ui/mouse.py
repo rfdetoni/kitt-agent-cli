@@ -103,6 +103,7 @@ def _focus_surface(ui, surface: str) -> None:
         "permission": getattr(ui, "permission_control", None),
         "autonomy": getattr(ui, "autonomy_control", None),
         "reverse_proxy": getattr(ui, "reverse_proxy_control", None),
+        "re_panel": getattr(ui, "re_panel_control", None),
         "help": getattr(ui, "help_control", None),
         "recovery": getattr(ui, "toast_control", None),
         "model_setup_header": getattr(ui, "model_setup_search_control", None),
@@ -153,6 +154,10 @@ def _activate_interaction(ui, region) -> None:
         asyncio.create_task(ui._set_autonomy_profile(str(value)))
     elif action == "autonomy.clear":
         asyncio.create_task(ui._clear_remembered_approvals("all"))
+    elif action == "re.select":
+        ui.re_selected = str(value)
+    elif action == "re.action":
+        asyncio.create_task(ui._re_action(str(value)))
     elif action == "reverse_proxy.show":
         ui._reverse_proxy_show(str(value))
     elif action == "reverse_proxy.refresh":
