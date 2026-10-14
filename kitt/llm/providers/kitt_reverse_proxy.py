@@ -7,7 +7,10 @@ import socket
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Tuple
-from kitt_protocol import MAX_TOOL_ARGUMENT_BYTES
+from kitt_protocol import (
+    MAX_TOOL_ARGUMENT_BYTES, AGENT_CONTRACT_HEADER, KAP_CURRENT_VERSION,
+    KAP_VERSION_HEADER, KAPNegotiationError, negotiate_kap_version,
+)
 
 from kitt.llm.domain import (
     ProviderConnectionError,
@@ -296,6 +299,16 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
         if request.api_key:
             headers["Authorization"] = f"Bearer {request.api_key}"
         headers.update(request.extra_headers)
+        agent_contract = any(key.lower() == AGENT_CONTRACT_HEADER.lower()
+                             for key in request.extra_headers)
+        if agent_contract:
+            try:
+                requested = next((value for key, value in request.extra_headers.items()
+                                  if key.lower() == KAP_VERSION_HEADER.lower()), None)
+                negotiate_kap_version(requested)
+            except KAPNegotiationError as exc:
+                raise ProviderProtocolError(str(exc)) from exc
+            headers[KAP_VERSION_HEADER] = KAP_CURRENT_VERSION
 
         http_request = urllib.request.Request(
             url,
@@ -309,6 +322,15 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
 
         try:
             with secure_urlopen(http_request, timeout=request.timeout_seconds) as response:
+                # Only agent-contract requests negotiate model wire syntax.
+                # Missing/mismatched acknowledgments are not a license to downgrade.
+                # BytesIO fixtures without HTTP metadata model legacy test streams.
+                if agent_contract and getattr(response, 'headers', None) is not None:
+                    selected = response.headers.get(KAP_VERSION_HEADER)
+                    if selected != KAP_CURRENT_VERSION:
+                        raise ProviderProtocolError(
+                            "Proxy did not acknowledge KAP/2; update Agent and Proxy together"
+                        )
                 for raw_line in iter(lambda: response.readline(4 * 1024 * 1024 + 1), b""):
                     received_bytes += len(raw_line)
                     if received_bytes > 4 * 1024 * 1024:
