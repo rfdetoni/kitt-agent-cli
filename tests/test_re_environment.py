@@ -19,7 +19,7 @@ def configured(tmp_path, monkeypatch):
     monkeypatch.setattr(
         re, "_profile",
         lambda path, system: (
-            Path(path), {"os": system, "kind": "qcow2", "state": str(tmp_path)},
+            Path(path), {"os": system, "kind": "qcow2", "probe_port": 18008, "state": str(tmp_path)},
             "f" * 64,
         ),
     )
