@@ -99,3 +99,8 @@ def test_runtime_tool_capability_map_includes_safe_compute():
 
     assert CAP_SAFE_COMPUTE in capabilities_for_tools(["kitt_runtime"])
     assert "sandbox.python" in runtime_operation_names()
+
+    runtime = SafeRuntime(Path("."), "ws", "conv")
+    capabilities = runtime.execute("kap.capabilities", {})
+    assert capabilities.success
+    assert "sandbox.python" in capabilities.data["features"]

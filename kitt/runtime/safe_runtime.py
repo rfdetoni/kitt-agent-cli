@@ -303,7 +303,7 @@ class SafeRuntime(_core.SafeRuntime):
                 "header": "K2",
                 "host_action": "K2 T kitt_runtime",
                 "features": ["repo.batch_read", "repo.ref.create", "repo.ref.read",
-                             "repo.ref.write", "plan.patch"],
+                             "repo.ref.write", "plan.patch", "sandbox.python"],
                 "positional_schema_digest": POSITIONAL_DIGEST,
                 "frame_batch": False,
                 "early_stream_termination": False,
