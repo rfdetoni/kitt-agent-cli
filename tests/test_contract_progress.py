@@ -153,3 +153,21 @@ def test_simulated_daemon_event_reaches_tui_before_real_tools():
     reduce_ui_event(state, map_daemon_event_to_turn_event(wire))
     assert "T00" in state.active_tasks[0].summary
     assert state.status_text == "GOAL EXECUTION"
+
+
+def test_tui_render_contains_live_review_phase_in_hud_and_transcript():
+    from kitt.ui.render.core import _status_text, _transcript_text
+
+    state = UIState()
+    state.init_turn_tasks("Build Observatory")
+    wire = SimpleNamespace(
+        event_type="ContractProgress",
+        payload={"phase": "reviewing", "attempt": 2, "max_attempts": 3},
+    )
+    reduce_ui_event(state, map_daemon_event_to_turn_event(wire))
+    ui = SimpleNamespace(state=state)
+    assert "REVIEWING 2/3" in _status_text(ui)
+    output = "".join(value for _, value in _transcript_text(ui))
+    assert "Validando plano" in output
+    assert "tentativa 2/3" in output
+    assert "✔" not in output
