@@ -83,8 +83,10 @@ rejected by the ledger's unique-key semantics.
   the textual envelope never authorizes a write.
 - These APIs are available in the Python Agent CLI. No separate `K2 B`
   grammar or tool execution route in the reverse proxy is required.
-- Request-header/session capability negotiation for optional future
-  `K2/n` grammar revisions is **not activated**.
+- Exact request-header negotiation for the deployed `KAP/2` version is active
+  through `X-Kitt-KAP` on Agent+Proxy HTTP contract requests. Unrecognized
+  versions are rejected, without fallback. New `K2/n` grammar revisions are
+  **not** implemented and require their own coordinated capability release.
 - Streaming completion still depends on trusted transport data or a
   complete strictly parsed assistant-owned UI response; a terminator in
   an arbitrary DOM node is not sufficient.
