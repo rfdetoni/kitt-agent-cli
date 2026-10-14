@@ -17,6 +17,9 @@
 
 - Header negotiation is transport metadata; it does not enable syntax
   `K2/n`, bypass permissions or permit client-side tool execution.
+- Host `kap.capabilities` reports `metadata_version_negotiation=true` for
+  the exact HTTP `KAP/2` selection; token-level early stream termination and
+  frame batching remain disabled.
 - Proxy's verified early *logical* completion uses assistant-owned DOM
   provenance and pretrusted CDP. The Agent still consumes the complete
   SSE response, including `[DONE]`; no early client connection abort.
