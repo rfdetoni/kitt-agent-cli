@@ -497,6 +497,8 @@ def build_parser() -> argparse.ArgumentParser:
     re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
     re_setup.add_argument("--runtime", choices=["podman", "docker"], default="podman")
     re_setup.add_argument("--source", type=Path)
+    re_setup.add_argument("--viewer-port", type=int, help="Local noVNC port (defaults: 18006/18007)")
+    re_setup.add_argument("--probe-port", type=int, help="Local-only SSH probe port (defaults: 18008/18009)")
     re_enroll = re_actions.add_parser("enroll", help="Approve an existing VM profile")
     re_enroll.add_argument("system", choices=["windows", "linux"])
     re_enroll.add_argument("profile", type=Path)
@@ -915,7 +917,10 @@ def main(argv=None) -> int:
             if args.re_action == "status":
                 result = re_environment.status()
             elif args.re_action == "setup":
-                result = re_environment.setup(args.system, runtime=args.runtime, source=args.source)
+                result = re_environment.setup(
+                    args.system, runtime=args.runtime, source=args.source,
+                    viewer_port=args.viewer_port, probe_port=args.probe_port,
+                )
             elif args.re_action == "enroll":
                 result = re_environment.enroll(args.system, args.profile, auto=args.auto)
             elif args.re_action == "auto":
