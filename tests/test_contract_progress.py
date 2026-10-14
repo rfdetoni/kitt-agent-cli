@@ -95,3 +95,79 @@ def test_daemon_preserves_progress_fields_across_ipc():
     assert event.phase == "reviewing"
     assert event.attempt == 2
     assert event.max_attempts == 3
+
+
+def test_review_retry_edits_validated_plan_not_freeform_redecomposition(tmp_path):
+    planner = ContractPlanner(SimpleNamespace(
+        canonical_root=tmp_path, workspace_id="workspace", processor=SimpleNamespace(),
+    ))
+    with patch.object(
+        planner, "_run_plan_turn", side_effect=[_proposal(), _proposal()],
+    ) as run, patch.object(
+        planner, "_review_high_risk", side_effect=[["T00 must wait for verified workspace"], []],
+    ):
+        events, items = _collect(planner.iter_plan("conv", "Build authorized inventory"))
+    retry_prompt = run.call_args_list[1].args[1]
+    assert "REVISION OF HOST-VALIDATED PLAN" in retry_prompt
+    assert "T00 must wait for verified workspace" in retry_prompt
+    assert '"local_id":"T00"' in retry_prompt
+    assert "not a fresh decomposition" in retry_prompt
+    assert [event.phase for event in events][-1] == "accepted"
+    assert [item["local_id"] for item in items] == ["T00", "FINAL"]
+
+
+def test_malformed_revision_retains_unresolved_review_issues(tmp_path):
+    planner = ContractPlanner(SimpleNamespace(
+        canonical_root=tmp_path, workspace_id="workspace", processor=SimpleNamespace(),
+    ))
+    with patch.object(
+        planner, "_run_plan_turn",
+        side_effect=[_proposal(), '{"items":"invalid"}', _proposal()],
+    ) as run, patch.object(
+        planner, "_review_high_risk", side_effect=[["Keep Windows execution gated"], []],
+    ):
+        events, items = _collect(planner.iter_plan("conv", "Build authorized inventory"))
+    third_prompt = run.call_args_list[2].args[1]
+    assert "Keep Windows execution gated" in third_prompt
+    assert "Host validation:" in third_prompt
+    assert [event.phase for event in events][-1] == "accepted"
+    assert len(items) == 2
+
+
+def test_simulated_daemon_event_reaches_tui_before_real_tools():
+    state = UIState()
+    state.init_turn_tasks("Build Observatory")
+    for phase, attempt in (("generating", 1), ("reviewing", 1),
+                           ("revising", 1), ("generating", 2)):
+        wire = SimpleNamespace(
+            event_type="ContractProgress",
+            payload={"phase": phase, "attempt": attempt, "max_attempts": 3},
+        )
+        reduce_ui_event(state, map_daemon_event_to_turn_event(wire))
+    assert state.status_text == "PLANNING 2/3"
+    assert [block.kind for block in state.transcript] == ["system"] * 4
+    assert not state.is_executing_tool
+    wire = SimpleNamespace(event_type="ContractProgress",
+                           payload={"phase": "executing", "task_id": "T00",
+                                    "task_state": "RUNNING", "total": 11, "completed": 0})
+    reduce_ui_event(state, map_daemon_event_to_turn_event(wire))
+    assert "T00" in state.active_tasks[0].summary
+    assert state.status_text == "GOAL EXECUTION"
+
+
+def test_tui_render_contains_live_review_phase_in_hud_and_transcript():
+    from kitt.ui.render.core import _status_text, _transcript_text
+
+    state = UIState()
+    state.init_turn_tasks("Build Observatory")
+    wire = SimpleNamespace(
+        event_type="ContractProgress",
+        payload={"phase": "reviewing", "attempt": 2, "max_attempts": 3},
+    )
+    reduce_ui_event(state, map_daemon_event_to_turn_event(wire))
+    ui = SimpleNamespace(state=state)
+    assert "REVIEWING 2/3" in _status_text(ui)
+    output = "".join(value for _, value in _transcript_text(ui))
+    assert "Validando plano" in output
+    assert "tentativa 2/3" in output
+    assert "✔" not in output
