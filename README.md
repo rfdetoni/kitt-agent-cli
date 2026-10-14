@@ -1,3 +1,11 @@
+## Agent CLI 0.87.16 — live goal planning feedback
+
+Automatic Goals now report planner/reviewer phases, bounded retry attempts
+and task execution status directly in the TUI, including over daemon IPC.
+A valid plan can still be revised up to three times before host execution;
+the UI now distinguishes that activity from real tool calls.
+See [release notes](docs/RELEASE_0.87.16.md).
+
 ## Agent CLI 0.87.15 — lazy RE lab cleanup and toolbox menu
 
 A host-owned mission lease prevents concurrent lazy lab runs. Mission-started

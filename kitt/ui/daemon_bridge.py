@@ -11,7 +11,7 @@ _EVENT_TYPES = {
     name: getattr(te, name)
     for name in (
         "TurnStarted", "FilterCompleted", "ContextResolved", "ContextBuildCompleted",
-        "BudgetApplied", "ModelSelected", "TextDelta", "ThinkingStarted",
+        "BudgetApplied", "ModelSelected", "TextDelta", "ContractProgress", "ThinkingStarted",
         "ThinkingCompleted", "ToolCallProposed", "ApprovalRequired", "ToolStarted",
         "ToolCompleted", "EditApplied", "MetricsRecorded", "TurnCompleted",
         "TurnFailed", "TurnCancelled", "TurnBlocked", "ChildAgentSpawned",

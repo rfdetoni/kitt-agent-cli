@@ -736,16 +736,18 @@ class GoalContractTests(unittest.TestCase):
                     workspace_id="ws", goals=self.goals, goal_scheduler=scheduler, processor=processor)
                 command = TurnCommand(conversation_id="conv", prompt="implement", turn_id=f"cancel-{cancel_phase}")
                 planned = [_item("T01"), _item("FINAL", kind="final")]
-                def plan(*args, **kwargs):
+                def iter_plan(*args, **kwargs):
                     if cancel_phase == "planning":
                         self.assertTrue(cancel_automatic_contract(runtime, "conv", command.turn_id, "cancel"))
+                    if False:
+                        yield None
                     return planned
                 create = self.goals.create_contract
                 def create_then_cancel(*args, **kwargs):
                     goal = create(*args, **kwargs)
                     registry.cancel(command.turn_id)
                     return goal
-                with patch("kitt.goals.auto_contract.ContractPlanner.plan", side_effect=plan), patch.object(
+                with patch("kitt.goals.auto_contract.ContractPlanner.iter_plan", side_effect=iter_plan), patch.object(
                     self.goals, "create_contract", side_effect=create_then_cancel if cancel_phase == "creation" else create,
                 ):
                     events = list(iter_automatic_contract(runtime, command))
@@ -872,9 +874,14 @@ class GoalContractTests(unittest.TestCase):
             _item("FINAL", kind="final", depends_on=["T01"]),
         ]
 
+        def iter_planned(*args, **kwargs):
+            if False:
+                yield None
+            return planned
+
         with patch(
-            "kitt.goals.auto_contract.ContractPlanner.plan",
-            return_value=planned,
+            "kitt.goals.auto_contract.ContractPlanner.iter_plan",
+            side_effect=iter_planned,
         ), patch(
             "kitt.goals.auto_contract.render_contract",
             return_value="contract complete",

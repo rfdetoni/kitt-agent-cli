@@ -5,6 +5,7 @@ from kitt.core.turn_events import (
     MetricsRecorded,
     ModelSelected,
     TextDelta,
+    ContractProgress,
     ToolCallProposed,
     ToolCompleted,
     ToolStarted,
@@ -155,6 +156,7 @@ def format_tool_bullet(tool_name: str, args: dict | None) -> str:
 
 from kitt.ui.reducer_handlers import (
     handle_turn_started,
+    handle_contract_progress,
     handle_thinking_started,
     handle_thinking_completed,
     handle_tool_proposed,
@@ -171,6 +173,8 @@ from kitt.ui.reducer_handlers import (
 def reduce_ui_event(state: UIState, event: object) -> UIState:
     if isinstance(event, TurnStarted):
         handle_turn_started(state, event)
+    elif isinstance(event, ContractProgress):
+        handle_contract_progress(state, event)
     elif isinstance(event, ThinkingStarted):
         handle_thinking_started(state, event)
     elif isinstance(event, ThinkingCompleted):

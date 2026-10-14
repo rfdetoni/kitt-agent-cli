@@ -51,6 +51,19 @@ class ModelSelected(TurnEvent):
     model: str = ""
 
 @dataclass
+class ContractProgress(TurnEvent):
+    """Host-owned contract lifecycle metadata; no model reasoning or secrets."""
+    phase: str = ""
+    attempt: int = 0
+    max_attempts: int = 0
+    issues: int = 0
+    task_id: str = ""
+    task_state: str = ""
+    completed: int = 0
+    total: int = 0
+
+
+@dataclass
 class TextDelta(TurnEvent):
     delta: str = ""
 

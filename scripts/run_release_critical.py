@@ -18,6 +18,7 @@ RELEASE_CRITICAL_TESTS = (
     "tests/test_event_ledger_replay.py",
     "tests/test_completion_contract.py",
     "tests/test_goal_contract.py",
+    "tests/test_contract_progress.py",
     "tests/test_verification_contract.py",
     "tests/test_tool_payload_contract.py",
     "tests/test_tool_registry.py",
