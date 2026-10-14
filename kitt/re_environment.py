@@ -166,7 +166,8 @@ def ensure_lab_guests() -> list[dict]:
     return results
 
 
-def setup(system: str, *, runtime: str = "podman", source: Path | None = None) -> dict:
+def setup(system: str, *, runtime: str = "podman", source: Path | None = None,
+          viewer_port: int | None = None, probe_port: int | None = None) -> dict:
     """Guided install: never fetch a guest OS or execute a silent privileged install."""
     if system == "rea":
         executable = shutil.which("rea")
@@ -207,7 +208,11 @@ def setup(system: str, *, runtime: str = "podman", source: Path | None = None) -
                 "next": f"kitt re enroll {system} {target}",
                 "note": "Existing VM kept unchanged; verify the OS is installed before enrolling"}
     from kitt.vm_helper import create_vm
-    _, profile = create_vm(system=system, source=source, backend=runtime, yes=True)
+    _, profile = create_vm(
+        system=system, source=source, backend=runtime, yes=True,
+        port=viewer_port if viewer_port is not None else (18006 if system == "windows" else 18007),
+        probe_port=probe_port if probe_port is not None else (18008 if system == "windows" else 18009),
+    )
     kind = source.suffix.lower() == ".iso"
     return {
         "created": True, "profile": str(profile),
