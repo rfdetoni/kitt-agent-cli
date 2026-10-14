@@ -127,6 +127,9 @@ def build_key_bindings(ui):
     @kb.add("a", filter=re_panel)
     def _(event): asyncio.create_task(ui._re_action("auto"))
 
+    @kb.add("b", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_action("build"))
+
     @kb.add("f5", filter=re_panel)
     def _(event): asyncio.create_task(ui._re_refresh())
 
