@@ -1,3 +1,7 @@
+## Agent CLI 0.87.19 — memória vetorial local opcional
+
+Defina `KITT_MEMORY_EMBED_MODEL` para ativar embeddings usando Ollama local; `KITT_MEMORY_EMBED_URL` aceita apenas loopback HTTP (padrão `http://127.0.0.1:11434`). A indexação após gravação ocorre em fila lazy limitada e a recuperação cai para FTS5 em falhas. Requer kitt-memoryd 0.10.0. Veja [release](docs/RELEASE_0.87.19.md).
+
 ## Agent CLI 0.87.10 — Python seguro no KAP/2
 
 O envelope KAP/2 aceita `sandbox.python` com bloco `code<<PY`.

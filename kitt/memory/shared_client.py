@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from kitt.memory.vector_index import LocalVectorIndexer
+
 from kitt_protocol import (
     AuthenticatedFrame,
     Envelope,
@@ -63,6 +65,7 @@ class KittMemoryClient:
         self.token_path = Path(token_path or os.getenv("KITT_MEMORY_TOKEN_PATH") or (root / "kitt" / "memory" / "auth.token"))
         self._budgets = threading.local()
         self.timeout = max(0.05, min(float(timeout), 10.0))
+        self._vector_indexer = LocalVectorIndexer.from_environment()
 
     @contextmanager
     def request_budget(self, seconds: float):
@@ -270,6 +273,8 @@ class KittMemoryClient:
         memory_id = body.get("id") if isinstance(body, dict) else None
         if not isinstance(memory_id, str):
             raise KittMemoryUnavailable("memory.remember response missing id")
+        if self._vector_indexer is not None and sensitivity != "ephemeral":
+            self._vector_indexer.schedule(self, memory_id, content)
         return memory_id
 
     def search(
@@ -288,9 +293,7 @@ class KittMemoryClient:
         exclude_ids: list[str] | tuple[str, ...] = (),
         include_context_hints: bool = False,
     ) -> tuple[list[dict[str, Any]], str]:
-        body = self._call(
-            MEMORY_SEARCH_REQUEST,
-            {
+        payload: dict[str, Any] = {
                 "namespace": namespace,
                 "workspace_id": workspace_id,
                 "scope_key": scope_key,
@@ -303,9 +306,13 @@ class KittMemoryClient:
                 "include_provenance": bool(include_provenance),
                 "exclude_ids": [str(value) for value in exclude_ids if str(value).strip()][:256],
                 "include_context_hints": bool(include_context_hints),
-            },
-            MEMORY_SEARCH_RESPONSE,
-        )
+        }
+        if self._vector_indexer is not None:
+            vector = self._vector_indexer.query(query)
+            if vector is not None:
+                payload["embedding_model"] = self._vector_indexer.model
+                payload["query_embedding"] = vector
+        body = self._call(MEMORY_SEARCH_REQUEST, payload, MEMORY_SEARCH_RESPONSE)
         hits = body.get("hits") if isinstance(body, dict) else None
         if not isinstance(hits, list):
             raise KittMemoryUnavailable("memory.search response missing hits")
