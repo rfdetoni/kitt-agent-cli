@@ -248,6 +248,33 @@ def normalize_native_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[
     return normalized
 
 
+
+def _proxy_request_headers(request: LLMRequest) -> tuple[dict[str, str], bool]:
+    """Negotiate a single model-wire version before any provider submission."""
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        "User-Agent": "Kitt-Agent-CLI/reverse-proxy",
+    }
+    if request.api_key:
+        headers["Authorization"] = f"Bearer {request.api_key}"
+    headers.update(request.extra_headers)
+    agent_contract = any(key.lower() == AGENT_CONTRACT_HEADER.lower()
+                         for key in request.extra_headers)
+    if agent_contract:
+        try:
+            selected = [value for key, value in request.extra_headers.items()
+                        if key.lower() == KAP_VERSION_HEADER.lower()]
+            if len(selected) > 1:
+                raise KAPNegotiationError("Ambiguous KAP version headers")
+            negotiate_kap_version(selected[0] if selected else None)
+        except KAPNegotiationError as exc:
+            raise ProviderProtocolError(str(exc)) from exc
+        headers[KAP_VERSION_HEADER] = KAP_CURRENT_VERSION
+    return headers, agent_contract
+
+
+
 class KittReverseProxyAdapter(OpenAIChatAdapter):
     """OpenAI Chat Completions adapter with native KITT tool round trips."""
 
@@ -287,24 +314,7 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
         if request.response_format == "json":
             payload["response_format"] = {"type": "json_object"}
 
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-            "User-Agent": "Kitt-Agent-CLI/reverse-proxy",
-        }
-        if request.api_key:
-            headers["Authorization"] = f"Bearer {request.api_key}"
-        headers.update(request.extra_headers)
-        agent_contract = any(key.lower() == AGENT_CONTRACT_HEADER.lower()
-                             for key in request.extra_headers)
-        if agent_contract:
-            try:
-                requested = next((value for key, value in request.extra_headers.items()
-                                  if key.lower() == KAP_VERSION_HEADER.lower()), None)
-                negotiate_kap_version(requested)
-            except KAPNegotiationError as exc:
-                raise ProviderProtocolError(str(exc)) from exc
-            headers[KAP_VERSION_HEADER] = KAP_CURRENT_VERSION
+        headers, agent_contract = _proxy_request_headers(request)
 
         http_request = urllib.request.Request(
             url,
