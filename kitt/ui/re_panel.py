@@ -148,8 +148,20 @@ async def action(ui, operation: str) -> None:
             current = ui.re_snapshot.get("guests", {}).get(system, {})
             result = await ui._run_blocking(re_environment.set_auto, system, not current.get("auto", False))
         elif operation == "start":
-            if system not in ("windows", "linux"):
-                result = await ui._run_blocking(re_environment.setup, system, runtime=ui.re_backend)
+            if system == "toolbox":
+                from prompt_toolkit.application import run_in_terminal
+                root = Path(ui.state.workspace_path)
+                exit_code = await run_in_terminal(
+                    lambda: vm_container.toolbox(
+                        runtime=ui.re_backend, profile="full", workspace=root,
+                    ),
+                    in_executor=True,
+                )
+                result = {"toolbox": "closed", "exit_code": exit_code}
+            elif system == "rea":
+                result = await ui._run_blocking(
+                    re_environment.setup, system, runtime=ui.re_backend,
+                )
             else:
                 result = await ui._run_blocking(re_environment.ensure, system)
         elif operation == "stop":

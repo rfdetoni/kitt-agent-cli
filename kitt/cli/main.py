@@ -941,12 +941,15 @@ def main(argv=None) -> int:
         try:
             if args.vm_action == "lab":
                 from kitt import vm_broker
-                if args.lab_action == "run":
-                    from kitt.re_environment import ensure_lab_guests
-                    ensure_lab_guests()
-                report = (vm_broker.doctor(args.hosts) if args.lab_action == "doctor" else
-                          vm_broker.run_lab_mission(workspace=args.workspace,
-                                                    mission=args.mission, hosts=args.hosts))
+                if args.lab_action == "doctor":
+                    report = vm_broker.doctor(args.hosts)
+                else:
+                    from kitt.re_environment import managed_lab_guests
+                    with managed_lab_guests():
+                        report = vm_broker.run_lab_mission(
+                            workspace=args.workspace, mission=args.mission,
+                            hosts=args.hosts,
+                        )
                 print(_json.dumps(report, ensure_ascii=False))
                 return 2 if report.get("blocked", 0) else 0
             if args.vm_action == "container":

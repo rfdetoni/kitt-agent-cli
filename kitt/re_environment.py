@@ -172,6 +172,56 @@ def ensure_lab_guests() -> list[dict]:
     return results
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def managed_lab_guests():
+    """Lease guests for one operator-run mission and stop only those we started.
+
+    A nonblocking host lock prevents two lazy missions from sharing and then
+    accidentally stopping each other's guests. Manual operator-started VMs
+    are never stopped by this context.
+    """
+    configured = _read_config()["profiles"]
+    selected = [system for system in _SYSTEMS
+                if configured.get(system, {}).get("auto")]
+    if not selected:
+        yield []
+        return
+    if os.name != "posix":
+        raise VMError("Automatic container guests require Linux host")
+    import fcntl
+
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(_CONFIG.parent / ".lab.lock", flags, 0o600)
+    with os.fdopen(fd, "w") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise VMError("Another lazy RE lab mission is already active") from exc
+        owned: list[str] = []
+        launched: list[dict] = []
+        try:
+            for system in selected:
+                result = ensure(system, automatic=True)
+                launched.append(result)
+                if result.get("started"):
+                    owned.append(system)
+            yield launched
+        finally:
+            failures = []
+            for system in reversed(owned):
+                try:
+                    stop(system)
+                except (VMError, OSError) as exc:
+                    failures.append(f"{system}: {exc}")
+            if failures:
+                raise VMError("Guest shutdown failed: " + "; ".join(failures))
+
+
 def setup(system: str, *, runtime: str = "podman", source: Path | None = None,
           viewer_port: int | None = None, probe_port: int | None = None) -> dict:
     """Guided install: never fetch a guest OS or execute a silent privileged install."""

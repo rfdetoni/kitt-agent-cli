@@ -69,3 +69,52 @@ def test_bad_persisted_profile_does_not_auto_start(configured, monkeypatch):
     re._CONFIG.write_text(json.dumps(config))
     monkeypatch.setattr(vm_container, "start_vm", lambda *args, **kwargs: pytest.fail("Should fail closed"))
     assert re.status()["guests"]["windows"]["status"] == "blocked"
+
+
+
+def test_mission_stops_only_guest_started_by_current_run(configured, monkeypatch):
+    re.enroll("windows", configured, auto=True)
+    operations = []
+    def operate(path, action):
+        operations.append(action)
+        return {"status": "missing" if action == "status" else "exited"}
+    monkeypatch.setattr(vm_container, "operate", operate)
+    monkeypatch.setattr(vm_container, "start_vm", lambda path: {"status": "ready"})
+    with re.managed_lab_guests() as results:
+        assert results[0]["started"] is True
+        assert operations == ["status"]
+    assert operations == ["status", "stop"]
+
+
+def test_mission_does_not_stop_preexisting_guest(configured, monkeypatch):
+    re.enroll("windows", configured, auto=True)
+    operations = []
+    def operate(path, action):
+        operations.append(action)
+        return {"status": "running"}
+    monkeypatch.setattr(vm_container, "operate", operate)
+    monkeypatch.setattr(vm_container, "start_vm", lambda path: pytest.fail("Duplicate boot"))
+    with re.managed_lab_guests() as results:
+        assert results[0]["started"] is False
+    assert operations == ["status"]
+
+
+def test_guest_is_stopped_after_mission_failure(configured, monkeypatch):
+    re.enroll("windows", configured, auto=True)
+    operations = []
+    monkeypatch.setattr(vm_container, "operate", lambda path, action:
+                        operations.append(action) or {"status": "missing"})
+    monkeypatch.setattr(vm_container, "start_vm", lambda path: {"status": "ready"})
+    with pytest.raises(RuntimeError, match="probe failed"):
+        with re.managed_lab_guests():
+            raise RuntimeError("probe failed")
+    assert operations == ["status", "stop"]
+
+
+def test_same_process_cannot_lease_guest_twice(configured, monkeypatch):
+    re.enroll("windows", configured, auto=True)
+    monkeypatch.setattr(vm_container, "operate", lambda path, action: {"status": "running"})
+    with re.managed_lab_guests():
+        with pytest.raises(VMError, match="already active"):
+            with re.managed_lab_guests():
+                pass
