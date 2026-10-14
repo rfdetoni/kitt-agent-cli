@@ -96,12 +96,30 @@ def build_session_report(
     cap = min(100, max(1, int(limit)))
     db = HistoryDatabase(root_dir)
     try:
-        if sessions is None:
-            identity = resolve_workspace_identity(db, root_dir)
-            repo = HistoryRepository(db)
-            source_rows = repo.list_conversations(identity.id, limit=cap)
-        else:
-            source_rows = list(sessions)[:cap]
+        # SQLite is authoritative for durable conversations. The daemon
+        # only enriches runtime status; it may have restarted and know fewer
+        # sessions than were saved on disk. Never expose other workspaces.
+        identity = resolve_workspace_identity(db, root_dir)
+        repo = HistoryRepository(db)
+        local_rows = repo.list_conversations(identity.id, limit=cap)
+        daemon_rows = {
+            str(row.get("id")): row for row in (sessions or ())
+            if isinstance(row, dict) and row.get("id")
+        }
+        source_rows = [
+            {**row, **{k: v for k, v in daemon_rows.get(row["id"], {}).items()
+                       if k not in {"id", "title", "workspace_id"}}}
+            for row in local_rows
+        ]
+        known = {row["id"] for row in source_rows}
+        for row in daemon_rows.values():
+            # Include an unsaved live daemon session only when the daemon
+            # explicitly identifies the same canonical workspace.
+            if (len(source_rows) >= cap or row["id"] in known
+                    or row.get("workspace_id") != identity.id):
+                continue
+            source_rows.append(row)
+            known.add(row["id"])
 
         current = float(
             now if now is not None else datetime.now(timezone.utc).timestamp()

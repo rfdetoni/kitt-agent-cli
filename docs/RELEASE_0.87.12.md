@@ -60,3 +60,10 @@ New Conversation and Fork are blocked while an active turn is running.
 History Resume is likewise blocked until the turn reaches a terminal
 state; this prevents switching the visible transcript away from the
 actual durable execution owner.
+
+## CLI sessions menu and daemon recovery
+
+`kitt sessions` and `kitt sessions --all` now merge the current
+workspace's durable SQLite conversations with optional live daemon status.
+An empty/restarted daemon no longer hides older history. Rows from other
+workspaces are excluded. No new storage/database is introduced.

@@ -32,6 +32,25 @@ class DurableSessionRecoveryTests(unittest.TestCase):
                 other_service.close()
             service.close()
 
+    def test_cli_sessions_merge_durable_history_with_daemon_status(self):
+        from kitt.cli.operations import build_session_report
+        with tempfile.TemporaryDirectory() as tmp:
+            db = HistoryService(tmp)
+            first = db.new_conversation("Huge previous task")
+            db.repo.save_message(first["id"], "original", "user", "A" * 23000)
+            second = db.new_conversation("More recent")
+            db.close()
+            offline = build_session_report(tmp, sessions=[])
+            self.assertEqual({row["id"] for row in offline}, {first["id"], second["id"]})
+            live = build_session_report(tmp, sessions=[
+                {"id": second["id"], "status": "RUNNING"},
+                {"id": "foreign", "title": "Other workspace"},
+            ])
+            self.assertEqual(len(live), 2)
+            self.assertEqual(next(row["status"] for row in live
+                                  if row["id"] == second["id"]), "RUNNING")
+            self.assertNotIn("foreign", {row["id"] for row in live})
+
     def test_big_prompt_is_stored_and_included_as_a_bounded_excerpt(self):
         with tempfile.TemporaryDirectory() as tmp:
             first = HistoryService(tmp)
