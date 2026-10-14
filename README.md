@@ -1,3 +1,11 @@
+## Agent CLI 0.87.17 — targeted Goal review correction
+
+A `REVISE` reviewer verdict now retains the prior host-validated
+plan as an editing baseline and sends only its unresolved issues for
+correction. Revisions are revalidated and reviewed before any
+execution; bounded retries and permission gates remain intact.
+See [release notes](docs/RELEASE_0.87.17.md).
+
 ## Agent CLI 0.87.16 — live goal planning feedback
 
 Automatic Goals now report planner/reviewer phases, bounded retry attempts
