@@ -2,6 +2,8 @@ import json
 import re
 from typing import Any, Dict, Optional, Tuple
 
+from kitt_protocol import KAP2Error, decode_kap2_frame
+
 TOOL_CALL_OPEN = "<kitt-tool>"
 TOOL_CALL_CLOSE = "</kitt-tool>"
 
@@ -159,6 +161,23 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
         return None
 
     canonical = text.strip()
+    if canonical.startswith("K2 T"):
+        # KAP/2 is decoded by the canonical SDK, not by a second local
+        # parser. Policy/allowed-operation checks remain host-owned.
+        try:
+            frame = decode_kap2_frame(canonical)
+        except KAP2Error as exc:
+            raise ValueError(f"Invalid KAP/2 host tool action: {exc}") from exc
+        if frame["action"] != "use_tool" or not isinstance(frame["tool_input"], dict):
+            raise ValueError("Expected one KAP/2 tool action with named arguments")
+        name = frame["tool"]
+        if not isinstance(name, str) or not name:
+            raise ValueError("Missing KAP/2 tool name")
+        return CANONICAL_TOOLS.get(name.lower(), name), frame["tool_input"]
+    # Structured finals are not tool requests; the Goals verifier
+    # handles K2 F reports separately after actual tool receipts.
+    if canonical.startswith(("K2 F", "K2 W", "K2 Q")):
+        return None
     if canonical.startswith(TOOL_CALL_OPEN):
         if not canonical.endswith(TOOL_CALL_CLOSE):
             raise ValueError("Incomplete kitt-tool envelope")

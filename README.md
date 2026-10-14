@@ -1,3 +1,10 @@
+## Agent CLI 0.87.13 — KAP/2 K2 T reaches host runtime
+
+Model-emitted `K2 T kitt_runtime` now goes through the canonical
+KAP/2 decoder before host policy and dispatch. This completes the
+tool-first Goals fix in 0.87.12 without adding new capabilities.
+See [release notes](docs/RELEASE_0.87.13.md).
+
 ## Agent CLI 0.87.12 — KAP/2 Goals execute via host tools
 
 Goals tasks now request textual K2 T host tool actions before K2 F
