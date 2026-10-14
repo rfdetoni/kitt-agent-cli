@@ -40,3 +40,10 @@ Unit/integration regressions cover cross-restart restoration, 60+ session
 ID resume, workspace isolation, large user prompt retention and fork UI.
 The remote CI validates supported Python and CLI surfaces. The root
 installer needs its agent pin and downstream locks updated separately.
+
+## Fail-closed history write validation
+
+A user prompt must persist before the local model turn can start. If SQLite
+fails, the TUI reports a turn-start error and does not dispatch the task.
+If writing a completed assistant answer fails, the bridge emits TurnFailed
+instead of reporting TurnCompleted. Regression tests verify both cases.

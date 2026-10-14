@@ -78,3 +78,38 @@ class SessionMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         await session_commands.handle_fork_command(ui, "")
         ui._load_conversation.assert_awaited_once_with(conv)
+
+
+    async def test_bridge_refuses_to_run_without_persisting_original_prompt(self):
+        from kitt.ui.event_bridge import TurnEventBridge
+        class FailedRepo:
+            def save_message(self, *args):
+                raise OSError("SQLite unavailable")
+        proc = SimpleNamespace(run_turn=lambda command: iter(()))
+        rt = SimpleNamespace(history=SimpleNamespace(repo=FailedRepo()), processor=proc)
+        bridge = TurnEventBridge(rt, lambda event: None, lambda: None)
+        with self.assertRaisesRegex(RuntimeError, "salvar o prompt"):
+            await bridge.start("Large original task", "conversation", no_history=False, mode="ask")
+        await bridge.shutdown()
+
+    async def test_assistant_history_write_failure_does_not_report_success(self):
+        from kitt.core.turn_events import TurnCompleted, TurnFailed
+        from kitt.ui.event_bridge import TurnEventBridge
+        class Repo:
+            calls = 0
+            def save_message(self, *args):
+                self.calls += 1
+                if self.calls >= 2:
+                    raise OSError("disk full")
+        class Proc:
+            def run_turn(self, command):
+                yield TurnCompleted(response="done")
+        events = []
+        bridge = TurnEventBridge(
+            SimpleNamespace(history=SimpleNamespace(repo=Repo()), processor=Proc()),
+            events.append, lambda: None)
+        await bridge.start("Big prompt", "conv", no_history=False, mode="ask")
+        await asyncio.wait_for(bridge._consumer, 2)
+        await bridge.shutdown()
+        self.assertTrue(any(isinstance(event, TurnFailed) for event in events))
+        self.assertFalse(any(isinstance(event, TurnCompleted) for event in events))

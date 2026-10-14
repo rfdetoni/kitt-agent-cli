@@ -501,3 +501,24 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    async def test_reopen_tui_hydrates_saved_transcript_without_reexecuting(self):
+        conv = self.runtime.history.new_conversation()
+        self.runtime.history.repo.save_message(
+            conv["id"], "saved-turn", "user", "# Windows Observatory\\n" + "W" * 18000)
+        self.runtime.history.repo.save_message(
+            conv["id"], "saved-turn", "assistant", "Plan saved; T00 pending")
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            task = asyncio.create_task(ui.run_async())
+            try:
+                await asyncio.sleep(0.05)
+                self.assertEqual(ui.state.active_conversation_id, conv["id"])
+                self.assertEqual(ui.state.route, "session")
+                self.assertEqual([b.kind for b in ui.state.transcript], ["user", "assistant"])
+                self.assertIn("T00 pending", ui.state.transcript[-1].text)
+                self.assertFalse(ui.state.is_thinking)
+            finally:
+                ui.request_exit()
+                await asyncio.wait_for(task, 2)

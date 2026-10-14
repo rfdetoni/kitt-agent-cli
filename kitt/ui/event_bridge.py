@@ -118,7 +118,11 @@ class TurnEventBridge:
     def _deliver(self, event):
         self.event_count += 1
         if isinstance(event, TurnCompleted):
-            self._persist_assistant_response_if_needed(event.response)
+            try:
+                self._persist_assistant_response_if_needed(event.response)
+            except Exception as exc:
+                # A failed durable write cannot be reported as a completed turn.
+                event = TurnFailed(error=f"Falha ao persistir resposta no histórico: {exc}")
         if event.__class__.__name__ == "TurnStarted" and getattr(event, "turn_id", ""):
             self._active_turn_id = event.turn_id
         self.on_event(event)
@@ -550,13 +554,10 @@ class TurnEventBridge:
             return
         text = response.strip() or self._accumulated_assistant_text.strip()
         if text:
-            try:
-                self.runtime.history.repo.save_message(
-                    self._active_conversation_id, self._active_turn_id, "assistant", text
-                )
-                self._saved_roles.add(key)
-            except Exception as exc:
-                self.on_event(TurnFailed(error=f"Falha ao persistir a resposta no histórico: {exc}"))
+            self.runtime.history.repo.save_message(
+                self._active_conversation_id, self._active_turn_id, "assistant", text
+            )
+            self._saved_roles.add(key)
 
     def _request_invalidate(self):
         now = time.monotonic()
