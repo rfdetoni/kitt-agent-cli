@@ -9,12 +9,19 @@ if TYPE_CHECKING:
 
 async def handle_resume_command(app: KittUIApp, arg: str) -> None:
     target = arg or "1"
+    if app.state.is_thinking or (app.bridge and app.bridge.is_active):
+        app._show_result("Cannot switch conversations while a turn is active.")
+        return
+    previous = app.runtime.history.active_conversation
     conversation = await app._run_blocking(app.runtime.history.resume_conversation, target)
-    if conversation:
-        await app._load_conversation(conversation)
+    if not conversation:
+        app._show_result(f"Conversation not found: {target}")
+        return
+    if await app._load_conversation(conversation):
         app._show_result(f"Resumed: {conversation['title']}")
     else:
-        app._show_result(f"Conversation not found: {target}")
+        app.runtime.history.active_conversation = previous
+        app._show_result("Conversation resume was not completed.")
 
 
 async def handle_fork_command(app: KittUIApp, arg: str) -> None:
@@ -22,7 +29,10 @@ async def handle_fork_command(app: KittUIApp, arg: str) -> None:
         app.runtime.history.fork_conversation,
         title_suffix=f" ({arg})" if arg else " (Fork)"
     )
-    app._show_result(f"Forked: {conversation['title']}")
+    if await app._load_conversation(conversation):
+        app._show_result(f"Forked: {conversation['title']}")
+    else:
+        app._show_result("Fork was created but its UI could not be attached.")
 
 
 async def handle_export_command(app: KittUIApp, arg: str) -> None:

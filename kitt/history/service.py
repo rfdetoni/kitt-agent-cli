@@ -88,20 +88,26 @@ class HistoryService:
         return [dict(row) for row in rows]
 
     def resume_conversation(self, conv_id_or_index: str) -> Optional[Dict[str, Any]]:
-        convs = self.list_history(limit=50)
-        # Check by numeric index or ID
-        if conv_id_or_index.isdigit():
-            idx = int(conv_id_or_index) - 1
-            if 0 <= idx < len(convs):
-                self.active_conversation = convs[idx]
-                self._fresh_session_requested = False
-                return self.active_conversation
-        for c in convs:
-            if c["id"].startswith(conv_id_or_index):
-                self.active_conversation = c
-                self._fresh_session_requested = False
-                return c
-        return None
+        """Resume a workspace-owned conversation even if older than the menu page.
+
+        Numeric selection is the 1-based recent-history index; IDs and
+        unambiguous hexadecimal prefixes are looked up in the database.
+        """
+        target = str(conv_id_or_index or "").strip()
+        if not target:
+            return None
+        if target.isdecimal():
+            index = int(target) - 1
+            if index < 0:
+                return None
+            rows = self.repo.list_conversations(self.workspace_id, limit=1, offset=index)
+            chosen = rows[0] if rows else None
+        else:
+            chosen = self.repo.find_conversation_by_prefix(self.workspace_id, target)
+        if chosen:
+            self.active_conversation = chosen
+            self._fresh_session_requested = False
+        return chosen
 
     def fork_conversation(self, title_suffix: str = " (Fork)") -> Dict[str, Any]:
         """Fork the active conversation copying the active path exactly once.

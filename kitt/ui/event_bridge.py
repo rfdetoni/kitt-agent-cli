@@ -281,8 +281,12 @@ class TurnEventBridge:
             try:
                 self.runtime.history.repo.save_message(conversation_id, cmd.turn_id, "user", prompt)
                 self._saved_roles.add((cmd.turn_id, "user"))
-            except Exception:
-                pass
+            except Exception as exc:
+                self._active_turn_id = None
+                raise RuntimeError(
+                    "Não foi possível salvar o prompt no histórico do workspace; "
+                    "a execução foi interrompida para evitar perder a conversa."
+                ) from exc
         self._turn_generation += 1
         gen = self._turn_generation
         loop = asyncio.get_running_loop()
@@ -551,8 +555,8 @@ class TurnEventBridge:
                     self._active_conversation_id, self._active_turn_id, "assistant", text
                 )
                 self._saved_roles.add(key)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.on_event(TurnFailed(error=f"Falha ao persistir a resposta no histórico: {exc}"))
 
     def _request_invalidate(self):
         now = time.monotonic()

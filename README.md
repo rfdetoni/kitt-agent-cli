@@ -1,3 +1,13 @@
+## Agent CLI 0.87.12 — reopen long-lived workspaces
+
+The CLI now restores the previous conversation and transcript on interactive
+restart instead of silently starting blank. /resume and the Conversations
+picker work with durable SQLite history; oversized prompts are retained in
+the database and bounded excerpts are supplied to model context, rather
+than discarded entirely. Use Ctrl+N or /new for a new conversation,
+--no-history to opt out, and /contract-resume or /goal-resume to continue a
+durable execution. See [release notes](docs/RELEASE_0.87.12.md).
+
 ## Agent CLI 0.87.11 — indentation-free KAP/2 planner
 
 The durable task planner now requests a tagged compact final

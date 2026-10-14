@@ -710,9 +710,11 @@ async def async_main(args) -> int:
         scheduler_enabled=False if contract_mode else base_config.scheduler_enabled,
     )
     runtime = KittRuntime.build(args.root, config=config)
-    # A new KITT invocation starts logically blank. Saved history remains
-    # available through explicit history/resume commands.
-    runtime.history.begin_fresh_session()
+    # Interactive sessions restore the latest conversation by default.
+    # Explicit one-shot -p invocations remain isolated unless resuming a
+    # durable contract; Ctrl+N / /new still starts a fresh conversation.
+    if args.prompt is not None and not getattr(args, "contract_resume", None):
+        runtime.history.begin_fresh_session()
     backend = None
     if not contract_mode:
         backend = (

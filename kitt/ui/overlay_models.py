@@ -22,7 +22,7 @@ class SessionPickerModel:
     async def reload(self, query: str = "") -> None:
         self.query = query
         try:
-            self.sessions = self.runtime.history.list_history(20, 0, query or None)
+            self.sessions = self.runtime.history.list_history(100, 0, query or None)
         except Exception:
             self.sessions = []
         self.selected_index = max(0, min(self.selected_index, max(0, len(self.sessions) - 1)))

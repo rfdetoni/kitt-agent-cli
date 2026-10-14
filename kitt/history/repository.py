@@ -197,6 +197,22 @@ class HistoryRepository:
                 )
             return [dict(row) for row in cur.fetchall()]
 
+    def find_conversation_by_prefix(
+        self, workspace_id: str, prefix: str
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve an unambiguous workspace-local session, not just the top 50."""
+        value = str(prefix).lower()
+        if not 4 <= len(value) <= 32 or any(ch not in "0123456789abcdef" for ch in value):
+            return None
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM conversations WHERE workspace_id = ? "
+                "AND status NOT IN ('DELETED','INTERNAL_CHILD') "
+                "AND id LIKE ? ORDER BY updated_at DESC LIMIT 2",
+                (workspace_id, value + "%"),
+            ).fetchall()
+        return dict(rows[0]) if len(rows) == 1 else None
+
     def delete_conversation(self, conv_id: str) -> bool:
         with self.db.get_connection() as conn:
             cur = conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
@@ -239,6 +255,17 @@ class HistoryRepository:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
                 (msg_id, conv_id, turn_id, role, content, now, token_count, c_hash)
             )
+            # Name the session after its first user task so History/Resume
+            # menus can distinguish a large autonomous mission from others.
+            if role == "user":
+                first_line = next((line.strip().lstrip("# ").strip()
+                                   for line in content.splitlines() if line.strip()), "")
+                title = first_line[:96] or "New Conversation"
+                conn.execute(
+                    "UPDATE conversations SET title = ? "
+                    "WHERE id = ? AND title = 'New Conversation'",
+                    (title, conv_id),
+                )
             conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?;", (now, conv_id))
             entry_type = ("USER_MESSAGE" if role == "user"
                           else ("ASSISTANT_MESSAGE" if role == "assistant" else "TOOL_RESULT"))

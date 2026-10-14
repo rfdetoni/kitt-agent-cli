@@ -60,6 +60,8 @@ async def _load_conversation(ui, conversation: dict) -> bool:
     ui.state.transcript.clear()
     for message in messages[-500:]:
         ui.state.append_message(message.get("role", "system"), message.get("content", ""))
+    ui.runtime.history.active_conversation = conversation
+    ui.runtime.history._fresh_session_requested = False
     return True
 
 

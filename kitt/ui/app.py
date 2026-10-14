@@ -404,6 +404,12 @@ class KittUIApp:
 
     async def run_async(self) -> int:
         app = self.application or self.build_application()
+        if getattr(self.runtime.config, "history_enabled", False):
+            # Restore transcript UI, not an unfinished execution. The durable
+            # GoalScheduler/contract owner controls resumption separately.
+            previous = self.runtime.history.get_active_read_only()
+            if previous:
+                await self._load_conversation(previous)
         if not self.no_animation and os.environ.get("TERM") != "dumb":
             self._animation_task = asyncio.create_task(self._animate(), name="kitt-scanner")
         try:
