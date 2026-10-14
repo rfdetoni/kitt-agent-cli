@@ -499,9 +499,6 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
             await bridge.shutdown()
             self.assertFalse(bridge.is_active)
 
-if __name__ == "__main__":
-    unittest.main()
-
     async def test_reopen_tui_hydrates_saved_transcript_without_reexecuting(self):
         conv = self.runtime.history.new_conversation()
         self.runtime.history.repo.save_message(
@@ -522,3 +519,8 @@ if __name__ == "__main__":
             finally:
                 ui.request_exit()
                 await asyncio.wait_for(task, 2)
+
+if __name__ == "__main__":
+    unittest.main()
+
+
