@@ -65,7 +65,11 @@ class VMSupervisorTests(unittest.TestCase):
         self.assertIn("snapshot=on", joined)
         self.assertNotIn("guestfwd", joined)
         self.assertNotIn("virtiofs", joined)
-        self.assertNotIn("9p", joined)
+        self.assertFalse(
+            any(arg == "9p" or arg.startswith(("9p,", "-virtfs", "-fsdev"))
+                or "fsdriver=9p" in arg for arg in args),
+            "VM may not expose host 9p/virtfs shared filesystems",
+        )
         self.assertNotIn("usb-host", joined)
         self.assertNotIn("tap,", joined)
         ssh = _ssh_args(info, 2222, "ssh")
