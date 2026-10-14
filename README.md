@@ -1,3 +1,7 @@
+## Agent CLI 0.87.9 — lock do Protocol corrigido
+
+O `uv.lock` agora fixa `kitt-protocol 0.13.2` no SHA `0b9300e`, compatível com os imports `KAP_VERSION_HEADER` e `negotiate_kap_version`. O pacote passa para 0.87.9 para que a correção seja distribuída pelo canal release. Veja [release 0.87.9](docs/RELEASE_0.87.9.md).
+
 ## Agent CLI 0.87.8 — negotiated KAP/2 wire contract
 
 The reverse proxy adapter now sends `X-Kitt-KAP: KAP/2` whenever the request enables the Agent contract. Unknown versions fail before transmission, and an HTTP peer returning an incompatible acknowledgment is rejected rather than silently downgraded. Regular OpenAI-compatible providers do not receive this header. See [release 0.87.8](docs/RELEASE_0.87.8.md).
