@@ -1,3 +1,12 @@
+## Agent CLI 0.87.11 — indentation-free KAP/2 planner
+
+The durable task planner now requests a tagged compact final
+(`K2 F @json: {"items":[...]} K2/END`) decoded by the canonical Protocol
+0.13.3 SDK. It is a single physical line with explicit field boundaries;
+WebChat whitespace folding cannot destroy its structure. Ordinary KAP/2
+tools, Python compute, approval handling and task schemas remain unchanged.
+The Agent does not repair provider DOM text or infer missing separators.
+
 ## Agent CLI 0.87.10 — safe Python via KAP/2
 
 `K2 T kitt_runtime` accepts `operation: sandbox.python` with a `code<<PY`

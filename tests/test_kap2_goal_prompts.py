@@ -7,6 +7,7 @@ def test_planner_example_decodes_to_required_task_and_final():
     text = ContractPlanner._planning_prompt("Inspect a small project")
     assert "KAP/1" not in text
     example = text.split("Example:\n", 1)[1].split("K2/END", 1)[0] + "K2/END"
+    assert example.startswith("K2 F @json: ")
     payload = decode_kap2_content(example)
     assert [item["kind"] for item in payload["items"]] == ["task", "final"]
     assert payload["items"][1]["depends_on"] == ["T01"]

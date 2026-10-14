@@ -117,3 +117,11 @@ rejected by the ledger's unique-key semantics.
   remains a serialized UI executor.
 - Read reference files are capped at 64 KiB, and a bounded read may be
   truncated; it is not an artifact mechanism for arbitrary binaries.
+
+## Compact planning finals — 0.87.11
+
+Plans may be expressed as `K2 F @json: {"items":[...]} K2/END`, an
+explicit indentation-free KAP/2 final validated by Protocol 0.13.3.
+Tools remain `K2 T kitt_runtime`. A flattened legacy `items[n]`
+frame instead returns `E_LAYOUT_LOSS` for a new model response, never
+guessing a plan.
