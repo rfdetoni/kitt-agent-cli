@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 
-CONTEXT_TABS = ("session_picker", "timeline", "diff", "agents", "autonomy_control", "reverse_proxy", "help")
+CONTEXT_TABS = ("session_picker", "timeline", "diff", "agents", "autonomy_control", "reverse_proxy", "re_panel", "help")
 
 
 class OverlayPriority(IntEnum):
@@ -124,6 +124,14 @@ OVERLAY_SPECS: Dict[str, OverlaySpec] = {
         modal=True,
         blocks_input_below=True,
     ),
+    "re_panel": OverlaySpec(
+        name="re_panel", priority=OverlayPriority.NAVIGATION,
+        modal=True, blocks_input_below=True,
+    ),
+    "re_setup": OverlaySpec(
+        name="re_setup", priority=OverlayPriority.TRANSACTIONAL,
+        modal=True, blocks_input_below=True,
+    ),
     "help": OverlaySpec(
         name="help",
         priority=OverlayPriority.HELP,
@@ -193,7 +201,7 @@ class OverlayManager:
             is_authorized_child = (
                 (parent_name is not None and parent_name == parent_frame.spec.name)
                 or (parent_frame.spec.name == "model_setup" and name in ("provider_popup", "add_provider", "provider_endpoint", "auth_login"))
-                or (parent_frame.spec.name == "palette" and name in ("help", "model_setup", "session_picker", "timeline", "diff", "agents", "reverse_proxy"))
+                or (parent_frame.spec.name == "palette" and name in ("help", "model_setup", "session_picker", "timeline", "diff", "agents", "reverse_proxy", "re_panel"))
             )
 
             if is_authorized_child:
@@ -331,6 +339,7 @@ class OverlayManager:
             "autonomy_control": getattr(self.app, "autonomy_control", None),
             "help": getattr(self.app, "help_control", None),
             "reverse_proxy": getattr(self.app, "reverse_proxy_control", None),
+            "re_panel": getattr(self.app, "re_panel_control", None),
         }
         frame.preferred_focus = controls.get(target)
         self._sync_state()
