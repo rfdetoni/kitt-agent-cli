@@ -59,6 +59,7 @@ jobs:
           tests/test_vm_linux_wizard.py
           tests/test_vm_container.py
           tests/test_re_environment.py
+          tests/test_re_tui.py
           tests/test_vm_runtime_safety.py
           tests/test_rea_plugin_workflows.py
           tests/test_rea_toolbox_runtime.py
