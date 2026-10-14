@@ -26,6 +26,7 @@ from kitt.ui import provider_flow as _provider_flow
 from kitt.ui import runtime_actions as _runtime_actions
 from kitt.ui import mouse as _mouse
 from kitt.ui import navigation as _navigation
+from kitt.ui import re_panel as _re_panel
 from kitt.ui import reverse_proxy_panel as _reverse_proxy_panel
 from kitt.reverse_proxy.client import ReverseProxyClient
 from kitt.ui.render import core as _render_core
@@ -52,6 +53,10 @@ class KittUIApp:
         self.diff_model = DiffViewerModel(str(root))
         self.model_setup_model = ModelSetupModel()
         self.reverse_proxy_model = _reverse_proxy_panel.ReverseProxyPanelModel()
+        self.re_selected = "windows"
+        self.re_backend = "podman"
+        self.re_snapshot = {}
+        self.re_error = ""
         self.reverse_proxy_client = ReverseProxyClient()
         self.mouse_support_enabled: bool = True
         self.editing_provider_name: Optional[str] = None
@@ -346,6 +351,18 @@ class KittUIApp:
     _reverse_proxy_restart_selected = _reverse_proxy_panel._reverse_proxy_restart_selected
     _reverse_proxy_remove_profile = _reverse_proxy_panel._reverse_proxy_remove_profile
     _reverse_proxy_bind_selected = _reverse_proxy_panel._reverse_proxy_bind_selected
+
+    _re_panel_text = _re_panel.panel_text
+    _re_setup_help_text = _re_panel.setup_help_text
+    _re_open = _re_panel.open_panel
+    _re_refresh = _re_panel.refresh
+    _re_select = _re_panel.select
+    _re_action = _re_panel.action
+    _re_open_setup = _re_panel.open_setup
+
+    def _accept_re_setup(self, buffer) -> bool:
+        asyncio.get_running_loop().create_task(_re_panel.submit_setup(self, buffer))
+        return True
 
     _show_result = _runtime_actions._show_result
     _show_history = _runtime_actions._show_history
