@@ -105,6 +105,7 @@ class HistoryService:
         else:
             chosen = self.repo.find_conversation_by_prefix(self.workspace_id, target)
         if chosen:
+            self.repo.touch_conversation(chosen["id"], self.workspace_id)
             self.active_conversation = chosen
             self._fresh_session_requested = False
         return chosen

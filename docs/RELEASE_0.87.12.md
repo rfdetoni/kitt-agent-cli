@@ -47,3 +47,9 @@ A user prompt must persist before the local model turn can start. If SQLite
 fails, the TUI reports a turn-start error and does not dispatch the task.
 If writing a completed assistant answer fails, the bridge emits TurnFailed
 instead of reporting TurnCompleted. Regression tests verify both cases.
+
+## Remembering explicit session selection
+
+A user-chosen /resume session is touched in the same workspace SQLite DB,
+so the next interactive invocation restores the selected older conversation
+even if newer threads also exist. No global history leak or schema migration.

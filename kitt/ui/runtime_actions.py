@@ -26,7 +26,7 @@ def _show_result(ui, text: str) -> None:
 
 
 async def _show_history(ui, search: str = "") -> None:
-    conversations = await ui._run_blocking(ui.runtime.history.list_history, 20, 0, search or None)
+    conversations = await ui._run_blocking(ui.runtime.history.list_history, 100, 0, search or None)
     active = ui.runtime.history.active_conversation
     active_id = active.get("id") if active else None
     ui._show_result("\n".join(

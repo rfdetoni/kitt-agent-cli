@@ -19,6 +19,10 @@ class DurableSessionRecoveryTests(unittest.TestCase):
                 service.new_conversation(f"Task {index}")
             self.assertEqual(service.resume_conversation(oldest["id"][:9])["id"], oldest["id"])
             self.assertEqual(service.resume_conversation("66")["id"], oldest["id"])
+            service.close()
+            reopened = HistoryService(tmp)
+            self.assertEqual(reopened.get_or_create_active()["id"], oldest["id"])
+            service = reopened
             self.assertIsNone(service.resume_conversation("999"))
             self.assertIsNone(service.resume_conversation("abc"))
             other = service.new_conversation("Current")

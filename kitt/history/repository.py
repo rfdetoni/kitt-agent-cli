@@ -213,6 +213,15 @@ class HistoryRepository:
             ).fetchall()
         return dict(rows[0]) if len(rows) == 1 else None
 
+    def touch_conversation(self, conv_id: str, workspace_id: str) -> None:
+        """Persist the last explicitly opened conversation across CLI restarts."""
+        with self.db.get_connection() as conn:
+            conn.execute(
+                "UPDATE conversations SET updated_at = ? "
+                "WHERE id = ? AND workspace_id = ? AND status NOT IN ('DELETED','INTERNAL_CHILD')",
+                (time.time(), conv_id, workspace_id),
+            )
+
     def delete_conversation(self, conv_id: str) -> bool:
         with self.db.get_connection() as conn:
             cur = conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
