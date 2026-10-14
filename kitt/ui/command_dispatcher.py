@@ -125,6 +125,9 @@ async def _execute_command(ui, raw: str) -> bool:
         await ui._open_diff_overlay()
     elif found.id == "status":
         handle_status_command(ui)
+    elif found.id == "re":
+        from kitt.ui.re_panel import command
+        await command(ui, arg)
     elif found.id == "reverse_proxy":
         from kitt.ui.reverse_proxy_panel import handle_reverse_proxy_command
         await handle_reverse_proxy_command(ui, arg)
