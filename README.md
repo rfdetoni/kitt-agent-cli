@@ -1,3 +1,10 @@
+## Agent CLI 0.87.10 — safe Python via KAP/2
+
+`K2 T kitt_runtime` accepts `operation: sandbox.python` with a `code<<PY`
+literal. The implementation reuses `python_compute` with AST, process resource
+limits and capability enforcement. No arbitrary Python, network, shell or
+workspace writes. See [KAP/2 host operations](docs/KAP2_HOST_OPERATIONS.md).
+
 ## Agent CLI 0.87.9 — lock do Protocol corrigido
 
 O `uv.lock` agora fixa `kitt-protocol 0.13.2` no SHA `0b9300e`, compatível com os imports `KAP_VERSION_HEADER` e `negotiate_kap_version`. O pacote passa para 0.87.9 para que a correção seja distribuída pelo canal release. Veja [release 0.87.9](docs/RELEASE_0.87.9.md).

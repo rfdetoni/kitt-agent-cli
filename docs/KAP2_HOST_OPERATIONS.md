@@ -5,6 +5,29 @@ KAP/2 core grammar or permissions. They can be used with an ordinary
 `K2 T kitt_runtime` envelope (one host action per model turn). The existing
 `KITT/1` and JSON HTTP transport remain independent.
 
+## KAP/2: `sandbox.python`
+
+Use the existing KAP/2 literal block, without any protocol version change:
+
+```text
+K2 T kitt_runtime
+operation: sandbox.python
+arguments:
+  code<<PY
+values = [10, 20, 30, 40]
+_result = {"average": sum(values) / len(values), "total": sum(values)}
+PY
+K2/END
+```
+
+The operation delegates to the existing `python_compute` AST-only interpreter
+with the `compute.safe` capability, normal tool policy and bounded worker
+process. It returns structured `stdout`, `result` and `steps`. Optional
+`inputs` is a JSON-compatible object; `result_var` defaults to `_result`.
+Imports, open/filesystem, networking, shell, arbitrary Python execution and
+user-defined functions/classes remain unavailable. This MVP adds neither Python
+sessions nor Python batches; it grants no access to privileged host tools.
+
 ## Host capability discovery
 
 Call `kap.capabilities` with an empty argument object to learn which

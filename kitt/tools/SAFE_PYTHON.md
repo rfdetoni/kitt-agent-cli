@@ -52,6 +52,24 @@ O subprocesso é defesa em profundidade. A fronteira primária é o interpretado
 
 Acesso ao projeto deve ocorrer por read_file, search, repository_map ou ferramenta controlada pela policy. Alterações passam por apply_patch e aprovação.
 
+## Envelope KAP/2
+
+A operação `sandbox.python` reutiliza o executor `python_compute`:
+
+```text
+K2 T kitt_runtime
+operation: sandbox.python
+arguments:
+  code<<PY
+_result = sum([1, 2, 3])
+PY
+K2/END
+```
+
+Exige a capability `compute.safe`. O código continua limitado ao subconjunto
+AST documentado, sem imports, filesystem, rede, shell ou funções do usuário.
+O MVP não implementa sessões ou batches de Python.
+
 ## Requisição da ferramenta
 
 ~~~json

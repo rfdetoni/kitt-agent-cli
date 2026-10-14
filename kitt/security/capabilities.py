@@ -99,7 +99,9 @@ TOOL_TO_CAPABILITY = {
 # expansion deliberately limited to repository capabilities: process, network,
 # MCP, memory and other sensitive capabilities must still be planned explicitly.
 TOOL_TO_CAPABILITIES = {
-    "kitt_runtime": frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_REPO_WRITE}),
+    "kitt_runtime": frozenset({
+        CAP_REPO_READ, CAP_REPO_SEARCH, CAP_REPO_WRITE, CAP_SAFE_COMPUTE,
+    }),
 }
 
 

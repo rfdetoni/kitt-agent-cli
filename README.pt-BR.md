@@ -1,3 +1,10 @@
+## Agent CLI 0.87.10 — Python seguro no KAP/2
+
+O envelope KAP/2 aceita `sandbox.python` com bloco `code<<PY`.
+Reutiliza `python_compute` com limitação AST, isolamento de processo e
+capability `compute.safe`; não permite imports, rede, shell ou escrita no projeto.
+Consulte [operações KAP/2](docs/KAP2_HOST_OPERATIONS.md).
+
 # K.I.T.T. Agent CLI
 
 ## Agent CLI 0.84.3 — refresh do control plane residente do Reverse Proxy

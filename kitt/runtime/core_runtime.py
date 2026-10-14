@@ -38,6 +38,7 @@ from kitt.security.capabilities import (
     CAP_REPO_READ,
     CAP_REPO_SEARCH,
     CAP_REPO_WRITE,
+    CAP_SAFE_COMPUTE,
 )
 
 
@@ -111,6 +112,9 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "repo.references": RuntimeOperationSpec("repo.references", CAP_REPO_SEARCH, "search"),
     "repo.context_map": RuntimeOperationSpec(
         "repo.context_map", CAP_REPO_SEARCH, "search"
+    ),
+    "sandbox.python": RuntimeOperationSpec(
+        "sandbox.python", CAP_SAFE_COMPUTE, "python_compute"
     ),
     "flow.execute": RuntimeOperationSpec("flow.execute", None, sensitive=False),
     "program.execute": RuntimeOperationSpec("program.execute", None, sensitive=False),
@@ -858,6 +862,9 @@ class SafeRuntime:
             "repo.context_map": lambda: self._op_repo_context_map(
                 args, security_context
             ),
+            "sandbox.python": lambda: self._op_sandbox_python(
+                args, turn_id, origin, security_context
+            ),
             "flow.execute": lambda: self._op_flow_execute(
                 args, turn_id, origin, capabilities, security_context
             ),
@@ -1080,6 +1087,39 @@ class SafeRuntime:
                 ),
             },
         )
+
+
+    def _op_sandbox_python(self, args, turn_id, origin, security_context):
+        """Delegate safe compute through the existing policy-governed tool."""
+        allowed = {"code", "inputs", "result_var"}
+        if not isinstance(args, dict) or set(args) - allowed:
+            return SafeRuntimeResult(
+                False, "sandbox.python",
+                error="sandbox.python accepts only code, inputs, and result_var",
+            )
+        if not isinstance(args.get("code"), str) or not args["code"].strip():
+            return SafeRuntimeResult(False, "sandbox.python", error="code must be non-empty text")
+        if not isinstance(args.get("inputs", {}), dict):
+            return SafeRuntimeResult(False, "sandbox.python", error="inputs must be a JSON object")
+        result_var = args.get("result_var", "_result")
+        if not isinstance(result_var, str) or not result_var.isidentifier() or (
+            result_var.startswith("_") and result_var != "_result"
+        ):
+            return SafeRuntimeResult(False, "sandbox.python", error="invalid result_var")
+
+        delegated = self._op_registry_tool(
+            "sandbox.python", "python_compute", args,
+            turn_id, origin, security_context,
+        )
+        if delegated.success:
+            try:
+                delegated.data = json.loads(delegated.data)
+            except (TypeError, ValueError):
+                return SafeRuntimeResult(
+                    False, "sandbox.python",
+                    error="Safe Python worker returned invalid structured output",
+                )
+        return delegated
 
     def _op_registry_tool(
         self,
