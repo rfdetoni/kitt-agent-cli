@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING
 from kitt.core.turn_events import (
     ApprovalRequired,
+    ContractProgress,
     TextDelta,
     ToolCallProposed,
     ToolCompleted,
@@ -87,6 +88,59 @@ def handle_turn_started(state: UIState, event: TurnStarted) -> None:
 
     state.init_turn_tasks(event.prompt)
     state.turn_started_at = time.time()
+
+
+def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
+    """Show verified host lifecycle phases without model internals or fake progress."""
+    attempt = max(0, int(event.attempt))
+    maximum = max(1, int(event.max_attempts))
+    phase = event.phase
+    step = f"{attempt}/{maximum}"
+    if phase == "generating":
+        status, summary = f"PLANNING {step}", f"Gerando contrato de tarefas (tentativa {step}); ainda sem execução."
+    elif phase == "reviewing":
+        status, summary = f"REVIEWING {step}", f"Validando plano e revisando riscos (tentativa {step})."
+    elif phase == "revising":
+        status, summary = f"REVISING {step}", f"Plano precisa de ajustes ({event.issues} questão(ões)); tentativa {step}."
+    elif phase == "rejected":
+        status, summary = "PLAN REJECTED", "Tentativas de planejamento esgotadas; nenhuma tarefa foi iniciada."
+    elif phase == "accepted":
+        status, summary = "PLAN VALID", "Plano validado; aguardando agendamento do host."
+    elif phase == "scheduled":
+        status, summary = "SCHEDULED", f"Contrato agendado com {event.total} itens; iniciando execução."
+    elif phase == "executing":
+        count = max(0, int(event.completed))
+        total = max(0, int(event.total))
+        label = safe_text(event.task_id)[:64] or "FINAL"
+        progress_state = safe_text(event.task_state)[:32]
+        status = "GOAL EXECUTION"
+        summary = f"Contrato: {count}/{total} itens finalizados; {label} {progress_state}."
+    else:
+        return
+
+    state.status_text = status
+    core_task = next(
+        (task for task in state.active_tasks if task.id == "core" or task.kind == "core_agent"),
+        None,
+    )
+    if core_task:
+        core_task.status = "running"
+        core_task.summary = summary
+    # The contract already emits TextDelta for each executable task state.
+    # Do not duplicate those entries or falsely imply a tool has run.
+    if phase == "executing":
+        return
+    state.transcript_sequence += 1
+    state.transcript.append(
+        TranscriptBlock(
+            id=f"contract-phase-{state.transcript_sequence}",
+            kind="system",
+            text=f"◈ {summary}",
+            status="done",
+        )
+    )
+    if not state.follow_tail:
+        state.unseen_output = True
 
 
 def handle_thinking_started(state: UIState, event: ThinkingStarted) -> None:
