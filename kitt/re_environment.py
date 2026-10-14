@@ -191,6 +191,21 @@ def setup(system: str, *, runtime: str = "podman", source: Path | None = None) -
             "ready": False, "next": f"kitt re setup {system} --source /path/to/{system}.iso --runtime {runtime}",
             "note": "Use your own licensed ISO or standalone QCOW2; installation is interactive",
         }
+    from kitt import vm_container
+    binary = vm_container._runtime(runtime)
+    try:
+        vm_container._image_id(binary, vm_container.IMAGES["qemu"])
+    except VMError:
+        return {"ready": False,
+                "next": f"kitt vm container build --runtime {runtime} --image qemu",
+                "note": "Build the pinned QEMU image first; retry the guided setup"}
+    default_profile = (Path.home() / ".local/share/kitt/vm-containers"
+                       / f"{system}-{runtime}" / "profile.json")
+    if default_profile.is_file():
+        target, _, _ = _profile(default_profile, system)
+        return {"ready": True, "profile": str(target),
+                "next": f"kitt re enroll {system} {target}",
+                "note": "Existing VM kept unchanged; verify the OS is installed before enrolling"}
     from kitt.vm_helper import create_vm
     _, profile = create_vm(system=system, source=source, backend=runtime, yes=True)
     kind = source.suffix.lower() == ".iso"
