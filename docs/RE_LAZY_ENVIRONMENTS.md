@@ -45,10 +45,17 @@ running guest is reused, not started twice. The container supervisor still
 handles its own lifecycle locking, image digest and noVNC health checks.
 Turn-level code tasks and static REA analysis do not boot VMs.
 
+As of Agent CLI 0.87.15, an operator-run lab mission takes a host-side,
+nonblocking local mission lease and stops only guests started by that
+invocation when the mission finishes or raises an error. Pre-existing guest
+instances are left running. Concurrent lazy lab missions are rejected instead
+of sharing a VM that one mission might stop. Crashes or host power loss
+still require operator recovery of orphaned containers.
+
 `kitt re start windows` and `kitt re stop windows` are explicit operator
-actions; `/re` has the same controls. This release **does not** implement
-automatic VM shutdown, time-based eviction, reference counting across
-independent KITT processes, or a universal guest OS provisioning service.
+actions; `/re` has the same controls. This integration **does not** implement
+time-based idle eviction, crash-proof cross-process guest leases, or universal
+guest OS provisioning.
 Do not stop a guest while a probe is in flight. No host-level Docker/Podman
 socket, guest admin credentials, unrestricted shell, or network access is
 granted to the model. Live Windows/KVM integration still requires the
@@ -58,8 +65,10 @@ operator's authorized lab.
 
 The `full` image has Ghidra, Frida, Wine and REA. `[b]` on Toolbox builds
 this pinned image only on explicit user request; `kitt vm container toolbox`
-starts an ephemeral, no-network shell for an authorized workspace. It is
-not automatically treated as a sandbox for hostile binaries. The REA MCP
+starts an ephemeral, no-network shell for an authorized workspace. In the
+TUI, select Toolbox and press **[s]** to suspend the interface temporarily,
+run that sandboxed shell in the selected workspace and return to the TUI on
+exit. The toolbox is not a VM-strength sandbox for hostile binaries. The REA MCP
 plugin remains explicitly opt-in and requires a host-side `rea` executable
 if used outside the toolbox:
 
