@@ -1,3 +1,12 @@
+## Agent CLI 0.87.14 — host-owned lazy RE environments and TUI
+
+The Agent CLI now offers `/re` and `kitt re` for discovery, guest
+profile enrollment, controlled on-demand VM startup, and guided ISO/QCOW2
+setup with Podman/Docker. Regular coding sessions do not start VMs.
+Only operator-approved lab profiles can auto-start. See the
+[RE environment guide](docs/RE_LAZY_ENVIRONMENTS.md) and
+[release 0.87.14](docs/RELEASE_0.87.14.md).
+
 ## Agent CLI 0.87.13 — KAP/2 K2 T reaches host runtime
 
 Model-emitted `K2 T kitt_runtime` now goes through the canonical
