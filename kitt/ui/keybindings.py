@@ -19,8 +19,10 @@ def build_key_bindings(ui):
     provider_endpoint = Condition(lambda: ui.state.active_overlay == "provider_endpoint")
     auth_login = Condition(lambda: ui.state.active_overlay == "auth_login")
     reverse_proxy = Condition(lambda: ui.state.active_overlay == "reverse_proxy")
+    re_panel = Condition(lambda: ui.state.active_overlay == "re_panel")
+    re_setup = Condition(lambda: ui.state.active_overlay == "re_setup")
     editor_focused = Condition(lambda: ui.application and ui.application.layout.current_control is ui.prompt_control)
-    context_panel = Condition(lambda: ui.state.active_overlay in {"session_picker", "timeline", "diff", "agents", "autonomy_control", "reverse_proxy", "help"})
+    context_panel = Condition(lambda: ui.state.active_overlay in {"session_picker", "timeline", "diff", "agents", "autonomy_control", "reverse_proxy", "re_panel", "help"})
 
     @kb.add("tab", filter=auth_login)
     def _(event):
@@ -100,6 +102,45 @@ def build_key_bindings(ui):
     def _(event):
         ui.overlay_manager.cycle_context_tab(1)
 
+
+    @kb.add("down", filter=re_panel)
+    def _(event): ui._re_select(1)
+
+    @kb.add("up", filter=re_panel)
+    def _(event): ui._re_select(-1)
+
+    @kb.add("enter", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_action("start"))
+
+    @kb.add("s", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_action("start"))
+
+    @kb.add("x", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_action("stop"))
+
+    @kb.add("p", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_action("setup"))
+
+    @kb.add("e", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_action("enroll"))
+
+    @kb.add("a", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_action("auto"))
+
+    @kb.add("b", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_action("build"))
+
+    @kb.add("f5", filter=re_panel)
+    def _(event): asyncio.create_task(ui._re_refresh())
+
+    @kb.add("tab", filter=re_setup)
+    def _(event):
+        ui.re_backend = "docker" if ui.re_backend == "podman" else "podman"
+        event.app.invalidate()
+
+    @kb.add("enter", filter=re_setup)
+    def _(event):
+        ui.re_setup_source_buffer.validate_and_handle()
 
     @kb.add("down", filter=reverse_proxy)
     def _(event):
