@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 def build_controls(ui) -> None:
     from prompt_toolkit.buffer import Buffer
