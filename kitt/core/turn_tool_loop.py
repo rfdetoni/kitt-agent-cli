@@ -189,6 +189,32 @@ def _goal_contract_uses_outer_verification(
         return False
 
 
+def _goal_needs_first_host_action(
+    *,
+    route: str,
+    security_context: ExecutionSecurityContext,
+    enabled_tools,
+    tool_calls: int,
+    plans,
+    conversation_id: str,
+    turn_id: str,
+    prompt: str,
+) -> bool:
+    """Reject report-only first turns; never re-run an approved host action."""
+    if (
+        route != "agent-loop"
+        or str(getattr(security_context, "principal_type", "") or "").upper() != "GOAL"
+        or not enabled_tools
+        or tool_calls > 0
+    ):
+        return False
+    if prompt.startswith("Continue the existing persistent goal after an approved host action."):
+        return False
+    return plans is None or _goal_contract_uses_outer_verification(
+        plans, security_context, conversation_id, turn_id,
+    )
+
+
 def _task_plan_context(
     plans,
     security_context: ExecutionSecurityContext,
@@ -613,17 +639,15 @@ class TurnToolLoopMixin:
                     # A durable Goals item cannot be validated from a model-only
                     # completion claim when the host offers tools but none ran.
                     # WebChat's local sandbox is not the operator's workspace.
-                    if (
-                        effective_agent_route == "agent-loop"
-                        and str(getattr(security_context, "principal_type", "") or "").upper() == "GOAL"
-                        and request.enabled_tools
-                        and tool_calls == 0
-                        and (
-                            plans is None
-                            or _goal_contract_uses_outer_verification(
-                                plans, security_context, cmd.conversation_id, cmd.turn_id,
-                            )
-                        )
+                    if _goal_needs_first_host_action(
+                        route=effective_agent_route,
+                        security_context=security_context,
+                        enabled_tools=request.enabled_tools,
+                        tool_calls=tool_calls,
+                        plans=plans,
+                        conversation_id=cmd.conversation_id,
+                        turn_id=cmd.turn_id,
+                        prompt=cmd.prompt,
                     ):
                         goal_tool_recoveries += 1
                         trace_event(

@@ -115,7 +115,7 @@ class AutonomousCompletionEngine:
             "After objective verification passes, KITT may run an independent adversarial senior code review. Required reviewer findings are completion gaps, not optional suggestions.",
             "EXECUTION FIRST: when host tools are available and work requires workspace evidence, emit a KAP/2 K2 T tool action and wait for its host result. Do not emit a completion report before executing the necessary host tools.",
             "ChatGPT Web's own Python, terminal, or browser environment is not the KITT workspace. A missing native kitt_runtime button is not evidence that the host tool is unavailable: request it as a textual K2 T envelope; the KITT host executes it.",
-            "Example host action: K2 T kitt_runtime\noperation: repo.list\narguments:\n  path: .\nK2/END. Use only operations actually listed in TOOLS_AVAILABLE; never invent tool results.",
+            "Example host action:\nK2 T kitt_runtime\noperation: repo.list\narguments:\n  path: .\nK2/END\nUse only operations actually listed in TOOLS_AVAILABLE; never invent tool results.",
         ]
 
         if criteria:

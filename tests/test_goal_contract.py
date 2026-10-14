@@ -18,6 +18,7 @@ from kitt.core.runtime_config import RuntimeConfig
 from kitt.domain.entities import ModelProfile
 from kitt.core.turn_tool_loop import (
     _goal_contract_uses_outer_verification,
+    _goal_needs_first_host_action,
     _task_plan_context,
 )
 from kitt.goals.contract import ContractPlanner
@@ -406,6 +407,34 @@ class GoalContractTests(unittest.TestCase):
                 NestedPlans(), security, "conv", "turn-goal"
             )
         )
+
+    def test_goal_first_turn_requires_host_tool_but_approved_resume_does_not(self):
+        class Plans:
+            def inspect(self, _conversation_id, _turn_id):
+                return None
+
+        base = dict(
+            route="agent-loop",
+            security_context=SimpleNamespace(principal_type="GOAL"),
+            enabled_tools=["kitt_runtime"],
+            tool_calls=0,
+            plans=Plans(),
+            conversation_id="conv",
+            turn_id="turn-goal",
+            prompt="Inspect workspace and record reports/environment.json",
+        )
+        self.assertTrue(_goal_needs_first_host_action(**base))
+        self.assertFalse(_goal_needs_first_host_action(**{**base, "tool_calls": 1}))
+        self.assertFalse(_goal_needs_first_host_action(**{**base, "enabled_tools": []}))
+        self.assertFalse(_goal_needs_first_host_action(**{**base, "route": "ask"}))
+        self.assertFalse(_goal_needs_first_host_action(**{
+            **base,
+            "security_context": SimpleNamespace(principal_type="USER"),
+        }))
+        self.assertFalse(_goal_needs_first_host_action(**{
+            **base,
+            "prompt": "Continue the existing persistent goal after an approved host action. The approved action already succeeded.",
+        }))
 
     def test_goal_contract_omits_task_plan_host_context_without_nested_plan(self):
         original = {"schema_version": 1, "segments": [{"id": "base"}]}
