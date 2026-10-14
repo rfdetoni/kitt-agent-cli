@@ -138,6 +138,10 @@ def build_key_bindings(ui):
         ui.re_backend = "docker" if ui.re_backend == "podman" else "podman"
         event.app.invalidate()
 
+    @kb.add("enter", filter=re_setup)
+    def _(event):
+        ui.re_setup_source_buffer.validate_and_handle()
+
     @kb.add("down", filter=reverse_proxy)
     def _(event):
         ui._reverse_proxy_move(1)
