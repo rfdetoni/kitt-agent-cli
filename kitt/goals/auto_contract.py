@@ -8,6 +8,7 @@ from kitt.core.cancellation import CancellationRegistry, CancelledError
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import (
     ApprovalRequired,
+    ContractProgress,
     EditApplied,
     TextDelta,
     ThinkingCompleted,
@@ -237,7 +238,7 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
         planning_started = time.perf_counter()
         yield ThinkingStarted()
         try:
-            items = ContractPlanner(runtime).plan(
+            items = yield from ContractPlanner(runtime).iter_plan(
                 command.conversation_id,
                 command.prompt,
                 source_command=command,
@@ -290,6 +291,7 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
         ):
             raise RuntimeError(f"Unable to schedule automatic contract {goal.id}")
         cancellation.raise_if_cancelled()
+        yield ContractProgress(phase="scheduled", total=len(items))
         yield TextDelta(
             delta=(
                 f"[contract] {goal.id}: plano criado com {len(items)} itens; "
@@ -318,6 +320,13 @@ def iter_automatic_contract(runtime, command: TurnCommand) -> Iterator[TurnEvent
             signature = _progress_signature(current_goal, contract_items)
             if signature != last_signature:
                 yield TextDelta(delta=_progress_text(current_goal, contract_items))
+                current = next((item for item in contract_items if item.status != "DONE"), None)
+                yield ContractProgress(
+                    phase="executing", task_id=current.local_id if current else "",
+                    task_state=current.status if current else current_goal.state,
+                    completed=sum(item.status == "DONE" for item in contract_items),
+                    total=len(contract_items),
+                )
                 last_signature = signature
 
             if current_goal.state == "WAITING_APPROVAL":
