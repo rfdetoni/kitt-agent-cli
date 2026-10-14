@@ -81,6 +81,8 @@ def _profile(path: Path, system: str) -> tuple[Path, dict, str]:
 def enroll(system: str, profile: Path, *, auto: bool = False) -> dict:
     """Explicit operator approval of a pinned, installed VM profile."""
     target, parsed, digest = _profile(profile, system)
+    if auto and not parsed["probe_port"]:
+        raise VMError("Lazy lab guests require a configured host-only SSH probe port")
     if parsed["kind"] == "iso" and not (Path(parsed["state"]) / "disk.qcow2").is_file():
         raise VMError("Install the guest OS before enrolling it")
     config = _read_config()
@@ -95,6 +97,10 @@ def set_auto(system: str, enabled: bool) -> dict:
     config = _read_config()
     if system not in config["profiles"]:
         raise VMError("Enroll a VM profile first: kitt re enroll <system> <profile>")
+    if enabled:
+        _, parsed, _ = _profile(Path(config["profiles"][system]["path"]), system)
+        if not parsed["probe_port"]:
+            raise VMError("Cannot auto-start a guest without a host-only SSH probe port")
     config["profiles"][system]["auto"] = bool(enabled)
     _write_config(config)
     return {"system": system, "auto": bool(enabled)}
