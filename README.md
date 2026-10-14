@@ -1,3 +1,7 @@
+## Agent CLI 0.87.18 — incremental index performance
+
+FTS5 rows are deleted by indexed rowid, avoiding full scans of UNINDEXED file_id. SQLite indexes now cover qualified symbols and per-file chunks. Full index refresh avoids reading unchanged files and redundant consistency scans on each edit; consistency is still verified at startup. See [release notes](docs/RELEASE_0.87.18.md).
+
 ## Agent CLI 0.87.17 — targeted Goal review correction
 
 A `REVISE` reviewer verdict now retains the prior host-validated

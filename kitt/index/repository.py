@@ -19,7 +19,7 @@ from kitt.index.graph import RepositoryGraph
 from kitt.index.parser_registry import ParserRegistry
 from kitt.security.workspace_fs import WorkspaceFileData, WorkspaceFileSystem
 
-INDEX_SCHEMA_VERSION = "2"
+INDEX_SCHEMA_VERSION = "3"
 
 
 class RepositoryIndex:
@@ -196,9 +196,7 @@ class RepositoryIndex:
                 if self._stop_event.is_set():
                     break
                 try:
-                    file_data = self.workspace_fs.read(
-                        rel_path, max_bytes=self.max_file_bytes
-                    )
+                    file_stat = self.workspace_fs.stat_regular(rel_path)
                 except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
                     continue
                 seen_paths.add(rel_path)
@@ -210,14 +208,20 @@ class RepositoryIndex:
                 adapter_version = self.parser_registry.adapter_for(self.root_path / rel_path).version
                 if (
                     row
-                    and row["mtime_ns"] == file_data.mtime_ns
-                    and row["size_bytes"] == file_data.size
+                    and row["mtime_ns"] == file_stat.mtime_ns
+                    and row["size_bytes"] == file_stat.size
                     and row["parser_version"] == adapter_version
                 ):
                     continue
 
-                # mtime can change during checkout/copy without changing bytes.
-                # Hash first; reparsing is the expensive part of incremental update.
+                # Read contents only if metadata differs from the indexed version.
+                try:
+                    file_data = self.workspace_fs.read(
+                        rel_path, max_bytes=self.max_file_bytes
+                    )
+                except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
+                    continue
+                # A checkout can change mtime without changing bytes.
                 if row and row["size_bytes"] == file_data.size:
                     content_hash = file_data.sha256
                     if content_hash == row["content_hash"] and row["parser_version"] == adapter_version:
@@ -255,7 +259,6 @@ class RepositoryIndex:
             changed = bool(updated_count or stale)
             if changed:
                 self._rebuild_reference_edges_locked()
-                self._ensure_fts_consistency_locked()
                 self._conn.execute(
                     "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
                 )
@@ -489,7 +492,6 @@ class RepositoryIndex:
                     ).fetchall()
                     impacted_source_ids.update(int(ref_row["file_id"]) for ref_row in ref_rows)
                 self._refresh_reference_edges_for_sources_locked(impacted_source_ids)
-                self._ensure_fts_consistency_locked()
                 self._conn.execute(
                     "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
                 )
@@ -586,9 +588,13 @@ class RepositoryIndex:
         file_id = self._conn.execute("SELECT file_id FROM files WHERE path=?", (rel_path,)).fetchone()["file_id"]
         self._conn.execute("DELETE FROM refs WHERE file_id=?", (file_id,))
         self._conn.execute("DELETE FROM symbols WHERE file_id=?", (file_id,))
-        self._conn.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
         if self.has_fts5:
-            self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (file_id,))
+            # The FTS file_id column is UNINDEXED; delete by indexed rowid instead.
+            self._conn.execute(
+                "DELETE FROM fts_chunks WHERE rowid IN "
+                "(SELECT chunk_id FROM chunks WHERE file_id=?)", (file_id,)
+            )
+        self._conn.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
 
         tags = self.parser_registry.parse(path, rel_path, content=content)
         symbol_names = []
@@ -638,7 +644,10 @@ class RepositoryIndex:
 
     def _delete_file_locked(self, file_id: int) -> None:
         if self.has_fts5:
-            self._conn.execute("DELETE FROM fts_chunks WHERE file_id=?", (file_id,))
+            self._conn.execute(
+                "DELETE FROM fts_chunks WHERE rowid IN "
+                "(SELECT chunk_id FROM chunks WHERE file_id=?)", (file_id,)
+            )
         self._conn.execute("DELETE FROM files WHERE file_id=?", (file_id,))
 
     def _ensure_fts_consistency_locked(self) -> None:

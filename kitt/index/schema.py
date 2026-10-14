@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+CREATE INDEX IF NOT EXISTS idx_symbols_qualified_name ON symbols(qualified_name);
+CREATE INDEX IF NOT EXISTS idx_symbols_file_start ON symbols(file_id, start_line);
+CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id);
 CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
 CREATE INDEX IF NOT EXISTS idx_refs_target_name ON refs(target_name);
 CREATE INDEX IF NOT EXISTS idx_refs_file ON refs(file_id);
