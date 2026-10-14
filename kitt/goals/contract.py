@@ -7,7 +7,7 @@ from typing import Any
 from kitt.core.cancellation import CancelledError
 from kitt.llm.agent_contract import parse_structured_result
 from kitt.core.turn_command import TurnCommand
-from kitt.core.turn_events import TurnBlocked, TurnCancelled, TurnCompleted, TurnFailed
+from kitt.core.turn_events import ContractProgress, TurnBlocked, TurnCancelled, TurnCompleted, TurnFailed
 from kitt.goals.risk import ReviewRisk, classify_review_risk
 from kitt.security.capabilities import CAP_ARTIFACT_READ, CAP_REPO_READ, CAP_REPO_SEARCH
 from kitt.security.context import ExecutionSecurityContext
@@ -347,13 +347,13 @@ class ContractPlanner:
             if registry is not None:
                 registry.token(self.source_command.turn_id).raise_if_cancelled()
 
-    def plan(
+    def iter_plan(
         self,
         conversation_id: str,
         superprompt: str,
         *,
         source_command: TurnCommand | None = None,
-    ) -> list[dict[str, Any]]:
+    ):
         self.source_command = source_command
         self._check_cancelled()
         if not str(superprompt or "").strip():
@@ -373,10 +373,12 @@ class ContractPlanner:
                     + "\n\nRejected response excerpt:\n"
                     + previous[:12000]
                 )
+            yield ContractProgress(phase="generating", attempt=attempt + 1, max_attempts=3)
             response = self._run_plan_turn(conversation_id, prompt)
             try:
                 payload = parse_structured_result(response)
                 items = self.validate(payload)
+                yield ContractProgress(phase="reviewing", attempt=attempt + 1, max_attempts=3)
                 review_issues = self._review_high_risk(
                     conversation_id,
                     superprompt.strip(),
@@ -388,9 +390,35 @@ class ContractPlanner:
                         for issue in review_issues
                     ]
                     previous = response
+                    yield ContractProgress(
+                        phase="revising", attempt=attempt + 1, max_attempts=3,
+                        issues=len(review_issues),
+                    )
                     continue
+                yield ContractProgress(phase="accepted", attempt=attempt + 1, max_attempts=3)
                 return items
             except ValueError as exc:
                 errors = [str(exc)]
                 previous = response
+                yield ContractProgress(
+                    phase="revising", attempt=attempt + 1, max_attempts=3, issues=1,
+                )
+        yield ContractProgress(phase="rejected", attempt=3, max_attempts=3, issues=len(errors))
         raise ValueError("Contract planning failed after 3 attempts: " + "; ".join(errors))
+
+    def plan(
+        self,
+        conversation_id: str,
+        superprompt: str,
+        *,
+        source_command: TurnCommand | None = None,
+    ) -> list[dict[str, Any]]:
+        """Synchronous compatibility adapter for non-interactive callers."""
+        steps = self.iter_plan(
+            conversation_id, superprompt, source_command=source_command,
+        )
+        while True:
+            try:
+                next(steps)
+            except StopIteration as finished:
+                return finished.value
