@@ -1,3 +1,11 @@
+## Agent CLI 0.87.12 — KAP/2 Goals execute via host tools
+
+Goals tasks now request textual K2 T host tool actions before K2 F
+completion reports; premature no-tool finals receive a bounded
+host-owned reminder and then BLOCKED rather than repeated fictional
+WebChat sandbox preflights.
+See [release notes](docs/RELEASE_0.87.12.md).
+
 ## Agent CLI 0.87.11 — indentation-free KAP/2 planner
 
 The durable task planner now requests a tagged compact final

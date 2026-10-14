@@ -559,6 +559,10 @@ class GoalContractTests(unittest.TestCase):
         example = completion[completion.index("K2 F\n"):completion.index("K2/END") + len("K2/END")]
         self.assertEqual(decode_kap2_content(example)["criteria"][0]["satisfied"], True)
         self.assertNotIn("Return one JSON", completion)
+        self.assertIn("EXECUTION FIRST", completion)
+        self.assertIn("K2 T kitt_runtime", completion)
+        self.assertIn("Only AFTER the required host tool actions", completion)
+
 
     def test_contract_creation_is_atomic_and_guards_success(self):
         goal = self._contract(max_attempts=4)

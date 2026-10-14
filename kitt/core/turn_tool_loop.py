@@ -392,6 +392,7 @@ class TurnToolLoopMixin:
         yield ThinkingStarted(), None, None
 
         completion_recoveries = 0
+        goal_tool_recoveries = 0
         failed_evidence: list[str] = []
         no_progress_actions: list[str] = []
         while True:
@@ -609,6 +610,50 @@ class TurnToolLoopMixin:
                         yield TurnFailed(error=f"Limite do chat atingido: {limit_msg}"), None, None
                         return
                     plans = getattr(self, "task_plans", None)
+                    # A durable Goals item cannot be validated from a model-only
+                    # completion claim when the host offers tools but none ran.
+                    # WebChat's local sandbox is not the operator's workspace.
+                    if (
+                        effective_agent_route == "agent-loop"
+                        and str(getattr(security_context, "principal_type", "") or "").upper() == "GOAL"
+                        and request.enabled_tools
+                        and tool_calls == 0
+                        and (
+                            plans is None
+                            or _goal_contract_uses_outer_verification(
+                                plans, security_context, cmd.conversation_id, cmd.turn_id,
+                            )
+                        )
+                    ):
+                        goal_tool_recoveries += 1
+                        trace_event(
+                            logger, "tool_loop.goal_requires_host_action",
+                            turn_id=cmd.turn_id, attempts=goal_tool_recoveries,
+                            tool_calls=tool_calls,
+                        )
+                        if _completion_recovery_exhausted(goal_tool_recoveries):
+                            yield TurnBlocked(
+                                reason="Durable goal step has no host tool evidence after bounded KAP/2 tool requests."
+                            ), None, None
+                            return
+                        execution_messages.extend([
+                            {"role": "assistant", "content": full_response},
+                            {"role": "user", "content": (
+                                "[KITT HOST TOOL REQUIRED]\n"
+                                "You emitted K2 F without calling any host tool. "
+                                "ChatGPT Web's own container/tools are not the KITT workspace. "
+                                "Do not inspect them or claim kitt_runtime is unavailable "
+                                "because it is not in the web UI. "
+                                "The KITT host executes textual KAP/2 K2 T actions. "
+                                "Start by requesting one permitted read-only action, for example:\n"
+                                "K2 T kitt_runtime\noperation: repo.list\narguments:\n  path: .\nK2/END\n"
+                                "Use only a real operation from TOOLS_AVAILABLE and wait for "
+                                "the host's result before preparing a K2 F completion report. "
+                                "Do not fabricate observations, execute code in an unrelated "
+                                "sandbox, or repeat the same final report."
+                            )},
+                        ])
+                        continue
                     if effective_agent_route == "agent-loop" and plans is not None:
                         outer_verification = _goal_contract_uses_outer_verification(
                             plans,
