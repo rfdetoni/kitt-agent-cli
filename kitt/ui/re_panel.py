@@ -56,7 +56,7 @@ def panel_text(ui) -> str:
         "",
         f"Selecionado: {selected.upper()}",
         " [s] Iniciar  [x] Parar  [p] Preparar / Helper",
-        " [e] Registrar VM existente  [a] Alternar auto  [F5] Atualizar",
+        " [e] Registrar VM existente  [a] Alternar auto  [b] Build imagem  [F5] Atualizar",
         " [Esc] Fechar   (Setas e Enter tambem funcionam)",
     ]
     action_rows = [(len(lines)-3, [
@@ -65,7 +65,7 @@ def panel_text(ui) -> str:
     ]), (len(lines)-2, [
         ("[e] Registrar VM existente", "enroll"),
         ("[a] Alternar auto", "auto"),
-        ("[F5] Atualizar", "refresh"),
+        ("[b] Build imagem", "build"), ("[F5] Atualizar", "refresh"),
     ])]
     for index, buttons in action_rows:
         for text, action in buttons:
@@ -133,7 +133,12 @@ async def action(ui, operation: str) -> None:
         open_setup(ui)
         return
     try:
-        if operation == "setup":
+        if operation == "build":
+            result = await ui._run_blocking(
+                vm_container.build_image, runtime=ui.re_backend,
+                image="toolbox" if system == "toolbox" else "qemu", profile="full",
+            )
+        elif operation == "setup":
             result = await ui._run_blocking(re_environment.setup, system, runtime=ui.re_backend)
         elif operation == "enroll":
             if system not in ("windows", "linux"):
