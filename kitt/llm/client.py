@@ -89,17 +89,6 @@ class UnsupportedProviderError(LLMError):
     """Raised when a backend provider is unknown or unsupported."""
 
 
-def _normalize_reasoning_effort(value: Optional[int]) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        raise ValueError("reasoning_effort must be an integer between 0 and 100")
-    effort = int(value)
-    if effort < 0 or effort > 100:
-        raise ValueError("reasoning_effort must be an integer between 0 and 100")
-    return effort
-
-
 def _with_retry(fn, max_retries: int = 3, base_delay: float = 0.5):
     """Backward-compatible helper delegating retry behavior to RetryPolicy."""
     policy = RetryPolicy(
