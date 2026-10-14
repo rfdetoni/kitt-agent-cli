@@ -488,6 +488,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     learn_report.add_argument("feature")
 
+    re_parser = subparsers.add_parser(
+        "re", parents=[common], help="Manage lazy reverse-engineering environments",
+    )
+    re_actions = re_parser.add_subparsers(dest="re_action", required=True)
+    re_actions.add_parser("status", help="Inspect installed REA, guests and runtimes (no startup)")
+    re_setup = re_actions.add_parser("setup", help="Prepare or inspect an RE environment")
+    re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
+    re_setup.add_argument("--runtime", choices=["podman", "docker"], default="podman")
+    re_setup.add_argument("--source", type=Path)
+    re_enroll = re_actions.add_parser("enroll", help="Approve an existing VM profile")
+    re_enroll.add_argument("system", choices=["windows", "linux"])
+    re_enroll.add_argument("profile", type=Path)
+    re_enroll.add_argument("--auto", action="store_true", help="Permit lazy startup for lab missions")
+    re_auto = re_actions.add_parser("auto", help="Enable or disable lazy lab startup")
+    re_auto.add_argument("system", choices=["windows", "linux"])
+    re_auto.add_argument("state", choices=["on", "off"])
+    for re_operation in ("start", "stop"):
+        re_command = re_actions.add_parser(re_operation)
+        re_command.add_argument("system", choices=["windows", "linux"])
+
     vm_parser = subparsers.add_parser(
         "vm", parents=[common], help="Run autonomous KITT inside an isolated QEMU guest",
     )
@@ -887,12 +907,38 @@ def main(argv=None) -> int:
 
         return handle_learn_command(args)
 
+    if args.subcommand == "re":
+        from kitt import re_environment
+        from kitt.vm_supervisor import VMError
+        import json as _json
+        try:
+            if args.re_action == "status":
+                result = re_environment.status()
+            elif args.re_action == "setup":
+                result = re_environment.setup(args.system, runtime=args.runtime, source=args.source)
+            elif args.re_action == "enroll":
+                result = re_environment.enroll(args.system, args.profile, auto=args.auto)
+            elif args.re_action == "auto":
+                result = re_environment.set_auto(args.system, args.state == "on")
+            elif args.re_action == "start":
+                result = re_environment.ensure(args.system)
+            else:
+                result = re_environment.stop(args.system)
+            print(_json.dumps(result, ensure_ascii=False))
+            return 0
+        except (VMError, OSError, ValueError) as exc:
+            print(f"RE environment error: {exc}", file=sys.stderr)
+            return 2
+
     if args.subcommand == "vm":
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
         try:
             if args.vm_action == "lab":
                 from kitt import vm_broker
+                if args.lab_action == "run":
+                    from kitt.re_environment import ensure_lab_guests
+                    ensure_lab_guests()
                 report = (vm_broker.doctor(args.hosts) if args.lab_action == "doctor" else
                           vm_broker.run_lab_mission(workspace=args.workspace,
                                                     mission=args.mission, hosts=args.hosts))
