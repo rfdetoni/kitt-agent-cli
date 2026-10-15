@@ -1,3 +1,7 @@
+## Agent CLI 0.87.27 — live planning and reviewer progress
+
+Planning now shows **the actual phase** (PLAN/REVIEW/REVISION, attempt 1/3), a continually updating stage timer, an explicit *waiting for LLM* label, and scoped entries in the transcript. The Agent dashboard replaces the misleading fixed progress percentage with **AGUARDO** during provider waits. The phase closes cleanly on success, cancellation, or errors. [Release notes](docs/RELEASE_0.87.27.md).
+
 ## Agent CLI 0.87.26 — non-mutating final contract validation
 
 Preserves model-authored FINAL acceptance criteria, checks, paths and dependencies during host contract validation, while retaining aggregate 64-path/64-criterion/12-check limits. The independent pre-mutation reviewer sees the exact validated proposal, not an expanded 49-criterion final step. This prevents systematic revision loops for large mission plans with optional/environment-gated stages; task checks continue running at their own steps. See [release details](docs/RELEASE_0.87.26.md).

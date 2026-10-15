@@ -126,3 +126,14 @@ The 30 requirements in [AGENTIC_RUNTIME_ACCEPTANCE.md](AGENTIC_RUNTIME_ACCEPTANC
 - Autonomous durable fan-out queues, distributed leases, project environment fingerprints and semantic coverage evaluation: require separate acceptance evidence and resource measurements.
 
 These items are not advertised as completed features of 0.82.0.
+
+
+## Live contract planning and review feedback (v0.87.27)
+
+The TUI consumes existing host-owned `ContractProgress` events and shows:
+- current planning/review/revision phase and bounded attempt count;
+- elapsed time since that *specific* phase started, updated on every screen refresh;
+- `aguardando LLM` while awaiting the remote model, never a fabricated completion percentage;
+- immutable phase rows closed on transitions/terminal results; host validations do not imply task execution.
+
+When the external WebChat provider takes several minutes to return a response, the timer indicates the wait; it does not claim insight into the model's hidden progress. If the provider reports `ui_timeout`, the host fails closed and does not replay a possibly completed browser turn automatically. Inspect/reconnect the authenticated browser session before an explicit retry. Workspace edits are never retried merely because response capture failed.
