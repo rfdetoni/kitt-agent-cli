@@ -1,3 +1,7 @@
+## Agent CLI 0.87.21 — responsive repository indexing
+
+Full reconciliation now reads and parses source files outside the shared SQLite lock. File updates use short transactions, re-check metadata before committing parsed snapshots, and avoid deleting paths changed by targeted updates after scan start. [Release notes](docs/RELEASE_0.87.21.md).
+
 ## Agent CLI 0.87.20 — revision-safe embeddings and durable-source backfill
 
 Asynchronous embedding writes carry the original Memory content hash. A bounded workspace backfill uses Memory's durable missing-vector queue when semantic search succeeds; unfinished items survive process restarts. Automatic backfill excludes secret, ephemeral and conversation memories. Full graph rebuild batches SQL edges. Requires Memory 0.10.2. [Release details](docs/RELEASE_0.87.20.md).

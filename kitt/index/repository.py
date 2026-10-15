@@ -170,7 +170,7 @@ class RepositoryIndex:
         RepositoryIndex._finalize_conn(conn, lock)
 
     def build_or_update(self) -> Dict[str, int]:
-        """Incremental index update based on mtime_ns, size, and content_hash."""
+        """Reconcile using short transactions without locking file I/O or parsers."""
         scanner = RepositoryScanner(self.root_path)
         files = scanner.scan_relative_files(
             max_files=self.max_files,
@@ -180,97 +180,109 @@ class RepositoryIndex:
         )
         if self._stop_event.is_set():
             return self.ready_stats()
-
         modules_found = scanner.detect_modules(should_stop=self._stop_event.is_set)
         if self._stop_event.is_set():
             return self.ready_stats()
 
+        scan_started = time.time()
         updated_count = 0
-        seen_paths = set()
-
+        seen_paths: set[str] = set()
         with self._lock, self._conn:
             self._index_modules_locked(modules_found)
             modules = self._module_rows_locked()
-            self._conn.execute("UPDATE index_meta SET value='BOOTSTRAP' WHERE key='state'")
-            for rel_path in files:
-                if self._stop_event.is_set():
-                    break
-                try:
-                    file_stat = self.workspace_fs.stat_regular(rel_path)
-                except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
-                    continue
-                seen_paths.add(rel_path)
+            self._set_meta_locked("state", "BOOTSTRAP")
 
+        for rel_path in files:
+            if self._stop_event.is_set():
+                break
+            path = self.root_path / rel_path
+            try:
+                stat = self.workspace_fs.stat_regular(rel_path)
+            except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
+                continue
+            seen_paths.add(rel_path)
+            with self._lock:
                 row = self._conn.execute(
-                    "SELECT file_id, mtime_ns, size_bytes, content_hash, parser_version FROM files WHERE path=?", (rel_path,)
+                    "SELECT file_id, mtime_ns, size_bytes, content_hash, parser_version "
+                    "FROM files WHERE path=?", (rel_path,)
                 ).fetchone()
-
-                adapter_version = self.parser_registry.adapter_for(self.root_path / rel_path).version
-                if (
-                    row
-                    and row["mtime_ns"] == file_stat.mtime_ns
-                    and row["size_bytes"] == file_stat.size
-                    and row["parser_version"] == adapter_version
-                ):
-                    continue
-
-                # Read contents only if metadata differs from the indexed version.
-                try:
-                    file_data = self.workspace_fs.read(
-                        rel_path, max_bytes=self.max_file_bytes
+            adapter_version = self.parser_registry.adapter_for(path).version
+            if (row and row["mtime_ns"] == stat.mtime_ns
+                    and row["size_bytes"] == stat.size
+                    and row["parser_version"] == adapter_version):
+                continue
+            try:
+                file_data = self.workspace_fs.read(rel_path, max_bytes=self.max_file_bytes)
+            except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
+                continue
+            if (row and row["size_bytes"] == file_data.size
+                    and row["content_hash"] == file_data.sha256
+                    and row["parser_version"] == adapter_version):
+                with self._lock, self._conn:
+                    self._conn.execute(
+                        "UPDATE files SET mtime_ns=?, indexed_at=? "
+                        "WHERE file_id=? AND content_hash=?",
+                        (file_data.mtime_ns, str(time.time()), row["file_id"], file_data.sha256),
                     )
-                except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
-                    continue
-                # A checkout can change mtime without changing bytes.
-                if row and row["size_bytes"] == file_data.size:
-                    content_hash = file_data.sha256
-                    if content_hash == row["content_hash"] and row["parser_version"] == adapter_version:
-                        self._conn.execute(
-                            "UPDATE files SET mtime_ns=?, indexed_at=? WHERE file_id=?",
-                            (file_data.mtime_ns, str(time.time()), row["file_id"]),
-                        )
-                        continue
+                continue
 
+            # CPU-intensive parsers must not block interactive SQLite queries.
+            tags = self.parser_registry.parse(
+                path, rel_path, content=file_data.content.decode("utf-8", errors="ignore")
+            )
+            if self._stop_event.is_set():
+                break
+            try:
+                current_stat = self.workspace_fs.stat_regular(rel_path)
+            except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, OSError):
+                continue
+            if (current_stat.mtime_ns != file_data.mtime_ns
+                    or current_stat.size != file_data.size):
+                continue
+            with self._lock, self._conn:
                 self._index_file_locked(
-                    self.root_path / rel_path, rel_path, modules, file_data=file_data
+                    path, rel_path, modules, file_data=file_data,
+                    parsed_tags=tags, reuse_parsed=True,
                 )
                 updated_count += 1
 
-            if self._stop_event.is_set():
-                return self._build_stats_locked(
-                    scanned=len(seen_paths), updated=updated_count, deleted=0
-                )
+        if self._stop_event.is_set():
+            with self._lock:
+                return self._build_stats_locked(len(seen_paths), updated_count, 0)
 
-            # Only a complete scan can prove that an indexed file disappeared.
-            # A max-files scan is intentionally partial, so unseen entries must
-            # remain until a later complete scan or an explicit update_paths call.
+        with self._lock, self._conn:
+            # Do not remove files updated by another thread after the scan started.
             scan_complete = len(files) < self.max_files
             if scan_complete:
-                indexed_rows = self._conn.execute(
-                    "SELECT file_id, path FROM files"
+                indexed = self._conn.execute(
+                    "SELECT file_id, path, indexed_at FROM files"
                 ).fetchall()
-                stale = [row for row in indexed_rows if row["path"] not in seen_paths]
+                stale = [
+                    row for row in indexed
+                    if row["path"] not in seen_paths
+                    and float(row["indexed_at"]) < scan_started
+                ]
             else:
                 stale = []
-
             for row in stale:
                 self._delete_file_locked(row["file_id"])
-
-            changed = bool(updated_count or stale)
-            if changed:
+            if updated_count or stale:
                 self._rebuild_reference_edges_locked()
                 self._conn.execute(
-                    "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
+                    "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
+                    "WHERE key='index_generation'"
                 )
             state = "READY" if scan_complete else "PARTIAL"
-            partial_reason = "" if state == "READY" else f"file limit reached ({self.max_files})"
             self._set_meta_locked("state", state)
-            self._set_meta_locked("partial_reason", partial_reason)
+            self._set_meta_locked(
+                "partial_reason",
+                "" if scan_complete else f"file limit reached ({self.max_files})",
+            )
             self._set_meta_locked("last_scan_at", str(time.time()))
-
-            generation = int(self._conn.execute("SELECT value FROM index_meta WHERE key='index_generation'").fetchone()["value"])
+            generation = int(self._conn.execute(
+                "SELECT value FROM index_meta WHERE key='index_generation'"
+            ).fetchone()["value"])
             meta = self.metadata()
-
         return {
             "scanned": len(files),
             "updated": updated_count,
@@ -555,6 +567,8 @@ class RepositoryIndex:
         modules: List[sqlite3.Row],
         *,
         file_data: WorkspaceFileData | None = None,
+        parsed_tags: Any = None,
+        reuse_parsed: bool = False,
     ) -> None:
         file_data = file_data or self.workspace_fs.read(
             rel_path, max_bytes=self.max_file_bytes
@@ -596,7 +610,7 @@ class RepositoryIndex:
             )
         self._conn.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
 
-        tags = self.parser_registry.parse(path, rel_path, content=content)
+        tags = parsed_tags if reuse_parsed else self.parser_registry.parse(path, rel_path, content=content)
         symbol_names = []
         if tags:
             for tag in tags.tags:

@@ -47,3 +47,29 @@ def test_full_reindex_skips_reads_on_unchanged_files(tmp_path, monkeypatch):
             raise AssertionError("unchanged files must not be read again")
         monkeypatch.setattr(index.workspace_fs, "read", forbidden_read)
         assert index.build_or_update()["updated"] == 0
+
+def test_background_parsing_does_not_block_interactive_sqlite_reads(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    (tmp_path / "blocked.py").write_text("def blocked():\n    return 1\n", encoding="utf-8")
+    with RepositoryIndex(tmp_path) as index:
+        parsing = Event()
+        release = Event()
+        original = index.parser_registry.parse
+
+        def slow_parse(*args, **kwargs):
+            parsing.set()
+            release.wait(5)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(index.parser_registry, "parse", slow_parse)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            building = executor.submit(index.build_or_update)
+            try:
+                assert parsing.wait(4), "index parser was not reached"
+                query = executor.submit(index.metadata)
+                assert "state" in query.result(timeout=1), "metadata blocked by parser"
+            finally:
+                release.set()
+                building.result(timeout=6)
