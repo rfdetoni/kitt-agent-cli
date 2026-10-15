@@ -67,6 +67,7 @@ def test_automatic_contract_fans_out_independent_children_without_reexecuting():
         registry=SimpleNamespace(execute_tool=execute_tool),
         agent_registry=SimpleNamespace(
             select=lambda task, require_write: SimpleNamespace(
+                id="code",
                 spawn_args=lambda task, paths: {
                     "name": "code", "task": task, "allowed_paths": list(paths),
                     "enabled_tools": ["read_file", "search", "repository_map", "write_file", "apply_patch"],
