@@ -51,7 +51,7 @@ class LocalSemanticIntegrationTests(unittest.TestCase):
             provider.assert_not_called()
 
     def test_local_classification_skips_generating_context_model_call(self):
-        prompt = "Explain UserService without editing."
+        prompt = "I want an explanation of UserService without editing files."
         task = SemanticTask(
             original_prompt=prompt, intent="ASK", goal=prompt,
             actions=["analyze"], confidence=0.65,
@@ -72,7 +72,8 @@ class LocalSemanticIntegrationTests(unittest.TestCase):
             result = SemanticFilter(self.profile, llm, local_mode="auto").filter_and_plan(
                 "Could you explain why UserService returns HTTP 403?"
             )
-        self.assertEqual(result.source, "LLM")
+        self.assertEqual(result.source, "FALLBACK")
+        self.assertIn("fidelity_rejected", result.fallback_reason or "")
         self.assertEqual(llm.calls, 1)
         self.assertTrue(result.plan.include_original_prompt)
 
