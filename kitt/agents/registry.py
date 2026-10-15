@@ -133,6 +133,8 @@ class AgentRegistry:
             profiles.append(_profile("kitt-core", slug, raw, None))
         manifests = self.extensions.plugins.discover()
         for plugin_id, manifest in sorted(manifests.items()):
+            if "agents.register" not in manifest.permissions:
+                continue
             if not self.extensions.plugins.is_enabled(plugin_id, manifest):
                 continue
             try:

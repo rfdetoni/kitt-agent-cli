@@ -99,6 +99,21 @@ class ChildMessageRepository:
             rows = conn.execute(query, params).fetchall()
             return [self._row_to_msg(r) for r in rows]
 
+    def list_pending_for_recipient(
+        self, conversation_id: str, recipient_id: str, limit: int = 16,
+    ) -> List[ChildMessage]:
+        """Bounded, ordered inbox; already delivered history never starves new messages."""
+        if not conversation_id or not recipient_id:
+            return []
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM child_messages
+                WHERE conversation_id=? AND recipient_id=? AND status='SENT'
+                ORDER BY timestamp ASC LIMIT ?""",
+                (conversation_id, recipient_id, min(max(int(limit), 1), 32)),
+            ).fetchall()
+        return [self._row_to_msg(row) for row in rows]
+
     def list_replies(self, correlation_id: str) -> List[ChildMessage]:
         query = "SELECT * FROM child_messages WHERE correlation_id = ? AND kind = 'REPLY' ORDER BY timestamp ASC"
         with self.db.get_connection() as conn:

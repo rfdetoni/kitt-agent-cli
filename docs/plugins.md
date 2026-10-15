@@ -168,3 +168,32 @@ Bundled plugins must remain dependency-light, bounded and deterministic. New fir
 - add tests for discovery, trust, enablement and representative output.
 
 VM autonomy: see [VM_SUPERVISOR.md](VM_SUPERVISOR.md). Guest RE lab: see [VM_AUTONOMY_SECURITY.md](VM_AUTONOMY_SECURITY.md).
+
+
+## Declarative specialist agent profiles
+
+The new **data-only** profile extension requires `agents.register` permission plus `[agents.<id>]` in a plugin manifest. It **does not execute Python code** and has no new authority; a plugin is only considered after it is enabled and content-hash trusted in this workspace.
+
+Example:
+```toml
+name = "agent-java"
+version = "1.0.0"
+api_version = "1"
+entrypoint = "declarative"
+permissions = ["agents.register"]
+trusted_in_process = false
+
+[agents.java]
+name = "Java Specialist"
+role = "IMPLEMENT"
+persona_file = "persona.md"
+read_only = false
+max_tokens = 4096
+timeout_seconds = 120
+tags = ["java", "spring", "hibernate"]
+output_contract = "agent.evidence.v1"
+```
+
+Create safely using `kitt agents create` or `kitt agents create java --role code`, then explicitly grant trust with `kitt plugins trust agent-java`. Edit with `kitt agents edit java --persona "..." ` and grant trust again. Use `kitt agents list|inspect|enable|disable|select`, or `/agent` in the TUI.
+
+Roles map to the canonical DISCOVER/ARCHITECT/IMPLEMENT/VERIFY/REVIEW policies; only IMPLEMENT with explicit `allowed_paths` can edit code. Agents cannot escalate their parent capabilities, tool budgets, workspace isolation or approval permissions. `/agent team` launches investigator and creative in parallel only if the existing child concurrency cap permits; it does not create a new scheduler. `/agent msg` uses the authenticated children.send operation and persisted family messages; workers read bounded pending messages on the next turn boundary.

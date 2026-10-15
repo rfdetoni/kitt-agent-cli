@@ -1,3 +1,7 @@
+## Agent CLI 0.87.23 — pluggable specialist agents
+
+Adds a trusted, declarative AgentRegistry with built-in Code, Creative, Investigator, Critic and Tester profiles, per-agent role/tool/budget/time contracts, and deterministic task-to-specialist selection. Workspace/global plugins can register agents via [agents.<id>] TOML plus a hashed persona Markdown; plugin content requires explicit per-workspace trust. Agents use existing ChildAgentManager and scheduler/worktree security boundaries, with no second planner or privilege elevation. CLI wizard: `kitt agents create`; TUI: `/agent` menu, `/agent run`, `/agent team`, `/agent msg`, `/agent inbox`. Family messages are durable and delivered at the next child turn boundary, not as live interrupts. See [release details](docs/RELEASE_0.87.23.md).
+
 ## Agent CLI 0.87.22 — selective indexed retrieval and graph changes
 
 Repository context now prefers a complete FTS5 index for regular lexical requests; native Rust lexical search remains the fallback and the primary path for diagnostic and exact-path requests. Targeted graph edits refresh only impacted source adjacencies instead of rebuilding every edge. [Release notes](docs/RELEASE_0.87.22.md).

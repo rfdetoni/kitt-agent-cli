@@ -199,10 +199,9 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
     task_prompt = str(request["task"])
     parent_conversation = str(request.get("parent_conversation_id") or "")
     if parent_conversation:
-        inbox = runtime.children.messaging.list_messages(
-            parent_conversation, recipient_id=str(request["child_id"]), limit=32,
+        unread = runtime.children.messaging.list_pending_for_recipient(
+            parent_conversation, recipient_id=str(request["child_id"]), limit=16,
         )
-        unread = [msg for msg in inbox if msg.status == "SENT"][:16]
         if unread:
             compact = [
                 {"id": msg.id, "sender": msg.sender_id,

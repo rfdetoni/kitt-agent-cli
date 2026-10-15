@@ -1,3 +1,7 @@
+## Agent CLI 0.87.23 — especialistas em plugins
+
+Inclui Code, Criativo, Investigador, Crítico e Testador, seleção automática, políticas por papel e agentes personalizados declarativos com trust por hash. Use `kitt agents create` para o assistente interativo; no TUI, `/agent` abre o menu, `/agent run` delega, `/agent team` executa uma equipe e `/agent msg` troca mensagens persistidas entre agentes. Mensagens chegam na próxima iteração do worker, não interrompem imediatamente turnos ativos. Consulte [release](docs/RELEASE_0.87.23.md).
+
 ## Agent CLI 0.87.19 — memória vetorial local opcional
 
 Defina `KITT_MEMORY_EMBED_MODEL` para ativar embeddings usando Ollama local; `KITT_MEMORY_EMBED_URL` aceita apenas loopback HTTP (padrão `http://127.0.0.1:11434`). A indexação após gravação ocorre em fila lazy limitada e a recuperação cai para FTS5 em falhas. Requer kitt-memoryd 0.10.0. Veja [release](docs/RELEASE_0.87.19.md).
