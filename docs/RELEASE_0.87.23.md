@@ -10,3 +10,6 @@
 
 ## Peer messaging
 Child roles may send via `children.send` only when the parent delegated `child.message`. Sender and parent conversation are bound from the SQLite child record, not model arguments; messages remain scoped and are consumed at turn boundaries.
+
+## Model-facing delegation
+`agents.list` is available as an authorized `kitt_runtime` read operation. Models may call `child_spawn` with `agent_profile` to delegate to a trusted specialist; the host replaces supplied role/tool permissions and clamps budgets to the declared profile. Selection never increases caller authority.

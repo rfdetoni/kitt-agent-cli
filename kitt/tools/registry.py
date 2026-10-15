@@ -61,6 +61,7 @@ class ToolRegistry(_core.ToolRegistry):
                     "optional explicit external backend: "
                     "codex|claude|opencode|aider|gemini|openhands|prime"
                 )
+                args["agent_profile"] = "optional trusted Agent Manager profile id (see agents.list)"
                 tool["args"] = args
             elif tool.get("name") == "kitt_runtime":
                 # Keep the model-visible composite tool intentionally small.
@@ -90,6 +91,28 @@ class ToolRegistry(_core.ToolRegistry):
         if args is not None and not isinstance(args, dict):
             return ToolResult(False, "", f"Invalid arguments for {tool_name}: expected an object.")
         normalized_args = args or {}
+        if tool_name == "child_spawn" and normalized_args.get("agent_profile"):
+            agent_registry = getattr(self, "agent_registry", None)
+            if agent_registry is None:
+                return ToolResult(False, "", "Specialist AgentRegistry unavailable")
+            try:
+                specialist = agent_registry.find(str(normalized_args["agent_profile"]))
+                paths = normalized_args.get("allowed_paths") or ()
+                if not isinstance(paths, (list, tuple)) or not all(isinstance(p, str) for p in paths):
+                    raise ValueError("allowed_paths must be an array of path strings")
+                profile_args = specialist.spawn_args(
+                    str(normalized_args.get("task") or ""), paths=tuple(paths),
+                )
+                name = str(normalized_args.get("name") or specialist.id).strip()
+                if name:
+                    profile_args["name"] = name[:100]
+                # A caller may narrow but never enlarge a persona's budget.
+                for key in ("token_budget", "timeout_seconds"):
+                    if key in normalized_args:
+                        profile_args[key] = min(profile_args[key], int(normalized_args[key]))
+                normalized_args = profile_args
+            except (ValueError, TypeError, OverflowError) as exc:
+                return ToolResult(False, "", f"Invalid specialist delegation: {exc}")
         if tool_name == "run_command":
             argv = normalized_args.get("argv")
             if self.policy.evaluate_argv(argv) == "DENY":

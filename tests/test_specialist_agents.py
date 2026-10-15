@@ -153,3 +153,38 @@ def test_family_message_binds_sender_to_authenticated_child():
     )
     assert not blocked.success
     assert len(messages) == 1
+
+
+def test_model_specialist_spawn_narrows_role_tools_and_budget():
+    from kitt.tools.registry import ToolRegistry
+
+    class Stub:
+        agent_registry = None
+
+    class Parent:
+        def __init__(self):
+            self.calls = []
+        def execute_tool(self, name, args, *extra, **kwargs):
+            self.calls.append((name, args))
+            return "accepted"
+
+    # Keep this a behavior-level contract without performing subprocess execution.
+    from unittest.mock import patch
+    from kitt.extensions.manager import ExtensionManager
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        profile = AgentRegistry(ExtensionManager(workspace_root=root)).find("critic")
+        registry = ToolRegistry.__new__(ToolRegistry)
+        registry.agent_registry = SimpleNamespace(find=lambda name: profile)
+        registry._processor = None
+        original = Parent()
+        with patch("kitt.tools.registry._core.ToolRegistry.execute_tool", original.execute_tool):
+            assert registry.execute_tool("child_spawn", {
+                "agent_profile": "critic", "task": "Review these files",
+                "token_budget": 9000,
+            }) == "accepted"
+        args = original.calls[0][1]
+        assert args["agent_role"] == "REVIEW"
+        assert "write_file" not in args["enabled_tools"]
+        assert args["token_budget"] == profile.token_budget
+        assert "Review these files" in args["task"]

@@ -211,6 +211,9 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         CAP_PROCESS_RUN,
         sensitive=True,
     ),
+    "agents.list": RuntimeOperationSpec(
+        "agents.list", CAP_REPO_READ, sensitive=False
+    ),
     "children.spawn": RuntimeOperationSpec(
         "children.spawn",
         CAP_CHILD_SPAWN,
@@ -912,6 +915,7 @@ class SafeRuntime:
             "process.resume": lambda: self._op_process_resume(
                 args, turn_id, security_context
             ),
+            "agents.list": lambda: self._op_agents_list(),
             "children.spawn": lambda: self._op_registry_tool("children.spawn", "child_spawn", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "children.send": lambda: self._op_children_send(args, security_context=security_context),
             "children.inspect": lambda: self._op_children_inspect(args),
@@ -1799,6 +1803,20 @@ class SafeRuntime:
             return SafeRuntimeResult(False, "memory.link", error="source_id and target_id are required")
         link_id = self.memory.link_concepts(source_id, target_id, relation, float(args.get("weight", 1.0) or 1.0))
         return SafeRuntimeResult(True, "memory.link", data={"id": link_id})
+
+    def _op_agents_list(self):
+        registry = getattr(self.registry, "agent_registry", None)
+        if registry is None:
+            return SafeRuntimeResult(False, "agents.list", error="AgentRegistry unavailable")
+        return SafeRuntimeResult(
+            True, "agents.list",
+            data={"agents": [
+                {"id": p.id, "role": p.role, "name": p.name,
+                 "description": p.description, "read_only": p.read_only,
+                 "tags": list(p.tags)}
+                for p in registry.list()[:64]
+            ]},
+        )
 
     def _op_children_send(self, args, *, security_context=None):
         recipient = str(args.get("recipient") or args.get("child_id") or "").strip()
