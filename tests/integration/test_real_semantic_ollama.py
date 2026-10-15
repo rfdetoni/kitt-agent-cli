@@ -79,8 +79,11 @@ def test_real_local_intent_coverage_and_safety():
     per_lang = {}
     accepted = 0
     correct = 0
+    by_source = {"explicit_imperative": 0, "accepted": 0}
     for language, expected, prompt in _EVALUATION:
-        task, _reason = classifier.classify(prompt)
+        task, reason = classifier.classify(prompt)
+        if task is not None:
+            by_source[reason] = by_source.get(reason, 0) + 1
         lang = per_lang.setdefault(language, {"accepted": 0, "correct": 0, "total": 0})
         lang["total"] += 1
         if task is not None:
@@ -110,6 +113,8 @@ def test_real_local_intent_coverage_and_safety():
         "coverage": accepted / total,
         "abstention_rate": (total - accepted) / total,
         "per_language": per_lang,
+        "accepted_by_source": by_source,
+        "NOTE": "Rule-based acceptances do not establish embedding classifier precision",
         "elapsed_ms_including_prototype_warmup": round((time.perf_counter() - began) * 1000, 3),
     }
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))

@@ -33,7 +33,7 @@ varreduras independentes do workspace.
 
 ## Semântica local e opcional
 
-Por padrão, embeddings ficam desligados. Prepare o modelo explicitamente com `ollama pull qllama/multilingual-e5-small:q8_0` e verifique com `ollama list`. A tag pública do conversor qllama identifica digest `96316f5cc784` (confira o digest completo instalado antes de considerar a versão fixada). O modelo upstream `intfloat/multilingual-e5-small` é MIT, 384 dimensões e 512 tokens; a conversão é publicada por terceiro e não foi validada nesta alteração com pesos executados. Para usar Ollama:
+Por padrão, embeddings ficam desligados. Prepare o modelo explicitamente com `ollama pull qllama/multilingual-e5-small:q8_0` e verifique com `ollama list`. A tag pública do conversor qllama identifica digest `96316f5cc784` (confira o digest completo instalado antes de considerar a versão fixada). O modelo upstream `intfloat/multilingual-e5-small` é MIT, 384 dimensões e 512 tokens; a conversão é publicada por terceiro; a integração real em Ollama CPU foi executada no CI com o digest verificado. Para usar Ollama:
 
 ```bash
 export KITT_RAG_SEMANTIC_ENABLED=true
@@ -148,3 +148,21 @@ python -m pytest -q tests/test_multilingual_semantic_fidelity.py tests/test_loca
 python -m compileall -q kitt tests
 python packaging/verify_cleanroom.py
 ```
+
+### Evidência medida: integração real E5/CPU (15/10/2026)
+
+Na execução [GitHub Actions #38754105001](https://github.com/rfdetoni/kitt-agent-cli/actions/runs/38754105001), usando Python 3.14.8, Ollama no Docker e modelo `qllama/multilingual-e5-small:q8_0`:
+
+| Métrica | Valor observado | Escopo |
+| --- | --- | --- |
+| Modelo/digest | `96316f5cc78414b0418c9c948934064dda96bf14b903ba357a4db75a6e538813` | Modelo Ollama |
+| Dimensão de embeddings | 384 | Inferência E5 real |
+| Tempo primeiro lote | 809,795 ms | 3 queries e 1 documento, CPU do runner |
+| Similaridade PT-EN (frases equivalentes) | 0,9641 | Apenas similaridade, não qualidade de classificação |
+| Similaridade PT-ES | 0,9899 | Apenas similaridade |
+| Classificações PT-BR/EN/ES explícitas | 24/24 corretas | Regras determinísticas ancoradas, 8 por idioma |
+| Cobertura do conjunto explícito | 24/24 | **Não representa cobertura em linguagem livre** |
+| Classificações vetoriais aceitas nesses 24 casos | 0 | As regras resolveram todos os casos antes dos embeddings |
+| Economia real de tokens/tarefa | Não medida | Precisa de benchmark de execução ponta a ponta |
+
+A avaliação demonstra que o modelo gera vetores reais e que os comandos explícitos podem ser classificados no host. **Não demonstra precisão 100% do classificador vetorial**: as regras foram ajustadas após observação de um conjunto pequeno, portanto os 24 casos não são mais um conjunto retido independente. Um conjunto novo, independente, com pedidos ambíguos e pares contrastivos permanece obrigatório antes de habilitar `auto` por padrão. O teste de calibração indicou margens vetoriais próximas de zero entre intenções diferentes; por segurança, não foram reduzidos os thresholds apenas para obter cobertura aparente.
