@@ -656,6 +656,12 @@ class PluginLoader:
             manifest, snapshot_root
         )
 
+        if manifest.entrypoint == "declarative":
+            # Agent profile plugins are trusted static data: no Python execution.
+            instance.handle = DefaultPluginHandle()
+            instance.state = PluginState.LOADED
+            return instance
+
         if manifest.source == "builtin":
             from kitt.extensions.builtin_plugins import shared as builtin_shared
 

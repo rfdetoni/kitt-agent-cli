@@ -513,6 +513,9 @@ class KittRuntime:
             tool_registry=registry,
         )
 
+        from kitt.agents.registry import AgentRegistry
+        agent_registry = AgentRegistry(extensions)
+
         runtime = cls(
             config,
             database,
@@ -558,6 +561,8 @@ class KittRuntime:
         from kitt.runtime.conversation_runtime import ConversationRuntimeRegistry
 
         runtime_holder["runtime"] = runtime
+        runtime.agent_registry = agent_registry
+        children.agent_registry = agent_registry
         runtime.prime_metrics = prime_metrics
         runtime.conversation_runtimes = ConversationRuntimeRegistry(
             canonical_root,

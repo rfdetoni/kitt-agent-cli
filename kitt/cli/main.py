@@ -250,6 +250,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plugins_parser.add_argument("plugin_name", nargs="?", default=None, help="Target plugin name")
 
+    agents_parser = subparsers.add_parser(
+        "agents", parents=[common], help="Manage specialist agent personas"
+    )
+    agents_parser.add_argument("agent_action", nargs="?", default="list",
+        choices=["list", "create", "edit", "inspect", "select", "enable", "disable"])
+    agents_parser.add_argument("agent_name", nargs="?", default=None)
+    agents_parser.add_argument("--role", default="investigator",
+        choices=["code", "creative", "investigator", "critic", "tester"])
+    agents_parser.add_argument("--persona", default=None)
+    agents_parser.add_argument("--display-name", default=None)
+    agents_parser.add_argument("--tags", default="")
+
     mcp_parser = subparsers.add_parser(
         "mcp",
         parents=[common],
@@ -813,6 +825,10 @@ def main(argv=None) -> int:
             provider=getattr(args, "provider", None),
             method=getattr(args, "method", "api_key"),
         )
+
+    if args.subcommand == "agents":
+        from kitt.agents.helper import handle_agents_command
+        return handle_agents_command(args.agent_action, args.agent_name, args.root, args)
 
     if args.subcommand == "plugins":
         from kitt.cli.commands import handle_plugins_command

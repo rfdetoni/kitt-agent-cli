@@ -490,6 +490,7 @@ class ChildAgentManager:
             "root": execution_root,
             "state_root": str(self.state_root),
             "child_id": child.id,
+            "parent_conversation_id": child.parent_conversation_id,
             "runtime_conversation_id": (
                 child.runtime_conversation_id or f"childconv_{child.id}"
             ),

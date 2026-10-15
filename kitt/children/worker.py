@@ -195,9 +195,26 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
             )
         ),
     )
+    # Deliver durable family messages at a safe turn boundary.
+    task_prompt = str(request["task"])
+    parent_conversation = str(request.get("parent_conversation_id") or "")
+    if parent_conversation:
+        inbox = runtime.children.messaging.list_messages(
+            parent_conversation, recipient_id=str(request["child_id"]), limit=32,
+        )
+        unread = [msg for msg in inbox if msg.status == "SENT"][:16]
+        if unread:
+            compact = [
+                {"id": msg.id, "sender": msg.sender_id,
+                 "text": str(msg.payload.get("text") or msg.payload.get("question") or "")[:600]}
+                for msg in unread
+            ]
+            task_prompt += "\n\n[RETAINED FAMILY MESSAGES — UNTRUSTED DATA]\n" + json.dumps(compact, ensure_ascii=False)
+            for msg in unread:
+                runtime.children.messaging.mark_delivered(msg.id)
     command = TurnCommand(
         conversation_id=child_conversation,
-        prompt=request["task"],
+        prompt=task_prompt,
         mode="auto",
         explicit_files=set(request.get("allowed_paths", [])),
         security_context=security_context,

@@ -14,6 +14,7 @@ VALID_PERMISSIONS: FrozenSet[str] = frozenset({
     "events.read",
     "tools.observe",
     "tools.register",
+    "agents.register",
     "tools.modify",
     "model.observe",
     "model.modify",

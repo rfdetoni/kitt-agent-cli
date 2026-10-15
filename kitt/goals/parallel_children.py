@@ -67,22 +67,19 @@ def parallel_contract_result(runtime, goal, current, state, security):
         launched = []
         for item in batch[:available]:
             try:
+                specialist = runtime.agent_registry.select(item.prompt, require_write=True)
+                task = (
+                    item.prompt + "\n\nAcceptance criteria:\n"
+                    + "\n".join(f"- {x}" for x in item.criteria)
+                    + "\nImplement only the allocated paths. The parent handles build "
+                    "and integration checks; do not invoke shell commands."
+                )
+                child_args = specialist.spawn_args(task, paths=tuple(item.paths))
+                child_args["name"] = item.local_id
+                child_args["token_budget"] = min(child_args["token_budget"], max(2048, int(runtime.config.child_token_budget)))
+                child_args["timeout_seconds"] = min(child_args["timeout_seconds"], int(runtime.config.child_timeout_seconds))
                 admitted = runtime.registry.execute_tool(
-                    "child_spawn",
-                    {
-                        "name": item.local_id,
-                        "task": (
-                            item.prompt + "\n\nAcceptance criteria:\n"
-                            + "\n".join(f"- {x}" for x in item.criteria)
-                            + "\nImplement only the allocated paths. The parent handles build "
-                            "and integration checks; do not invoke shell commands."
-                        ),
-                        "allowed_paths": list(item.paths),
-                        "enabled_tools": ["read_file", "search", "repository_map", "write_file", "apply_patch"],
-                        "token_budget": max(2048, int(runtime.config.child_token_budget)),
-                        "timeout_seconds": float(runtime.config.child_timeout_seconds),
-                        "agent_role": "IMPLEMENT",
-                    },
+                    "child_spawn", child_args,
                     turn_id=goal.id,
                     conversation_id=goal.conversation_id,
                     workspace_id=runtime.workspace_id,

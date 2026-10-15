@@ -170,6 +170,9 @@ async def _execute_command(ui, raw: str) -> bool:
             ui._show_result("\n".join(f"{r.approval_id[:8]} {r.tool_name} ({r.turn_id[:8]})\n  summary: {r.summary}" for r in pending) or "No approval requests.")
     elif found.id == "compact":
         await handle_compact_command(ui, arg)
+    elif found.id == "agent_manager":
+        from kitt.ui.agent_commands import handle_agent_manager
+        await handle_agent_manager(ui, arg)
     elif found.id == "child":
         if not arg:
             ui._show_result("Usage: /child <task description>")

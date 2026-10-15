@@ -138,6 +138,8 @@ def parse_manifest_data(
         )
 
     entrypoint = str(data.get("entrypoint", "")).strip()
+    if not entrypoint and isinstance(data.get("agents"), dict) and data["agents"]:
+        entrypoint = "declarative"
     if not entrypoint:
         raise PluginManifestError(
             f"Plugin '{name}' manifest missing required 'entrypoint' field."
@@ -157,6 +159,12 @@ def parse_manifest_data(
                 f"Plugin '{name}' requests unknown permission '{permission_name}'."
             )
         permissions.add(permission_name)
+
+    if entrypoint == "declarative":
+        if "agents.register" not in permissions or not isinstance(data.get("agents"), dict) or not data["agents"]:
+            raise PluginManifestError("Declarative plugins require agents.register and agents table")
+        if data.get("trusted_in_process", False):
+            raise PluginManifestError("Declarative agent plugin cannot execute in-process")
 
     raw_capabilities = data.get("capabilities", {})
     if raw_capabilities is None:

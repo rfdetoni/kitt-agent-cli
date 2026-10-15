@@ -157,7 +157,8 @@ class AgentRegistry:
                         profiles.append(_profile(plugin_id, slug, raw, root))
                     except (OSError, ValueError, UnicodeError):
                         continue
-            except (OSError, ValueError, RuntimeError):
+            except Exception:
+                # Invalid/revoked plugins never block the bundled specialists.
                 continue
         enabled, disabled = self.extensions.plugin_state.load()
         return [p for p in profiles if f"agent:{p.id}" not in disabled]
