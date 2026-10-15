@@ -33,6 +33,7 @@ from kitt.goals.auto_contract import (
 from kitt.goals.contract_validation import ContractValidator, parse_validation_report
 from kitt_protocol import decode_kap2_content
 from kitt.goals.progress import publish_goal_progress
+from kitt.goals.executor import GoalStepExecutor
 from kitt.goals.scheduler import GoalScheduler
 from kitt.goals.service import GoalService
 from kitt.history.database import HistoryDatabase
@@ -397,6 +398,49 @@ class GoalContractTests(unittest.TestCase):
         managed[0] = True
         exhausted = replace(goal, turns_used=goal.max_turns)
         self.assertEqual(scheduler._budget_reason(exhausted, time.time()), "turn budget exceeded")
+
+    def test_capture_timeout_requires_explicit_resume_and_consumes_no_global_retries(self):
+        error = (
+            "KITT reverse proxy: ui_timeout: ChatGPT finished, but no fresh "
+            "assistant response was captured. No KAP action was received or executed."
+        )
+        self.assertTrue(GoalStepExecutor._ambiguous_webchat_capture(error))
+        self.assertFalse(GoalStepExecutor._ambiguous_webchat_capture(
+            "KITT reverse proxy: ui_timeout: unrelated network failure"
+        ))
+        self.assertFalse(GoalStepExecutor._ambiguous_webchat_capture(
+            "A test script printed ui_timeout and No KAP action was received or executed"
+        ))
+
+        goal = self._contract()
+        count = [0]
+
+        def executor(_goal, **_kwargs):
+            count[0] += 1
+            return {
+                "status": "BLOCKED" if GoalStepExecutor._ambiguous_webchat_capture(error) else "FAILED",
+                "tokens": 0,
+                "cost": 0.0,
+                "error": error,
+                "block_reason": "ENVIRONMENT",
+            }
+
+        scheduler = GoalScheduler(
+            self.db, self.goals, runtime_step_executor=executor,
+            poll_interval_seconds=0.01,
+        )
+        scheduler.schedule_goal(goal.id, heartbeat_enabled=True)
+        self.assertEqual(scheduler.check_and_execute_due()[0]["status"], "BLOCKED")
+        self.assertEqual(self.goals.get(goal.id).retries_used, 0)
+        self.assertEqual(self.goals.get(goal.id).failures_used, 0)
+        # No repeated WebChat submission without operator action.
+        self.assertEqual(scheduler.check_and_execute_due(), [])
+        self.assertEqual(count[0], 1)
+        blocked = self.goals.contract_items(goal.id)
+        self.assertEqual(blocked[0].status, "BLOCKED")
+        resumed = self.goals.resume_contract(goal.id, conversation_id="conv")
+        self.assertEqual(resumed.local_id, "T01")
+        self.assertEqual(self.goals.contract_items(goal.id)[0].status, "PENDING")
 
     def test_scheduler_commits_terminal_host_block_without_global_retry(self):
         goal = self._contract()
