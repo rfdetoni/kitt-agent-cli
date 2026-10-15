@@ -134,6 +134,25 @@ def deterministic_intent(prompt: str) -> str | None:
     return None
 
 
+def explicit_task(prompt: str) -> SemanticTask | None:
+    """Compile an unambiguous command without constructing an embedding client."""
+    intent = deterministic_intent(prompt)
+    if intent is None:
+        return None
+    task = DeterministicFallbackPlanner().generate_task(prompt)
+    task.intent = intent
+    task.confidence = 0.8  # Evidence of an anchored rule, not model probability.
+    task.secondary_intents = (
+        ["TEST"] if intent in _MUTATING and _TEST_THEN.search(prompt) else []
+    )
+    if intent in {"ASK", "PLAN", "REVIEW"}:
+        task.actions = ["analyze", "answer without modifying workspace"]
+        task.validation_hints = []
+    elif intent == "TEST":
+        task.actions = ["analyze", "run the requested tests"]
+    return task
+
+
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     if not a or len(a) != len(b):
         raise EmbeddingError("Local semantic vector dimension mismatch")
@@ -164,19 +183,8 @@ class LocalIntentClassifier:
             return None, "complex_prompt"
         if _CONTINUATION.search(prompt):
             return None, "conversation_dependency"
-        explicit = deterministic_intent(prompt)
-        if explicit is not None:
-            task = DeterministicFallbackPlanner().generate_task(prompt)
-            task.intent = explicit
-            task.confidence = 0.8  # Rule evidence, not calibrated probability.
-            task.secondary_intents = (
-                ["TEST"] if explicit in _MUTATING and _TEST_THEN.search(prompt) else []
-            )
-            if explicit in {"ASK", "PLAN", "REVIEW"}:
-                task.actions = ["analyze", "answer without modifying workspace"]
-                task.validation_hints = []
-            if explicit == "TEST":
-                task.actions = ["analyze", "run the requested tests"]
+        task = explicit_task(prompt)
+        if task is not None:
             return task, "explicit_imperative"
         if not self._lock.acquire(timeout=2.0):
             return None, "local_encoder_busy"

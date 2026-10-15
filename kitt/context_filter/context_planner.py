@@ -15,9 +15,11 @@ class ContextPlanner:
         prompt_to_check = original_prompt or task.original_prompt
         fidelity_passed, _ = validate_semantic_fidelity(prompt_to_check, task)
 
-        # High confidence (>=0.90) AND fidelity passed -> IR_ONLY (include_original_prompt = False)
-        # Otherwise -> include_original_prompt = True
-        include_original_prompt = True  # Never discard the human instruction
+        # Shape/fidelity failure is a rejection, not a tool permission hint.
+        # Even a direct caller bypassing SemanticFilter must fail closed.
+        if not fidelity_passed:
+            tools = ["read_file", "search", "repository_map", "artifact_read"]
+        include_original_prompt = True
 
         return ContextPlan(
             search_queries=search_queries,

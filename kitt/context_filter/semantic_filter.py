@@ -9,7 +9,7 @@ from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.context_filter.schema import ContextFilterSchemaValidator
 from kitt.context_filter.fallback import DeterministicFallbackPlanner
 from kitt.context_filter.context_planner import ContextPlanner
-from kitt.context_filter.local_intent import get_local_classifier
+from kitt.context_filter.local_intent import explicit_task, get_local_classifier
 
 SYSTEM_CONTEXT_FILTER_PROMPT = """You are a Semantic Task Compiler.
 Convert the user's request into a minimal, execution-oriented canonical semantic representation.
@@ -155,6 +155,15 @@ class SemanticFilter:
             )
 
         if self.local_mode != "off":
+            # No Ollama requirement for clear imperative rules. This also avoids
+            # host initialization and network calls on the fast path.
+            deterministic = explicit_task(prompt)
+            if deterministic is not None:
+                plan = self.planner.build_plan(deterministic)
+                return SemanticFilterResult(
+                    task=deterministic, plan=plan, source="DETERMINISTIC_BYPASS",
+                    latency_ms=(time.time() - start_t) * 1000,
+                )
             model = os.getenv("KITT_SEMANTIC_LOCAL_MODEL", "").strip()
             endpoint = os.getenv("KITT_SEMANTIC_LOCAL_URL", "http://127.0.0.1:11434")
             reason = "model_not_configured"
@@ -231,6 +240,16 @@ class SemanticFilter:
             latency = (time.time() - start_t) * 1000.0
 
             if valid:
+                from kitt.context_filter.fidelity import validate_semantic_fidelity
+                faithful, reason = validate_semantic_fidelity(prompt, task)
+                if not faithful:
+                    fallback_task = self.fallback_planner.generate_task(prompt)
+                    return SemanticFilterResult(
+                        task=fallback_task,
+                        plan=self.fallback_planner.generate_plan(fallback_task),
+                        source="FALLBACK", fallback_reason="fidelity_rejected:" + reason,
+                        latency_ms=latency,
+                    )
                 plan = self.planner.build_plan(task)
                 return SemanticFilterResult(
                     task=task,

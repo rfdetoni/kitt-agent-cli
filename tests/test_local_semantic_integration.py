@@ -37,6 +37,19 @@ class LocalSemanticIntegrationTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
+    def test_rule_fast_path_needs_no_ollama_model_or_llm(self):
+        with patch.dict("os.environ", {"KITT_SEMANTIC_LOCAL_MODEL": ""}):
+            llm = FakeContextLLM()
+            with patch("kitt.context_filter.semantic_filter.get_local_classifier") as provider:
+                result = SemanticFilter(self.profile, llm, local_mode="auto").filter_and_plan(
+                    "Crea un archivo de configuración."
+                )
+            self.assertEqual(result.source, "DETERMINISTIC_BYPASS")
+            self.assertEqual(result.task.intent, "IMPLEMENT")
+            self.assertEqual(result.task.original_prompt, "Crea un archivo de configuración.")
+            self.assertEqual(llm.calls, 0)
+            provider.assert_not_called()
+
     def test_local_classification_skips_generating_context_model_call(self):
         prompt = "Explain UserService without editing."
         task = SemanticTask(

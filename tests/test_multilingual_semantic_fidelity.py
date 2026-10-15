@@ -31,7 +31,11 @@ class LiteralSemanticsTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("contradicts", reason)
         self.assertEqual(task.confidence, 0.8)
-        self.assertTrue(ContextPlanner().build_plan(task).include_original_prompt)
+        plan = ContextPlanner().build_plan(task)
+        self.assertTrue(plan.include_original_prompt)
+        self.assertFalse(set(plan.enabled_tools).intersection({
+            "write_file", "apply_patch", "run_command",
+        }))
 
     def test_equivalent_file_creation_is_a_mutation(self):
         fallback = DeterministicFallbackPlanner()
