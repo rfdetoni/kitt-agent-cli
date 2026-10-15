@@ -66,10 +66,18 @@ class SemanticCandidateReranker:
         cached_vectors: list[list[float] | None] = [self._cache_get(key) for key in keys]
         missing_indexes = [idx for idx, vector in enumerate(cached_vectors) if vector is None]
 
-        inputs = [query[: self.max_chars], *(docs[idx] for idx in missing_indexes)]
         try:
-            fetched = self.provider.embed(inputs)
-            if len(fetched) != len(inputs):
+            if hasattr(self.provider, "embed_queries") and hasattr(self.provider, "embed_documents"):
+                query_embeddings = self.provider.embed_queries([query[: self.max_chars]])
+                document_embeddings = (
+                    self.provider.embed_documents([docs[idx] for idx in missing_indexes])
+                    if missing_indexes else []
+                )
+                fetched = [*query_embeddings, *document_embeddings]
+            else:
+                inputs = [query[: self.max_chars], *(docs[idx] for idx in missing_indexes)]
+                fetched = self.provider.embed(inputs)
+            if len(fetched) != len(missing_indexes) + 1:
                 raise EmbeddingError("embedding count mismatch")
             query_vector = self._validated_vector(fetched[0], "query")
             for offset, idx in enumerate(missing_indexes, start=1):

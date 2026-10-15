@@ -1,6 +1,7 @@
 """Embedding providers used only for bounded candidate reranking."""
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import socket
@@ -8,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from typing import Protocol, Sequence
+from urllib.parse import urlsplit
 
 from kitt.llm.http_security import read_error_body, secure_urlopen
 
@@ -37,8 +39,28 @@ class OllamaEmbeddingProvider:
         base = base_url.strip().rstrip("/")
         if base and not base.startswith(("http://", "https://")):
             base = f"http://{base}"
+        url = urlsplit(base)
+        if (
+            url.scheme != "http"
+            or url.username is not None or url.password is not None
+            or url.path not in {"", "/"} or url.query or url.fragment
+            or url.hostname not in {"localhost", "127.0.0.1", "::1"}
+        ):
+            raise ValueError("Embeddings require a loopback-only HTTP Ollama URL")
+        try:
+            if url.port is None:
+                raise ValueError("Ollama endpoint needs an explicit port")
+            addresses = socket.getaddrinfo(url.hostname, url.port, type=socket.SOCK_STREAM)
+            if not addresses or any(
+                not ipaddress.ip_address(address[4][0]).is_loopback
+                for address in addresses
+            ):
+                raise ValueError("Ollama hostname resolves outside loopback")
+        except (socket.gaierror, ValueError) as exc:
+            raise ValueError("Ollama endpoint is not a verified loopback address") from exc
         self.model = model.strip()
         self.base_url = base
+        self.is_e5 = "multilingual-e5-small" in self.model.lower()
         self.timeout_seconds = max(0.5, float(timeout_seconds))
         self.total_timeout_seconds = max(0.5, float(total_timeout_seconds))
         self.batch_size = max(2, min(64, int(batch_size)))
@@ -74,13 +96,23 @@ class OllamaEmbeddingProvider:
             )
         return vectors
 
+    def embed_queries(self, texts: Sequence[str]) -> list[list[float]]:
+        """E5 symmetric classification/retrieval query features."""
+        return self.embed([("query: " + str(t)) if self.is_e5 else str(t) for t in texts])
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        """E5 asymmetric code/document features."""
+        return self.embed([("passage: " + str(t)) if self.is_e5 else str(t) for t in texts])
+
     def _embed_batch(
         self,
         texts: Sequence[str],
         timeout_seconds: float,
     ) -> list[list[float]]:
         url = f"{self.base_url}/api/embed"
-        payload = json.dumps({"model": self.model, "input": list(texts)}).encode("utf-8")
+        payload = json.dumps({
+            "model": self.model, "input": list(texts), "truncate": False,
+        }).encode("utf-8")
         request = urllib.request.Request(
             url,
             data=payload,
@@ -91,7 +123,8 @@ class OllamaEmbeddingProvider:
             with secure_urlopen(
                 request,
                 timeout=max(0.05, float(timeout_seconds)),
-                max_body_bytes=32 * 1024 * 1024,
+                max_body_bytes=8 * 1024 * 1024,
+                local_only=True,
             ) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except socket.timeout as exc:
