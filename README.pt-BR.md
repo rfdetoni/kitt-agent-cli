@@ -1,3 +1,7 @@
+## Agent CLI 0.87.28 — não repetir automaticamente falhas de captura WebChat
+
+Ao receber `ui_timeout` depois do envio do prompt, sem qualquer ação KAP válida, o contrato fica **BLOCKED / ENVIRONMENT**. Isso impede três ou mais envios iguais da T00 sem inspeção da sessão autenticada. A retomada exige ação explícita do operador; veja [detalhes](docs/RELEASE_0.87.28.md).
+
 ## Agent CLI 0.87.27 — progresso visual durante planejamento
 
 O TUI mostra etapa real (PLANNING/REVIEWING/REVISING), tentativa 1/3, tempo decorrido daquela etapa e o aviso *aguardando LLM*. A dashboard substitui a porcentagem enganosa por **AGUARDO** durante a espera. Mensagens anteriores são fechadas sem poluir o histórico. [Detalhes](docs/RELEASE_0.87.27.md).
