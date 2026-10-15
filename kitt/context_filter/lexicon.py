@@ -94,7 +94,8 @@ _FIRST = re.compile(r"^([^\W_]+(?:[-'][^\W_]+)?)", re.UNICODE)
 _NEGATION = re.compile(
     r"(?i)\b(?:não|nao|nunca|never|don't|do not|sin|sem|without|no)\b"
     r"[^.!?;\n]{0,65}\b(?:crie|create|crea|corrija|fix|edit|edite|"
-    r"altere|change|modifique|modify|cambies|editar|alterar|"
+    r"altere|change|modifique|modify|cambies|cambiar|cambie|"
+    r"editar|alterar|modificar|touch|mexer|tocar|"
     r"aplique|apply|execute|ejecute|escreva|write)\b"
 )
 _CONTINUE = re.compile(
@@ -143,7 +144,8 @@ def lexical_intent(prompt: str) -> str | None:
     """Recognize only an unambiguous leading command; fail closed on uncertainty."""
     if not 12 <= len(prompt.strip()) <= 1200 or _CONTINUE.match(prompt):
         return None
-    if _NEGATION.search(prompt):
+    if (_NEGATION.search(prompt)
+            or re.search(r"(?i)\b(?:e\s+depois|and\s+then|y\s+después)\b", prompt)):
         return None
     text = normalize(_PREFIX.sub("", prompt))
     match = _FIRST.match(text)
