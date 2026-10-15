@@ -1,3 +1,14 @@
+## Agent CLI 0.87.24 — explicit WebChat capture failure
+
+The reverse-proxy client now distinguishes `ui_timeout` (the website request
+was submitted but its assistant response could not be extracted) from KAP/2
+syntax failures. It reports that **no KAP action was received or executed**
+and asks for authenticated WebChat session inspection before an explicit retry;
+it does not replay a potentially executed action automatically.
+The Python dependency on `kitt-protocol` is pinned to immutable revision
+`cc3b51dd0e868adaab4ed7a0069c4dbf9aa08c42`; the release manifest tracks the exact component SHA.
+See [release 0.87.24](docs/RELEASE_0.87.24.md) and Reverse Proxy 5.3.15.
+
 ## Agent CLI 0.87.23 — pluggable specialist agents
 
 Adds a trusted, declarative AgentRegistry with built-in Code, Creative, Investigator, Critic and Tester profiles, per-agent role/tool/budget/time contracts, and deterministic task-to-specialist selection. Workspace/global plugins can register agents via [agents.<id>] TOML plus a hashed persona Markdown; plugin content requires explicit per-workspace trust. Agents use existing ChildAgentManager and scheduler/worktree security boundaries, with no second planner or privilege elevation. CLI wizard: `kitt agents create`; TUI: `/agent` menu, `/agent run`, `/agent team`, `/agent msg`, `/agent inbox`. Family messages are durable and delivered at the next child turn boundary, not as live interrupts. See [release details](docs/RELEASE_0.87.23.md).

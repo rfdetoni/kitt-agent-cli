@@ -376,7 +376,15 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                             request.usage_callback(safe_usage)
                     if "error" in chunk:
                         error = chunk["error"] if isinstance(chunk["error"], dict) else {}
-                        message = f"KITT reverse proxy: {error.get('code', 'stream_error')}: {error.get('message', 'SSE error')}"
+                        code = str(error.get("code", "stream_error"))
+                        message = f"KITT reverse proxy: {code}: {error.get('message', 'SSE error')}"
+                        if code == "ui_timeout":
+                            # The web request was submitted, but no model response
+                            # was captured. Retrying automatically could duplicate it.
+                            raise ProviderProtocolError(
+                                message + " No KAP action was received or executed. "
+                                "Inspect the authenticated WebChat session before an explicit retry."
+                            )
                         if error.get("recoverable") is True:
                             raise ProviderRecoverableError(message, code=str(error.get("code", "stream_error")), recovery_action=str(error.get("recovery_action", "continue")))
                         raise ProviderProtocolError(message)
