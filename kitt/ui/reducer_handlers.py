@@ -102,10 +102,10 @@ def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
     step = f"{attempt}/{maximum}"
     if phase == "generating":
         status = f"PLANNING {step}"
-        summary = f"Gerando plano com LLM (tentativa {step}); aguardando resposta, nenhuma ferramenta executada."
+        summary = f"Gerando plano com LLM (tentativa {step}); aguardando resposta, ainda sem execução."
     elif phase == "reviewing":
         status = f"REVIEWING {step}"
-        summary = f"Revisor independente: avaliando critérios e dependências (tentativa {step})."
+        summary = f"Validando plano: revisor independente avaliando critérios e dependências (tentativa {step})."
     elif phase == "revising":
         status = f"REVISING {step}"
         summary = f"Revisor solicitou {max(0, event.issues)} ajuste(s); preparando nova tentativa {step}."
