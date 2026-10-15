@@ -112,3 +112,59 @@ def test_real_local_intent_coverage_and_safety():
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
     # This is a diagnostic holdout, not a certified production quality gate.
     # Production auto-default remains disabled until calibrated.
+
+
+# Calibration examples are not part of the final holdout above. They are used
+# only to inspect score distributions and design safe acceptance thresholds.
+_CALIBRATION = (
+    ("IMPLEMENT", "Crie uma nova configuração de ambiente."),
+    ("IMPLEMENT", "Add a new settings module."),
+    ("IMPLEMENT", "Crea el módulo para configuraciones."),
+    ("ASK", "Como funciona o sistema de permissões?"),
+    ("ASK", "What does the provider routing code do?"),
+    ("ASK", "¿Cómo funciona el enrutamiento de proveedores?"),
+    ("PLAN", "Desenhe os passos para migrar o armazenamento, sem executar."),
+    ("PLAN", "Outline database migration phases without applying changes."),
+    ("PLAN", "Elabora los pasos para migrar la base de datos sin ejecutarlo."),
+    ("DEBUG", "Investigue e corrija a falha na autenticação."),
+    ("DEBUG", "Troubleshoot and repair the auth issue."),
+    ("DEBUG", "Diagnostica y arregla un fallo de permisos."),
+    ("TEST", "Rode a suíte de testes do projeto."),
+    ("TEST", "Launch the regression test suite."),
+    ("TEST", "Ejecuta las pruebas de regresión."),
+    ("REVIEW", "Avalie o código e aponte problemas sem alterar."),
+    ("REVIEW", "Audit the code for defects; do not edit it."),
+    ("REVIEW", "Inspecciona el código y señala fallos, sin cambios."),
+    ("DOCUMENT", "Documente a configuração no README."),
+    ("DOCUMENT", "Write documentation for environment setup."),
+    ("DOCUMENT", "Redacta una guía de configuración."),
+    ("REFACTOR", "Refatore o módulo de autenticação preservando as interfaces."),
+    ("REFACTOR", "Clean up the authentication module without API changes."),
+    ("REFACTOR", "Refactoriza el módulo de autenticación sin alterar las firmas."),
+)
+
+def test_calibration_score_distribution():
+    from kitt.context_filter.local_intent import EXAMPLES
+    provider = OllamaEmbeddingProvider(
+        _MODEL, "http://127.0.0.1:11434", timeout_seconds=30,
+        total_timeout_seconds=120, batch_size=32,
+    )
+    prototypes = provider.embed_documents([s for _, s in EXAMPLES])
+    probes = provider.embed_queries([s for _, s in _CALIBRATION])
+    details = []
+    for ((expected, text), probe) in zip(_CALIBRATION, probes, strict=True):
+        by_intent = {}
+        for (intent, _), prototype in zip(EXAMPLES, prototypes, strict=True):
+            by_intent.setdefault(intent, []).append(_cosine(probe, prototype))
+        ranked = sorted(
+            ((round(sum(sorted(values, reverse=True)[:2]) / 2, 5), label)
+             for label, values in by_intent.items()),
+            reverse=True,
+        )
+        details.append({
+            "expected": expected, "pred": ranked[0][1],
+            "score": ranked[0][0], "margin": round(ranked[0][0] - ranked[1][0], 5),
+            "correct": ranked[0][1] == expected,
+        })
+    print(json.dumps({"experiment": "e5_calibration_scores_query_passage",
+                      "cases": details}, ensure_ascii=False))
