@@ -1,5 +1,5 @@
 from kitt.domain.entities import SemanticTask, ContextPlan
-from kitt.context_filter.fidelity import validate_semantic_fidelity, IR_ONLY_CONFIDENCE_THRESHOLD
+from kitt.context_filter.fidelity import validate_semantic_fidelity
 
 class ContextPlanner:
     """Converts SemanticTask into an actionable ContextPlan governing tool selection and search targets."""
