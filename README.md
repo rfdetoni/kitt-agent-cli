@@ -1,3 +1,7 @@
+## Agent CLI 0.87.20 — revision-safe embeddings and durable-source backfill
+
+Asynchronous embedding writes carry the original Memory content hash. A bounded workspace backfill uses Memory's durable missing-vector queue when semantic search succeeds; unfinished items survive process restarts. Automatic backfill excludes secret, ephemeral and conversation memories. Full graph rebuild batches SQL edges. Requires Memory 0.10.2. [Release details](docs/RELEASE_0.87.20.md).
+
 ## Agent CLI 0.87.19 — opt-in local vector memory
 
 The existing Ollama embedding provider now supports opt-in hybrid memory retrieval via kitt-memoryd 0.10.0. Set `KITT_MEMORY_EMBED_MODEL` to an installed model; `KITT_MEMORY_EMBED_URL` defaults to `http://127.0.0.1:11434` and accepts loopback HTTP only. A single lazy worker and bounded queue index successful remembers; search uses a short provider deadline and falls back to FTS5. No remote egress or automatic model downloads. See [release details](docs/RELEASE_0.87.19.md).

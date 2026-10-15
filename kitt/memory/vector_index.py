@@ -34,6 +34,7 @@ class LocalVectorIndexer:
         if parts.port is None or not 1 <= parts.port <= 65535:
             raise ValueError("embedding URL requires a valid port")
         self.model = model
+        self._backfill_lock = threading.Lock()
         self.provider = OllamaEmbeddingProvider(
             model, url, timeout_seconds=0.75, total_timeout_seconds=0.9, batch_size=4,
         )
@@ -68,8 +69,10 @@ class LocalVectorIndexer:
             _LOG.debug("KITT vector embedding unavailable (%s); using FTS5", type(exc).__name__)
             return None
 
-    def schedule(self, client, memory_id: str, content: str) -> None:
-        if not content.strip() or not _SLOTS.acquire(blocking=False):
+    def schedule(self, client, memory_id: str, content: str, expected_content_hash: str) -> None:
+        if (not content.strip() or len(expected_content_hash) != 64
+                or not all(c in '0123456789abcdef' for c in expected_content_hash.lower())
+                or not _SLOTS.acquire(blocking=False)):
             return
 
         def work():
@@ -78,6 +81,7 @@ class LocalVectorIndexer:
                 if vector is not None:
                     client.manage("vector.upsert", {
                         "memory_id": memory_id, "model": self.model, "embedding": vector,
+                        "expected_content_hash": expected_content_hash,
                     })
             except Exception as exc:
                 _LOG.debug("KITT vector upsert failed (%s)", type(exc).__name__)
@@ -85,3 +89,42 @@ class LocalVectorIndexer:
                 _SLOTS.release()
 
         _POOL.submit(work)
+
+    def schedule_backfill(self, client, workspace_id: str, namespace: str) -> None:
+        """Retry missing embeddings using durable Memory records as the work source."""
+        if not self._backfill_lock.acquire(blocking=False):
+            return
+
+        def work() -> None:
+            try:
+                result = client.manage("vector.pending", {
+                    "workspace_id": workspace_id,
+                    "namespace": namespace,
+                    "model": self.model,
+                    "limit": 4,
+                })
+                for record in result.get("pending", [])[:4]:
+                    if not isinstance(record, dict):
+                        continue
+                    memory_id, content, expected_hash = (
+                        record.get("id"), record.get("content"), record.get("content_hash")
+                    )
+                    if not all(isinstance(item, str) for item in (memory_id, content, expected_hash)):
+                        continue
+                    if not content.strip() or len(expected_hash) != 64:
+                        continue
+                    vector = self.query(content)
+                    if vector is not None:
+                        client.manage("vector.upsert", {
+                            "memory_id": memory_id, "model": self.model,
+                            "embedding": vector, "expected_content_hash": expected_hash,
+                        })
+            except Exception as exc:
+                _LOG.debug("KITT vector backfill deferred (%s)", type(exc).__name__)
+            finally:
+                self._backfill_lock.release()
+
+        try:
+            _POOL.submit(work)
+        except RuntimeError:
+            self._backfill_lock.release()

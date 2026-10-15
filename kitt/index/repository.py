@@ -765,16 +765,15 @@ class RepositoryIndex:
             WHERE rf.file_id != sf.file_id
             """
         ).fetchall()
-        for row in rows:
-            self._conn.execute(
-                """
-                INSERT INTO edges (source_file_id, target_file_id, kind, weight)
-                VALUES (?, ?, ?, 1.0)
-                ON CONFLICT(source_file_id, target_file_id, kind) DO UPDATE SET
-                    weight=excluded.weight
-                """,
-                (row["source_file_id"], row["target_file_id"], row["kind"]),
-            )
+        self._conn.executemany(
+            """
+            INSERT INTO edges (source_file_id, target_file_id, kind, weight)
+            VALUES (?, ?, ?, 1.0)
+            ON CONFLICT(source_file_id, target_file_id, kind) DO UPDATE SET
+                weight=excluded.weight
+            """,
+            [(row["source_file_id"], row["target_file_id"], row["kind"]) for row in rows],
+        )
         path_edges = self._conn.execute(
             """
             SELECT sf.path AS source_path, tf.path AS target_path, e.weight

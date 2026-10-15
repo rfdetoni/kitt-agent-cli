@@ -273,8 +273,11 @@ class KittMemoryClient:
         memory_id = body.get("id") if isinstance(body, dict) else None
         if not isinstance(memory_id, str):
             raise KittMemoryUnavailable("memory.remember response missing id")
-        if self._vector_indexer is not None and sensitivity != "ephemeral":
-            self._vector_indexer.schedule(self, memory_id, content)
+        record = body.get("record") if isinstance(body, dict) else None
+        expected_hash = record.get("content_hash") if isinstance(record, dict) else None
+        if (self._vector_indexer is not None and sensitivity not in ("ephemeral", "secret")
+                and isinstance(expected_hash, str)):
+            self._vector_indexer.schedule(self, memory_id, content, expected_hash)
         return memory_id
 
     def search(
@@ -313,6 +316,8 @@ class KittMemoryClient:
                 payload["embedding_model"] = self._vector_indexer.model
                 payload["query_embedding"] = vector
         body = self._call(MEMORY_SEARCH_REQUEST, payload, MEMORY_SEARCH_RESPONSE)
+        if self._vector_indexer is not None and "query_embedding" in payload:
+            self._vector_indexer.schedule_backfill(self, workspace_id, namespace)
         hits = body.get("hits") if isinstance(body, dict) else None
         if not isinstance(hits, list):
             raise KittMemoryUnavailable("memory.search response missing hits")

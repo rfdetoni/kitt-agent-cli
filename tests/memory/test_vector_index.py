@@ -20,3 +20,16 @@ class VectorIndexerTests(unittest.TestCase):
         idx = LocalVectorIndexer("model-v1", "http://127.0.0.1:11434")
         with patch.object(idx.provider, "embed", side_effect=RuntimeError("down")):
             self.assertIsNone(idx.query("safe lexical fallback"))
+
+    def test_background_write_uses_original_content_hash(self):
+        from threading import Event
+        idx = LocalVectorIndexer("model-v1", "http://127.0.0.1:11434")
+        idx.query = lambda content: [1.0, 0.0]
+        done = Event()
+        class Client:
+            def manage(self, operation, data):
+                assert operation == "vector.upsert"
+                assert data["expected_content_hash"] == "a" * 64
+                done.set()
+        idx.schedule(Client(), "some-id", "content", "a" * 64)
+        self.assertTrue(done.wait(3), "background vector write not invoked")
