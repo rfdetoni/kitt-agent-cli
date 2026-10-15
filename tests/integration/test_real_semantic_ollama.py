@@ -91,6 +91,9 @@ def test_real_local_intent_coverage_and_safety():
                 lang["correct"] += 1
             assert task.original_prompt == prompt
     total = len(_EVALUATION)
+    assert accepted >= max(1, total // 3), "Local automatic mode has near-zero accepted coverage"
+    if accepted:
+        assert correct / accepted >= 0.95, "Unsafe intent acceptance precision"
     for prompt in (
         "Explica el código sin modificar ningún archivo.",
         "Do not edit the code; explain what it does.",

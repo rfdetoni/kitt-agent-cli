@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from kitt.context.rag.embeddings import OllamaEmbeddingProvider
 from kitt.context_filter.semantic_filter import SemanticFilter
+from kitt.context_filter.local_intent import deterministic_intent
 from kitt.domain.entities import ModelProfile, SemanticTask
 
 
@@ -72,6 +73,25 @@ class LocalSemanticIntegrationTests(unittest.TestCase):
         self.assertEqual(result.source, "ABSTAIN")
         self.assertEqual(llm.calls, 0)
         self.assertEqual(result.fallback_reason, "conversation_dependency")
+
+    def test_conservative_direct_intents_in_three_languages(self):
+        cases = {
+            "Crie o arquivo de configuração.": "IMPLEMENT",
+            "Create a configuration file.": "IMPLEMENT",
+            "Crea un archivo de configuración.": "IMPLEMENT",
+            "Explain how to fix the bug without editing files.": "ASK",
+            "Explica el código sin modificar ningún archivo.": "ASK",
+            "Fix the authentication bug and run the relevant tests.": "DEBUG",
+            "Revisa UserService; no apliques ninguna corrección.": "REVIEW",
+            "How to create a configuration file?": "ASK",
+            "Refatore BillingService para simplificar.": "REFACTOR",
+        }
+        for prompt, intent in cases.items():
+            with self.subTest(prompt=prompt):
+                self.assertEqual(deterministic_intent(prompt), intent)
+        for prompt in ("continue", "do the same", "faça isso",
+                       "Create a test and then refactor the module."):
+            self.assertIsNone(deterministic_intent(prompt))
 
     def test_reverse_proxy_never_uses_local_classifier(self):
         prompt = "Crea el archivo sin cambiar la API."

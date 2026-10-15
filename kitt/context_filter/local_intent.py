@@ -63,6 +63,64 @@ _TEST_THEN = re.compile(
 )
 
 
+
+# Host-side imperative patterns are deliberately anchored to the beginning of
+# the human request. Matching a code symbol such as "UserService.fix" must not
+# classify it as a mutation. These are not probability scores.
+_DIRECT_INTENTS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (intent, re.compile(r"(?i)^\s*(?:(?:please|por favor)[:,]?\s+)?" + pattern))
+    for intent, pattern in (
+        ("ASK", r"(?:explique|explica|explain|describe|descreva|cómo|como|how|why|what|"
+                r"qual|quais|por\s+que|por\s+qué|o\s+que|qué)\b"),
+        ("PLAN", r"(?:planeje|planifique|planifica|plan|planejar|elabore\s+um\s+plano|"
+                 r"draft\s+(?:a\s+)?(?:plan|strategy)|outline)\b"),
+        ("REVIEW", r"(?:revise|revisa|review|revisar|inspecione|inspect|audit|audite|"
+                   r"avalie|evaluate)\b"),
+        ("REFACTOR", r"(?:refatore|refactor|refactoriza|refactorize|restructure|"
+                     r"reestruture|reestructura)\b"),
+        ("DEBUG", r"(?:corrija|corrige|fix|debug|depure|depura|diagnostique|"
+                  r"diagnostica|troubleshoot|repare|repair|arregla)\b"),
+        ("TEST", r"(?:teste|test|run\s+(?:the\s+)?tests|run\s+the\s+\w+\s+tests|"
+                 r"execute\s+(?:os|as|o|a)\s+testes|execute\s+(?:a\s+)?suíte|"
+                 r"ejecuta\s+(?:las|los)\s+pruebas|rode\s+(?:os|as)\s+testes|"
+                 r"launch\s+(?:the\s+)?(?:regression|integration)\s+tests)\b"),
+        ("DOCUMENT", r"(?:documente|documenta|document|atualize\s+(?:a\s+)?documentação|"
+                     r"update\s+(?:the\s+)?documentation|"
+                     r"actualiza\s+(?:la\s+)?documentación|"
+                     r"write\s+(?:the\s+)?documentation|escreva\s+(?:a\s+)?documentação|"
+                     r"redacta\s+una\s+guía)\b"),
+        ("IMPLEMENT", r"(?:crie|create|crea|implemente|implement|implementa|"
+                      r"adicione|add|agrega|construa|build|construye|"
+                      r"escreva|write|escribe|gere|generate)\b"),
+    )
+)
+
+def deterministic_intent(prompt: str) -> str | None:
+    """Return only a direct unambiguous leading imperative; otherwise abstain."""
+    original = prompt.strip()
+    if len(original) < 12 or len(original) > 1200:
+        return None
+    if _CONTINUATION.search(original):
+        return None
+    # "Don't edit; explain..." is a read-only prohibition, not an edit.
+    if re.match(
+        r"(?i)^\s*(?:não|nao|no|do\s+not|don't)\s+"
+        r"(?:crie|crees|create|edit|edite|altere|change|cambies|"
+        r"modifique|modifiques|modify)\b", original
+    ):
+        return "ASK"
+    if re.search(r"(?i)\b(?:e\s+depois|and\s+then|y\s+después)\b", original):
+        return None
+    for intent, pattern in _DIRECT_INTENTS:
+        if pattern.match(original):
+            if intent in _MUTATING and _NEGATED_MUTATION.search(original):
+                # Scope of a negation (API vs file) is not safely inferred here.
+                # A complex mix is left to the original generative planner.
+                return None
+            return intent
+    return None
+
+
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     if not a or len(a) != len(b):
         raise EmbeddingError("Local semantic vector dimension mismatch")
@@ -93,6 +151,20 @@ class LocalIntentClassifier:
             return None, "complex_prompt"
         if _CONTINUATION.search(prompt):
             return None, "conversation_dependency"
+        explicit = deterministic_intent(prompt)
+        if explicit is not None:
+            task = DeterministicFallbackPlanner().generate_task(prompt)
+            task.intent = explicit
+            task.confidence = 0.8  # Rule evidence, not calibrated probability.
+            task.secondary_intents = (
+                ["TEST"] if explicit in _MUTATING and _TEST_THEN.search(prompt) else []
+            )
+            if explicit in {"ASK", "PLAN", "REVIEW"}:
+                task.actions = ["analyze", "answer without modifying workspace"]
+                task.validation_hints = []
+            if explicit == "TEST":
+                task.actions = ["analyze", "run the requested tests"]
+            return task, "explicit_imperative"
         if not self._lock.acquire(timeout=2.0):
             return None, "local_encoder_busy"
         try:

@@ -134,7 +134,7 @@ export KITT_SEMANTIC_LOCAL_URL=http://127.0.0.1:11434
 - Para reverse-proxy, a classificação generativa auxiliar continua desativada (`LLM_FIRST`); o pedido humano chega sem reescrita.
 - As chamadas a `/api/embed` são somente por HTTP loopback, sem proxy de ambiente e sem seguir redirects. Não existem pulls automáticos.
 - O E5 recebe `query:` para consultas e protótipos e `passage:` para documentos. Modelos não E5 não recebem prefixos artificialmente.
-- A similaridade por cosseno é **score de ranqueamento, não probabilidade calibrada**. Os thresholds 0.87 e margem 0.035 são **provisórios**. O caminho local não deve ser habilitado globalmente até avaliação com conjunto retido, incluindo casos negativos, três idiomas e comportamento com pesos reais.
+- Comandos imperativos inequívocos são tratados por regras ancoradas no pedido; casos semanticamente incertos passam ao encoder local e podem provocar abstenção. A similaridade por cosseno é **score de ranqueamento, não probabilidade calibrada**. Os thresholds 0.87 e margem 0.035 são **provisórios**. O caminho local não deve ser habilitado globalmente até avaliação com conjunto retido, incluindo casos negativos, três idiomas e comportamento com pesos reais.
 - Negação, continuidade, pedidos longos e ambiguidade têm regras conservadoras de abstenção; isto não é uma prova de equivalência semântica.
 - O pedido original é sempre preservado em execução. A classificação não altera autorizações de ferramenta.
 - O classificador mantém protótipos em RAM por processo; não armazena texto do usuário em cache persistente.

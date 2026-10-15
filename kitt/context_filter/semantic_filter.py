@@ -164,7 +164,9 @@ class SemanticFilter:
                     if local_task is not None:
                         plan = self.planner.build_plan(local_task)
                         return SemanticFilterResult(
-                            task=local_task, plan=plan, source="LOCAL",
+                            task=local_task, plan=plan,
+                            source=("DETERMINISTIC_BYPASS"
+                                    if reason == "explicit_imperative" else "LOCAL"),
                             latency_ms=(time.time() - start_t) * 1000,
                         )
                 except (OSError, ValueError, RuntimeError) as exc:
