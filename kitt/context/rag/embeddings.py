@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import math
+import re
 import socket
 import time
 import urllib.error
@@ -70,6 +71,27 @@ class OllamaEmbeddingProvider:
         ):
             if not math.isfinite(value):
                 raise ValueError(f"{name} must be finite")
+
+    def cache_identity(self) -> str:
+        """Read the effective on-disk model digest; invalidate vectors after updates.
+
+        Ollama /api/tags is local-only, bounded and never triggers a pull.
+        """
+        request = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
+        try:
+            with secure_urlopen(request, timeout=3.0, max_body_bytes=512 * 1024, local_only=True) as response:
+                metadata = json.loads(response.read().decode("utf-8"))
+            models = metadata.get("models", ()) if isinstance(metadata, dict) else ()
+            if not isinstance(models, list):
+                raise EmbeddingError("Invalid local model tag inventory")
+            match = next((item for item in models if isinstance(item, dict)
+                          and str(item.get("name", "")).casefold() == self.model.casefold()), None)
+            digest = str(match.get("digest", "")) if match else ""
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+                raise EmbeddingError("Model not prepared or digest invalid")
+            return f"{self.model}|sha256:{digest.lower()}|e5={self.is_e5}|role-v1|truncate=false"
+        except (urllib.error.URLError, OSError, ValueError, TypeError) as exc:
+            raise EmbeddingError("Unable to verify local Ollama model digest") from exc
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         items = [str(text) for text in texts]

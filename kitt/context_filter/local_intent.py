@@ -82,6 +82,7 @@ class LocalIntentClassifier:
         self.provider = provider
         self._lock = threading.Lock()
         self._examples: list[list[float]] | None = None
+        self._prototype_revision = ""
         self.last_reason = "not_started"
         self.last_score: float | None = None
 
@@ -95,6 +96,12 @@ class LocalIntentClassifier:
         if not self._lock.acquire(timeout=2.0):
             return None, "local_encoder_busy"
         try:
+            revision_check = getattr(self.provider, "cache_identity", None)
+            if callable(revision_check):
+                current_revision = str(revision_check()) + "|" + EXAMPLE_REVISION
+                if current_revision != self._prototype_revision:
+                    self._examples = None
+                    self._prototype_revision = current_revision
             if self._examples is None:
                 self._examples = self.provider.embed_queries([x[1] for x in EXAMPLES])
                 if len(self._examples) != len(EXAMPLES):

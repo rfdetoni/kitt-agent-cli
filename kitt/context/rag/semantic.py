@@ -60,6 +60,16 @@ class SemanticCandidateReranker:
         pool = self._bounded_unique(candidates)[: self.max_candidates]
         if not query.strip() or not pool:
             return SemanticRankResult(tuple(), {})
+        revision_check = getattr(self.provider, "cache_identity", None)
+        if callable(revision_check):
+            try:
+                identity = str(revision_check())
+            except (EmbeddingError, OSError, ValueError, RuntimeError) as exc:
+                return SemanticRankResult(tuple(), {}, degraded=True, reason=str(exc)[:240])
+            with self._cache_lock:
+                if identity != self._provider_namespace:
+                    self._cache.clear()
+                    self._provider_namespace = identity
 
         docs = [self._render_candidate(candidate) for candidate in pool]
         keys = [self._cache_key(candidate, doc) for candidate, doc in zip(pool, docs, strict=True)]
