@@ -409,6 +409,7 @@ class RepositoryIndex:
         updated = deleted = 0
         impacted_source_ids: set[int] = set()
         changed_target_names: set[str] = set()
+        graph_paths: set[str] = set()
         with self._lock, self._conn:
             modules = self._module_rows_locked()
             for raw_rel_path in dict.fromkeys(path for path in paths if path and not os.path.isabs(path)):
@@ -418,6 +419,7 @@ class RepositoryIndex:
                         continue
                 except PermissionError:
                     continue
+                graph_paths.add(rel_path)
                 row = self._conn.execute(
                     "SELECT file_id, mtime_ns, size_bytes, content_hash, parser_version FROM files WHERE path=?",
                     (rel_path,),
@@ -503,7 +505,7 @@ class RepositoryIndex:
                         tuple(names),
                     ).fetchall()
                     impacted_source_ids.update(int(ref_row["file_id"]) for ref_row in ref_rows)
-                self._refresh_reference_edges_for_sources_locked(impacted_source_ids)
+                self._refresh_reference_edges_for_sources_locked(impacted_source_ids, graph_paths)
                 self._conn.execute(
                     "UPDATE index_meta SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='index_generation'"
                 )
@@ -728,8 +730,9 @@ class RepositoryIndex:
     def _refresh_reference_edges_for_sources_locked(
         self,
         source_file_ids: set[int],
+        graph_paths: set[str],
     ) -> None:
-        """Recompute only outgoing edges affected by targeted file changes."""
+        """Recompute outgoing SQL and in-memory adjacencies for impacted sources."""
         if not source_file_ids:
             self._restore_graph_locked()
             return
@@ -762,9 +765,26 @@ class RepositoryIndex:
                 for row in rows
             ],
         )
-        # Restoring adjacency is O(E) and avoids the much more expensive global
-        # refs×symbols join/rebuild that previously ran after every local edit.
-        self._restore_graph_locked()
+        # Refresh only the changed source paths in the in-memory graph. Paths of
+        # deleted files come from the caller; their IDs no longer exist in SQLite.
+        affected_paths = set(graph_paths)
+        path_rows = self._conn.execute(
+            f"SELECT path FROM files WHERE file_id IN ({placeholders})", tuple(ids)
+        ).fetchall()
+        affected_paths.update(str(row["path"]) for row in path_rows)
+        for path in affected_paths:
+            self.graph.remove_outgoing(path)
+        edges = self._conn.execute(
+            f"""
+            SELECT sf.path AS source_path, tf.path AS target_path, e.weight
+            FROM edges e
+            JOIN files sf ON sf.file_id=e.source_file_id
+            JOIN files tf ON tf.file_id=e.target_file_id
+            WHERE e.source_file_id IN ({placeholders})
+            """, tuple(ids)
+        ).fetchall()
+        for edge in edges:
+            self.graph.add_edge(edge["source_path"], edge["target_path"], edge["weight"])
 
     def _rebuild_reference_edges_locked(self) -> None:
         self._conn.execute("DELETE FROM edges")

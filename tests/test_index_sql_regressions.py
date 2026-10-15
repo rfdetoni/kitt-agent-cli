@@ -73,3 +73,18 @@ def test_background_parsing_does_not_block_interactive_sqlite_reads(tmp_path, mo
             finally:
                 release.set()
                 building.result(timeout=6)
+
+def test_incremental_graph_source_replacement_preserves_other_reverse_edges():
+    from kitt.index.graph import RepositoryGraph
+
+    graph = RepositoryGraph()
+    graph.add_edge("a.py", "shared.py")
+    graph.add_edge("b.py", "shared.py")
+    graph.add_edge("a.py", "old.py")
+    graph.remove_outgoing("a.py")
+    assert ("b.py", 1.0) in graph.rev_adj["shared.py"]
+    assert "a.py" not in [source for source, _ in graph.rev_adj["shared.py"]]
+    graph.add_edge("a.py", "new.py")
+    graph.add_edge("b.py", "shared.py", 2.0)
+    assert ("b.py", 2.0) in graph.rev_adj["shared.py"]
+    assert graph.adj["a.py"] == [("new.py", 1.0)]

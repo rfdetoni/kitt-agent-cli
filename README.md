@@ -1,3 +1,7 @@
+## Agent CLI 0.87.22 — selective indexed retrieval and graph changes
+
+Repository context now prefers a complete FTS5 index for regular lexical requests; native Rust lexical search remains the fallback and the primary path for diagnostic and exact-path requests. Targeted graph edits refresh only impacted source adjacencies instead of rebuilding every edge. [Release notes](docs/RELEASE_0.87.22.md).
+
 ## Agent CLI 0.87.21 — responsive repository indexing
 
 Full reconciliation now reads and parses source files outside the shared SQLite lock. File updates use short transactions, re-check metadata before committing parsed snapshots, and avoid deleting paths changed by targeted updates after scan start. [Release notes](docs/RELEASE_0.87.21.md).

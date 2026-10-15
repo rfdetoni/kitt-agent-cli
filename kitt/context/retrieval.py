@@ -120,23 +120,36 @@ class HybridRetrievalPipeline:
                 RankedSource("symbol", symbol_candidates, self.rag_config.symbol_weight)
             )
 
-        native_candidates = self.native_retriever.retrieve(
-            prompt,
-            plan,
-            working_set_paths=working_set_paths,
-            max_results=min(
-                max(plan.candidate_limit, self.rag_config.native_candidate_limit), 128
-            ),
-            context_lines=self.rag_config.native_context_lines,
-            token_budget=min(
-                max(256, self.rag_config.native_token_budget),
-                max(256, max_tokens),
-            ),
+        # Prefer indexed FTS for complete, unambiguous text searches. Native
+        # search retains ownership of diagnostics, explicit paths and regex-like
+        # requests where FTS tokenization can change exact-match semantics.
+        indexed_ready = (
+            self.index.has_fts5
+            and self.index.metadata().get("state") == "READY"
+            and not plan.diagnostics
+            and not plan.exact_paths
+            and bool(plan.lexical_terms or plan.exact_symbols)
         )
-        lexical_backend = "rust"
+        native_candidates = (
+            self._indexed_lexical_candidates(prompt, plan, working_set_paths)
+            if indexed_ready else []
+        )
+        lexical_backend = "indexed_fts" if native_candidates else "rust"
         if not native_candidates:
-            # Do not invoke NativeCodeEngine's Python file-scanner fallback.
-            # The existing indexed FTS is cheaper and avoids duplicate scans.
+            native_candidates = self.native_retriever.retrieve(
+                prompt,
+                plan,
+                working_set_paths=working_set_paths,
+                max_results=min(
+                    max(plan.candidate_limit, self.rag_config.native_candidate_limit), 128
+                ),
+                context_lines=self.rag_config.native_context_lines,
+                token_budget=min(
+                    max(256, self.rag_config.native_token_budget),
+                    max(256, max_tokens),
+                ),
+            )
+        if not native_candidates and not indexed_ready:
             native_candidates = self._indexed_lexical_candidates(
                 prompt, plan, working_set_paths
             )

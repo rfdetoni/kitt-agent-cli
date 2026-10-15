@@ -28,6 +28,7 @@ class RepositoryGraph:
             self._edge_positions[edge_key] = (len(src_edges), len(dst_edges))
             src_edges.append((dst, weight))
             dst_edges.append((src, weight))
+            self.cached_scores.clear()
             self.generation += 1
             return
 
@@ -35,6 +36,29 @@ class RepositoryGraph:
         if weight > self.adj[src][src_idx][1]:
             self.adj[src][src_idx] = (dst, weight)
             self.rev_adj[dst][dst_idx] = (src, weight)
+            self.cached_scores.clear()
+            self.generation += 1
+
+    def remove_outgoing(self, src: str) -> None:
+        """Remove only one source adjacency while preserving reverse-edge positions."""
+        old = self.adj.pop(src, [])
+        for dst, _weight in old:
+            self._edge_positions.pop((src, dst), None)
+            remaining = [(parent, weight) for parent, weight in self.rev_adj.get(dst, []) if parent != src]
+            if remaining:
+                self.rev_adj[dst] = remaining
+                for pos, (parent, _weight) in enumerate(remaining):
+                    old_pos = self._edge_positions.get((parent, dst))
+                    if old_pos is not None:
+                        self._edge_positions[(parent, dst)] = (old_pos[0], pos)
+            else:
+                self.rev_adj.pop(dst, None)
+            if dst not in self.adj and dst not in self.rev_adj:
+                self.nodes.discard(dst)
+        if src not in self.adj and src not in self.rev_adj:
+            self.nodes.discard(src)
+        if old:
+            self.cached_scores.clear()
             self.generation += 1
 
     def compute_pagerank(
