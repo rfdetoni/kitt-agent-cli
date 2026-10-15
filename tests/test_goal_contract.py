@@ -244,9 +244,9 @@ class GoalContractTests(unittest.TestCase):
             result = planner.plan("conv", "Implement a verifiable review workflow")
         reviewer_prompt = ask.call_args_list[1].args[1]
         review_payload = json.loads(
-            reviewer_prompt.split("Contract:\\n", 1)[1].split(
-                "\\n\\nReturn one KAP/2", 1
-            )[0]
+            reviewer_prompt.split("Contract:", 1)[1].split(
+                "Return one KAP/2", 1
+            )[0].strip()
         )
         self.assertEqual(review_payload["items"], result)
         self.assertEqual(result[-1]["success_criteria"], ["Document verified result"])
