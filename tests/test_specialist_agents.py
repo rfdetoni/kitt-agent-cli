@@ -163,6 +163,8 @@ def test_model_specialist_spawn_narrows_role_tools_and_budget():
         profile = AgentRegistry(ExtensionManager(workspace_root=root)).find("critic")
         registry = ToolRegistry.__new__(ToolRegistry)
         registry.agent_registry = SimpleNamespace(find=lambda name: profile)
+        registry.root_path = Path(root)
+        registry.runtime_config = SimpleNamespace(privacy_mode="hybrid_redacted")
         registry._processor = None
         with patch("kitt.tools.registry_core.ToolRegistry.execute_tool", return_value="accepted") as delegate:
             result = registry.execute_tool("child_spawn", {

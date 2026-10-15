@@ -104,7 +104,22 @@ def interactive_wizard(root: str) -> Path:
     name = input("Display name [auto]: ").strip() or None
     persona = input("Behavior/persona [default]: ").strip() or None
     tags = tuple(t.strip() for t in input("Routing keywords (comma separated): ").split(",") if t.strip())
-    return create_agent(root, slug, role=role, display_name=name, persona=persona, tags=tags)
+    created = create_agent(root, slug, role=role, display_name=name,
+                           persona=persona, tags=tags)
+    from kitt.agents.model_router import AgentLLMPolicy, AgentModelStore, AgentModelRouter
+    from kitt.router.router import TaskRouter
+    mode = input("LLM mode [auto|preferred|fixed] (default auto): ").strip() or "auto"
+    primary = input("TaskRouter profile name (optional): ").strip()
+    fallback = input("Fallback profiles, comma-separated (optional): ").strip()
+    policy = AgentLLMPolicy.parse({
+        "mode": mode, "primary": primary,
+        "fallbacks": [x.strip() for x in fallback.split(",") if x.strip()],
+    })
+    AgentModelRouter(TaskRouter(root_dir=root)).resolve(
+        _ROLES[role], policy, privacy_mode="hybrid_redacted",
+    )
+    AgentModelStore(root).save(f"agent-{slug}:{slug}", policy)
+    return created
 
 
 def handle_agents_command(action: str, name: str | None, workspace: str, options) -> int:

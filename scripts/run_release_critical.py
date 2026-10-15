@@ -43,6 +43,7 @@ RELEASE_CRITICAL_TESTS = (
     "tests/test_prompt_no_duplication.py",
     "tests/test_required_workspace_mutation_guard.py",
     "tests/test_specialist_agents.py",
+    "tests/test_agent_model_router.py",
     "tests/test_children_events.py",
     "tests/test_child_lifecycle_guards.py",
     "tests/test_tui_behavioral.py",

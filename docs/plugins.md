@@ -199,3 +199,24 @@ Create safely using `kitt agents create` or `kitt agents create java --role code
 Roles map to the canonical DISCOVER/ARCHITECT/IMPLEMENT/VERIFY/REVIEW policies; only IMPLEMENT with explicit `allowed_paths` can edit code. Agents cannot escalate their parent capabilities, tool budgets, workspace isolation or approval permissions. `/agent team` launches investigator and creative in parallel only if the existing child concurrency cap permits; it does not create a new scheduler. `/agent msg` uses the authenticated children.send operation and persisted family messages; workers read bounded pending messages on the next turn boundary.
 
 Specialists may call `kitt_runtime` `children.send` only with inherited `child.message` authority. The host derives the sender from the child identity. Messages queue in the existing scoped family message store and are delivered on the next turn, not as live interruptions.
+
+
+## Per-specialist LLM policy
+
+Agents may include a declarative model routing policy in their trusted plugin manifest:
+
+```toml
+[agents.critic.llm]
+mode = "preferred"             # auto | preferred | fixed
+primary = "review-proxy"       # Existing .kitt-router.json profile name
+fallbacks = ["review-direct", "execute"]
+reasoning = "high"             # auto | low | medium | high
+temperature = 0.1
+max_output_tokens = 8192
+require_tools = true
+remote_egress = "inherit"      # inherit | deny
+```
+
+`kitt agents model critic --mode preferred --primary review-proxy --fallbacks review-direct,execute --reasoning high` saves an atomic workspace override in `.kitt-agent-models.json`. `/agent model critic preferred review-proxy review-direct,execute` does the same from TUI. `kitt agents inspect critic` prints effective preferences.
+
+All profile names refer to existing **TaskRouter** profiles (backends: Ollama, OpenAI-compatible, Anthropic, OpenAI, KITT reverse-proxy etc.). Configure provider endpoints/auth first using the normal Model/Provider manager. Different named profiles may point to different reverse-proxy instances (e.g. localhost:3000 and :3001) with separate child browser sessions. Plugins cannot supply credentials, endpoints or implicit network destinations. `fixed` requires one named profile and forbids fallbacks; `preferred` respects explicit ordered fallbacks; `auto` ranks configured profiles by role keywords and context size. The admission route is persisted in each child record (secret-free), and rehydrated in the worker on both new and approval-resumed tasks. Failover uses ProviderCircuitPool and never replays a stream after visible output. Local-only/offline privacy modes reject remote models and remote fallback, even on subsequent child starts. Only use named fallback profiles that satisfy your data-egress policy.

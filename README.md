@@ -1,3 +1,7 @@
+## Agent CLI 0.87.24 — configurable LLM routing per specialist
+
+Specialist plugins now declare `[agents.<id>.llm]` preferences: automatic, preferred/fallback or fixed profiles, output/temperature/reasoning limits, tool requirements and remote egress restriction. Each child takes an immutable admitted model snapshot from the existing TaskRouter (Ollama, direct providers or distinct KITT reverse-proxy instances), with scoped session isolation and bounded `ProviderCircuitPool` failover. Edit without touching plugin trust via `kitt agents model <id> --mode preferred --primary review-proxy --fallbacks execute` or `/agent model <id> preferred review-proxy execute`. See [release details](docs/RELEASE_0.87.24.md).
+
 ## Agent CLI 0.87.23 — pluggable specialist agents
 
 Adds a trusted, declarative AgentRegistry with built-in Code, Creative, Investigator, Critic and Tester profiles, per-agent role/tool/budget/time contracts, and deterministic task-to-specialist selection. Workspace/global plugins can register agents via [agents.<id>] TOML plus a hashed persona Markdown; plugin content requires explicit per-workspace trust. Agents use existing ChildAgentManager and scheduler/worktree security boundaries, with no second planner or privilege elevation. CLI wizard: `kitt agents create`; TUI: `/agent` menu, `/agent run`, `/agent team`, `/agent msg`, `/agent inbox`. Family messages are durable and delivered at the next child turn boundary, not as live interrupts. See [release details](docs/RELEASE_0.87.23.md).
