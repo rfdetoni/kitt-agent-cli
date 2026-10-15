@@ -194,9 +194,18 @@ def main(argv=None) -> int:
                 provenance("omw", lang, path)
                 # OMW tab: synset-id, lemma, word. Candidate only; senses are
                 # polysemous and cannot be promoted without human review.
+                # Two streaming passes retain only synsets containing a
+                # domain-reviewed anchor; the full OMW corpus is never loaded.
+                target_synsets: set[str] = set()
+                for cells in source_rows(path):
+                    if (len(cells) >= 3 and cells[1] == "lemma"
+                            and cells[0].endswith("-v")
+                            and normalize(cells[2]) in anchors):
+                        target_synsets.add(cells[0])
                 groups: dict[str, set[str]] = {}
                 for cells in source_rows(path):
-                    if len(cells) >= 3 and cells[1] == "lemma" and cells[0].endswith("-v"):
+                    if (len(cells) >= 3 and cells[1] == "lemma"
+                            and cells[0] in target_synsets):
                         form = normalize(cells[2])
                         if _HEAD.fullmatch(form):
                             groups.setdefault(cells[0], set()).add(form)
