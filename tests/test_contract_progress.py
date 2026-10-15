@@ -79,7 +79,7 @@ def test_tui_shows_planning_and_review_without_false_completion():
     reduce_ui_event(state, ContractProgress(phase="reviewing", attempt=1, max_attempts=3))
     assert state.status_text == "REVIEWING 1/3"
     reduce_ui_event(state, ContractProgress(phase="revising", attempt=1, max_attempts=3, issues=4))
-    assert "4 questão" in state.active_tasks[0].summary
+    assert "4 ajuste" in state.active_tasks[0].summary
     reduce_ui_event(state, ContractProgress(phase="executing", task_id="T00",
                                             task_state="RUNNING", completed=0, total=11))
     assert state.status_text == "GOAL EXECUTION"
@@ -211,4 +211,4 @@ def test_thinking_events_do_not_clobber_contract_phase():
     assert not any(block.kind == "thought" for block in state.transcript)
     reduce_ui_event(state, TurnFailed(error="ui_timeout"))
     assert state.contract_phase == ""
-    assert state.transcript[-1].status == "done"
+    assert next(block for block in state.transcript if block.metadata.get("contract_phase")).status == "done"
