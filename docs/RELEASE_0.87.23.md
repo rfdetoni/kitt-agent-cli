@@ -7,3 +7,6 @@
 - Scoped parent/peer family messaging persists to the existing SQLite child message repository. Pending messages are drained when a child begins/resumes a new turn. No live interruption or blanket cross-workspace messaging.
 - Bump pyproject.toml, uv.lock and runtime fallback to 0.87.23. No new Python dependencies or wire/protocol changes.
 - Validate: pytest -q tests/test_specialist_agents.py; python scripts/run_release_critical.py; CI PR Checks and Docker.
+
+## Peer messaging
+Child roles may send via `children.send` only when the parent delegated `child.message`. Sender and parent conversation are bound from the SQLite child record, not model arguments; messages remain scoped and are consumed at turn boundaries.

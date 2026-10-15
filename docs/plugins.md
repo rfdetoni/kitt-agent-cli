@@ -197,3 +197,5 @@ output_contract = "agent.evidence.v1"
 Create safely using `kitt agents create` or `kitt agents create java --role code`, then explicitly grant trust with `kitt plugins trust agent-java`. Edit with `kitt agents edit java --persona "..." ` and grant trust again. Use `kitt agents list|inspect|enable|disable|select`, or `/agent` in the TUI.
 
 Roles map to the canonical DISCOVER/ARCHITECT/IMPLEMENT/VERIFY/REVIEW policies; only IMPLEMENT with explicit `allowed_paths` can edit code. Agents cannot escalate their parent capabilities, tool budgets, workspace isolation or approval permissions. `/agent team` launches investigator and creative in parallel only if the existing child concurrency cap permits; it does not create a new scheduler. `/agent msg` uses the authenticated children.send operation and persisted family messages; workers read bounded pending messages on the next turn boundary.
+
+Specialists may call `kitt_runtime` `children.send` only with inherited `child.message` authority. The host derives the sender from the child identity. Messages queue in the existing scoped family message store and are delivered on the next turn, not as live interruptions.

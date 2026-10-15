@@ -39,7 +39,7 @@ async def handle_agent_manager(ui, arg: str) -> None:
                 "/agent edit <slug> <new persona>",
                 "/agent enable|disable <id>",
                 "/agent inspect <id>",
-                "/agent msg <from> <to> <message>",
+                "/agent msg <to> <message>",
                 "/agent inbox                 (family messages)",
                 "Guided creator: kitt agents create",
                 "To trust a custom profile: kitt plugins trust agent-<slug>",
@@ -111,15 +111,15 @@ async def handle_agent_manager(ui, arg: str) -> None:
             ui._show_result("Specialist team submitted. Use /tasks and /agent inbox to monitor.")
             return
         if action == "msg":
-            if len(tokens) < 3:
-                raise ValueError("Usage: /agent msg <sender> <recipient> <message>")
-            sender, recipient = tokens[0], tokens[1]
-            message = " ".join(tokens[2:])
+            if len(tokens) < 2:
+                raise ValueError("Usage: /agent msg <recipient> <message>")
+            recipient = tokens[0]
+            message = " ".join(tokens[1:])
             # The host policy (children.send) validates conversation, sender and
             # recipient; it never bypasses the existing authorization boundary.
             await ui._execute_direct_tool("kitt_runtime", {
                 "operation": "children.send",
-                "arguments": {"sender": sender, "recipient": recipient, "message": message},
+                "arguments": {"sender": "parent", "recipient": recipient, "message": message},
             })
             return
         if action == "inbox":

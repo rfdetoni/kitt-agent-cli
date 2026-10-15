@@ -16,8 +16,8 @@ from kitt.extensions.plugins.security import prepare_trusted_plugin_snapshot
 
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,47}$")
 _ROLES = frozenset({"DISCOVER", "ARCHITECT", "IMPLEMENT", "VERIFY", "REVIEW"})
-_READ = ("read_file", "search", "repository_map", "git_status", "git_diff")
-_EDIT = ("read_file", "search", "repository_map", "write_file", "apply_patch")
+_READ = ("read_file", "search", "repository_map", "git_status", "git_diff", "kitt_runtime", "children_send")
+_EDIT = ("read_file", "search", "repository_map", "write_file", "apply_patch", "kitt_runtime", "children_send")
 _ALLOWED = frozenset((*_READ, "write_file", "apply_patch", "artifact_read", "memory_recall"))
 _DEFAULTS = (
     ("code", "Code Worker", "IMPLEMENT", "Implement small, correct changes; run no shell commands. Return changes and tests.", ("code","implement","feature","fix","refactor","java","rust","python","angular"), False),

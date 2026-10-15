@@ -913,7 +913,7 @@ class SafeRuntime:
                 args, turn_id, security_context
             ),
             "children.spawn": lambda: self._op_registry_tool("children.spawn", "child_spawn", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
-            "children.send": lambda: self._op_children_send(args),
+            "children.send": lambda: self._op_children_send(args, security_context=security_context),
             "children.inspect": lambda: self._op_children_inspect(args),
             "children.observe": lambda: self._op_children_observe(),
             "children.passivate": lambda: self._op_children_passivate(args),
@@ -1800,42 +1800,42 @@ class SafeRuntime:
         link_id = self.memory.link_concepts(source_id, target_id, relation, float(args.get("weight", 1.0) or 1.0))
         return SafeRuntimeResult(True, "memory.link", data={"id": link_id})
 
-    def _op_children_send(self, args):
+    def _op_children_send(self, args, *, security_context=None):
         recipient = str(args.get("recipient") or args.get("child_id") or "").strip()
-        sender = str(args.get("sender") or "parent").strip()
         message = args.get("message", "")
         if not recipient or message in (None, ""):
-            return SafeRuntimeResult(
-                False,
-                "children.send",
-                error="recipient/child_id and message required",
-            )
+            return SafeRuntimeResult(False, "children.send", error="recipient and message required")
         if not self.children or not hasattr(self.children, "send_agent_message"):
-            return SafeRuntimeResult(
-                False,
-                "children.send",
-                error="Agent family messaging not available",
+            return SafeRuntimeResult(False, "children.send", error="Agent family messaging not available")
+        sender = str(args.get("sender") or "parent").strip()
+        family_conversation = self.conversation_id
+        if security_context is not None and getattr(security_context, "principal_type", None) == "CHILD":
+            child_id = str(getattr(security_context, "principal_id", "") or "")
+            child = self.children.repo.get_scoped(child_id, workspace_id=self.workspace_id)
+            if child is None or child.runtime_conversation_id != self.conversation_id:
+                return SafeRuntimeResult(False, "children.send", error="Invalid child family identity")
+            if sender not in {"parent", "self", child_id}:
+                return SafeRuntimeResult(False, "children.send", error="Cannot impersonate another agent")
+            sender = child_id
+            family_conversation = child.parent_conversation_id
+        elif sender not in {"parent", self.conversation_id}:
+            return SafeRuntimeResult(False, "children.send", error="Parent cannot impersonate children")
+        if not isinstance(message, (str, dict)) or len(str(message)) > 4000:
+            return SafeRuntimeResult(False, "children.send", error="Message must be at most 4000 characters")
+        try:
+            message_object, delivery_mode = self.children.send_agent_message(
+                family_conversation,
+                sender=sender, recipient=recipient, message=message,
+                delivery_mode=str(args.get("delivery_mode") or "AUTO"),
+                correlation_id=args.get("correlation_id"), reply_to=args.get("reply_to"),
+                trace_id=args.get("trace_id"),
             )
-        message_object, delivery_mode = self.children.send_agent_message(
-            self.conversation_id,
-            sender=sender,
-            recipient=recipient,
-            message=message,
-            delivery_mode=str(args.get("delivery_mode") or "AUTO"),
-            correlation_id=args.get("correlation_id"),
-            reply_to=args.get("reply_to"),
-            trace_id=args.get("trace_id"),
-        )
+        except (ValueError, PermissionError) as exc:
+            return SafeRuntimeResult(False, "children.send", error=str(exc))
         return SafeRuntimeResult(
-            True,
-            "children.send",
-            data={
-                "message_id": getattr(message_object, "id", ""),
-                "status": "SENT",
-                "delivery_mode": delivery_mode,
-                "sender": sender,
-                "recipient": recipient,
-            },
+            True, "children.send",
+            data={"message_id": getattr(message_object, "id", ""), "status": "SENT",
+                  "delivery_mode": delivery_mode, "sender": sender, "recipient": recipient},
             context_handles=[f"child:{recipient}"],
         )
 

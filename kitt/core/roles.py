@@ -6,8 +6,10 @@ from typing import Any
 from kitt_protocol import AgentRole
 from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
+    CAP_CHILD_MESSAGE,
     CAP_MEMORY_READ,
     CAP_PROCESS_RUN,
+                CAP_CHILD_MESSAGE,
     CAP_SAFE_COMPUTE,
     CAP_REPO_READ,
     CAP_REPO_SEARCH,
@@ -101,7 +103,7 @@ class AgentRolePolicy:
 POLICIES: dict[AgentRole, AgentRolePolicy] = {
     AgentRole.DISCOVER: AgentRolePolicy(
         AgentRole.DISCOVER,
-        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE}),
+        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE, CAP_CHILD_MESSAGE}),
         _READ_TOOLS,
         False,
         "evidence-first",
@@ -110,7 +112,7 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
     ),
     AgentRole.ARCHITECT: AgentRolePolicy(
         AgentRole.ARCHITECT,
-        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE}),
+        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE, CAP_CHILD_MESSAGE}),
         _READ_TOOLS,
         False,
         "architecture-and-evidence",
@@ -128,6 +130,7 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
                 CAP_MEMORY_READ,
                 CAP_SAFE_COMPUTE,
                 CAP_PROCESS_RUN,
+                CAP_CHILD_MESSAGE,
             }
         ),
         _IMPLEMENT_TOOLS,
@@ -146,6 +149,7 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
                 CAP_MEMORY_READ,
                 CAP_SAFE_COMPUTE,
                 CAP_PROCESS_RUN,
+                CAP_CHILD_MESSAGE,
             }
         ),
         _VERIFY_TOOLS,
@@ -156,7 +160,7 @@ POLICIES: dict[AgentRole, AgentRolePolicy] = {
     ),
     AgentRole.REVIEW: AgentRolePolicy(
         AgentRole.REVIEW,
-        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE}),
+        frozenset({CAP_REPO_READ, CAP_REPO_SEARCH, CAP_ARTIFACT_READ, CAP_MEMORY_READ, CAP_SAFE_COMPUTE, CAP_CHILD_MESSAGE}),
         _READ_TOOLS,
         False,
         "review-evidence",
