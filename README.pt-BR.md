@@ -1,3 +1,7 @@
+## Agent CLI 0.87.29 — motor semântico local multilíngue opcional
+
+Comandos explícitos em PT-BR, inglês e espanhol são interpretados localmente, sem chamada generativa auxiliar. O classificador E5 Q8 via Ollama é opcional e se abstém em casos incertos; o pedido original sempre prevalece na execução. **Desligado por padrão** até calibração independente. Diagnostique com `/semantic doctor` e `/semantic status`. Os instaladores só baixam pesos mediante a opção explícita `--prepare-semantic-model` (Linux) ou `-PrepareSemanticModel` (Windows). [Detalhes](docs/RELEASE_0.87.29.md).
+
 ## Agent CLI 0.87.28 — não repetir automaticamente falhas de captura WebChat
 
 Ao receber `ui_timeout` depois do envio do prompt, sem qualquer ação KAP válida, o contrato fica **BLOCKED / ENVIRONMENT**. Isso impede três ou mais envios iguais da T00 sem inspeção da sessão autenticada. A retomada exige ação explícita do operador; veja [detalhes](docs/RELEASE_0.87.28.md).

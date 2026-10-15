@@ -116,6 +116,11 @@ class _CancellableHTTPSHandler(urllib.request.HTTPSHandler):
 _CANCELLABLE_OPENER = urllib.request.build_opener(_NoRedirectHandler(), _CancellableHTTPHandler(), _CancellableHTTPSHandler())
 
 _OPENER = urllib.request.build_opener(_NoRedirectHandler())
+_LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
+_LOCAL_CANCELLABLE_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _NoRedirectHandler(),
+    _CancellableHTTPHandler(), _CancellableHTTPSHandler(),
+)
 
 
 class BoundedHTTPResponse:
@@ -195,10 +200,15 @@ def secure_urlopen(
     *,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     max_line_bytes: int = DEFAULT_MAX_LINE_BYTES,
+    local_only: bool = False,
 ):
     token = _ACTIVE_CANCELLATION.get()
     if token: token.check()
-    response = (_CANCELLABLE_OPENER if token else _OPENER).open(request, timeout=min(timeout, 10.0) if token else timeout)
+    opener = (
+        (_LOCAL_CANCELLABLE_OPENER if token else _LOCAL_OPENER)
+        if local_only else (_CANCELLABLE_OPENER if token else _OPENER)
+    )
+    response = opener.open(request, timeout=min(timeout, 10.0) if token else timeout)
     sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
     if token and sock:
         try:

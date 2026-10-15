@@ -14,12 +14,13 @@ INSTALL_ROOT="${KITT_AGENT_HOME:-$DATA_HOME/kitt-agent-cli}"
 BIN_DIR="${KITT_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
 NATIVE=1
 UNINSTALL=0
+PREPARE_SEMANTIC=0
 
 usage() {
   cat <<'EOF'
 K.I.T.T. Agent CLI installer/updater
 
-Usage: install.sh [--ref REF] [--no-native] [--uninstall]
+Usage: install.sh [--ref REF] [--no-native] [--prepare-semantic-model] [--uninstall]
 
 The installer composes the portable Agent control plane with the Assistant
 runtime and Evolution/Evals packages. The shared Rust backend is optional.
@@ -41,6 +42,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --ref) REF="${2:?missing ref}"; shift 2 ;;
     --no-native) NATIVE=0; shift ;;
+    --prepare-semantic-model) PREPARE_SEMANTIC=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -193,5 +195,10 @@ finally:
 print('KITT companion packages and state schema: ok')
 PY
 backend="$($VPY -c "from kitt.native.bridge import NativeCodeEngine; print(NativeCodeEngine('$SRC').status.backend)")"
+if [[ $PREPARE_SEMANTIC -eq 1 ]]; then
+  # Explicit opt-in: Ollama remains user-owned. No services or weights are
+  # downloaded by ordinary installation or on startup.
+  "$VPY" "$SRC/scripts/prepare_semantic_model.py" --pull
+fi
 echo "K.I.T.T. Agent CLI installed/updated at $INSTALL_ROOT (backend: $backend; native wheel: $installed_native)."
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Add $BIN_DIR to PATH to use: kitt" ;; esac

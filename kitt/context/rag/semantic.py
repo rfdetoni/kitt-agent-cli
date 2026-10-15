@@ -60,16 +60,34 @@ class SemanticCandidateReranker:
         pool = self._bounded_unique(candidates)[: self.max_candidates]
         if not query.strip() or not pool:
             return SemanticRankResult(tuple(), {})
+        revision_check = getattr(self.provider, "cache_identity", None)
+        if callable(revision_check):
+            try:
+                identity = str(revision_check())
+            except (EmbeddingError, OSError, ValueError, RuntimeError) as exc:
+                return SemanticRankResult(tuple(), {}, degraded=True, reason=str(exc)[:240])
+            with self._cache_lock:
+                if identity != self._provider_namespace:
+                    self._cache.clear()
+                    self._provider_namespace = identity
 
         docs = [self._render_candidate(candidate) for candidate in pool]
         keys = [self._cache_key(candidate, doc) for candidate, doc in zip(pool, docs, strict=True)]
         cached_vectors: list[list[float] | None] = [self._cache_get(key) for key in keys]
         missing_indexes = [idx for idx, vector in enumerate(cached_vectors) if vector is None]
 
-        inputs = [query[: self.max_chars], *(docs[idx] for idx in missing_indexes)]
         try:
-            fetched = self.provider.embed(inputs)
-            if len(fetched) != len(inputs):
+            if hasattr(self.provider, "embed_queries") and hasattr(self.provider, "embed_documents"):
+                query_embeddings = self.provider.embed_queries([query[: self.max_chars]])
+                document_embeddings = (
+                    self.provider.embed_documents([docs[idx] for idx in missing_indexes])
+                    if missing_indexes else []
+                )
+                fetched = [*query_embeddings, *document_embeddings]
+            else:
+                inputs = [query[: self.max_chars], *(docs[idx] for idx in missing_indexes)]
+                fetched = self.provider.embed(inputs)
+            if len(fetched) != len(missing_indexes) + 1:
                 raise EmbeddingError("embedding count mismatch")
             query_vector = self._validated_vector(fetched[0], "query")
             for offset, idx in enumerate(missing_indexes, start=1):

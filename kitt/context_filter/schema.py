@@ -209,7 +209,7 @@ class ContextFilterSchemaValidator:
             if intent not in VALID_INTENTS:
                 intent = "UNKNOWN"
 
-            confidence = float(data.get("confidence", 1.0))
+            confidence = float(data.get("confidence", 0.0))
             if not (0.0 <= confidence <= 1.0):
                 confidence = 0.5
 

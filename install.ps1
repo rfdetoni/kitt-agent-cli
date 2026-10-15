@@ -1,6 +1,7 @@
 param(
   [string]$Ref = $(if ($env:KITT_AGENT_REF) { $env:KITT_AGENT_REF } else { 'main' }),
   [switch]$NoNative,
+  [switch]$PrepareSemanticModel,
   [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -134,6 +135,11 @@ if (-not $NoNative -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
   }
 }
 
+if ($PrepareSemanticModel) {
+  # Explicit model preparation; the Ollama process belongs to the user.
+  & $Vpy (Join-Path $Src 'scripts\prepare_semantic_model.py') --pull
+  if ($LASTEXITCODE -ne 0) { throw 'Local semantic model preparation failed; Agent installation is intact' }
+}
 $KittExe = Join-Path $Venv 'Scripts\kitt.exe'
 Set-Content -Path $Launcher -Encoding Ascii -Value "@echo off`r`n`"$KittExe`" %*"
 $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')

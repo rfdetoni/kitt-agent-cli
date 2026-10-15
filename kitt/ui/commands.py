@@ -56,6 +56,7 @@ class CommandRegistry:
             ("mode", "Turn Mode", "Turn", "Toggle or set mode: /mode [code|plan|ask] (F4 / Ctrl+T)", ["/mode", "/toggle-mode"]),
             ("model", "Model", "Models", "Set one role or all roles: /model <role|all> [provider] <model>", ["/model", "/models"]),
             ("setup_models", "Setup Models", "Models", "Configure models; optional remote Ollama URL", ["/setup-models"]),
+            ("semantic", "Local Semantic", "Models", "Local semantic status, diagnostics and mode: /semantic [status|doctor|auto|local|off|test <prompt>]", ["/semantic"]),
             ("add_provider", "Add Provider", "Models", "Register custom provider template: /add-provider <name> [ollama|openai|anthropic|gemini] <url>", ["/add-provider", "/add-server"]),
             ("edit_provider", "Edit Provider", "Models", "Edit custom provider: /edit-provider <name> [new_url] [pattern] [token]", ["/edit-provider"]),
             ("delete_provider", "Delete Provider", "Models", "Delete custom provider: /delete-provider <name>", ["/delete-provider", "/remove-provider"]),

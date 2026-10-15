@@ -7,7 +7,11 @@ PATH_PATTERN = re.compile(r'(?:@)?(?:[a-zA-Z0-9_\-\.]+/)*[a-zA-Z0-9_\-]+\.' + FI
 SYMBOL_PATTERN = re.compile(r'\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*\b')
 QUOTED_PATTERN = re.compile(r'["\']([^"\']+)["\"]')
 NEGATIVE_SPAN_PATTERN = re.compile(
-    r'\b(?:don\'t|do not|never|sem|sem usar|without|nao|não|nunca|no\s+(?:new|extra|breaking|changes|deps|dependencies|dependências|mutation|modifications|alterações|alteração|change))\b\s*[^.,;\n]*',
+    r"\b(?:don't|do not|never|without|sem|nao|não|nunca|sin|excepto|"
+    r"no\s+(?:cambies|cambiar|modifiques|modificar|crees|crear|apliques|"
+    r"aplicar|edites|editar|alteres|nuevas?|cambios?|modificaciones?|"
+    r"new|extra|breaking|changes|deps|dependencies|dependências|"
+    r"mutation|modifications|alterações|alteração|change))\b\s*[^.,;\n]*",
     re.IGNORECASE
 )
 COMMAND_PATTERN = re.compile(r'/(?:add|drop|files|memory|remember|repomap|model|router|diff|commit|undo|run|ask|code|clear|help|skills|setup-skills)\b')

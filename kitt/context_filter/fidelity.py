@@ -1,6 +1,7 @@
 """Deterministic fidelity validator for compiled SemanticTask IR."""
 from __future__ import annotations
 
+import re
 from typing import Tuple
 from kitt.domain.entities import SemanticTask
 from kitt.context_filter.deterministic_extractor import DeterministicExtractor
@@ -19,6 +20,16 @@ def validate_semantic_fidelity(
 ) -> Tuple[bool, str]:
     """Deterministically validates if SemanticTask faithfully represents original user prompt."""
     ext = extractor or DeterministicExtractor()
+
+    # Guard clear read-only/negated requests against contradictory mutation IR.
+    read_only_request = re.match(
+        r"(?i)^\s*(?:explique|explica|explain|describe|descreva|revisa|review|"
+        r"não\s+crie|nao\s+crie|no\s+crees|do\s+not\s+create)\b",
+        original_prompt,
+    )
+    if read_only_request and task.intent in {"IMPLEMENT", "REFACTOR", "DEBUG"}:
+        task.semantic_confidence = SemanticConfidence.from_overall(0.0)
+        return False, "Read-only request contradicts mutation intent"
 
     # 1. Intent validation: cannot be UNKNOWN
     intent_score = 1.0 if task.intent != "UNKNOWN" else 0.0
@@ -83,5 +94,6 @@ def validate_semantic_fidelity(
         actions=actions_score,
         overall=overall
     )
-    task.confidence = overall
-    return True, "Fidelity validation passed"
+    # Structural validation cannot calibrate or increase class confidence.
+    task.semantic_confidence.overall = min(overall, task.confidence)
+    return True, "Structural fidelity passed; semantic equivalence not proven"

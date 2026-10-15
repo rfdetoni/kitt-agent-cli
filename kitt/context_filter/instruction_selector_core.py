@@ -8,7 +8,7 @@ from typing import Iterable
 
 from kitt.security.workspace_fs import WorkspaceFileSystem
 
-_WORD_RE = re.compile(r"[a-z0-9_+./#-]{2,}", re.I)
+_WORD_RE = re.compile(r"[^\W_][\w+./#-]*|_[\w+./#-]+", re.UNICODE)
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.S)
 
 

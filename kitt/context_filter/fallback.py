@@ -5,12 +5,12 @@ from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 
 _WORKSPACE_CREATION_VERBS = (
     "crie", "criar", "create", "build", "implemente", "implementar",
-    "gere", "gerar", "construa", "adicione",
+    "gere", "gerar", "construa", "adicione", "crea", "crear", "construye", "implementa", "agrega",
 )
 _WORKSPACE_CREATION_NOUNS = (
     "projeto", "project", "site", "app", "aplicação", "aplicacao",
     "pasta", "folder", "diretório", "diretorio", "directory",
-    "arquivo", "file", "backend", "frontend", "front end",
+    "arquivo", "file", "archivo", "fichero", "prueba", "backend", "frontend", "front end",
 )
 _WORKSPACE_MUTATION_VERBS = (
     *_WORKSPACE_CREATION_VERBS,
@@ -21,6 +21,7 @@ _WORKSPACE_MUTATION_VERBS = (
     "corrija", "corrigir", "altere", "alterar", "modifique", "modificar",
     "atualize", "atualizar", "edite", "editar", "refatore", "refatorar",
     "fix", "change", "modify", "update", "edit", "refactor",
+    "corrige", "arregla", "modifica", "cambia", "actualiza", "edita", "refactoriza",
 )
 _WORKSPACE_MUTATION_NOUNS = (
     *_WORKSPACE_CREATION_NOUNS,
@@ -29,7 +30,8 @@ _WORKSPACE_MUTATION_NOUNS = (
 )
 _WORKSPACE_HOW_TO_PREFIXES = (
     "como ", "how ", "explique ", "explain ", "qual a forma de ",
-    "qual é a forma de ", "qual e a forma de ", "como faço para ", "como faco para ",
+    "qual é a forma de ", "qual e a forma de ", "como faço para ", "como faco para ", "cómo ", "como se ",
+    "explica ", "explain ",
 )
 
 _CONTAINER_RUNTIME_TERMS = (
@@ -121,7 +123,7 @@ def _execution_actions(
     actions = ['analyze', 'edit']
 
     if intent == 'PLAN':
-        return actions + [
+        return ['analyze',
             'inspect the relevant workspace structure and existing implementation',
             'produce an ordered implementation checklist with target files, risks, and validation',
         ]
@@ -167,9 +169,14 @@ class DeterministicFallbackPlanner:
             "crie o diretório", "crie um diretório", "execute", "rode",
         ))
         conversational_request = any(word in prompt_lower for word in (
-            'explique', 'diga', 'responda', 'como ', 'por que', 'porque', '?',
+            'explique', 'explica', 'explain', 'diga', 'responda', 'como ', 'cómo ', 'how ', 'por que', 'porque', '?',
         ))
-        if creation_request or mutation_request:
+        read_only_prefix = prompt_lower.strip().startswith((
+            "explique ", "explica ", "explain ", "revisa ", "review ",
+            "revise ", "descreva ", "describe ", "não crie ", "nao crie ",
+            "no crees ", "do not create ", "don't create ",
+        ))
+        if (creation_request or mutation_request) and not read_only_prefix:
             # Creation is the primary workspace intent even when the same request also
             # asks to run tests/builds afterward. Validation is a completion step, not
             # a reason to downgrade the execution route to validate-diff.
@@ -191,7 +198,7 @@ class DeterministicFallbackPlanner:
             intent = 'DEBUG'
         elif 'refactor' in prompt_lower or 'clean' in prompt_lower:
             intent = 'REFACTOR'
-        elif 'review' in prompt_lower:
+        elif re.search(r'\b(?:review|revisa|revise|revisar)\b', prompt_lower):
             intent = 'REVIEW'
         elif 'doc' in prompt_lower or 'readme' in prompt_lower:
             intent = 'DOCUMENT'
@@ -232,8 +239,15 @@ class DeterministicFallbackPlanner:
         )
 
     def generate_plan(self, task: SemanticTask) -> ContextPlan:
-        if task.intent == 'ASK' and not task.paths and not task.symbols:
-            return ContextPlan(confidence=1.0)
+        if task.intent in {'ASK', 'PLAN', 'REVIEW'}:
+            return ContextPlan(
+                search_queries=list(dict.fromkeys([*task.paths, *task.symbols])),
+                candidate_symbols=task.symbols,
+                preferred_paths=task.paths,
+                enabled_tools=['read_file', 'search', 'repository_map', 'artifact_read'],
+                confidence=task.confidence,
+                include_original_prompt=True,
+            )
         container_runtime = task.intent == 'TEST' and any(
             tech in {"docker", "podman", "kubernetes", "helm"}
             for tech in task.technologies

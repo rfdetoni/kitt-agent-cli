@@ -34,6 +34,9 @@ async def _execute_command(ui, raw: str) -> bool:
         ui.open_overlay("help", ui.help_control)
     elif found.id == "model":
         await handle_model_command(ui, arg)
+    elif found.id == "semantic":
+        from kitt.ui.semantic_commands import handle_semantic_command
+        await handle_semantic_command(ui, arg)
     elif found.id == "setup_skills":
         await handle_setup_skills_command(ui, arg)
     elif found.id == "setup_models":
