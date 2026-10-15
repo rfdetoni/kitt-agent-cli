@@ -105,3 +105,51 @@ def test_no_override_or_implicit_plugin_trust(harness):
         create_agent(root, "debugger")
     assert all(p.plugin != "agent-debugger" for p in reg.list())
     assert not ext.plugin_trust.is_trusted(ext.plugins.discover()["agent-debugger"])
+
+
+def test_family_message_binds_sender_to_authenticated_child():
+    from types import SimpleNamespace
+    from kitt.runtime.core_runtime import SafeRuntime
+
+    messages = []
+    child = SimpleNamespace(id="child_a", runtime_conversation_id="childconv_a",
+                            parent_conversation_id="rootconv")
+
+    class Repo:
+        def get_scoped(self, child_id, workspace_id=None):
+            assert workspace_id == "workspace"
+            return child if child_id == "child_a" else None
+
+    def deliver(conversation, **kwargs):
+        messages.append((conversation, kwargs))
+        return SimpleNamespace(id="msg_1"), "FOLLOW_UP"
+
+    runtime = SafeRuntime.__new__(SafeRuntime)
+    runtime.children = SimpleNamespace(repo=Repo(), send_agent_message=deliver)
+    runtime.workspace_id = "workspace"
+    runtime.conversation_id = "childconv_a"
+    security = SimpleNamespace(principal_type="CHILD", principal_id="child_a")
+
+    denied = runtime._op_children_send(
+        {"sender": "child_b", "recipient": "child_b", "message": "spoof"},
+        security_context=security,
+    )
+    assert not denied.success
+    assert not messages
+
+    accepted = runtime._op_children_send(
+        {"sender": "self", "recipient": "child_b", "message": "Investigate this"},
+        security_context=security,
+    )
+    assert accepted.success
+    assert messages[0][0] == "rootconv"
+    assert messages[0][1]["sender"] == "child_a"
+    assert messages[0][1]["recipient"] == "child_b"
+
+    runtime.conversation_id = "unrelated_conversation"
+    blocked = runtime._op_children_send(
+        {"recipient": "child_b", "message": "cross-scope"},
+        security_context=security,
+    )
+    assert not blocked.success
+    assert len(messages) == 1

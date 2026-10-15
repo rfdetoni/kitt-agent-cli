@@ -199,6 +199,12 @@ def _run_new_turn(runtime: KittRuntime, request: dict) -> dict:
     task_prompt = str(request["task"])
     parent_conversation = str(request.get("parent_conversation_id") or "")
     if parent_conversation:
+        child_record = runtime.children.repo.get_scoped(
+            str(request["child_id"]), conversation_id=parent_conversation,
+            workspace_id=runtime.workspace_id,
+        )
+        if child_record is None or child_record.runtime_conversation_id != child_conversation:
+            raise PermissionError("Child message family scope mismatch")
         unread = runtime.children.messaging.list_pending_for_recipient(
             parent_conversation, recipient_id=str(request["child_id"]), limit=16,
         )
