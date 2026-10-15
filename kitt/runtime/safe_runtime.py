@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from kitt_protocol import AGENT_CONTRACT_VERSION, AGENT_WIRE_FORMAT
+
 from kitt.integrations.semantic import SemanticCodeIntelligence
 from kitt.runtime import core_runtime as _core
 from kitt.runtime.search_fallback import full_scan_search
@@ -15,7 +17,7 @@ RuntimeOperationSpec = _core.RuntimeOperationSpec
 RuntimeOperationRegistry = _core.RuntimeOperationRegistry
 SafeRuntimeResult = _core.SafeRuntimeResult
 OPERATION_REGISTRY = _core.OPERATION_REGISTRY.extend({
-        'kap.capabilities': RuntimeOperationSpec('kap.capabilities', None),
+        'runtime.capabilities': RuntimeOperationSpec('runtime.capabilities', None),
         'repo.batch_read': RuntimeOperationSpec('repo.batch_read', CAP_REPO_READ),
         'repo.ref.create': RuntimeOperationSpec('repo.ref.create', CAP_REPO_READ, 'read_file'),
         'repo.ref.read': RuntimeOperationSpec('repo.ref.read', CAP_REPO_READ),
@@ -295,19 +297,18 @@ class SafeRuntime(_core.SafeRuntime):
         expected_approval_id,
         automatic_budget_reserved: bool = False,
     ):
-        if op == "kap.capabilities":
+        if op == "runtime.capabilities":
             if args:
-                return SafeRuntimeResult(False, op, error="kap.capabilities requires no arguments")
+                return SafeRuntimeResult(False, op, error="runtime.capabilities requires no arguments")
             return SafeRuntimeResult(True, op, data={
-                "grammar": "KAP/2",
-                "header": "K2",
-                "host_action": "K2 T kitt_runtime",
+                "format": AGENT_WIRE_FORMAT,
+                "host_tool": "kitt_runtime",
                 "features": ["repo.batch_read", "repo.ref.create", "repo.ref.read",
                              "repo.ref.write", "plan.patch", "sandbox.python"],
                 "positional_schema_digest": POSITIONAL_DIGEST,
                 "frame_batch": False,
                 "early_stream_termination": False,
-                "metadata_version_negotiation": True,
+                "agent_contract_version": AGENT_CONTRACT_VERSION,
             })
         if op in {"repo.ref.create", "repo.ref.read", "repo.ref.write"}:
             return execute_revision_ref(self, op, args, security_context=security_context)

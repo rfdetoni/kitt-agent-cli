@@ -1,4 +1,4 @@
-"""Real KAP/2 literal dispatch must preserve compute capabilities and isolation."""
+"""Real JSON source dispatch must preserve compute capabilities and isolation."""
 import tempfile
 from pathlib import Path
 
@@ -6,21 +6,14 @@ from kitt.runtime.safe_runtime import SafeRuntime
 from kitt.security.capabilities import CAP_SAFE_COMPUTE
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.registry import ToolRegistry
-from kitt_protocol import decode_kap2_frame
+from kitt_protocol import decode_json_object
 
 
-def test_kap2_literal_dispatches_safe_python_and_returns_structured_data():
+def test_json_literal_dispatches_safe_python_and_returns_structured_data():
     envelope = (
-        "K2 T kitt_runtime\n"
-        "operation: sandbox.python\n"
-        "arguments:\n"
-        "  code<<PY\n"
-        "values = [10, 20, 30, 40]\n"
-        "_result = {'average': sum(values) / len(values), 'total': sum(values)}\n"
-        "PY\n"
-        "K2/END"
+        '{"action":"use_tool","tool":"kitt_runtime","tool_input":{"operation":"sandbox.python","arguments":{"code":"values = [10, 20, 30, 40]\\n_result = {\'average\': sum(values) / len(values), \'total\': sum(values)}"}},"content":null,"reasoning_summary":"","loop":null}'
     )
-    frame = decode_kap2_frame(envelope)
+    frame = decode_json_object(envelope)
     assert frame["tool"] == "kitt_runtime"
     with tempfile.TemporaryDirectory() as directory:
         registry = ToolRegistry(directory)
@@ -101,6 +94,6 @@ def test_runtime_tool_capability_map_includes_safe_compute():
     assert "sandbox.python" in runtime_operation_names()
 
     runtime = SafeRuntime(Path("."), "ws", "conv")
-    capabilities = runtime.execute("kap.capabilities", {})
+    capabilities = runtime.execute("runtime.capabilities", {})
     assert capabilities.success
     assert "sandbox.python" in capabilities.data["features"]

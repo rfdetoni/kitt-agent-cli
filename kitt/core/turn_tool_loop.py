@@ -657,22 +657,22 @@ class TurnToolLoopMixin:
                         )
                         if _completion_recovery_exhausted(goal_tool_recoveries):
                             yield TurnBlocked(
-                                reason="Durable goal step has no host tool evidence after bounded KAP/2 tool requests."
+                                reason="Durable goal step has no host tool evidence after bounded JSON tool requests."
                             ), None, None
                             return
                         execution_messages.extend([
                             {"role": "assistant", "content": full_response},
                             {"role": "user", "content": (
                                 "[KITT HOST TOOL REQUIRED]\n"
-                                "You emitted K2 F without calling any host tool. "
+                                "You emitted final_response without calling any host tool. "
                                 "ChatGPT Web's own container/tools are not the KITT workspace. "
                                 "Do not inspect them or claim kitt_runtime is unavailable "
                                 "because it is not in the web UI. "
-                                "The KITT host executes textual KAP/2 K2 T actions. "
+                                "The KITT host executes JSON use_tool actions. "
                                 "Start by requesting one permitted read-only action, for example:\n"
-                                "K2 T kitt_runtime\noperation: repo.list\narguments:\n  path: .\nK2/END\n"
+                                "{\"action\":\"use_tool\",\"tool\":\"kitt_runtime\",\"tool_input\":{\"operation\":\"repo.list\",\"arguments\":{\"path\":\".\"}},\"content\":null,\"reasoning_summary\":\"Inspect the workspace.\",\"loop\":null}\n"
                                 "Use only a real operation from TOOLS_AVAILABLE and wait for "
-                                "the host's result before preparing a K2 F completion report. "
+                                "the host's result before preparing a final_response completion report. "
                                 "Do not fabricate observations, execute code in an unrelated "
                                 "sandbox, or repeat the same final report."
                             )},

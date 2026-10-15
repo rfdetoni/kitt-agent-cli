@@ -1,3 +1,5 @@
+> Current wire format: JSON with Agent contract v5. See [0.88.0](RELEASE_0.88.0.md). Examples below describe archived releases and must not be used in active prompts.
+
 # Agent CLI 0.82.0: plans, verification and child containment
 
 ## Release scope

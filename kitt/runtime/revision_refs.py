@@ -37,7 +37,7 @@ def execute_revision_ref(runtime: Any, operation: str, arguments: dict[str, Any]
                 security_context.assert_path_allowed(path)
             data = fs.read(path, max_bytes=_MAX_BYTES)
             token = 'ref:' + secrets.token_urlsafe(24)
-            if not runtime.state.set('kap2:' + token,
+            if not runtime.state.set('revision-ref:' + token,
                                      {'path': path, 'sha256': data.sha256},
                                      ttl_seconds=_TTL):
                 return denied('Unable to persist revision')
@@ -47,7 +47,7 @@ def execute_revision_ref(runtime: Any, operation: str, arguments: dict[str, Any]
         token = arguments.get('ref')
         if not isinstance(token, str) or not _REF.fullmatch(token):
             return denied('Invalid revision reference')
-        record = runtime.state.get('kap2:' + token)
+        record = runtime.state.get('revision-ref:' + token)
         if (not isinstance(record, dict) or not isinstance(record.get('path'), str)
                 or not isinstance(record.get('sha256'), str)):
             return denied('Unknown or expired revision reference')
@@ -88,7 +88,7 @@ def execute_revision_ref(runtime: Any, operation: str, arguments: dict[str, Any]
                 return denied('Expected revision mismatch')
             digest = fs.atomic_write(path, content, expected_sha256=record['sha256'],
                                      expected_exists=True, max_bytes=_MAX_BYTES)
-            runtime.state.delete('kap2:' + token)
+            runtime.state.delete('revision-ref:' + token)
             return SafeRuntimeResult(True, operation,
                 data={'path': path, 'previous_revision': expected,
                       'revision': digest, 'receipt': 'committed'})

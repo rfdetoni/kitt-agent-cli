@@ -2,7 +2,7 @@ import json
 import re
 from typing import Any, Dict, Optional, Tuple
 
-from kitt_protocol import KAP2Error, decode_kap2_frame
+from kitt_protocol import MAX_TOOL_ARGUMENT_BYTES, decode_json_object
 
 TOOL_CALL_OPEN = "<kitt-tool>"
 TOOL_CALL_CLOSE = "</kitt-tool>"
@@ -160,24 +160,28 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     if not text:
         return None
 
-    canonical = text.strip()
-    if canonical.startswith("K2 T"):
-        # KAP/2 is decoded by the canonical SDK, not by a second local
-        # parser. Policy/allowed-operation checks remain host-owned.
-        try:
-            frame = decode_kap2_frame(canonical)
-        except KAP2Error as exc:
-            raise ValueError(f"Invalid KAP/2 host tool action: {exc}") from exc
-        if frame["action"] != "use_tool" or not isinstance(frame["tool_input"], dict):
-            raise ValueError("Expected one KAP/2 tool action with named arguments")
-        name = frame["tool"]
-        if not isinstance(name, str) or not name:
-            raise ValueError("Missing KAP/2 tool name")
-        return CANONICAL_TOOLS.get(name.lower(), name), frame["tool_input"]
-    # Structured finals are not tool requests; the Goals verifier
-    # handles K2 F reports separately after actual tool receipts.
-    if canonical.startswith(("K2 F", "K2 W", "K2 Q")):
-        return None
+    canonical = _strip_markdown_fences(text.strip())
+    if canonical.startswith("{"):
+        # Decode before legacy heuristics: malformed or competing JSON must
+        # never turn into a different executable tool call.
+        frame = decode_json_object(canonical)
+        if "action" in frame:
+            if not isinstance(frame["action"], str) or frame["action"] not in {"use_tool", "final_response", "request_workspace", "request_tools"}:
+                raise ValueError("Unknown JSON host action")
+            if frame["action"] != "use_tool":
+                return None
+            if set(frame) != {"action", "tool", "tool_input", "content", "reasoning_summary", "loop"}:
+                raise ValueError("JSON host action requires the canonical six fields")
+            if frame["content"] is not None:
+                raise ValueError("JSON host tool action requires content=null")
+            name, arguments = frame.get("tool"), frame.get("tool_input")
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", name):
+                raise ValueError("Invalid JSON host tool name")
+            if not isinstance(arguments, dict):
+                raise ValueError("JSON host tool action requires object tool_input")
+            if len(json.dumps(arguments, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_TOOL_ARGUMENT_BYTES:
+                raise ValueError("JSON host tool arguments exceed 64 KiB")
+            return CANONICAL_TOOLS.get(name.lower(), name), arguments
     if canonical.startswith(TOOL_CALL_OPEN):
         if not canonical.endswith(TOOL_CALL_CLOSE):
             raise ValueError("Incomplete kitt-tool envelope")

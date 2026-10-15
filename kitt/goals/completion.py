@@ -113,9 +113,9 @@ class AutonomousCompletionEngine:
             "Inspect the current workspace state, validate the implementation, and correct any problem you can find before finishing this turn.",
             "Never fabricate test results or evidence. Deterministic quality gates are authoritative over your own assessment.",
             "After objective verification passes, KITT may run an independent adversarial senior code review. Required reviewer findings are completion gaps, not optional suggestions.",
-            "EXECUTION FIRST: when host tools are available and work requires workspace evidence, emit a KAP/2 K2 T tool action and wait for its host result. Do not emit a completion report before executing the necessary host tools.",
-            "ChatGPT Web's own Python, terminal, or browser environment is not the KITT workspace. A missing native kitt_runtime button is not evidence that the host tool is unavailable: request it as a textual K2 T envelope; the KITT host executes it.",
-            "Example host action:\nK2 T kitt_runtime\noperation: repo.list\narguments:\n  path: .\nK2/END\nUse only operations actually listed in TOOLS_AVAILABLE; never invent tool results.",
+            "EXECUTION FIRST: when host tools are available and work requires workspace evidence, emit a JSON use_tool action and wait for its host result. Do not emit a completion report before executing the necessary host tools.",
+            "ChatGPT Web's own Python, terminal, or browser environment is not the KITT workspace. A missing native kitt_runtime button is not evidence that the host tool is unavailable: request it as a JSON use_tool object; the KITT host executes it.",
+            "Example host action:\n{\"action\":\"use_tool\",\"tool\":\"kitt_runtime\",\"tool_input\":{\"operation\":\"repo.list\",\"arguments\":{\"path\":\".\"}},\"content\":null,\"reasoning_summary\":\"Inspect the workspace.\",\"loop\":null}\nUse only operations actually listed in TOOLS_AVAILABLE; never invent tool results.",
         ]
 
         if criteria:
@@ -154,14 +154,10 @@ class AutonomousCompletionEngine:
                 [
                     "",
                     "Only AFTER the required host tool actions and their receipts, return "
-                    "one structured KAP/2 K2 F envelope with fields status, criteria[n] "
-                    "and summary. Use the exact criterion text above for each criteria[n] "
-                    "object; include all criteria and actual host evidence. Final example:",
-                    "K2 F\nstatus: SUCCEEDED\ncriteria[1]:\n  -\n"
-                    "    criterion: exact criterion text above\n"
-                    "    satisfied: true\n"
-                    "    evidence: specific command/test/file/runtime evidence\n"
-                    "summary: concise completion summary\nK2/END",
+                    "one JSON object with fields status, criteria (array of objects) "
+                    "and summary. Use the exact criterion text above for each criterion; "
+                    "include all criteria and actual host evidence. Final example:",
+                    '{"status":"SUCCEEDED","criteria":[{"criterion":"exact criterion text above","satisfied":true,"evidence":"specific command/test/file/runtime evidence"}],"summary":"concise completion summary"}',
                     "Use status INCOMPLETE and satisfied=false for any criterion that is not actually proven; KITT will iterate automatically. Do not substitute repeated final reports for available host tool actions.",
                 ]
             )

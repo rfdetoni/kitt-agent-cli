@@ -19,38 +19,21 @@ from kitt.llm.providers.kitt_reverse_proxy import (
 
 
 class TestKittReverseProxyCompatibility(unittest.TestCase):
-    def test_exact_kap_header_and_acknowledgment_for_agent_contract(self):
-        from kitt_protocol import AGENT_CONTRACT_HEADER, KAP_VERSION_HEADER
-        payload = {'choices': [{'delta': {'content': 'K2 F\nstate: done\nK2/END'}}]}
+    def test_json_contract_has_no_grammar_negotiation(self):
+        from kitt_protocol import AGENT_CONTRACT_HEADER, AGENT_CONTRACT_VERSION
+        payload = {'choices': [{'delta': {'content': '{"verdict":"OK"}'}}]}
         raw = ('data: ' + json.dumps(payload) + '\n\ndata: [DONE]\n').encode()
-
-        class Response(io.BytesIO):
-            def __init__(self, ack):
-                super().__init__(raw)
-                self.headers = {KAP_VERSION_HEADER: ack} if ack is not None else {}
-
         captured = []
         def fake_urlopen(req, timeout=300):
             captured.append(req)
-            return Response('KAP/2' if len(captured) == 1 else None)
-
-        request = LLMRequest(model='fixture', messages=[{'role': 'user', 'content': 'hello'}],
-                             extra_headers={AGENT_CONTRACT_HEADER: 'v4'})
+            return io.BytesIO(raw)
+        request = LLMRequest(model='fixture', messages=[{'role':'user','content':'hello'}],
+                             extra_headers={AGENT_CONTRACT_HEADER: AGENT_CONTRACT_VERSION})
         with patch('kitt.llm.providers.kitt_reverse_proxy.secure_urlopen', side_effect=fake_urlopen):
-            self.assertEqual(list(KittReverseProxyAdapter().stream(request)), ['K2 F\nstate: done\nK2/END'])
-            self.assertEqual(captured[0].get_header('X-kitt-kap'), 'KAP/2')
-            with self.assertRaisesRegex(ProviderProtocolError, 'acknowledge'):
-                list(KittReverseProxyAdapter().stream(request))
+            self.assertEqual(list(KittReverseProxyAdapter().stream(request)), ['{"verdict":"OK"}'])
+        self.assertIsNone(captured[0].get_header('X-kitt-kap'))
+        self.assertEqual(captured[0].get_header('X-kitt-agent-contract'), AGENT_CONTRACT_VERSION)
 
-    def test_invalid_kap_request_never_reaches_transport(self):
-        from kitt_protocol import AGENT_CONTRACT_HEADER, KAP_VERSION_HEADER
-        request = LLMRequest(model='fixture', messages=[], extra_headers={
-            AGENT_CONTRACT_HEADER: 'v4', KAP_VERSION_HEADER: 'KAP/2,KAP/1'
-        })
-        with patch('kitt.llm.providers.kitt_reverse_proxy.secure_urlopen') as opener:
-            with self.assertRaises(ProviderProtocolError):
-                list(KittReverseProxyAdapter().stream(request))
-            opener.assert_not_called()
     def test_canonical_arguments_are_never_reinterpreted_as_nested_calls(self):
         for content in [
             "read_file('secret.txt')",
@@ -113,7 +96,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
         with patch("kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
                    return_value=io.BytesIO(raw)):
             with self.assertRaisesRegex(
-                ProviderProtocolError, "No KAP action was received or executed"
+                ProviderProtocolError, "No model action was received or executed"
             ):
                 list(KittReverseProxyAdapter().stream(request))
 
@@ -225,7 +208,7 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
 
     def test_structural_tool_definitions_survive_compact_prompt(self):
         class FakeResponse:
-            headers = {"X-Kitt-KAP": "KAP/2"}
+            headers = {}
 
             def __init__(self):
                 self._stream = io.BytesIO(b"data: [DONE]" + bytes([10]))
@@ -508,12 +491,12 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                 _discover.return_value = KittProxyCapabilities(discovered=True, raw={
                     "kitt_agent_cli": {"agent_contract": {"version": "v2"}},
                 })
-                with self.assertRaisesRegex(ProviderProtocolError, "expected v4"):
+                with self.assertRaisesRegex(ProviderProtocolError, "expected v5"):
                     list(client.chat_stream([{"role":"user", "content":"incompatible"}]))
                 self.assertEqual(len(captured), 3)
 
         first = captured[0].extra_headers
-        self.assertEqual(first["X-Kitt-Agent-Contract"], "v4")
+        self.assertEqual(first["X-Kitt-Agent-Contract"], "v5")
         self.assertEqual(captured[0].context_window, 0)
         self.assertEqual(captured[0].max_output_tokens, 0)
         self.assertEqual(client.profile, profile)

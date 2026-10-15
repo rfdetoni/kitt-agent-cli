@@ -1,10 +1,12 @@
+# Agent CLI 0.88.0 — JSON model responses
+
+Planning, advisory architecture, contract review, independent validation, senior review, completion reports and host-tool recovery now request ordinary JSON. Structured results use the strict shared JSON decoder; textual host actions dispatch from the canonical JSON action object. Duplicate keys, non-finite values and competing objects fail closed.
+
+[Release details](docs/RELEASE_0.88.0.md).
+
 ## Agent CLI 0.87.29 — optional local multilingual semantic engine
 
 PT-BR, English and Spanish explicit task commands are resolved locally without generating an auxiliary LLM classification request. An optional Ollama multilingual E5 Q8 classifier abstains on uncertain input; the original user request is always authoritative and remains in the execution prompt. The engine is **disabled by default** until independently calibrated. Use `/semantic doctor`, `/semantic status`, and the [Code-RAG guide](docs/CODE_RAG.md). Direct installers support explicit `--prepare-semantic-model` (Linux) or `-PrepareSemanticModel` (Windows) and never pull weights implicitly. [Release notes](docs/RELEASE_0.87.29.md).
-
-## Agent CLI 0.87.28 — stop unsafe automatic WebChat retries
-
-When the reverse-proxy reports a submitted WebChat turn whose fresh assistant response could not be captured (`ui_timeout`, no KAP action verified), the durable goal now enters **BLOCKED / ENVIRONMENT** instead of blindly resending the same task. Previous completed tasks and budget remain intact; operator inspection and explicit `goal resume` are required before attempting again. [Release notes](docs/RELEASE_0.87.28.md).
 
 ## Agent CLI 0.87.27 — live planning and reviewer progress
 
@@ -17,17 +19,6 @@ Preserves model-authored FINAL acceptance criteria, checks, paths and dependenci
 ## Agent CLI 0.87.25 — configurable LLM routing per specialist
 
 Specialist workers can now select distinct existing TaskRouter profiles (direct API, local Ollama or separate KITT reverse-proxy instances), using automatic, preferred or fixed routing with privacy-aware fallbacks. Settings are editable via `kitt agents model` and `/agent model`; models are bound to the child session and reused after approval/resume. See [routing release notes](docs/RELEASE_0.87.25.md).
-
-## Agent CLI 0.87.24 — explicit WebChat capture failure
-
-The reverse-proxy client now distinguishes `ui_timeout` (the website request
-was submitted but its assistant response could not be extracted) from KAP/2
-syntax failures. It reports that **no KAP action was received or executed**
-and asks for authenticated WebChat session inspection before an explicit retry;
-it does not replay a potentially executed action automatically.
-The Python dependency on `kitt-protocol` is pinned to immutable revision
-`cc3b51dd0e868adaab4ed7a0069c4dbf9aa08c42`; the release manifest tracks the exact component SHA.
-See [release 0.87.24](docs/RELEASE_0.87.24.md) and Reverse Proxy 5.3.15.
 
 ## Agent CLI 0.87.23 — pluggable specialist agents
 
@@ -85,72 +76,9 @@ Only operator-approved lab profiles can auto-start. See the
 [RE environment guide](docs/RE_LAZY_ENVIRONMENTS.md) and
 [release 0.87.14](docs/RELEASE_0.87.14.md).
 
-## Agent CLI 0.87.13 — KAP/2 K2 T reaches host runtime
-
-Model-emitted `K2 T kitt_runtime` now goes through the canonical
-KAP/2 decoder before host policy and dispatch. This completes the
-tool-first Goals fix in 0.87.12 without adding new capabilities.
-See [release notes](docs/RELEASE_0.87.13.md).
-
-## Agent CLI 0.87.12 — KAP/2 Goals execute via host tools
-
-Goals tasks now request textual K2 T host tool actions before K2 F
-completion reports; premature no-tool finals receive a bounded
-host-owned reminder and then BLOCKED rather than repeated fictional
-WebChat sandbox preflights.
-See [release notes](docs/RELEASE_0.87.12.md).
-
-## Agent CLI 0.87.11 — indentation-free KAP/2 planner
-
-The durable task planner now requests a tagged compact final
-(`K2 F @json: {"items":[...]} K2/END`) decoded by the canonical Protocol
-0.13.3 SDK. It is a single physical line with explicit field boundaries;
-WebChat whitespace folding cannot destroy its structure. Ordinary KAP/2
-tools, Python compute, approval handling and task schemas remain unchanged.
-The Agent does not repair provider DOM text or infer missing separators.
-
-## Agent CLI 0.87.10 — safe Python via KAP/2
-
-`K2 T kitt_runtime` accepts `operation: sandbox.python` with a `code<<PY`
-literal. The implementation reuses `python_compute` with AST, process resource
-limits and capability enforcement. No arbitrary Python, network, shell or
-workspace writes. See [KAP/2 host operations](docs/KAP2_HOST_OPERATIONS.md).
-
-## Agent CLI 0.87.9 — lock do Protocol corrigido
-
-O `uv.lock` agora fixa `kitt-protocol 0.13.2` no SHA `0b9300e`, compatível com os imports `KAP_VERSION_HEADER` e `negotiate_kap_version`. O pacote passa para 0.87.9 para que a correção seja distribuída pelo canal release. Veja [release 0.87.9](docs/RELEASE_0.87.9.md).
-
-## Agent CLI 0.87.8 — negotiated KAP/2 wire contract
-
-The reverse proxy adapter now sends `X-Kitt-KAP: KAP/2` whenever the request enables the Agent contract. Unknown versions fail before transmission, and an HTTP peer returning an incompatible acknowledgment is rejected rather than silently downgraded. Regular OpenAI-compatible providers do not receive this header. See [release 0.87.8](docs/RELEASE_0.87.8.md).
-
-## Agent CLI 0.87.6 — KAP/2 host operations
-
-Host-enforced batches of read-only `repo.read`/`repo.list` calls, digest-bound positional read tables, SHA-256 revision references with CAS write receipts, and optimistic differential task-plan updates. Every operation remains subject to capability, policy, scope, replay and size limits. The textual KAP/2 grammar and HTTP JSON transport are unchanged. See [KAP/2 host operations](docs/KAP2_HOST_OPERATIONS.md) and [0.87.6 release notes](docs/RELEASE_0.87.6.md).
-
-## Agent CLI 0.87.5 — KAP/2 independent validation
-
-Planning, contract review, independent validation, adversarial review and completion now request KAP/2 final envelopes, with typed issue objects and evidence lists. Regression tests decode the prompt examples. No host authorization changes.
-
-## Agent 0.87.4 — compact KAP/2 plans and reviews
-
-Planning, contract validation review and adversarial code review now request KAP/2 instead of legacy KAP/1; tests verify that the planning examples decode to the required structured task contract. Eliminates contradictory output instructions when using Reverse Proxy 5.3.0.
-
 ## 0.87.3 — browser gateway forwarding
 
 FailoverLLMClient now delegates scoped browser-gateway capability discovery to the selected primary client only, without granting authority through fallback providers. Host trust and origin checks remain mandatory.
-
-## KAP/2 0.13.1 synchronization — Agent 0.87.2
-
-Decode structured K2 F with quoted keys, nested object arrays, stable error codes and optional summary from the canonical Protocol SDK. Host authorization remains unchanged.
-
-## 0.87.1 — KAP/2 contract pin
-
-Agent CLI uses Protocol 0.12.1 to reject competing actions in compact text. Host authorization and tool behavior remain unchanged.
-
-## KAP/2 compact output — 0.87.0
-
-The Agent decodes structured `K2 F` results from the shared kitt-protocol 0.12.0 SDK. The reverse-proxy owns tool lowering and validates host operation schemas; model responses cannot grant authorization. See [KAP/2 specification](https://github.com/rfdetoni/kitt-protocol/blob/main/docs/KAP2.md).
 
 ## Docker / Podman QEMU and prebuilt Linux RE toolbox
 
@@ -179,17 +107,9 @@ Fixed the follow-up mouse regression: prompt_toolkit already translates screen c
 
 Selections in the approval modal dismiss it immediately without canceling the pending decision; concurrent mouse/keyboard submissions are serialized, and failed daemon acknowledgments restore the request. Workspace-scoped remembered `run_command` rules now apply only to the matching executor identity; explicit denials remain authoritative. Transcript scrolling is routed to the workarea even without an overlay, and Reverse Proxy context tabs restore focus and refresh data. OpenTUI-inspired interaction principles are implemented using the existing `prompt_toolkit` stack. See [release notes](docs/RELEASE_0.86.3.md).
 
-## Release 0.86.2 — Consistent KAP reports and provider fallback
-
-Completion and independent validation request structured KAP fields, including typed issue objects. Validation receives the item's current planned files as explicit inputs. Invalid nested process argv is reported as an input error before policy evaluation. Untrusted fallback endpoints are excluded from provider selection without granting new endpoint trust. See [release notes](docs/RELEASE_0.86.2.md).
-
 ## Release 0.86.1 — Parallel child admission and live monitoring
 
 The task-plan host can dispatch multiple **independent** child tasks using `plan.dispatch_ready` (up to four by default), sharing one parent budget while keeping per-child permissions, worktrees, browser sessions and verification requirements. `Ctrl+X, A` opens the Agent monitor; the provider endpoint chord is now `Ctrl+X, E`. Automatic durable Goals contracts now opportunistically fan out independent file-scoped implementation items in autonomous mode, while the existing GoalScheduler retains lease ownership and independently validates each completed item. Tasks with overlapping files or unsatisfied dependencies remain sequential. See [release notes](docs/RELEASE_0.86.1.md).
-
-## Release 0.86.0 — KAP/1 WebChat actions
-
-Uses kitt-protocol contract v4 for compact KAP/1 model actions. Planning and review now emit typed textual fields; the reverse-proxy converts verified actions back into native tool calls/JSON generated by host code. KAP outputs are also accepted by the local structured-result decoder. No approval or completion gate is delegated to the model.
 
 ## Release 0.85.0 — Structured Agent results
 

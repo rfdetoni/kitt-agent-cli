@@ -448,7 +448,7 @@ class LLMClient:
             metadata = dict(request_metadata or {})
             metadata.setdefault("max_upstream_attempts", 1)
             if contract_route == "agent-loop":
-                # The proxy buffers the full KAP contract until validation.
+                # The proxy buffers the full JSON contract until validation.
                 # Large WebChat generations must not be cut off at 240 seconds.
                 metadata.setdefault("deadline_ms", 900_000)
             metadata["route"] = contract_route

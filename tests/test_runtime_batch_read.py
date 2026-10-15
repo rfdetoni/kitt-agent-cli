@@ -26,16 +26,16 @@ class ReadBatchTests(unittest.TestCase):
     def _read(identifier, path):
         return {'id': identifier, 'operation': 'repo.read', 'arguments': {'path': path}}
 
-    def test_kap_capabilities_list_only_implemented_host_features(self):
+    def test_runtime_capabilities_list_only_implemented_host_features(self):
         from kitt.runtime.read_batch import POSITIONAL_DIGEST
-        status = self.runtime.execute('kap.capabilities', {})
+        status = self.runtime.execute('runtime.capabilities', {})
         self.assertTrue(status.success)
-        self.assertEqual(status.data['grammar'], 'KAP/2')
+        self.assertEqual(status.data['format'], 'json')
         self.assertEqual(status.data['positional_schema_digest'], POSITIONAL_DIGEST)
         self.assertFalse(status.data['frame_batch'])
         self.assertFalse(status.data['early_stream_termination'])
-        self.assertTrue(status.data['metadata_version_negotiation'])
-        self.assertFalse(self.runtime.execute('kap.capabilities', {'enable_unsafe': True}).success)
+        self.assertEqual(status.data['agent_contract_version'], 'v5')
+        self.assertFalse(self.runtime.execute('runtime.capabilities', {'enable_unsafe': True}).success)
 
     def test_read_only_parallel_batch_maintains_order_and_receipts(self):
         def fake_read(args, *_):

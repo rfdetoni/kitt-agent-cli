@@ -1,10 +1,12 @@
+# Agent CLI 0.88.0 — JSON model responses
+
+Planning, advisory architecture, contract review, independent validation, senior review, completion reports and host-tool recovery now request ordinary JSON. Structured results use the strict shared JSON decoder; textual host actions dispatch from the canonical JSON action object. Duplicate keys, non-finite values and competing objects fail closed.
+
+[Release details](docs/RELEASE_0.88.0.md).
+
 ## Agent CLI 0.87.29 — motor semântico local multilíngue opcional
 
 Comandos explícitos em PT-BR, inglês e espanhol são interpretados localmente, sem chamada generativa auxiliar. O classificador E5 Q8 via Ollama é opcional e se abstém em casos incertos; o pedido original sempre prevalece na execução. **Desligado por padrão** até calibração independente. Diagnostique com `/semantic doctor` e `/semantic status`. Os instaladores só baixam pesos mediante a opção explícita `--prepare-semantic-model` (Linux) ou `-PrepareSemanticModel` (Windows). [Detalhes](docs/RELEASE_0.87.29.md).
-
-## Agent CLI 0.87.28 — não repetir automaticamente falhas de captura WebChat
-
-Ao receber `ui_timeout` depois do envio do prompt, sem qualquer ação KAP válida, o contrato fica **BLOCKED / ENVIRONMENT**. Isso impede três ou mais envios iguais da T00 sem inspeção da sessão autenticada. A retomada exige ação explícita do operador; veja [detalhes](docs/RELEASE_0.87.28.md).
 
 ## Agent CLI 0.87.27 — progresso visual durante planejamento
 
@@ -21,13 +23,6 @@ Inclui Code, Criativo, Investigador, Crítico e Testador, seleção automática,
 ## Agent CLI 0.87.19 — memória vetorial local opcional
 
 Defina `KITT_MEMORY_EMBED_MODEL` para ativar embeddings usando Ollama local; `KITT_MEMORY_EMBED_URL` aceita apenas loopback HTTP (padrão `http://127.0.0.1:11434`). A indexação após gravação ocorre em fila lazy limitada e a recuperação cai para FTS5 em falhas. Requer kitt-memoryd 0.10.0. Veja [release](docs/RELEASE_0.87.19.md).
-
-## Agent CLI 0.87.10 — Python seguro no KAP/2
-
-O envelope KAP/2 aceita `sandbox.python` com bloco `code<<PY`.
-Reutiliza `python_compute` com limitação AST, isolamento de processo e
-capability `compute.safe`; não permite imports, rede, shell ou escrita no projeto.
-Consulte [operações KAP/2](docs/KAP2_HOST_OPERATIONS.md).
 
 # K.I.T.T. Agent CLI
 

@@ -31,7 +31,7 @@ from kitt.goals.auto_contract import (
     iter_automatic_contract,
 )
 from kitt.goals.contract_validation import ContractValidator, parse_validation_report
-from kitt_protocol import decode_kap2_content
+from kitt_protocol import decode_json_object
 from kitt.goals.progress import publish_goal_progress
 from kitt.goals.executor import GoalStepExecutor
 from kitt.goals.scheduler import GoalScheduler
@@ -89,31 +89,8 @@ def _item(
 
 
 
-def _as_kap_final(payload):
-    """Fake WebChat response using the current KAP/1 transport contract."""
-    lines = ["KITT/1", "ACTION FINAL"]
-    def emit(path, value):
-        if isinstance(value, dict):
-            lines.append("OBJECT " + path)
-            for key, item in value.items():
-                emit(path + "." + str(key), item)
-        elif isinstance(value, list):
-            lines.append("ARRAY " + path)
-            for index, item in enumerate(value):
-                emit(path + "." + str(index), item)
-        elif isinstance(value, str):
-            if "\n" in value:
-                lines.extend(["TEXT " + path, value, "KITT/ENDTEXT"])
-            else:
-                lines.append("STRING " + path + " = " + value)
-        elif isinstance(value, bool):
-            lines.append("BOOLEAN " + path + " = " + str(value).lower())
-        elif value is None:
-            lines.append("NULL " + path)
-        else:
-            lines.append(("INTEGER " if isinstance(value, int) else "DECIMAL ") + path + " = " + str(value))
-    emit("content", payload)
-    return "\n".join(lines + ["KITT/END"])
+def _as_json_result(payload):
+    return json.dumps(payload)
 
 class GoalContractTests(unittest.TestCase):
     def setUp(self):
@@ -246,7 +223,7 @@ class GoalContractTests(unittest.TestCase):
         reviewer_prompt = ask.call_args_list[1].args[1]
         review_payload = json.loads(
             reviewer_prompt.split("Contract:", 1)[1].split(
-                "Return one KAP/2", 1
+                "Return one JSON", 1
             )[0].strip()
         )
         self.assertEqual(review_payload["items"], result)
@@ -331,9 +308,9 @@ class GoalContractTests(unittest.TestCase):
                 dispatched.append(messages[-1]["content"])
                 self_outer.assertNotIn("max_prompt_tokens", kwargs["request_metadata"])
                 if len(dispatched) == 1:
-                    yield _as_kap_final(payload)
+                    yield _as_json_result(payload)
                 else:
-                    yield _as_kap_final({"verdict": "OK", "issues": []})
+                    yield _as_json_result({"verdict": "OK", "issues": []})
 
         processor = TurnProcessor(
             root_dir=self.tmp.name, workspace_id="ws", execution_client=Client(),
@@ -354,7 +331,7 @@ class GoalContractTests(unittest.TestCase):
                 self.assertGreater(allocation["total_input_tokens"], 8192)
                 self.assertEqual(allocation["reserved_output_tokens"], 0)
             self.assertIn(json.dumps(objective), dispatched[1])
-            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nReturn one KAP/2", 1)[0])
+            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nReturn one JSON", 1)[0])
             self.assertEqual(review["objective"], objective)
             self.assertEqual(review["items"], accepted)
         finally:
@@ -402,14 +379,14 @@ class GoalContractTests(unittest.TestCase):
     def test_capture_timeout_requires_explicit_resume_and_consumes_no_global_retries(self):
         error = (
             "KITT reverse proxy: ui_timeout: ChatGPT finished, but no fresh "
-            "assistant response was captured. No KAP action was received or executed."
+            "assistant response was captured. No model action was received or executed."
         )
         self.assertTrue(GoalStepExecutor._ambiguous_webchat_capture(error))
         self.assertFalse(GoalStepExecutor._ambiguous_webchat_capture(
             "KITT reverse proxy: ui_timeout: unrelated network failure"
         ))
         self.assertFalse(GoalStepExecutor._ambiguous_webchat_capture(
-            "A test script printed ui_timeout and No KAP action was received or executed"
+            "A test script printed ui_timeout and No model action was received or executed"
         ))
 
         goal = self._contract()
@@ -667,20 +644,19 @@ class GoalContractTests(unittest.TestCase):
         self.assertTrue(processor.command.no_history)
         self.assertIn("src/domain.ts", processor.command.explicit_files)
         prompt = processor.command.prompt
-        example = prompt[prompt.index("K2 F\n"):prompt.index("K2/END") + len("K2/END")]
+        example = prompt.split("FAIL example:\n", 1)[1]
         failure = parse_validation_report(example)
         self.assertFalse(failure.ok)
         self.assertEqual(failure.issues[0]["severity"], "P1")
-        self.assertNotIn("Return one JSON", prompt)
+        self.assertNotIn("K2 F", prompt)
         completion = AutonomousCompletionEngine().build_execution_prompt(
             SimpleNamespace(success_criteria=["Compile domain models"], gates=[]), "Implement models"
         )
-        final_start = completion.index("K2 F\n")
-        example = completion[final_start:completion.index("K2/END", final_start) + len("K2/END")]
-        self.assertEqual(decode_kap2_content(example)["criteria"][0]["satisfied"], True)
-        self.assertNotIn("Return one JSON", completion)
+        example = completion.split("Final example:\n", 1)[1].split("\n",1)[0]
+        self.assertEqual(decode_json_object(example)["criteria"][0]["satisfied"], True)
+        self.assertNotIn("K2 F", completion)
         self.assertIn("EXECUTION FIRST", completion)
-        self.assertIn("K2 T kitt_runtime", completion)
+        self.assertIn('"action":"use_tool"', completion)
         self.assertIn("Only AFTER the required host tool actions", completion)
 
 

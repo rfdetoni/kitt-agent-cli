@@ -50,7 +50,7 @@ class GoalStepExecutor:
         return (
             "kitt reverse proxy" in value
             and "ui_timeout" in value
-            and "no kap action was received or executed" in value
+            and "no model action was received or executed" in value
         )
 
     def __init__(self, runtime_getter, reviewer_factory=None):

@@ -13,8 +13,9 @@ class ProtocolLockTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         expected = importlib.metadata.version("kitt-protocol")
         self.assertEqual(entries[0]["version"], expected)
-        from kitt_protocol import negotiate_kap_version
-        self.assertEqual(negotiate_kap_version("KAP/2"), "KAP/2")
+        from kitt_protocol import AGENT_CONTRACT_VERSION, decode_json_object
+        self.assertEqual(AGENT_CONTRACT_VERSION, "v5")
+        self.assertEqual(decode_json_object('{"format":"json"}'), {"format":"json"})
 
 
 if __name__ == "__main__":

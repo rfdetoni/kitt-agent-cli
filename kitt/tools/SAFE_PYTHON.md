@@ -52,18 +52,24 @@ O subprocesso é defesa em profundidade. A fronteira primária é o interpretado
 
 Acesso ao projeto deve ocorrer por read_file, search, repository_map ou ferramenta controlada pela policy. Alterações passam por apply_patch e aprovação.
 
-## Envelope KAP/2
+## JSON host action
 
 A operação `sandbox.python` reutiliza o executor `python_compute`:
 
-```text
-K2 T kitt_runtime
-operation: sandbox.python
-arguments:
-  code<<PY
-_result = sum([1, 2, 3])
-PY
-K2/END
+```json
+{
+  "action": "use_tool",
+  "tool": "kitt_runtime",
+  "tool_input": {
+    "operation": "sandbox.python",
+    "arguments": {
+      "code": "_result = sum([1, 2, 3])"
+    }
+  },
+  "content": null,
+  "reasoning_summary": "Compute the sum.",
+  "loop": null
+}
 ```
 
 Exige a capability `compute.safe`. O código continua limitado ao subconjunto
