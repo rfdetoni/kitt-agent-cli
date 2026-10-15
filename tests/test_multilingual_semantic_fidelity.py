@@ -59,6 +59,22 @@ class LiteralSemanticsTests(unittest.TestCase):
                 for span in spans:
                     self.assertEqual(prompt[span.source_start:span.source_end], span.text)
 
+    def test_read_only_fallback_does_not_expose_workspace_mutation_tools(self):
+        fallback = DeterministicFallbackPlanner()
+        for prompt in (
+            "Explain UserService.java without modifying any files.",
+            "Revisa UserService.java; no apliques ninguna corrección.",
+            "Planeje a refatoração de UserService.java sem executar.",
+        ):
+            with self.subTest(prompt=prompt):
+                task = fallback.generate_task(prompt)
+                plan = fallback.generate_plan(task)
+                if task.intent in {"ASK", "PLAN", "REVIEW"}:
+                    self.assertTrue(set(plan.enabled_tools).isdisjoint({
+                        "write_file", "apply_patch", "run_command", "create_directory",
+                    }))
+                    self.assertTrue(plan.include_original_prompt)
+
     def test_explanations_and_reviews_do_not_become_write_requests(self):
         fallback = DeterministicFallbackPlanner()
         cases = {

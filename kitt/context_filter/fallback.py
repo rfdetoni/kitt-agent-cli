@@ -123,7 +123,7 @@ def _execution_actions(
     actions = ['analyze', 'edit']
 
     if intent == 'PLAN':
-        return actions + [
+        return ['analyze',
             'inspect the relevant workspace structure and existing implementation',
             'produce an ordered implementation checklist with target files, risks, and validation',
         ]
@@ -239,8 +239,15 @@ class DeterministicFallbackPlanner:
         )
 
     def generate_plan(self, task: SemanticTask) -> ContextPlan:
-        if task.intent == 'ASK' and not task.paths and not task.symbols:
-            return ContextPlan(confidence=1.0)
+        if task.intent in {'ASK', 'PLAN', 'REVIEW'}:
+            return ContextPlan(
+                search_queries=list(dict.fromkeys([*task.paths, *task.symbols])),
+                candidate_symbols=task.symbols,
+                preferred_paths=task.paths,
+                enabled_tools=['read_file', 'search', 'repository_map', 'artifact_read'],
+                confidence=task.confidence,
+                include_original_prompt=True,
+            )
         container_runtime = task.intent == 'TEST' and any(
             tech in {"docker", "podman", "kubernetes", "helm"}
             for tech in task.technologies
