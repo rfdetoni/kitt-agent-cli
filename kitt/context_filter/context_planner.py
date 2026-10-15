@@ -17,7 +17,7 @@ class ContextPlanner:
 
         # High confidence (>=0.90) AND fidelity passed -> IR_ONLY (include_original_prompt = False)
         # Otherwise -> include_original_prompt = True
-        include_original_prompt = not (task.confidence >= IR_ONLY_CONFIDENCE_THRESHOLD and fidelity_passed)
+        include_original_prompt = True  # Never discard the human instruction
 
         return ContextPlan(
             search_queries=search_queries,

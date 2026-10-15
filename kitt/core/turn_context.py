@@ -603,24 +603,9 @@ class TurnContextMixin:
         # Browser-backed execution is LLM-first: the original human request is
         # authoritative and is never replaced by a KITT-generated semantic summary.
         llm_first_proxy = _reverse_proxy_identity(exe_profile) is not None
-        if llm_first_proxy:
-            principal_task_prompt = cmd.prompt
-        elif plan.enabled_tools:
-            if getattr(task, "confidence", 1.0) < 0.70:
-                principal_task_prompt = cmd.prompt
-            elif not plan.include_original_prompt and task.goal and task.intent != "UNKNOWN":
-                principal_task_prompt = task.to_execution_prompt()
-            elif task.goal and task.intent != "UNKNOWN" and task.confidence >= 0.70:
-                semantic_prompt = task.to_execution_prompt()
-                principal_task_prompt = (
-                    semantic_prompt
-                    if self._goal_preserves_original_request(task, cmd.prompt)
-                    else f"{semantic_prompt}\n\nOriginal Request:\n{cmd.prompt}"
-                )
-            else:
-                principal_task_prompt = cmd.prompt
-        else:
-            principal_task_prompt = cmd.prompt
+        # The original request is authoritative; semantic metadata only hints
+        # routing and retrieval, even when classifier confidence is high.
+        principal_task_prompt = cmd.prompt
 
         history_context = (
             ""
