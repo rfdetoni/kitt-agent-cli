@@ -277,3 +277,7 @@ python packaging/verify_cleanroom.py
 MIT. Consulte [LICENSE](LICENSE).
 
 > O README em inglês é a fonte canônica para detalhes extensos e notas históricas. Este documento mantém o caminho de adoção e as decisões arquiteturais essenciais em português.
+
+### Léxico semântico local PT-BR / EN / ES
+
+O vocabulário linguístico opcional utiliza comandos revisados e pode importar UniMorph, Open Multilingual Wordnet e enriquecimento por `wordfreq`/Snowball/spaCy **em tempo de compilação**, sem adicionar dependências de runtime. Consulte [o guia do léxico](docs/SEMANTIC_LEXICON.md) para licenças, preparação offline e configuração. O modo semântico continua desligado por padrão e não substitui as aprovações de execução.

@@ -1185,3 +1185,7 @@ Agent CLI 0.77.3 fixes three user-facing execution issues:
 - Reverse-proxy prompt compaction can safely remove the textual `Tool Contract` without dropping `kitt_runtime`.
 - The structural schema preserves the exact per-turn `kitt_runtime.operation` allowlist; host policy and approval checks remain authoritative.
 - Added a regression test for compact discovery prompts with structural tools.
+
+### Optional offline multilingual lexicon
+
+The local PT-BR/EN/ES lexicon optionally imports UniMorph inflections, Open Multilingual Wordnet suggestions, and build-time wordfreq/Snowball/spaCy metadata. It makes no runtime downloads; all corpus licensing and operator-owned index setup are documented in [SEMANTIC_LEXICON.md](docs/SEMANTIC_LEXICON.md). This path is opt-in and never grants execution permission.

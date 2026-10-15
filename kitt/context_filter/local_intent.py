@@ -13,6 +13,7 @@ from typing import Sequence
 
 from kitt.context.rag.embeddings import EmbeddingError, OllamaEmbeddingProvider
 from kitt.context_filter.fallback import DeterministicFallbackPlanner
+from kitt.context_filter.lexicon import lexical_intent
 from kitt.domain.entities import SemanticTask
 
 # Dataset revision is part of the decision policy and model-cache identity.
@@ -131,7 +132,7 @@ def deterministic_intent(prompt: str) -> str | None:
                 # A complex mix is left to the original generative planner.
                 return None
             return intent
-    return None
+    return lexical_intent(original)
 
 
 def explicit_task(prompt: str) -> SemanticTask | None:
