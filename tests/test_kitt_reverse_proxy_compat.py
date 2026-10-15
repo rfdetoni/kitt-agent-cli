@@ -105,6 +105,18 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                         system_prompt=prompt,
                     )))
 
+
+    def test_ui_timeout_is_not_misreported_as_kap_parse_failure(self):
+        error = {"error": {"code": "ui_timeout", "message": "assistant not captured"}}
+        raw = ("data: " + json.dumps(error) + "\n\ndata: [DONE]\n").encode()
+        request = LLMRequest(model="chatgpt-web", messages=[{"role": "user", "content": "inspect"}])
+        with patch("kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
+                   return_value=io.BytesIO(raw)):
+            with self.assertRaisesRegex(
+                ProviderProtocolError, "No KAP action was received or executed"
+            ):
+                list(KittReverseProxyAdapter().stream(request))
+
     def test_oversized_sse_line_is_read_with_a_bound(self):
         class BoundedResponse(io.BytesIO):
             def readline(self, size=-1):

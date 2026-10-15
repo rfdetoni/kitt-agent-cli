@@ -1,6 +1,15 @@
-## Agent CLI 0.87.24 — configurable LLM routing per specialist
+## Agent CLI 0.87.25 — configurable LLM routing per specialist
 
-Specialist plugins now declare `[agents.<id>.llm]` preferences: automatic, preferred/fallback or fixed profiles, output/temperature/reasoning limits, tool requirements and remote egress restriction. Each child takes an immutable admitted model snapshot from the existing TaskRouter (Ollama, direct providers or distinct KITT reverse-proxy instances), with scoped session isolation and bounded `ProviderCircuitPool` failover. Edit without touching plugin trust via `kitt agents model <id> --mode preferred --primary review-proxy --fallbacks execute` or `/agent model <id> preferred review-proxy execute`. See [release details](docs/RELEASE_0.87.24.md).
+## Agent CLI 0.87.24 — explicit WebChat capture failure
+
+The reverse-proxy client now distinguishes `ui_timeout` (the website request
+was submitted but its assistant response could not be extracted) from KAP/2
+syntax failures. It reports that **no KAP action was received or executed**
+and asks for authenticated WebChat session inspection before an explicit retry;
+it does not replay a potentially executed action automatically.
+The Python dependency on `kitt-protocol` is pinned to immutable revision
+`cc3b51dd0e868adaab4ed7a0069c4dbf9aa08c42`; the release manifest tracks the exact component SHA.
+See [release 0.87.24](docs/RELEASE_0.87.24.md) and Reverse Proxy 5.3.15.
 
 ## Agent CLI 0.87.23 — pluggable specialist agents
 

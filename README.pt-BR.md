@@ -1,6 +1,6 @@
-## Agent CLI 0.87.24 — roteamento LLM independente por agente
+## Agent CLI 0.87.25 — roteamento LLM independente por agente
 
-Cada especialista suporta seleção de modelo automática, preferencial (com fallbacks) ou fixa, usando os perfis já existentes do TaskRouter. Provedores comuns, Ollama e instâncias distintas do reverse-proxy são aceitos. Use `kitt agents model critic --mode preferred --primary review-proxy --fallbacks execute` ou `/agent model critic preferred review-proxy execute`. O modelo é fixado na admissão da tarefa, com privacidade e isolamento de sessão, e o failover é limitado aos modelos configurados. Veja [detalhes](docs/RELEASE_0.87.24.md).
+Cada especialista suporta seleção de modelo automática, preferencial (com fallbacks) ou fixa, usando os perfis já existentes do TaskRouter. Provedores comuns, Ollama e instâncias distintas do reverse-proxy são aceitos. Use `kitt agents model critic --mode preferred --primary review-proxy --fallbacks execute` ou `/agent model critic preferred review-proxy execute`. O modelo é fixado na admissão da tarefa, com privacidade e isolamento de sessão, e o failover é limitado aos modelos configurados. Veja [detalhes](docs/RELEASE_0.87.25.md).
 
 ## Agent CLI 0.87.23 — especialistas em plugins
 
