@@ -103,12 +103,12 @@ def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
     if phase == "generating":
         status = f"PLANNING {step}"
         summary = f"Gerando plano com LLM (tentativa {step}); aguardando resposta, ainda sem execução."
-    elif phase == "reviewing":
-        status = f"REVIEWING {step}"
-        summary = f"Validando plano: revisor independente avaliando critérios e dependências (tentativa {step})."
+    elif phase == "checking":
+        status = f"PLAN CHECK {step}"
+        summary = f"Checagem local do plano: estrutura, dependências, caminhos e checks (tentativa {step}); sem nova chamada LLM."
     elif phase == "revising":
         status = f"REVISING {step}"
-        summary = f"Revisor solicitou {max(0, event.issues)} ajuste(s); preparando nova tentativa {step}."
+        summary = f"Host encontrou {max(0, event.issues)} erro(s) de estrutura; corrigindo na tentativa {step}."
     elif phase == "rejected":
         status, summary = "PLAN REJECTED", "Tentativas esgotadas; execução não iniciada."
     elif phase == "accepted":
@@ -153,7 +153,7 @@ def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
             id=f"contract-phase-{state.transcript_sequence}",
             kind="system",
             text=f"◈ {summary}",
-            status="running" if phase in {"generating", "reviewing"} else "done",
+            status="running" if phase in {"generating", "checking"} else "done",
             started_at=now,
             metadata={"contract_phase": phase},
         )
@@ -163,7 +163,7 @@ def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
 
 
 def handle_thinking_started(state: UIState, event: ThinkingStarted) -> None:
-    if state.contract_phase in {"generating", "reviewing"}:
+    if state.contract_phase in {"generating", "checking"}:
         # A nested model call is not a separate stage of the outer contract.
         return
     state.status_text = "THINKING"
@@ -178,7 +178,7 @@ def handle_thinking_started(state: UIState, event: ThinkingStarted) -> None:
 
 
 def handle_thinking_completed(state: UIState, event: ThinkingCompleted) -> None:
-    if state.contract_phase in {"generating", "reviewing"}:
+    if state.contract_phase in {"generating", "checking"}:
         return
     for block in reversed(state.transcript):
         if block.kind == "thought" and block.status == "running":

@@ -37,36 +37,25 @@ def _collect(iterator):
             return events, done.value
 
 
-def test_plan_review_revisions_stream_distinct_phases(tmp_path):
-    planner = ContractPlanner(SimpleNamespace(
-        canonical_root=tmp_path, workspace_id="workspace", processor=SimpleNamespace(),
-    ))
-    with patch.object(planner, "_run_plan_turn", return_value=_proposal()) as run, patch.object(
-        planner, "_review_high_risk", side_effect=[["Fix the dependency"], []],
-    ):
-        events, items = _collect(planner.iter_plan("conv", "Create a safe inventory"))
-    assert [event.phase for event in events] == [
-        "generating", "reviewing", "revising",
-        "generating", "reviewing", "accepted",
-    ]
-    assert [(event.attempt, event.issues) for event in events if event.phase == "revising"] == [(1, 1)]
+def test_local_structure_correction_streams_distinct_phases(tmp_path):
+    planner = ContractPlanner(SimpleNamespace(canonical_root=tmp_path,workspace_id="workspace",processor=SimpleNamespace()))
+    invalid = json.loads(_proposal());invalid["items"][0]["depends_on"]=["missing"]
+    with patch.object(planner,"_run_plan_turn",side_effect=[json.dumps(invalid),_proposal()]) as run:
+        events,items = _collect(planner.iter_plan("conv","Create a safe inventory"))
+    assert [e.phase for e in events] == ["generating","checking","revising","generating","checking","accepted"]
     assert items[0]["local_id"] == "T00"
     assert run.call_count == 2
 
 
-def test_three_revisions_have_explicit_terminal_failure(tmp_path):
-    planner = ContractPlanner(SimpleNamespace(
-        canonical_root=tmp_path, workspace_id="workspace", processor=SimpleNamespace(),
-    ))
+def test_invalid_plan_gets_one_correction_then_explicit_failure(tmp_path):
+    planner = ContractPlanner(SimpleNamespace(canonical_root=tmp_path,workspace_id="workspace",processor=SimpleNamespace()))
     events = []
-    with patch.object(planner, "_run_plan_turn", return_value=_proposal()), patch.object(
-        planner, "_review_high_risk", return_value=["Missing proof"],
-    ):
-        generator = planner.iter_plan("conv", "Create a safe inventory")
-        with pytest.raises(ValueError, match="failed after 3 attempts"):
-            while True:
-                events.append(next(generator))
-    assert [e.attempt for e in events if e.phase == "revising"] == [1, 2, 3]
+    with patch.object(planner,"_run_plan_turn",return_value='{"items":"invalid"}') as run:
+        generator = planner.iter_plan("conv","Create a safe inventory")
+        with pytest.raises(ValueError,match="failed after 2 attempts"):
+            while True: events.append(next(generator))
+    assert run.call_count == 2
+    assert [e.attempt for e in events if e.phase=="revising"] == [1]
     assert events[-1].phase == "rejected"
 
 
@@ -76,10 +65,10 @@ def test_tui_shows_planning_and_review_without_false_completion():
     reduce_ui_event(state, ContractProgress(phase="generating", attempt=1, max_attempts=3))
     assert state.status_text == "PLANNING 1/3"
     assert "ainda sem execução" in state.active_tasks[0].summary
-    reduce_ui_event(state, ContractProgress(phase="reviewing", attempt=1, max_attempts=3))
-    assert state.status_text == "REVIEWING 1/3"
+    reduce_ui_event(state, ContractProgress(phase="checking", attempt=1, max_attempts=3))
+    assert state.status_text == "PLAN CHECK 1/3"
     reduce_ui_event(state, ContractProgress(phase="revising", attempt=1, max_attempts=3, issues=4))
-    assert "4 ajuste" in state.active_tasks[0].summary
+    assert "4 erro" in state.active_tasks[0].summary
     reduce_ui_event(state, ContractProgress(phase="executing", task_id="T00",
                                             task_state="RUNNING", completed=0, total=11))
     assert state.status_text == "GOAL EXECUTION"
@@ -88,56 +77,38 @@ def test_tui_shows_planning_and_review_without_false_completion():
 
 
 def test_daemon_preserves_progress_fields_across_ipc():
-    payload = {"phase": "reviewing", "attempt": 2, "max_attempts": 3, "issues": 1}
+    payload = {"phase": "checking", "attempt": 2, "max_attempts": 3, "issues": 1}
     wire = SimpleNamespace(event_type="ContractProgress", payload=payload)
     event = map_daemon_event_to_turn_event(wire)
     assert isinstance(event, ContractProgress)
-    assert event.phase == "reviewing"
+    assert event.phase == "checking"
     assert event.attempt == 2
     assert event.max_attempts == 3
 
 
-def test_review_retry_edits_validated_plan_not_freeform_redecomposition(tmp_path):
-    planner = ContractPlanner(SimpleNamespace(
-        canonical_root=tmp_path, workspace_id="workspace", processor=SimpleNamespace(),
-    ))
-    with patch.object(
-        planner, "_run_plan_turn", side_effect=[_proposal(), _proposal()],
-    ) as run, patch.object(
-        planner, "_review_high_risk", side_effect=[["T00 must wait for verified workspace"], []],
-    ):
-        events, items = _collect(planner.iter_plan("conv", "Build authorized inventory"))
-    retry_prompt = run.call_args_list[1].args[1]
-    assert "REVISION OF HOST-VALIDATED PLAN" in retry_prompt
-    assert "T00 must wait for verified workspace" in retry_prompt
-    assert '"local_id":"T00"' in retry_prompt
-    assert "not a fresh decomposition" in retry_prompt
-    assert [event.phase for event in events][-1] == "accepted"
-    assert [item["local_id"] for item in items] == ["T00", "FINAL"]
+def test_structure_correction_carries_only_host_diagnostics_and_original_request(tmp_path):
+    planner = ContractPlanner(SimpleNamespace(canonical_root=tmp_path,workspace_id="workspace",processor=SimpleNamespace()))
+    invalid = json.loads(_proposal());invalid["items"][0]["depends_on"]=["missing"]
+    with patch.object(planner,"_run_plan_turn",side_effect=[json.dumps(invalid),_proposal()]) as run:
+        events,items = _collect(planner.iter_plan("conv","Build authorized inventory"))
+    prompt = run.call_args_list[1].args[1]
+    assert "Build authorized inventory" in prompt and "earlier ids" in prompt
+    assert "Correct the reported host structural error only" in prompt
+    assert events[-1].phase == "accepted" and len(items)==2
 
 
-def test_malformed_revision_retains_unresolved_review_issues(tmp_path):
-    planner = ContractPlanner(SimpleNamespace(
-        canonical_root=tmp_path, workspace_id="workspace", processor=SimpleNamespace(),
-    ))
-    with patch.object(
-        planner, "_run_plan_turn",
-        side_effect=[_proposal(), '{"items":"invalid"}', _proposal()],
-    ) as run, patch.object(
-        planner, "_review_high_risk", side_effect=[["Keep Windows execution gated"], []],
-    ):
-        events, items = _collect(planner.iter_plan("conv", "Build authorized inventory"))
-    third_prompt = run.call_args_list[2].args[1]
-    assert "Keep Windows execution gated" in third_prompt
-    assert "Host validation:" in third_prompt
-    assert [event.phase for event in events][-1] == "accepted"
-    assert len(items) == 2
+def test_malformed_correction_never_becomes_an_accepted_plan(tmp_path):
+    planner = ContractPlanner(SimpleNamespace(canonical_root=tmp_path,workspace_id="workspace",processor=SimpleNamespace()))
+    with patch.object(planner,"_run_plan_turn",side_effect=['{"items":[]}','{"items":"invalid"}']) as run:
+        with pytest.raises(ValueError,match="failed after 2 attempts"):
+            _collect(planner.iter_plan("conv","Build authorized inventory"))
+    assert run.call_count == 2
 
 
 def test_simulated_daemon_event_reaches_tui_before_real_tools():
     state = UIState()
     state.init_turn_tasks("Build Observatory")
-    for phase, attempt in (("generating", 1), ("reviewing", 1),
+    for phase, attempt in (("generating", 1), ("checking", 1),
                            ("revising", 1), ("generating", 2)):
         wire = SimpleNamespace(
             event_type="ContractProgress",
@@ -162,13 +133,13 @@ def test_tui_render_contains_live_review_phase_in_hud_and_transcript():
     state.init_turn_tasks("Build Observatory")
     wire = SimpleNamespace(
         event_type="ContractProgress",
-        payload={"phase": "reviewing", "attempt": 2, "max_attempts": 3},
+        payload={"phase": "checking", "attempt": 2, "max_attempts": 3},
     )
     reduce_ui_event(state, map_daemon_event_to_turn_event(wire))
     ui = SimpleNamespace(state=state)
-    assert "REVIEWING 2/3" in _status_text(ui)
+    assert "PLAN CHECK 2/3" in _status_text(ui)
     output = "".join(value for _, value in _transcript_text(ui))
-    assert "Validando plano" in output
+    assert "Checagem local" in output
     assert "tentativa 2/3" in output
     assert "✔" not in output
 
@@ -190,25 +161,38 @@ def test_long_llm_wait_has_stage_and_real_elapsed_without_fake_progress(monkeypa
     assert "aguardando resposta do provedor" in display
     assert "PLANNING 1/3" in _status_text(ui)
     assert "aguardando LLM" in StatusBarComponent().render(state, width=125)
-    reduce_ui_event(state, ContractProgress(phase="reviewing", attempt=1, max_attempts=3))
+    reduce_ui_event(state, ContractProgress(phase="checking", attempt=1, max_attempts=3))
     assert state.transcript[-2].status == "done"
     assert state.transcript[-1].status == "running"
-    assert "REVIEWING 1/3" in StatusBarComponent().render(state, width=125)
+    assert "checagem local" in StatusBarComponent().render(state, width=125)
+    assert "aguardando LLM" not in StatusBarComponent().render(state, width=125)
     reduce_ui_event(state, ContractProgress(phase="revising", attempt=1, max_attempts=3, issues=2))
     assert state.transcript[-2].status == "done"
     assert next(block for block in state.transcript if block.metadata.get("contract_phase")).status == "done"
-    assert "2 ajuste" in state.active_tasks[0].summary
+    assert "2 erro" in state.active_tasks[0].summary
 
 
 def test_thinking_events_do_not_clobber_contract_phase():
     from kitt.core.turn_events import ThinkingStarted, ThinkingCompleted, TurnFailed
     state = UIState()
     state.init_turn_tasks("Build observatory")
-    reduce_ui_event(state, ContractProgress(phase="reviewing", attempt=2, max_attempts=3))
+    reduce_ui_event(state, ContractProgress(phase="checking", attempt=2, max_attempts=3))
     reduce_ui_event(state, ThinkingStarted())
     reduce_ui_event(state, ThinkingCompleted(duration_ms=500))
-    assert state.status_text == "REVIEWING 2/3"
+    assert state.status_text == "PLAN CHECK 2/3"
     assert not any(block.kind == "thought" for block in state.transcript)
     reduce_ui_event(state, TurnFailed(error="ui_timeout"))
     assert state.contract_phase == ""
     assert next(block for block in state.transcript if block.metadata.get("contract_phase")).status == "done"
+
+
+def test_high_risk_plan_uses_one_generation_and_local_acceptance(tmp_path):
+    planner = ContractPlanner(SimpleNamespace(
+        canonical_root=tmp_path, workspace_id='workspace', processor=SimpleNamespace(),
+    ))
+    proposal = _proposal().replace('README.md','security/policy.py')
+    with patch.object(planner, '_run_plan_turn', side_effect=[proposal, AssertionError('unexpected plan review')]) as run:
+        events, items = _collect(planner.iter_plan('conv','Harden security'))
+    assert run.call_count == 1
+    assert [event.phase for event in events] == ['generating','checking','accepted']
+    assert items[0]['paths'] == ['security/policy.py']

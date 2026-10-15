@@ -38,3 +38,14 @@ def parse_structured_result(response: str) -> dict:
     text = str(response or "").strip()
     fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```", text, re.IGNORECASE)
     return decode_json_object(fenced[1] if fenced else text)
+
+
+def structured_result_instruction() -> str:
+    """Keep application result schemas inside the active provider contract."""
+    return (
+        "Return the requested structured JSON result using the active provider output contract. "
+        "If an Agent action envelope is required, use final_response and put the result object "
+        "in content; tool, tool_input and loop must be null. Otherwise return the result object "
+        "directly. Do not replace the provider envelope with the result schema. "
+        "No Markdown fences or extra prose."
+    )

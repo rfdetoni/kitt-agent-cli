@@ -203,7 +203,7 @@ class GoalContractTests(unittest.TestCase):
         self.assertEqual(accepted[-1]["paths"], ["reports/final.md"])
         self.assertEqual(steps[-1], accepted[-1])
 
-    def test_high_risk_reviewer_sees_unchanged_final_criteria(self):
+    def test_local_acceptance_preserves_authored_final_criteria(self):
         planner = ContractPlanner(SimpleNamespace(
             canonical_root=Path(self.tmp.name),
             workspace_id="ws", processor=SimpleNamespace(),
@@ -220,13 +220,7 @@ class GoalContractTests(unittest.TestCase):
             json.dumps(proposal), '{"verdict":"OK","issues":[]}',
         ]) as ask:
             result = planner.plan("conv", "Implement a verifiable review workflow")
-        reviewer_prompt = ask.call_args_list[1].args[1]
-        review_payload = json.loads(
-            reviewer_prompt.split("Contract:", 1)[1].split(
-                "Return one JSON", 1
-            )[0].strip()
-        )
-        self.assertEqual(review_payload["items"], result)
+        self.assertEqual(ask.call_count, 1)
         self.assertEqual(result[-1]["success_criteria"], ["Document verified result"])
         self.assertEqual(result[-1]["depends_on"], ["T01"])
 
@@ -251,7 +245,7 @@ class GoalContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at least one task plus FINAL"):
             planner.validate(final_only)
 
-    def test_high_risk_plan_is_reviewed_before_acceptance(self):
+    def test_high_risk_plan_is_locally_validated_before_acceptance(self):
         runtime = SimpleNamespace(
             canonical_root=Path(self.tmp.name),
             workspace_id="ws",
@@ -273,15 +267,12 @@ class GoalContractTests(unittest.TestCase):
         ) as run:
             items = planner.plan("conv", "Harden the security policy")
         self.assertEqual(items[0]["local_id"], "T01")
-        self.assertEqual(run.call_count, 2)
-        self.assertEqual(
-            run.call_args_list[1].kwargs["principal_type"],
-            "CONTRACT_REVIEWER",
-        )
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(items[0]["paths"], ["security/policy.py"])
 
     def test_long_high_risk_contract_delegates_token_limits_to_webchat(self):
         # A WebChat prompt may exceed local profile placeholders and turn token
-        # quotas. Neither planning nor the required review may truncate it.
+        # quotas. Local acceptance must retain the entire objective without another model turn.
         objective = ("Implement authentication and isolated user journeys. " * 700).strip()
         tasks = [
             _item(f"T{index:02}", paths=["src/auth/domain.ts"])
@@ -305,6 +296,8 @@ class GoalContractTests(unittest.TestCase):
             )
 
             def chat_stream(self, messages, **kwargs):
+                self_outer.assertFalse(kwargs.get("tools"))
+                self_outer.assertFalse(kwargs.get("tool_definitions"))
                 dispatched.append(messages[-1]["content"])
                 self_outer.assertNotIn("max_prompt_tokens", kwargs["request_metadata"])
                 if len(dispatched) == 1:
@@ -325,15 +318,12 @@ class GoalContractTests(unittest.TestCase):
             ))
             accepted = planner.plan("conv", objective)
             self.assertEqual(len(accepted), 8)
-            self.assertEqual(len(dispatched), 2)
-            self.assertEqual(len(allocations), 2)
+            self.assertEqual(len(dispatched), 1)
+            self.assertEqual(len(allocations), 1)
             for allocation in allocations:
                 self.assertGreater(allocation["total_input_tokens"], 8192)
                 self.assertEqual(allocation["reserved_output_tokens"], 0)
-            self.assertIn(json.dumps(objective), dispatched[1])
-            review = json.loads(dispatched[1].split("Contract:\n", 1)[1].split("\n\nReturn one JSON", 1)[0])
-            self.assertEqual(review["objective"], objective)
-            self.assertEqual(review["items"], accepted)
+            self.assertIn(objective, dispatched[0])
         finally:
             processor.close()
             processor.registry.close()

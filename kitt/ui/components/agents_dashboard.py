@@ -21,7 +21,7 @@ class AgentsDashboardComponent:
             tag = "[CHILD]" if task.kind == "child_agent" else "[CORE]"
             label = f"{glyph} {tag} {task.name:<24}"
             amount = ("AGUARDO" if task.kind != "child_agent"
-                      and state.contract_phase in {"generating", "reviewing"}
+                      and state.contract_phase in {"generating", "checking"}
                       else f"{task.progress:>3}%")
             row = f"│ {label} [{bar}] {amount:>7}  {task.summary[:28]:<28} │"
             colored = t.format_primary(row) if task.status == "running" else \

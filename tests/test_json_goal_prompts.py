@@ -1,6 +1,6 @@
 """Examples in model instructions use the active JSON result contract."""
-import json
 from kitt.goals.contract import ContractPlanner
+from kitt.llm.agent_contract import structured_result_instruction
 from kitt.goals.contract_validation import _VALIDATION_JSON_EXAMPLE, parse_validation_report
 from kitt_protocol import decode_json_object
 
@@ -20,8 +20,8 @@ def test_planner_example_decodes_to_required_task_and_final():
 
 
 def test_review_prompt_and_validation_example_use_json():
-    prompt = ContractPlanner._review_prompt("Improve something", [], "LOW")
-    assert json.dumps({"verdict":"OK","issues":[]},separators=(",",":")) in prompt
+    prompt = structured_result_instruction()
+    assert "final_response" in prompt and "in content" in prompt
     assert "K2 " not in prompt and "KAP" not in prompt
     payload = decode_json_object(_VALIDATION_JSON_EXAMPLE)
     assert payload["verdict"] == "FAIL"

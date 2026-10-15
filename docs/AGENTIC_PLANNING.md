@@ -1,3 +1,11 @@
+# Current automatic Goal planning (0.88.1)
+
+One model proposes a concise plan with no execution tools; the host checks its existing schema, bounded size, IDs, dependencies, workspace paths, acceptance criteria and known check IDs locally. A valid plan proceeds immediately. One structural correction is allowed, then planning fails explicitly. There is no mandatory LLM review of the proposal before execution.
+
+Repository discovery belongs to the first execution task. Task execution still requires normal host authority and retains deterministic verification, independent code/task validation, risk-aware review and final integration checks. The UI phase is `checking` (local), not a waiting reviewer call. JSON results use the active provider envelope (`final_response.content` for Agent v5).
+
+The sections below document historical releases and do not override the current flow.
+
 > Current wire format: JSON with Agent contract v5. See [0.88.0](RELEASE_0.88.0.md). Examples below describe archived releases and must not be used in active prompts.
 
 # Agent CLI 0.82.0: plans, verification and child containment

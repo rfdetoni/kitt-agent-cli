@@ -1130,14 +1130,15 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             yield ContextResolved(resolved_count=len(context_blocks) + len(explicit_items))
 
             llm_first_proxy = _reverse_proxy_identity(exe_profile) is not None
+            contract_planning = str(getattr(cmd.security_context, "principal_type", "")).upper() == "CONTRACT_PLANNER"
             execution_slice = None
             architect_handoff = None
-            if llm_first_proxy:
+            if llm_first_proxy or contract_planning:
                 trace_event(
                     logger,
                     "architect.skipped",
                     turn_id=cmd.turn_id,
-                    reason="llm_first_reverse_proxy_loop",
+                    reason="contract_decomposition" if contract_planning else "llm_first_reverse_proxy_loop",
                 )
             else:
                 execution_slice = build_execution_slice(cmd, task, plan)
@@ -1210,7 +1211,7 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     "project_type": edit_context.project_type,
                 },
             )
-            browser_authorities = self._browser_authorities_for_turn(
+            browser_authorities = [] if contract_planning else self._browser_authorities_for_turn(
                 cmd, exe_client, exe_profile
             )
             planned_authorities = list(plan.enabled_tools)
@@ -1223,6 +1224,9 @@ Use read_file/search/repository_map for project data and pass only selected JSON
             )
             if browser_authorities:
                 exposed_tools = ["kitt_runtime"]
+            if contract_planning:
+                planned_authorities = []
+                exposed_tools = []
             security_context = self._security_context_for_turn(cmd, planned_authorities)
             prompt_plan = replace(plan, enabled_tools=planned_authorities)
 

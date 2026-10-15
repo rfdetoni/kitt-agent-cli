@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from kitt.llm.agent_contract import parse_structured_result
+from kitt.llm.agent_contract import parse_structured_result, structured_result_instruction
 
 import hashlib
 import json
@@ -172,7 +172,7 @@ class AdversarialCodeReviewer:
                 "3. Prefer minimal fixes. Do not demand churn, style-only rewrites, or unrelated refactors.",
                 "4. Check tests themselves for weak assertions, mock-only validation, happy-path bias, and missing regressions.",
                 "5. If no required issue remains, APPROVE and explain the risks you checked in approval_evidence.",
-                "6. Return exactly one JSON object with required fields "
+                "6. " + structured_result_instruction() + " Required result fields: "
                 "status (APPROVED or CHANGES_REQUIRED), summary, reviewed_areas, findings, approval_evidence. "
                 "reviewed_areas is an array of strings and findings is an array of objects. "
                 "Every finding must include severity, category, title, location, problem, impact, "

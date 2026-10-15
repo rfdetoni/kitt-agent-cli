@@ -1,3 +1,9 @@
+# Agent CLI 0.88.1 — bounded planning with local validation
+
+A valid automatic Goal plan now needs one model generation, followed by local validation of the existing size, ID, dependency, path, criterion and registered-check constraints. One structural correction is allowed when that validation fails; a second invalid result stops planning. Transport failures are not automatically replayed.
+
+[Release details](docs/RELEASE_0.88.1.md).
+
 # Agent CLI 0.88.0 — JSON model responses
 
 Planning, advisory architecture, contract review, independent validation, senior review, completion reports and host-tool recovery now request ordinary JSON. Structured results use the strict shared JSON decoder; textual host actions dispatch from the canonical JSON action object. Duplicate keys, non-finite values and competing objects fail closed.

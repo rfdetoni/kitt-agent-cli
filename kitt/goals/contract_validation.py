@@ -9,7 +9,7 @@ from kitt.core.turn_events import (
     TurnCompleted,
     TurnFailed,
 )
-from kitt.llm.agent_contract import parse_structured_result
+from kitt.llm.agent_contract import parse_structured_result, structured_result_instruction
 from kitt.security.capabilities import CAP_ARTIFACT_READ, CAP_REPO_READ, CAP_REPO_SEARCH
 from kitt.security.context import ExecutionSecurityContext
 from kitt.runtime.state import RuntimeStateStore
@@ -160,12 +160,12 @@ class ContractValidator:
             + ("\n".join(f"- {path}" for path in changed_paths[:64]) or "- none recorded")
             + "\n\nBounded workspace snapshot:\n"
             + (snapshot[:24000] or "[snapshot unavailable]")
-            + "\n\nReturn FAIL for every unproven requirement. Respond ONLY with a single "
+            + "\n\nReturn FAIL for every unproven requirement. The result is a "
             "JSON object. verdict is OK or FAIL. evidence is an array of nonempty strings; "
             "issues is an array of objects with severity, location, problem and fix. "
             "For OK use an empty issues array. No fences or extra prose. "
             "FAIL example:\n"
-            + _VALIDATION_JSON_EXAMPLE
+            + _VALIDATION_JSON_EXAMPLE + "\n" + structured_result_instruction()
         )
         security = ExecutionSecurityContext(
             workspace_id=self.runtime.workspace_id,

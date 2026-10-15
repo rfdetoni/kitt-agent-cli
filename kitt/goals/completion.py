@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from kitt.llm.agent_contract import parse_structured_result
+from kitt.llm.agent_contract import parse_structured_result, structured_result_instruction
 
 import hashlib
 from dataclasses import asdict, dataclass, field
@@ -113,6 +113,7 @@ class AutonomousCompletionEngine:
             "Inspect the current workspace state, validate the implementation, and correct any problem you can find before finishing this turn.",
             "Never fabricate test results or evidence. Deterministic quality gates are authoritative over your own assessment.",
             "After objective verification passes, KITT may run an independent adversarial senior code review. Required reviewer findings are completion gaps, not optional suggestions.",
+            structured_result_instruction(),
             "EXECUTION FIRST: when host tools are available and work requires workspace evidence, emit a JSON use_tool action and wait for its host result. Do not emit a completion report before executing the necessary host tools.",
             "ChatGPT Web's own Python, terminal, or browser environment is not the KITT workspace. A missing native kitt_runtime button is not evidence that the host tool is unavailable: request it as a JSON use_tool object; the KITT host executes it.",
             "Example host action:\n{\"action\":\"use_tool\",\"tool\":\"kitt_runtime\",\"tool_input\":{\"operation\":\"repo.list\",\"arguments\":{\"path\":\".\"}},\"content\":null,\"reasoning_summary\":\"Inspect the workspace.\",\"loop\":null}\nUse only operations actually listed in TOOLS_AVAILABLE; never invent tool results.",
@@ -154,7 +155,7 @@ class AutonomousCompletionEngine:
                 [
                     "",
                     "Only AFTER the required host tool actions and their receipts, return "
-                    "one JSON object with fields status, criteria (array of objects) "
+                    "one result object with fields status, criteria (array of objects) "
                     "and summary. Use the exact criterion text above for each criterion; "
                     "include all criteria and actual host evidence. Final example:",
                     '{"status":"SUCCEEDED","criteria":[{"criterion":"exact criterion text above","satisfied":true,"evidence":"specific command/test/file/runtime evidence"}],"summary":"concise completion summary"}',
