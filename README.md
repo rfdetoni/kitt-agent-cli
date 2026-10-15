@@ -1,5 +1,7 @@
 ## Agent CLI 0.87.25 — configurable LLM routing per specialist
 
+Specialist workers can now select distinct existing TaskRouter profiles (direct API, local Ollama or separate KITT reverse-proxy instances), using automatic, preferred or fixed routing with privacy-aware fallbacks. Settings are editable via `kitt agents model` and `/agent model`; models are bound to the child session and reused after approval/resume. See [routing release notes](docs/RELEASE_0.87.25.md).
+
 ## Agent CLI 0.87.24 — explicit WebChat capture failure
 
 The reverse-proxy client now distinguishes `ui_timeout` (the website request
