@@ -170,7 +170,7 @@ def test_model_specialist_spawn_narrows_role_tools_and_budget():
                 "token_budget": 9000,
             })
         assert result == "accepted"
-        args = delegate.call_args.args[2]
+        args = delegate.call_args.args[-1]
         assert args["agent_role"] == "REVIEW"
         assert "write_file" not in args["enabled_tools"]
         assert args["token_budget"] == profile.token_budget
