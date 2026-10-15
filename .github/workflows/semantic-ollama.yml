@@ -1,0 +1,68 @@
+name: Real Ollama Multilingual E5
+
+on:
+  pull_request:
+    paths:
+      - "kitt/context/rag/**"
+      - "kitt/context_filter/**"
+      - "tests/integration/test_real_semantic_ollama.py"
+      - ".github/workflows/semantic-ollama.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e5-cpu:
+    name: E5 local CPU integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install project test environment
+        run: python -m pip install -e '.[dev]'
+      - name: Start local Ollama CPU container
+        run: |
+          docker run --detach --name kitt-semantic-ollama \
+            --security-opt no-new-privileges \
+            --publish 127.0.0.1:11434:11434 \
+            --env OLLAMA_NUM_PARALLEL=1 \
+            ollama/ollama:latest
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs kitt-semantic-ollama
+          exit 1
+      - name: Prepare explicitly verified E5 Q8 model
+        run: |
+          docker exec kitt-semantic-ollama ollama pull qllama/multilingual-e5-small:q8_0
+          docker exec kitt-semantic-ollama ollama list
+          python - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as response:
+              data = json.load(response)
+          model = next(
+              (m for m in data["models"]
+               if m["name"] == "qllama/multilingual-e5-small:q8_0"),
+              None
+          )
+          assert model is not None, "E5 local model is missing"
+          digest = model.get("digest", "")
+          assert digest.startswith("96316f5cc784"), f"Unexpected model digest: {digest}"
+          print("Verified E5 model digest:", digest)
+          PY
+      - name: Exercise real local inference (no remote embedding)
+        env:
+          KITT_SEMANTIC_REAL_OLLAMA: "1"
+          KITT_SEMANTIC_LOCAL_MODEL: qllama/multilingual-e5-small:q8_0
+          KITT_SEMANTIC_LOCAL_URL: http://127.0.0.1:11434
+        run: python -m pytest -q -s tests/integration/test_real_semantic_ollama.py
+      - name: Stop local container
+        if: always()
+        run: docker rm --force kitt-semantic-ollama || true
