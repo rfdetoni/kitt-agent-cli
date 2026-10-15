@@ -303,6 +303,7 @@ class TurnContextMixin:
         semantic_filter = SemanticFilter(
             context_profile=ctx_profile,
             llm_client=self.context_client,
+            local_mode=getattr(self.config, "semantic_mode", "off"),
         )
         execution_budget = getattr(self, "execution_budgets", {}).get(cmd.turn_id)
         classifier_input = TokenCounter.count_tokens(cmd.prompt) + 256

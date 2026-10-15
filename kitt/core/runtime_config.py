@@ -76,6 +76,7 @@ class RuntimeConfig:
     dream_max_sessions: int = 20
     dream_max_entries: int = 200
 
+    semantic_mode: str = "off"  # off | auto | local (semantic step only)
     context_window_default: int = 8192
     reserved_output_tokens: int = 1200
     max_tool_output_chars: int = 4000
@@ -127,6 +128,8 @@ class RuntimeConfig:
             provider_failover_enabled=_env_bool("KITT_PROVIDER_FAILOVER", values.get("provider_failover_enabled", True)),
             verify_full_enabled=verification_full_enabled(bool(values.get("verify_full_enabled", False))),
         )
+        mode = os.getenv("KITT_SEMANTIC_MODE", str(values.get("semantic_mode", "off"))).strip().lower()
+        values["semantic_mode"] = mode if mode in {"off", "auto", "local"} else "off"
         return cls(**values)
 
     @property

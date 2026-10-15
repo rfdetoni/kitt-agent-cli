@@ -1,4 +1,5 @@
 import inspect
+import os
 import time
 from typing import Any, Optional, Literal
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from kitt.context_filter.deterministic_extractor import DeterministicExtractor
 from kitt.context_filter.schema import ContextFilterSchemaValidator
 from kitt.context_filter.fallback import DeterministicFallbackPlanner
 from kitt.context_filter.context_planner import ContextPlanner
+from kitt.context_filter.local_intent import get_local_classifier
 
 SYSTEM_CONTEXT_FILTER_PROMPT = """You are a Semantic Task Compiler.
 Convert the user's request into a minimal, execution-oriented canonical semantic representation.
@@ -44,7 +46,7 @@ RULES:
 6. Output JSON ONLY. No markdown, no conversation.
 """
 
-FilterSource = Literal['LLM', 'LLM_FIRST', 'DETERMINISTIC_BYPASS', 'FALLBACK']
+FilterSource = Literal['LLM', 'LLM_FIRST', 'DETERMINISTIC_BYPASS', 'FALLBACK', 'LOCAL', 'ABSTAIN']
 
 LLM_FIRST_CAPABILITY_TOOLS = (
     "kitt_runtime",
@@ -111,12 +113,13 @@ def llm_first_filter_result(prompt: str, *, latency_ms: float = 0.0) -> Semantic
 class SemanticFilter:
     """Orchestrates dual-model context filtering: deterministic bypass, context LLM call, schema validation, and fallback."""
 
-    def __init__(self, context_profile: ModelProfile, llm_client: Optional[LLMClient] = None):
+    def __init__(self, context_profile: ModelProfile, llm_client: Optional[LLMClient] = None, *, local_mode: str = "off"):
         self.profile = context_profile
         self.llm_client = llm_client
         self.extractor = DeterministicExtractor()
         self.fallback_planner = DeterministicFallbackPlanner()
         self.planner = ContextPlanner()
+        self.local_mode = local_mode if local_mode in {"off", "auto", "local"} else "off"
 
     def filter_and_plan(
         self,
@@ -150,6 +153,29 @@ class SemanticFilter:
                 fallback_reason=None,
                 latency_ms=latency
             )
+
+        if self.local_mode != "off":
+            model = os.getenv("KITT_SEMANTIC_LOCAL_MODEL", "").strip()
+            endpoint = os.getenv("KITT_SEMANTIC_LOCAL_URL", "http://127.0.0.1:11434")
+            reason = "model_not_configured"
+            if model:
+                try:
+                    local_task, reason = get_local_classifier(model, endpoint).classify(prompt)
+                    if local_task is not None:
+                        plan = self.planner.build_plan(local_task)
+                        return SemanticFilterResult(
+                            task=local_task, plan=plan, source="LOCAL",
+                            latency_ms=(time.time() - start_t) * 1000,
+                        )
+                except (OSError, ValueError, RuntimeError) as exc:
+                    reason = "local_provider_invalid:" + type(exc).__name__
+            if self.local_mode == "local":
+                task = self.fallback_planner.generate_task(prompt)
+                plan = self.fallback_planner.generate_plan(task)
+                return SemanticFilterResult(
+                    task=task, plan=plan, source="ABSTAIN",
+                    fallback_reason=reason, latency_ms=(time.time() - start_t) * 1000,
+                )
 
         # Rule 2: Call Context LLM lazily.
         try:
