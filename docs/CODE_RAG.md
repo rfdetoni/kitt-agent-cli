@@ -184,3 +184,7 @@ python scripts/prepare_semantic_model.py --pull
 ```
 
 **Atenção:** o download acessa o registro externo configurado para Ollama apenas nesse comando explícito. Sem a opção, nem o instalador nem o Agent baixam pesos. A execução de embeddings usa exclusivamente loopback após a preparação. Habilitar a etapa semântica para um turno depende de `KITT_SEMANTIC_MODE=auto` ou do Control Center.
+
+### Léxico offline e fontes linguísticas (PT-BR, EN, ES)
+
+O motor lexical opcional está documentado em [SEMANTIC_LEXICON.md](SEMANTIC_LEXICON.md). O importador aceita UniMorph e OMW com atribuição e reconhecimento explícito de licenças; `wordfreq`, Snowball e spaCy são apenas ferramentas opcionais de compilação. Synsets do WordNet são armazenados como sugestões sem aprovação; a base local não modifica ferramentas permitidas nem habilita o estágio semântico por padrão.
