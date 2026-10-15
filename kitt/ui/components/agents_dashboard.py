@@ -20,7 +20,10 @@ class AgentsDashboardComponent:
             glyph = self.STATUS_GLYPH.get(task.status, "?")
             tag = "[CHILD]" if task.kind == "child_agent" else "[CORE]"
             label = f"{glyph} {tag} {task.name:<24}"
-            row = f"│ {label} [{bar}] {task.progress:>3}%  {task.summary[:28]:<28} │"
+            amount = ("AGUARDO" if task.kind != "child_agent"
+                      and state.contract_phase in {"generating", "reviewing"}
+                      else f"{task.progress:>3}%")
+            row = f"│ {label} [{bar}] {amount:>7}  {task.summary[:28]:<28} │"
             colored = t.format_primary(row) if task.status == "running" else \
                       (t.format_muted(row) if task.status in {"pending", "cancelled"} else row)
             lines.append(colored)

@@ -12,6 +12,10 @@ class StatusBarComponent:
         if state.pending_approvals:
             count = len(state.pending_approvals)
             center = f"[⚠ APROVAÇÃO NECESSÁRIA — {count} pendente(s) — Tab/y/n]"
+        # Planning is waiting on a remote model, not "15% complete".
+        elif state.contract_phase in {"generating", "reviewing"} and state.is_thinking:
+            stage_age = max(0, int(time.time() - state.contract_phase_started_at))
+            center = f"[◌ {state.status_text} · {stage_age}s · aguardando LLM]"
         # Priority 2: Active Running Tasks
         elif state.active_tasks:
             running = [tk for tk in state.active_tasks if tk.status == "running"]

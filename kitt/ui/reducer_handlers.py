@@ -71,6 +71,10 @@ def handle_turn_started(state: UIState, event: TurnStarted) -> None:
     state.pending_recovery = None
     state.is_thinking = True
     state.status_text = "SCANNING"
+    state.contract_phase = ""
+    state.contract_attempt = 0
+    state.contract_max_attempts = 0
+    state.contract_phase_started_at = 0.0
 
     pending_prompt = next(
         (
@@ -91,33 +95,48 @@ def handle_turn_started(state: UIState, event: TurnStarted) -> None:
 
 
 def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
-    """Show verified host lifecycle phases without model internals or fake progress."""
+    """Display host-verified phase and truthful LLM waiting time (never fake %)."""
     attempt = max(0, int(event.attempt))
     maximum = max(1, int(event.max_attempts))
     phase = event.phase
     step = f"{attempt}/{maximum}"
     if phase == "generating":
-        status, summary = f"PLANNING {step}", f"Gerando contrato de tarefas (tentativa {step}); ainda sem execução."
+        status = f"PLANNING {step}"
+        summary = f"Gerando plano com LLM (tentativa {step}); aguardando resposta, nenhuma ferramenta executada."
     elif phase == "reviewing":
-        status, summary = f"REVIEWING {step}", f"Validando plano e revisando riscos (tentativa {step})."
+        status = f"REVIEWING {step}"
+        summary = f"Revisor independente: avaliando critérios e dependências (tentativa {step})."
     elif phase == "revising":
-        status, summary = f"REVISING {step}", f"Plano precisa de ajustes ({event.issues} questão(ões)); tentativa {step}."
+        status = f"REVISING {step}"
+        summary = f"Revisor solicitou {max(0, event.issues)} ajuste(s); preparando nova tentativa {step}."
     elif phase == "rejected":
-        status, summary = "PLAN REJECTED", "Tentativas de planejamento esgotadas; nenhuma tarefa foi iniciada."
+        status, summary = "PLAN REJECTED", "Tentativas esgotadas; execução não iniciada."
     elif phase == "accepted":
-        status, summary = "PLAN VALID", "Plano validado; aguardando agendamento do host."
+        status, summary = "PLAN VALID", "Plano aprovado pelo host; preparando agendamento."
     elif phase == "scheduled":
-        status, summary = "SCHEDULED", f"Contrato agendado com {event.total} itens; iniciando execução."
+        status, summary = "SCHEDULED", f"Contrato agendado com {max(0, event.total)} etapas; execução iniciará."
     elif phase == "executing":
-        count = max(0, int(event.completed))
-        total = max(0, int(event.total))
+        count, total = max(0, event.completed), max(0, event.total)
         label = safe_text(event.task_id)[:64] or "FINAL"
-        progress_state = safe_text(event.task_state)[:32]
+        summary = f"Contrato: {count}/{total} etapas concluídas; {label} {safe_text(event.task_state)[:32]}."
         status = "GOAL EXECUTION"
-        summary = f"Contrato: {count}/{total} itens finalizados; {label} {progress_state}."
     else:
         return
 
+    now = time.time()
+    # Close prior phase in place; this keeps the transcript readable even
+    # after long provider waits or repeated reviewer revisions.
+    for block in reversed(state.transcript):
+        if block.metadata.get("contract_phase") and block.status == "running":
+            elapsed = max(0.0, now - block.started_at)
+            block.duration_ms = int(elapsed * 1000)
+            block.status = "done"
+            block.text += f" ({int(elapsed)}s)"
+            break
+    state.contract_phase = phase
+    state.contract_attempt = attempt
+    state.contract_max_attempts = maximum
+    state.contract_phase_started_at = now
     state.status_text = status
     core_task = next(
         (task for task in state.active_tasks if task.id == "core" or task.kind == "core_agent"),
@@ -126,8 +145,6 @@ def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
     if core_task:
         core_task.status = "running"
         core_task.summary = summary
-    # The contract already emits TextDelta for each executable task state.
-    # Do not duplicate those entries or falsely imply a tool has run.
     if phase == "executing":
         return
     state.transcript_sequence += 1
@@ -136,7 +153,9 @@ def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
             id=f"contract-phase-{state.transcript_sequence}",
             kind="system",
             text=f"◈ {summary}",
-            status="done",
+            status="running" if phase in {"generating", "reviewing"} else "done",
+            started_at=now,
+            metadata={"contract_phase": phase},
         )
     )
     if not state.follow_tail:
@@ -144,6 +163,9 @@ def handle_contract_progress(state: UIState, event: ContractProgress) -> None:
 
 
 def handle_thinking_started(state: UIState, event: ThinkingStarted) -> None:
+    if state.contract_phase in {"generating", "reviewing"}:
+        # A nested model call is not a separate stage of the outer contract.
+        return
     state.status_text = "THINKING"
     state.transcript.append(TranscriptBlock(
         f"thought-{len(state.transcript)+1}", "thought", "▸ Pensando...", "running",
@@ -156,6 +178,8 @@ def handle_thinking_started(state: UIState, event: ThinkingStarted) -> None:
 
 
 def handle_thinking_completed(state: UIState, event: ThinkingCompleted) -> None:
+    if state.contract_phase in {"generating", "reviewing"}:
+        return
     for block in reversed(state.transcript):
         if block.kind == "thought" and block.status == "running":
             secs = event.duration_ms / 1000
@@ -450,6 +474,10 @@ def handle_terminal_events(state: UIState, event: object) -> None:
     state.is_executing_tool = False
     state.active_tool_name = None
     state.active_turn_id = None
+    state.contract_phase = ""
+    state.contract_attempt = 0
+    state.contract_max_attempts = 0
+    state.contract_phase_started_at = 0.0
 
     now = time.time()
     for block in state.transcript:
@@ -458,6 +486,9 @@ def handle_terminal_events(state: UIState, event: object) -> None:
             block.duration_ms = int(elapsed * 1000)
             if block.kind == "assistant":
                 block.status = "done"
+            elif block.metadata.get("contract_phase"):
+                block.status = "done"
+                block.text += f" ({int(elapsed)}s)"
             elif block.kind == "thought":
                 block.status = "done"
                 block.text = f"▸ Pensou por {elapsed:.0f}s"

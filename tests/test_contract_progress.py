@@ -171,3 +171,44 @@ def test_tui_render_contains_live_review_phase_in_hud_and_transcript():
     assert "Validando plano" in output
     assert "tentativa 2/3" in output
     assert "✔" not in output
+
+
+def test_long_llm_wait_has_stage_and_real_elapsed_without_fake_progress(monkeypatch):
+    from kitt.ui.render.core import _transcript_text, _status_text
+    from kitt.ui.components.status_bar import StatusBarComponent
+    import time
+
+    state = UIState()
+    state.init_turn_tasks("Build observatory")
+    state.is_thinking = True
+    reduce_ui_event(state, ContractProgress(phase="generating", attempt=1, max_attempts=3))
+    state.contract_phase_started_at = time.time() - 71
+    state.transcript[-1].started_at = time.time() - 71
+    ui = SimpleNamespace(state=state)
+    display = "".join(text for _, text in _transcript_text(ui))
+    assert "71s" in display or "70s" in display
+    assert "aguardando resposta do provedor" in display
+    assert "PLANNING 1/3" in _status_text(ui)
+    assert "aguardando LLM" in StatusBarComponent().render(state, width=125)
+    reduce_ui_event(state, ContractProgress(phase="reviewing", attempt=1, max_attempts=3))
+    assert state.transcript[-2].status == "done"
+    assert state.transcript[-1].status == "running"
+    assert "REVIEWING 1/3" in StatusBarComponent().render(state, width=125)
+    reduce_ui_event(state, ContractProgress(phase="revising", attempt=1, max_attempts=3, issues=2))
+    assert state.transcript[-2].status == "done"
+    assert state.transcript[-1].status == "done"
+    assert "2 ajuste" in state.active_tasks[0].summary
+
+
+def test_thinking_events_do_not_clobber_contract_phase():
+    from kitt.core.turn_events import ThinkingStarted, ThinkingCompleted, TurnFailed
+    state = UIState()
+    state.init_turn_tasks("Build observatory")
+    reduce_ui_event(state, ContractProgress(phase="reviewing", attempt=2, max_attempts=3))
+    reduce_ui_event(state, ThinkingStarted())
+    reduce_ui_event(state, ThinkingCompleted(duration_ms=500))
+    assert state.status_text == "REVIEWING 2/3"
+    assert not any(block.kind == "thought" for block in state.transcript)
+    reduce_ui_event(state, TurnFailed(error="ui_timeout"))
+    assert state.contract_phase == ""
+    assert state.transcript[-1].status == "done"

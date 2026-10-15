@@ -119,6 +119,10 @@ class UIState:
     unseen_output: bool = False
     scanner_step: int = 0
     planning_mode: bool = False
+    contract_phase: str = ""
+    contract_attempt: int = 0
+    contract_max_attempts: int = 0
+    contract_phase_started_at: float = 0.0
     turn_mode: Literal["code", "plan", "ask"] = "code"
     width: int = 80
     height: int = 24

@@ -78,7 +78,7 @@ def _transcript_text(ui):
         live_ids.add(block.id)
         surface = block.metadata.get("surface") if isinstance(block.metadata, dict) else None
         running = (
-            block.kind in {"tool", "thought"}
+            (block.kind in {"tool", "thought"} or bool(block.metadata.get("contract_phase")))
             and block.status == "running"
             and bool(
                 ui.state.active_turn_id
@@ -109,10 +109,14 @@ def _transcript_text(ui):
                 ("class:context", "\nSURFACE  "),
                 *surface_fragments(surface),
             ]
-        elif block.kind in {"tool", "thought"}:
+        elif block.kind in {"tool", "thought"} or block.metadata.get("contract_phase"):
             text = block.text
             if running:
-                if block.kind == "thought":
+                if block.metadata.get("contract_phase"):
+                    age = elapsed or 0
+                    hint = "aguardando resposta do provedor" if age >= 15 else "solicitação enviada ao modelo"
+                    text = f"{text}  ⏱ {age}s — {hint}..."
+                elif block.kind == "thought":
                     text = f"▸ Pensando ({elapsed or 0}s...)"
                 else:
                     text = f"{text} ({elapsed or 0}s...)"
@@ -121,17 +125,19 @@ def _transcript_text(ui):
             if block.collapsed:
                 first_line = text.split("\n")[0]
                 hint = " (ctrl+o para expandir)" if is_toggle_target else ""
-                fragment.append((f"class:{block.kind}", f"{first_line}{hint}\n"))
+                style = "class:system" if block.metadata.get("contract_phase") else f"class:{block.kind}"
+                fragment.append((style, f"{first_line}{hint}\n"))
             elif full_output is not None:
                 hint = "\n    (ctrl+o para recolher)" if is_toggle_target else ""
                 fragment.append(
                     (
-                        f"class:{block.kind}",
+                        "class:system" if block.metadata.get("contract_phase") else f"class:{block.kind}",
                         f"{text}\n    {full_output}{hint}\n",
                     )
                 )
             else:
-                fragment.append((f"class:{block.kind}", f"{text}\n"))
+                style = "class:system" if block.metadata.get("contract_phase") else f"class:{block.kind}"
+                fragment.append((style, f"{text}\n"))
         else:
             label = labels.get(block.kind, block.kind.upper())
             fragment.extend(
