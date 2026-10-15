@@ -43,6 +43,16 @@ class GoalStepExecutor:
             return "POLICY"
         return "UNSPECIFIED"
 
+    @staticmethod
+    def _ambiguous_webchat_capture(error: str) -> bool:
+        """A submitted browser turn may have completed; do not resend it."""
+        value = str(error or "").casefold()
+        return (
+            "kitt reverse proxy" in value
+            and "ui_timeout" in value
+            and "no kap action was received or executed" in value
+        )
+
     def __init__(self, runtime_getter, reviewer_factory=None):
         self.runtime_getter = runtime_getter
         self.reviewer_factory = reviewer_factory
@@ -174,10 +184,24 @@ class GoalStepExecutor:
                             block_reason=category,
                         )
                     elif isinstance(event, TurnFailed):
+                        # A WebChat capture timeout means a prompt was submitted,
+                        # but no fresh response can be authenticated to this turn.
+                        # Reissuing the same goal automatically can duplicate an
+                        # unseen browser response. Require explicit operator
+                        # inspection/resume instead of spending retry budgets.
+                        capture_ambiguous = (
+                            contract_item is not None
+                            and self._ambiguous_webchat_capture(event.error)
+                        )
                         result.update(
-                            status="INCOMPLETE" if event.recoverable else "FAILED",
+                            status=(
+                                "BLOCKED" if capture_ambiguous
+                                else "INCOMPLETE" if event.recoverable else "FAILED"
+                            ),
                             error=event.error,
-                            block_reason="ENVIRONMENT" if event.recoverable else "",
+                            block_reason=(
+                                "ENVIRONMENT" if capture_ambiguous or event.recoverable else ""
+                            ),
                         )
         finally:
             state.delete(active_turn_key)
