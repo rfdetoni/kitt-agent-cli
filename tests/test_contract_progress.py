@@ -196,7 +196,7 @@ def test_long_llm_wait_has_stage_and_real_elapsed_without_fake_progress(monkeypa
     assert "REVIEWING 1/3" in StatusBarComponent().render(state, width=125)
     reduce_ui_event(state, ContractProgress(phase="revising", attempt=1, max_attempts=3, issues=2))
     assert state.transcript[-2].status == "done"
-    assert state.transcript[-1].status == "done"
+    assert next(block for block in state.transcript if block.metadata.get("contract_phase")).status == "done"
     assert "2 ajuste" in state.active_tasks[0].summary
 
 
