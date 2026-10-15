@@ -239,6 +239,13 @@ class TurnContextMixin:
     def _run_semantic_filter(self, cmd: TurnCommand) -> tuple:
         ctx_profile_name, ctx_profile = self.router.resolve_profile_for_task("context-gather")
         _, execution_profile = self.router.resolve_profile_for_task("code-generation")
+        specialist = getattr(self, "_specialist_execution", None)
+        if specialist is not None:
+            # A specialist never silently sends its classification/context
+            # to a different default provider. Proxy profiles use the
+            # existing deterministic llm-first classifier path.
+            ctx_profile_name, ctx_profile = specialist
+            execution_profile = ctx_profile
         execution_client_profile = getattr(self.execution_client, "profile", None)
         llm_first_reverse_proxy = (
             _reverse_proxy_identity(execution_profile) is not None

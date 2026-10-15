@@ -238,3 +238,8 @@ def apply_child_model_route(runtime, request: dict) -> None:
     from kitt.llm.failover import ProviderCircuitPool
     pool = ProviderCircuitPool(runtime.config.provider_park_seconds)
     runtime.processor.provider_client_factory = lambda profile: pool.wrap(profile, fallbacks)
+    # Direct specialist models also own their semantic/context classification.
+    # The reverse-proxy route uses the deterministic llm-first filter instead.
+    from kitt.core.turn_helpers import _reverse_proxy_identity
+    if _reverse_proxy_identity(selected) is None:
+        runtime.processor.context_client = pool.wrap(selected, fallbacks)
