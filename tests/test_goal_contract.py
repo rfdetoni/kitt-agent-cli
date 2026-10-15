@@ -169,12 +169,11 @@ class GoalContractTests(unittest.TestCase):
         }
         items = planner.validate(valid)
         self.assertEqual(items[-1]["depends_on"], ["T01"])
-        self.assertEqual(items[-1]["check_ids"], ["python.tests"])
-        self.assertEqual(items[-1]["paths"], ["src/a.py"])
-        self.assertEqual(
-            items[-1]["success_criteria"],
-            ["T01 works", "FINAL works"],
-        )
+        # The planner's explicit FINAL is not silently expanded with all
+        # upstream criteria, checks, paths and dependencies.
+        self.assertEqual(items[-1]["check_ids"], [])
+        self.assertEqual(items[-1]["paths"], [])
+        self.assertEqual(items[-1]["success_criteria"], ["FINAL works"])
 
         for forbidden in ("capabilities", "gates", "argv"):
             payload = json.loads(json.dumps(valid))
@@ -205,6 +204,53 @@ class GoalContractTests(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             planner.validate(path_overflow)
+
+    def test_final_preserves_authored_scope_when_optional_tasks_exist(self):
+        planner = ContractPlanner(
+            SimpleNamespace(canonical_root=Path(self.tmp.name))
+        )
+        steps = [
+            _item("T00", criteria=["preflight verified"], paths=["reports/environment.md"]),
+            _item("T01", criteria=["MVP works"], depends_on=["T00"],
+                  paths=["src/catalog.py"], check_ids=["python.tests"]),
+            _item("T06", criteria=["optional integration recorded"],
+                  depends_on=["T01"], paths=["src/optional.py"]),
+            _item("FINAL", kind="final", criteria=["MVP report is auditable"],
+                  depends_on=["T01"], paths=["reports/final.md"]),
+        ]
+        accepted = planner.validate({"items": steps})
+        self.assertEqual(accepted[-1]["depends_on"], ["T01"])
+        self.assertEqual(accepted[-1]["success_criteria"], ["MVP report is auditable"])
+        self.assertEqual(accepted[-1]["check_ids"], [])
+        self.assertEqual(accepted[-1]["paths"], ["reports/final.md"])
+        self.assertEqual(steps[-1], accepted[-1])
+
+    def test_high_risk_reviewer_sees_unchanged_final_criteria(self):
+        planner = ContractPlanner(SimpleNamespace(
+            canonical_root=Path(self.tmp.name),
+            workspace_id="ws", processor=SimpleNamespace(),
+        ))
+        proposal = {
+            "items": [
+                _item("T01", paths=["security/policy.py"]),
+                _item("T02", depends_on=["T01"], paths=["security/optional.py"]),
+                _item("FINAL", kind="final", depends_on=["T01"],
+                      criteria=["Document verified result"], paths=["reports/final.md"]),
+            ]
+        }
+        with patch.object(planner, "_run_plan_turn", side_effect=[
+            json.dumps(proposal), '{"verdict":"OK","issues":[]}',
+        ]) as ask:
+            result = planner.plan("conv", "Implement a verifiable review workflow")
+        reviewer_prompt = ask.call_args_list[1].args[1]
+        review_payload = json.loads(
+            reviewer_prompt.split("Contract:\\n", 1)[1].split(
+                "\\n\\nReturn one KAP/2", 1
+            )[0]
+        )
+        self.assertEqual(review_payload["items"], result)
+        self.assertEqual(result[-1]["success_criteria"], ["Document verified result"])
+        self.assertEqual(result[-1]["depends_on"], ["T01"])
 
     def test_planner_requires_ordered_dependencies_and_final_item(self):
         planner = ContractPlanner(

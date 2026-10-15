@@ -1,3 +1,7 @@
+## Agent CLI 0.87.26 — non-mutating final contract validation
+
+Preserves model-authored FINAL acceptance criteria, checks, paths and dependencies during host contract validation, while retaining aggregate 64-path/64-criterion/12-check limits. The independent pre-mutation reviewer sees the exact validated proposal, not an expanded 49-criterion final step. This prevents systematic revision loops for large mission plans with optional/environment-gated stages; task checks continue running at their own steps. See [release details](docs/RELEASE_0.87.26.md).
+
 ## Agent CLI 0.87.25 — configurable LLM routing per specialist
 
 Specialist workers can now select distinct existing TaskRouter profiles (direct API, local Ollama or separate KITT reverse-proxy instances), using automatic, preferred or fixed routing with privacy-aware fallbacks. Settings are editable via `kitt agents model` and `/agent model`; models are bound to the child session and reused after approval/resume. See [routing release notes](docs/RELEASE_0.87.25.md).
