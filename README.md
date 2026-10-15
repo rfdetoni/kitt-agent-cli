@@ -1,3 +1,7 @@
+## Agent CLI 0.87.28 — stop unsafe automatic WebChat retries
+
+When the reverse-proxy reports a submitted WebChat turn whose fresh assistant response could not be captured (`ui_timeout`, no KAP action verified), the durable goal now enters **BLOCKED / ENVIRONMENT** instead of blindly resending the same task. Previous completed tasks and budget remain intact; operator inspection and explicit `goal resume` are required before attempting again. [Release notes](docs/RELEASE_0.87.28.md).
+
 ## Agent CLI 0.87.27 — live planning and reviewer progress
 
 Planning now shows **the actual phase** (PLAN/REVIEW/REVISION, attempt 1/3), a continually updating stage timer, an explicit *waiting for LLM* label, and scoped entries in the transcript. The Agent dashboard replaces the misleading fixed progress percentage with **AGUARDO** during provider waits. The phase closes cleanly on success, cancellation, or errors. [Release notes](docs/RELEASE_0.87.27.md).

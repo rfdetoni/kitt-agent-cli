@@ -137,3 +137,8 @@ The TUI consumes existing host-owned `ContractProgress` events and shows:
 - immutable phase rows closed on transitions/terminal results; host validations do not imply task execution.
 
 When the external WebChat provider takes several minutes to return a response, the timer indicates the wait; it does not claim insight into the model's hidden progress. If the provider reports `ui_timeout`, the host fails closed and does not replay a possibly completed browser turn automatically. Inspect/reconnect the authenticated browser session before an explicit retry. Workspace edits are never retried merely because response capture failed.
+
+
+## Ambiguous provider capture safety (v0.87.28)
+
+The KITT Reverse Proxy may report `ui_timeout` when WebChat generation apparently finished but the proxy could not authenticate a *fresh assistant-owned* KAP/2 response. That is neither a valid tool action nor a guaranteed empty model answer. For goals, the executor maps this specific ambiguous response into `BLOCKED` with reason `ENVIRONMENT`; the durable scheduler does **not** automatically resubmit the same browser turn. The operator must inspect the authenticated WebChat session and explicitly resume the contract item, or switch to a healthy provider. Earlier DONE items remain done. Other recoverable verification failures keep their existing bounded retry behavior.
