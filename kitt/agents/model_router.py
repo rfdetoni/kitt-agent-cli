@@ -232,6 +232,9 @@ def apply_child_model_route(runtime, request: dict) -> None:
             raise PermissionError("Remote child fallback forbidden")
         fallbacks.append(alternate)
     runtime.processor._specialist_execution = (name, selected)
+    levels = {"low": 25, "medium": 50, "high": 90}
+    if route.get("reasoning") in levels:
+        runtime.processor.reasoning_effort = levels[route["reasoning"]]
     from kitt.llm.failover import ProviderCircuitPool
     pool = ProviderCircuitPool(runtime.config.provider_park_seconds)
     runtime.processor.provider_client_factory = lambda profile: pool.wrap(profile, fallbacks)

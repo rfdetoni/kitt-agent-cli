@@ -564,6 +564,7 @@ class KittRuntime:
         runtime.agent_registry = agent_registry
         children.agent_registry = agent_registry
         registry.agent_registry = agent_registry
+        registry.runtime_config = config
         runtime.prime_metrics = prime_metrics
         runtime.conversation_runtimes = ConversationRuntimeRegistry(
             canonical_root,

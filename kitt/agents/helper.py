@@ -109,10 +109,35 @@ def interactive_wizard(root: str) -> Path:
 
 def handle_agents_command(action: str, name: str | None, workspace: str, options) -> int:
     from kitt.extensions.manager import ExtensionManager
+    from kitt.agents.model_router import (
+        AgentLLMPolicy, AgentModelRouter, AgentModelStore,
+    )
+    from kitt.router.router import TaskRouter
+    from kitt.core.runtime_config import RuntimeConfig
     ext = ExtensionManager(workspace_root=workspace)
     registry = AgentRegistry(ext)
     try:
-        if action == "create":
+        if action == "model":
+            if not name:
+                raise ValueError("Agent ID required: kitt agents model <id> --mode auto|preferred|fixed")
+            profile = registry.find(name)
+            policy = AgentLLMPolicy.parse({
+                "mode": getattr(options, "mode", "auto"),
+                "primary": getattr(options, "primary", ""),
+                "fallbacks": [x.strip() for x in (getattr(options, "fallbacks", "") or "").split(",") if x.strip()],
+                "reasoning": getattr(options, "reasoning", "auto"),
+                "temperature": getattr(options, "temperature", None),
+                "max_output_tokens": getattr(options, "output_tokens", None),
+                "require_tools": bool(getattr(options, "require_tools", False)),
+                "remote_egress": "deny" if getattr(options, "local_only", False) else "inherit",
+            })
+            selected = AgentModelRouter(TaskRouter(root_dir=workspace)).resolve(
+                profile.role, policy, privacy_mode=RuntimeConfig.from_env().privacy_mode,
+            )
+            AgentModelStore(workspace).save(name, policy)
+            print(f"Model routing for {name}: {policy.mode} => {selected['primary']}"
+                  f"\nFallbacks: {', '.join(v['name'] for v in selected['fallbacks']) or '(none)'}")
+        elif action == "create":
             path = (create_agent(
                 workspace, name,
                 role=getattr(options, "role", "investigator"),
@@ -143,14 +168,17 @@ def handle_agents_command(action: str, name: str | None, workspace: str, options
             if not name:
                 raise ValueError("Agent id required")
             item = registry.find(name)
+            current = AgentModelStore(workspace).load().get(item.id, item.llm)
             print(f"Agent: {item.id}\nRole: {item.role}\nTools: {', '.join(item.tools)}"
                   f"\nBudget: {item.token_budget}\nTimeout: {item.timeout_seconds}s"
+                  f"\nLLM: {current.mode} / {current.primary or '(automatic)'}"
+                  f"\nFallbacks: {', '.join(current.fallbacks) or '(automatic)'}"
                   f"\nContract: {item.output_contract}\nPersona:\n{item.persona}")
         elif action == "list":
             print("\nKITT Specialist Agents")
             for item in registry.list():
                 print(f"  {item.id:<32} {item.role:<10} {item.name}")
-            print("\nManage: kitt agents create | inspect | enable | disable | edit | select")
+            print("\nManage: kitt agents create | inspect | enable | disable | edit | select | model")
         else:
             raise ValueError("Unknown agents action")
         return 0

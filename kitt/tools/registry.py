@@ -118,7 +118,10 @@ class ToolRegistry(_core.ToolRegistry):
                 store = AgentModelStore(self.root_path)
                 policy = store.load().get(specialist.id, specialist.llm)
                 selection = AgentModelRouter(TaskRouter(root_dir=str(self.root_path))).resolve(
-                    specialist.role, policy, privacy_mode=RuntimeConfig.from_env().privacy_mode,
+                    specialist.role, policy, privacy_mode=getattr(
+                        getattr(self, "runtime_config", None),
+                        "privacy_mode", RuntimeConfig.from_env().privacy_mode,
+                    ),
                 )
                 profile_args["agent_profile"] = specialist.id
                 profile_args["agent_model_route"] = selection

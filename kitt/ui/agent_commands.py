@@ -39,6 +39,7 @@ async def handle_agent_manager(ui, arg: str) -> None:
                 "/agent edit <slug> <new persona>",
                 "/agent enable|disable <id>",
                 "/agent inspect <id>",
+                "/agent model <id> <auto|preferred|fixed> [primary] [fallbacks comma-separated]",
                 "/agent msg <to> <message>",
                 "/agent inbox                 (family messages)",
                 "Guided creator: kitt agents create",
@@ -48,11 +49,33 @@ async def handle_agent_manager(ui, arg: str) -> None:
             return
         if action == "inspect":
             p = registry.find(tokens[0])
+            from kitt.agents.model_router import AgentModelStore
+            model_policy = AgentModelStore(ui.runtime.canonical_root).load().get(p.id, p.llm)
             ui._show_result(
                 f"{p.id} / {p.role} / {p.name}\n{p.persona}\n"
                 f"Tools: {', '.join(p.tools)}\nTokens: {p.token_budget}"
                 f"\nTimeout: {p.timeout_seconds}s\nContract: {p.output_contract}"
+                f"\nLLM: {model_policy.mode} / {model_policy.primary or '(automatic)'}"
+                f"\nFallbacks: {', '.join(model_policy.fallbacks) or '(automatic)'}"
             )
+            return
+        if action == "model":
+            if len(tokens) < 2 or len(tokens) > 4:
+                raise ValueError("Usage: /agent model <id> <mode> [primary] [fallbacks comma-separated]")
+            from kitt.agents.model_router import AgentLLMPolicy, AgentModelRouter, AgentModelStore
+            from kitt.router.router import TaskRouter
+            agent = registry.find(tokens[0])
+            policy = AgentLLMPolicy.parse({
+                "mode": tokens[1],
+                "primary": tokens[2] if len(tokens) > 2 else "",
+                "fallbacks": tokens[3].split(",") if len(tokens) > 3 else [],
+            })
+            resolved = AgentModelRouter(TaskRouter(root_dir=ui.runtime.canonical_root)).resolve(
+                agent.role, policy, privacy_mode=ui.runtime.config.privacy_mode,
+            )
+            await ui._run_blocking(AgentModelStore(ui.runtime.canonical_root).save, agent.id, policy)
+            ui._show_result(f"Agent {agent.id}: model={resolved['primary']}, "
+                            f"fallbacks={[x['name'] for x in resolved['fallbacks']]}")
             return
         if action == "create":
             if not tokens:

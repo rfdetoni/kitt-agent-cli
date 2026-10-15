@@ -254,13 +254,21 @@ def build_parser() -> argparse.ArgumentParser:
         "agents", parents=[common], help="Manage specialist agent personas"
     )
     agents_parser.add_argument("agent_action", nargs="?", default="list",
-        choices=["list", "create", "edit", "inspect", "select", "enable", "disable"])
+        choices=["list", "create", "edit", "inspect", "select", "enable", "disable", "model"])
     agents_parser.add_argument("agent_name", nargs="?", default=None)
     agents_parser.add_argument("--role", default="investigator",
         choices=["code", "creative", "investigator", "critic", "tester"])
     agents_parser.add_argument("--persona", default=None)
     agents_parser.add_argument("--display-name", default=None)
     agents_parser.add_argument("--tags", default="")
+    agents_parser.add_argument("--mode", default="auto", choices=["auto", "preferred", "fixed"])
+    agents_parser.add_argument("--primary", default="", help="Name of existing TaskRouter model profile")
+    agents_parser.add_argument("--fallbacks", default="", help="Comma-separated allowed fallback profiles")
+    agents_parser.add_argument("--reasoning", default="auto", choices=["auto", "low", "medium", "high"])
+    agents_parser.add_argument("--temperature", type=float, default=None)
+    agents_parser.add_argument("--output-tokens", type=int, default=None)
+    agents_parser.add_argument("--require-tools", action="store_true")
+    agents_parser.add_argument("--local-only", action="store_true")
 
     mcp_parser = subparsers.add_parser(
         "mcp",
