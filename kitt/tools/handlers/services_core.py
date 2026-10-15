@@ -120,6 +120,16 @@ class ChildSpawnHandler:
             task_id=str(args["plan_task_id"]) if args.get("plan_task_id") else None,
             parent_request_id=getattr(ctx.registry, "logical_request_ids", {}).get(ctx.turn_id),
             agent_role=str(args["agent_role"]) if args.get("agent_role") else None,
+            model_profile=(
+                str(args["agent_model_route"]["primary"])
+                if args.get("agent_profile") and isinstance(args.get("agent_model_route"), dict)
+                else "context"
+            ),
+            model_route=(
+                args["agent_model_route"]
+                if args.get("agent_profile") and isinstance(args.get("agent_model_route"), dict)
+                else None
+            ),
         )
         plans = getattr(ctx.registry, "task_plans", None)
         if plans is not None and args.get("plan_task_id"):

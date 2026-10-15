@@ -265,6 +265,7 @@ class ChildAgentManager:
         task_id: str | None = None,
         parent_request_id: str | None = None,
         agent_role: str | None = None,
+        model_route: dict | None = None,
     ):
         if security_context is not None and security_context.principal_type == "CHILD":
             raise PermissionError("Leaf child agents cannot spawn subagents")
@@ -389,6 +390,7 @@ class ChildAgentManager:
             "role": agent_role or "IMPLEMENT",
             "backend": backend_name,
             "model": str(model_profile),
+            "model_route": model_route,
             "context_fork_mode": "narrowed",
             "isolation_mode": isolation_mode,
             "budget_lease_id": str(budget_lease.get("id") or ""),
@@ -511,6 +513,7 @@ class ChildAgentManager:
             "state_root": str(self.state_root),
             "child_id": child.id,
             "runtime_conversation_id": child.runtime_conversation_id,
+            "lineage": dict(getattr(child, "lineage", None) or {}),
             "turn_id": child.current_task_id,
             "grant": {
                 "approval_id": grant.approval_id,

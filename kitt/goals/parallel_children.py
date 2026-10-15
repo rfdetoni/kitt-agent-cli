@@ -76,6 +76,8 @@ def parallel_contract_result(runtime, goal, current, state, security):
                 )
                 child_args = specialist.spawn_args(task, paths=tuple(item.paths))
                 child_args["name"] = item.local_id
+                child_args["agent_profile"] = specialist.id
+                child_args["task"] = task
                 child_args["token_budget"] = min(child_args["token_budget"], max(2048, int(runtime.config.child_token_budget)))
                 child_args["timeout_seconds"] = min(child_args["timeout_seconds"], int(runtime.config.child_timeout_seconds))
                 admitted = runtime.registry.execute_tool(

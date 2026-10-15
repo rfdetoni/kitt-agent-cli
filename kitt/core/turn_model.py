@@ -570,6 +570,9 @@ class TurnModelMixin:
         yield full_response, None
 
     def _provider_manages_tokens(self) -> bool:
+        specialist = getattr(self, "_specialist_execution", None)
+        if specialist is not None:
+            return _reverse_proxy_identity(specialist[1]) is not None
         explicit = getattr(self.execution_client, "profile", None)
         if _reverse_proxy_identity(explicit) is not None:
             return True
@@ -577,6 +580,27 @@ class TurnModelMixin:
         return _reverse_proxy_identity(configured) is not None
 
     def _resolve_execution_profile(self, cmd: TurnCommand, task: Optional[SemanticTask] = None) -> tuple:
+        specialist = getattr(self, "_specialist_execution", None)
+        if specialist is not None:
+            name, selected = specialist
+            from kitt.llm.privacy import profile_processing_is_local
+            privacy = str(getattr(self.config, "privacy_mode", "hybrid_redacted"))
+            if privacy in {"offline", "local_only"} and not profile_processing_is_local(selected):
+                raise PermissionError("Remote specialist model forbidden by privacy policy")
+            ledger = getattr(self, "execution_budgets", {}).get(cmd.turn_id)
+            if ledger is not None and _reverse_proxy_identity(selected) is not None:
+                ledger.delegate_token_limits_to_provider()
+            decision = RoutingDecision(
+                route_id=f"specialist-{cmd.turn_id[:12]}", selected_profile=name,
+                selected_tier="large" if selected.context_window > 8192 else "small",
+                context_profile=None,
+                reasons=("Per-specialist model profile selected at child admission.",),
+                component_scores={name: 1.0},
+                escalation_conditions=("provider_unavailable",),
+                privacy_mode=privacy, privacy_decision="ALLOWED",
+                policy_version="specialist-model-v1", created_at=str(time.time()),
+            )
+            return name, selected, decision, None
         configured_exe_name, configured_exe = self.router.resolve_profile_for_task("code-generation")
         explicit_client_profile = getattr(self.execution_client, "profile", None)
         llm_first_profile = (

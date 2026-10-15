@@ -110,8 +110,20 @@ class ToolRegistry(_core.ToolRegistry):
                 for key in ("token_budget", "timeout_seconds"):
                     if key in normalized_args:
                         profile_args[key] = min(profile_args[key], int(normalized_args[key]))
+                from kitt.agents.model_router import (
+                    AgentModelRouter, AgentModelStore,
+                )
+                from kitt.router.router import TaskRouter
+                from kitt.core.runtime_config import RuntimeConfig
+                store = AgentModelStore(self.root_path)
+                policy = store.load().get(specialist.id, specialist.llm)
+                selection = AgentModelRouter(TaskRouter(root_dir=str(self.root_path))).resolve(
+                    specialist.role, policy, privacy_mode=RuntimeConfig.from_env().privacy_mode,
+                )
+                profile_args["agent_profile"] = specialist.id
+                profile_args["agent_model_route"] = selection
                 normalized_args = profile_args
-            except (ValueError, TypeError, OverflowError) as exc:
+            except (ValueError, TypeError, OverflowError, PermissionError, OSError) as exc:
                 return ToolResult(False, "", f"Invalid specialist delegation: {exc}")
         if tool_name == "run_command":
             argv = normalized_args.get("argv")

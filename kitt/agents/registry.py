@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import tomllib
 
+from kitt.agents.model_router import AgentLLMPolicy
 from kitt.extensions.manager import ExtensionManager
 from kitt.extensions.plugins.security import prepare_trusted_plugin_snapshot
 
@@ -42,6 +43,7 @@ class AgentProfile:
     output_contract: str
     tags: tuple[str, ...]
     read_only: bool
+    llm: "AgentLLMPolicy"
 
     def spawn_args(self, task: str, *, paths: tuple[str, ...] = ()) -> dict:
         if not task.strip() or len(task) > 12000:
@@ -113,6 +115,7 @@ def _profile(plugin: str, slug: str, raw: dict, root: Path | None) -> AgentProfi
         tools=tuple(dict.fromkeys(tools)), token_budget=budget,
         timeout_seconds=timeout, output_contract=contract, tags=tuple(tags),
         read_only=read_only,
+        llm=AgentLLMPolicy.parse(raw.get("llm")),
     )
 
 

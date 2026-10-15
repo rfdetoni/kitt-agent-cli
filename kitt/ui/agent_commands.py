@@ -97,6 +97,8 @@ async def handle_agent_manager(ui, arg: str) -> None:
             if profile is None:
                 profile = registry.select(task, require_write=bool(paths))
             args = profile.spawn_args(task, paths=paths)
+            args["agent_profile"] = profile.id
+            args["task"] = task
             await ui._execute_direct_tool("child_spawn", args)
             return
         if action == "team":
@@ -107,7 +109,10 @@ async def handle_agent_manager(ui, arg: str) -> None:
             task = " ".join(tokens)
             team = (registry.find("investigator"), registry.find("creative"))
             for agent in team:
-                await ui._execute_direct_tool("child_spawn", agent.spawn_args(task))
+                args = agent.spawn_args(task)
+                args["agent_profile"] = agent.id
+                args["task"] = task
+                await ui._execute_direct_tool("child_spawn", args)
             ui._show_result("Specialist team submitted. Use /tasks and /agent inbox to monitor.")
             return
         if action == "msg":

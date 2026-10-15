@@ -380,6 +380,8 @@ def main() -> None:
         request = json.loads(sys.stdin.read())
         runtime = KittRuntime.build(request["root"], state_root_dir=request.get("state_root"))
         _bind_child_proxy_session(runtime, request)
+        from kitt.agents.model_router import apply_child_model_route
+        apply_child_model_route(runtime, request)
         mode = str(request.get("mode", "run"))
         if mode == "run":
             result = _run_new_turn(runtime, request)
