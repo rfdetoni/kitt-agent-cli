@@ -111,6 +111,19 @@ def deterministic_intent(prompt: str) -> str | None:
         return "ASK"
     if re.search(r"(?i)\b(?:e\s+depois|and\s+then|y\s+después)\b", original):
         return None
+    # Resolve deliverable-specific instructions before broad imperative patterns.
+    normalized = original.casefold()
+    if re.match(r"(?i)^write\s+(?:a\s+)?(?:database\s+)?(?:migration\s+)?strategy\b", original):
+        return "PLAN"
+    if re.match(r"(?i)^(?:atualize|update|actualiza)\b", original) and any(
+        word in normalized for word in ("readme", "instruções", "instrucciones", "instructions")
+    ):
+        return "DOCUMENT"
+    if re.match(r"(?i)^(?:execute|run|launch|ejecuta|rode)\b", original) and any(
+        word in normalized for word in ("tests", "testes", "pruebas", "suite", "suíte")
+    ):
+        return "TEST"
+
     for intent, pattern in _DIRECT_INTENTS:
         if pattern.match(original):
             if intent in _MUTATING and _NEGATED_MUTATION.search(original):
