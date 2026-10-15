@@ -166,3 +166,21 @@ Na execução [GitHub Actions #38754105001](https://github.com/rfdetoni/kitt-age
 | Economia real de tokens/tarefa | Não medida | Precisa de benchmark de execução ponta a ponta |
 
 A avaliação demonstra que o modelo gera vetores reais e que os comandos explícitos podem ser classificados no host. **Não demonstra precisão 100% do classificador vetorial**: as regras foram ajustadas após observação de um conjunto pequeno, portanto os 24 casos não são mais um conjunto retido independente. Um conjunto novo, independente, com pedidos ambíguos e pares contrastivos permanece obrigatório antes de habilitar `auto` por padrão. O teste de calibração indicou margens vetoriais próximas de zero entre intenções diferentes; por segurança, não foram reduzidos os thresholds apenas para obter cobertura aparente.
+
+### Preparação explícita pelo instalador direto
+
+O instalador direto (`install.sh` / `install.ps1`) aceita `--prepare-semantic-model` / `-PrepareSemanticModel`. **Não instala Ollama, não inicia o daemon e não baixa pesos automaticamente**: a preparação só acontece mediante essa opção, depois da instalação do Agent, e exige que um Ollama pertencente ao usuário já esteja acessível no loopback. O script `scripts/prepare_semantic_model.py` faz `ollama pull` (com progresso nativo e cancelamento por Ctrl+C), confere o SHA-256 completo instalado e falha se o modelo for substituído. Se a preparação falhar, a instalação do Agent permanece disponível; não há anúncio de sucesso para o backend semântico.
+
+Exemplo de verificação sem download:
+
+```bash
+python scripts/prepare_semantic_model.py
+```
+
+Preparação manual explícita:
+
+```bash
+python scripts/prepare_semantic_model.py --pull
+```
+
+**Atenção:** o download acessa o registro externo configurado para Ollama apenas nesse comando explícito. Sem a opção, nem o instalador nem o Agent baixam pesos. A execução de embeddings usa exclusivamente loopback após a preparação. Habilitar a etapa semântica para um turno depende de `KITT_SEMANTIC_MODE=auto` ou do Control Center.

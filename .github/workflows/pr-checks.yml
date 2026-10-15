@@ -40,12 +40,16 @@ jobs:
         run: |
           python -m pip install -e '.[dev]'
           python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
+      - name: Verify uv dependency lock using uv resolver
+        run: |
+          python -m pip install 'uv==0.10.0'
+          uv lock --check
       - name: Compile runtime
         run: python -m compileall -q kitt assistant-source/packages/kitt-assistant-runtime/kitt
       - name: Run release-critical regression contracts
         run: python scripts/run_release_critical.py
       - name: Multilingual local semantics regressions
-        run: python -m pytest -q tests/test_multilingual_semantic_fidelity.py tests/test_local_semantic_integration.py
+        run: python -m pytest -q tests/test_multilingual_semantic_fidelity.py tests/test_local_semantic_integration.py tests/test_semantic_preparation.py
       - name: Reverse engineering MCP safety contracts
         run: >-
           python -m pytest -q
