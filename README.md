@@ -1,3 +1,7 @@
+## Agent CLI 0.87.29 — optional local multilingual semantic engine
+
+PT-BR, English and Spanish explicit task commands are resolved locally without generating an auxiliary LLM classification request. An optional Ollama multilingual E5 Q8 classifier abstains on uncertain input; the original user request is always authoritative and remains in the execution prompt. The engine is **disabled by default** until independently calibrated. Use `/semantic doctor`, `/semantic status`, and the [Code-RAG guide](docs/CODE_RAG.md). Direct installers support explicit `--prepare-semantic-model` (Linux) or `-PrepareSemanticModel` (Windows) and never pull weights implicitly. [Release notes](docs/RELEASE_0.87.29.md).
+
 ## Agent CLI 0.87.28 — stop unsafe automatic WebChat retries
 
 When the reverse-proxy reports a submitted WebChat turn whose fresh assistant response could not be captured (`ui_timeout`, no KAP action verified), the durable goal now enters **BLOCKED / ENVIRONMENT** instead of blindly resending the same task. Previous completed tasks and budget remain intact; operator inspection and explicit `goal resume` are required before attempting again. [Release notes](docs/RELEASE_0.87.28.md).

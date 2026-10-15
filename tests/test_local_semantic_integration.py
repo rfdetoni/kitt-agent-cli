@@ -77,6 +77,21 @@ class LocalSemanticIntegrationTests(unittest.TestCase):
         self.assertEqual(llm.calls, 1)
         self.assertTrue(result.plan.include_original_prompt)
 
+    def test_llm_read_only_mutation_conflict_falls_back_without_write_tools(self):
+        class ContradictoryLLM:
+            def chat(self, *args, **kwargs):
+                return ('{"intent":"IMPLEMENT","goal":"Modify the code",'
+                        '"actions":["edit"],"confidence":0.8,"constraints":[]}')
+        prompt = "Explica el código sin modificar ningún archivo."
+        result = SemanticFilter(self.profile, ContradictoryLLM(), local_mode="off").filter_and_plan(prompt)
+        self.assertEqual(result.source, "FALLBACK")
+        self.assertEqual(result.task.original_prompt, prompt)
+        self.assertEqual(result.task.intent, "ASK")
+        self.assertTrue(result.plan.include_original_prompt)
+        self.assertTrue(set(result.plan.enabled_tools).isdisjoint({
+            "run_command", "write_file", "apply_patch", "create_directory",
+        }))
+
     def test_required_local_abstains_without_generating_request(self):
         llm = FakeContextLLM()
         local = FakeLocal((None, "conversation_dependency"))
