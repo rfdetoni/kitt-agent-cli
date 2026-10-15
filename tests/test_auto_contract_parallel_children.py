@@ -65,6 +65,15 @@ def test_automatic_contract_fans_out_independent_children_without_reexecuting():
             get=lambda goal_id: SimpleNamespace(state="RUNNING"),
         ),
         registry=SimpleNamespace(execute_tool=execute_tool),
+        agent_registry=SimpleNamespace(
+            select=lambda task, require_write: SimpleNamespace(
+                spawn_args=lambda task, paths: {
+                    "name": "code", "task": task, "allowed_paths": list(paths),
+                    "enabled_tools": ["read_file", "search", "repository_map", "write_file", "apply_patch"],
+                    "token_budget": 2048, "timeout_seconds": 5, "agent_role": "IMPLEMENT",
+                }
+            ),
+        ),
         workspace_id="ws",
         config=SimpleNamespace(child_token_budget=2048, child_timeout_seconds=5),
     )
