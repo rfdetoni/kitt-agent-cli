@@ -65,7 +65,13 @@ class VMSupervisorTests(unittest.TestCase):
         self.assertIn("snapshot=on", joined)
         self.assertNotIn("guestfwd", joined)
         self.assertNotIn("virtiofs", joined)
-        self.assertNotIn("9p", joined)
+        # Check QEMU mount options, not incidental characters in a random
+        # temporary image pathname (which may contain "9p").
+        self.assertFalse(any(
+            arg in {"-virtfs", "-fsdev"}
+            or arg.startswith(("virtio-9p", "9p,"))
+            for arg in args
+        ))
         self.assertNotIn("usb-host", joined)
         self.assertNotIn("tap,", joined)
         ssh = _ssh_args(info, 2222, "ssh")
