@@ -99,7 +99,7 @@ class TestAutonomyPolicy(unittest.TestCase):
             for argv in commands:
                 self.assertEqual(engine.evaluate_tool("run_command", {"argv": argv}), "DENY")
 
-    def test_opaque_interpreter_wrappers_are_denied_even_with_allow_all(self):
+    def test_allow_all_preserves_denies_and_allows_inline_interpreters(self):
         engine = PolicyEngine(autonomy=AutonomyPolicy.preset("allow_all"))
         denied = (
             ["sh", "-c", "git status"],
@@ -127,8 +127,11 @@ class TestAutonomyPolicy(unittest.TestCase):
                 self.assertEqual(engine.evaluate_argv(argv), "ASK")
                 self.assertEqual(
                     engine.evaluate_tool("run_command", {"argv": argv}),
-                    "ASK",
+                    "ALLOW",
                 )
+                for level in ("supervised", "balanced"):
+                    supervised = PolicyEngine(autonomy=AutonomyPolicy.preset(level))
+                    self.assertEqual(supervised.evaluate_tool("run_command", {"argv": argv}), "ASK")
 
         self.assertEqual(engine.evaluate_argv(["python", "scripts/check.py"]), "ASK")
 
@@ -141,7 +144,7 @@ class TestAutonomyPolicy(unittest.TestCase):
             workspace_id="ws-approved", executable_identity="MODEL:agent",
         )
         engine = PolicyEngine(
-            autonomy=AutonomyPolicy.preset("allow_all"), approval_manager=manager,
+            autonomy=AutonomyPolicy.preset("supervised"), approval_manager=manager,
         )
         command = {"argv": ["node", "-e", "console.log('approved')"]}
         self.assertEqual(engine.evaluate_tool(

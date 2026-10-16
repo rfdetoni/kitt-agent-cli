@@ -273,8 +273,6 @@ class PolicyEngine:
                 )
                 if remembered in {"allow", "deny"}:
                     return "ALLOW" if remembered == "allow" else "DENY"
-            if self._requires_explicit_approval_argv(argv):
-                return "ASK"
             # Repository autonomy is user-owned; model commands cannot change it.
             return "ALLOW" if getattr(self.autonomy, "allow_run_command_auto", False) else "ASK"
 
@@ -310,8 +308,6 @@ class PolicyEngine:
             command_decision = self.evaluate_argv(argv)
             if command_decision == "DENY":
                 return "DENY"
-            if self._requires_explicit_approval_argv(argv):
-                return "ASK"
             if getattr(self.autonomy, "allow_run_command_auto", False):
                 return "ALLOW"
             return "ASK"
@@ -482,8 +478,8 @@ class PolicyEngine:
             return "DENY"
         if self._requires_explicit_approval_argv(argv):
             # Inline interpreter payloads are opaque to the argv policy. They
-            # remain executable after an exact explicit approval, but autonomy
-            # must never silently upgrade them to ALLOW.
+            # require approval in supervised/balanced mode. evaluate_tool applies
+            # the user's explicit autonomous process permission after hard DENY.
             return "ASK"
         if any(not self._path_arg_safe(arg) for arg in argv[1:] if not arg.startswith("-")):
             return "DENY"

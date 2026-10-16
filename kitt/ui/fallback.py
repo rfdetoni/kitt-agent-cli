@@ -342,6 +342,13 @@ class PlainLineUI:
                         event.action_hash,
                         approval_id=event.approval_request_id,
                     )
+                    from kitt.goals.auto_contract import goal_id_for_pending_turn, resolve_goal_approval
+
+                    if goal_id_for_pending_turn(self.runtime, event.turn_id):
+                        resolution = await asyncio.to_thread(resolve_goal_approval, self.runtime, grant)
+                        if not resolution.success:
+                            self._write(f"\nError: {resolution.error}")
+                        continue
                     resumed_iterator = self.runtime.processor.continue_turn(event.turn_id, grant)
                     async for resumed in _stream_iterator(resumed_iterator):
                         if isinstance(resumed, TextDelta):

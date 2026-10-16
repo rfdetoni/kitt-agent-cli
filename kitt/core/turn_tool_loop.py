@@ -1087,6 +1087,13 @@ class TurnToolLoopMixin:
                     approval_payload = tool_result.metadata.get("approval_payload")
                     if not isinstance(approval_payload, dict):
                         approval_payload = tool_args
+                    # Registry handlers receive a copy of model arguments.
+                    # Persist the host's concrete resume metadata explicitly;
+                    # mutating handler arguments cannot update this envelope.
+                    resume_tool = str(tool_result.metadata.get("resume_tool_name") or tool_name)
+                    resume_args = dict(
+                        approval_payload if tool_result.metadata.get("resume_tool_name") else tool_args
+                    )
                     action_hash = self.registry.policy.generate_action_hash(
                         approval_action, approval_payload
                     )
@@ -1104,7 +1111,16 @@ class TurnToolLoopMixin:
                     )
                     now = time.time()
                     from kitt.security.mutation_preconditions import capture_preconditions
-                    preconditions = capture_preconditions(self.root_path, tool_name, tool_args)
+                    preconditions = capture_preconditions(self.root_path, resume_tool, resume_args)
+                    if resume_tool == "apply_patch" and "before_hashes" in tool_result.metadata:
+                        from kitt.security.mutation_preconditions import MutationPrecondition
+
+                        # Keep the hashes captured by the host handler before
+                        # pausing. Re-reading a changed file must not bless it.
+                        preconditions = [
+                            MutationPrecondition(path, digest is not None, digest)
+                            for path, digest in tool_result.metadata["before_hashes"].items()
+                        ]
                     affected = [p.path for p in preconditions]
                     before = {p.path: p.expected_sha256 for p in preconditions}
                     sec_dict = security_context.to_dict()
@@ -1135,10 +1151,10 @@ class TurnToolLoopMixin:
                         cmd.turn_id,
                         cmd.conversation_id,
                         pa_ws,
-                        tool_name,
-                        tool_args,
+                        resume_tool,
+                        resume_args,
                         action_hash,
-                        self._args_digest(tool_args),
+                        self._args_digest(resume_args),
                         affected,
                         before,
                         now,

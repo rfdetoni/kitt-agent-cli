@@ -5,7 +5,6 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from kitt.core.pending_action import embed_resume_descriptor
 from kitt.runtime.safe_runtime import SafeRuntime
 from kitt.tools.handlers import ToolContext, ToolHandler
 from kitt.tools.handlers.system import PATCH_INTEGRITY_KEY
@@ -135,15 +134,6 @@ class SafeRuntimeHandler(ToolHandler):
                     )
                 except PermissionError as exc:
                     return ToolResult(False, "", str(exc))
-
-            if result.resume_tool_name:
-                embed_resume_descriptor(
-                    args,
-                    tool_name=result.resume_tool_name,
-                    arguments=approval_payload,
-                    affected_paths=affected_paths,
-                    before_hashes=before_hashes,
-                )
 
             return ToolResult(
                 success=False,
