@@ -1,3 +1,9 @@
+# Agent CLI 0.88.5 — managed Docker RE lab discovery and runtime auto-selection
+
+Detect an available Docker/Podman engine (Docker preferred) without silently overriding explicit selection. Inspect installer-owned `kitt-re-full` and `kitt-re-win11` with image identity, private bind-mount and isolation validation; allow operator-only start/stop and a Linux toolbox shell, without creating duplicate QEMU guests or granting Windows oracle/SSH authority. Existing QEMU profiles and unattended approval boundaries are preserved.
+
+[Release details](docs/RELEASE_0.88.5.md).
+
 # Agent CLI 0.88.4 — durable approvals and collision-safe parallel work
 
 Approvals are persisted before appearing in the UI, cannot reopen after a decision, and resume the exact concrete action with its original mutation preconditions. Cancelling a turn retires its pending approval. Parallel Goal batches include the scheduled task and prevent overlapping directory/file work. Keeps the 0.88.3 allow-all and Goal fencing contracts, with focused regressions and no new dependencies.
