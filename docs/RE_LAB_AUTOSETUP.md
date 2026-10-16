@@ -50,17 +50,36 @@ ForceCommand runner and registered, hash-pinned probes.
 First-install credentials are random and not printed to stdout.
 Repeated setup preserves existing container and disk instead of reinstalling.
 
+## Explicit reset
+
+Preview and obtain the confirmation token without mutation:
+
+    kitt re lab recreate --scope windows --destroy-data --dry-run
+
+Execute ONLY with that recent token:
+
+    kitt re lab recreate --scope windows --destroy-data \
+      --confirm TOKEN_FROM_DRY_RUN --accept-license
+
+Other scopes: linux, wine, all. The token is bound to scope, selected
+immutable Docker container IDs, absolute deletion paths and a ten-minute
+expiry; all scopes require --destroy-data. A failed reinstall reports PARTIAL
+rather than declaring readiness. The global workspace is never deleted by
+the windows-only scope.
+
 ## Verified states and limitations
 
 - Setup returns PROVISIONING, not READY. Docker running or noVNC is not an
   authenticated Oracle.
 - Oracle readiness requires a successful real pinned-SSH forced-command
   probe.info response whose manifest matches the operator-approved hash.
-- The full pilot currently uses Wine in the existing networkless toolbox.
-  A dedicated disposable Wine candidate is still pending; lab_ready is false
-  despite a matching benign pilot.
-- No destructive recreate operation is implemented in this CLI. Never use
-  broad --yes, retry loops or model prompts to destroy the Windows disk.
+- The fixed pilot uses a separate ephemeral networkless, read-only
+  Linux+Wine container with strict limits and only a read-only approved probe
+  mount. It shares the Linux kernel; it is not a Windows guest or hypervisor.
+- A scoped destructive recreate requires a read-only plan and recent HMAC
+  confirmation token bound to Docker IDs and absolute paths, plus explicit
+  --destroy-data and --accept-license for Windows resets. Never use broad --yes
+  or a model-generated token to destroy the Windows disk.
 - Existing historical Windows Docker/admin installations are not migrated by
   overwriting Docker variables; an explicit supervised migration is required.
 - The central KITT installer must be updated to delegate to this canonical
