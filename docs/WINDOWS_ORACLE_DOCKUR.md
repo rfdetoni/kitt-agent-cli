@@ -101,3 +101,24 @@ operator-invoked bounded comparison that explicitly documents its isolation.
 If OpenSSH provisioning is blocked because Windows Features-on-Demand isn't
 available, provide the signed Microsoft FoD source to Windows through the
 operator's approved installation process. Never silently disable security.
+
+## Operator-only fixed differential pilot
+
+Once doctor reports READY, execute exactly the fixed KITT-authored PE on the
+Windows reference and the existing no-network full Wine toolbox:
+
+    kitt re oracle pilot \
+      --hosts /ABSOLUTE/PRIVATE/hosts.json \
+      --manifest-sha256 REAL_64_CHARACTER_SHA256 \
+      --yes
+
+The host validates the current Windows Oracle readiness again, verifies the
+local PE SHA against the approved manifest, runs only event_auto_reset (no
+arbitrary path/commands/arguments) and compares the Windows receipt against the
+Wine result. A bounded evidence report is saved in the private lab as
+oracle/pilot.json. Codes: 0 PASS_SCENARIO, 1 FAIL_SCENARIO, 2 BLOCKED_ENV.
+
+This initial pilot is safe for its own benign test binary, but the Linux
+toolbox uses a shared kernel and is not suitable for untrusted executables.
+Full mission execution with multiple guest VMs still needs the existing
+operator-approved forced-command host brokers and verified isolation.
