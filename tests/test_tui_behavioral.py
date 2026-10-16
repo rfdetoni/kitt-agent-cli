@@ -283,6 +283,34 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ui.state.pending_approval["approval_id"], "still-pending")
             self.assertEqual(ui.state.status_text, "ERROR")
 
+    async def test_approved_action_execution_failure_does_not_reopen_modal(self):
+        class FailedExecutionDaemon:
+            daemon_mode = True
+            is_active = False
+
+            async def resolve_approval(self, approval_id, allow):
+                return {
+                    "status": "ok",
+                    "decision": "approved",
+                    "execution_status": "failed",
+                    "execution_error": "Execution authority changed since approval",
+                }
+
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(
+                self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True
+            )
+            ui.build_application()
+            ui.bridge = FailedExecutionDaemon()
+            ui.state.pending_approvals.append(
+                {"approval_id": "decided", "tool_name": "run_command"}
+            )
+            ui.open_overlay("permission", ui.permission_control)
+            await ui.resolve_approval("once")
+            self.assertFalse(ui.state.pending_approvals)
+            self.assertNotEqual(ui.state.active_overlay, "permission")
+            self.assertEqual(ui.state.status_text, "ERROR")
+
     async def test_reverse_proxy_tab_switch_refreshes_data_and_focus(self):
         from unittest.mock import AsyncMock
 

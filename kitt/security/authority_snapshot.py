@@ -40,11 +40,32 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _approval_revision(approval_manager: Any) -> str:
-    rules = []
-    for rule in list(getattr(approval_manager, "remembered_rules", ()) or ()):
-        rules.append(_jsonable(rule))
-    return _digest(rules)
+def _approval_rules(approval_manager: Any) -> list[dict[str, Any]]:
+    snapshot = getattr(approval_manager, "remembered_rules_snapshot", None)
+    rules = (
+        snapshot()
+        if callable(snapshot)
+        else list(getattr(approval_manager, "remembered_rules", ()) or ())
+    )
+    return [_jsonable(rule) for rule in rules]
+
+
+def _approval_revision(rules: list[dict[str, Any]]) -> str:
+    return f"{len(rules)}:{_digest(rules)}"
+
+
+def _only_added_allows(previous: str, rules: list[dict[str, Any]]) -> bool:
+    count, separator, digest = previous.partition(":")
+    if not separator or not count.isdecimal() or len(count) > 10:
+        return False
+    size = int(count)
+    # The original ordered prefix must survive byte-for-byte. Removing,
+    # replacing or adding a deny still invalidates the pending authority.
+    return (
+        size < len(rules)
+        and _digest(rules[:size]) == digest
+        and all(rule.get("decision") == "allow" for rule in rules[size:])
+    )
 
 
 def capture_authority_snapshot(
@@ -54,6 +75,7 @@ def capture_authority_snapshot(
     autonomy: Any,
     approval_manager: Any,
     sandbox_profile: str,
+    _remembered_rules: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     capabilities = sorted(str(item) for item in security_context.capabilities)
     filesystem_caps = [
@@ -62,17 +84,14 @@ def capture_authority_snapshot(
         if item.startswith(("repo.", "artifact.", "filesystem.", "state."))
     ]
     network_caps = [
-        item
-        for item in capabilities
-        if item.startswith(("network.", "browser.", "mcp."))
+        item for item in capabilities if item.startswith(("network.", "browser.", "mcp."))
     ]
     policy_revision = _digest(
         {
             "policy": type(policy).__name__,
             "root": str(getattr(policy, "root_path", "")),
             "disallowed_shells": sorted(
-                str(item)
-                for item in getattr(policy, "DISALLOWED_PROCESS_EXECUTABLES", ())
+                str(item) for item in getattr(policy, "DISALLOWED_PROCESS_EXECUTABLES", ())
             ),
         }
     )
@@ -80,16 +99,16 @@ def capture_authority_snapshot(
     snapshot = ExecutionAuthoritySnapshot(
         policy_revision=policy_revision,
         autonomy_revision=autonomy_revision,
-        approval_revision=_approval_revision(approval_manager),
+        approval_revision=_approval_revision(
+            _approval_rules(approval_manager) if _remembered_rules is None else _remembered_rules
+        ),
         workspace_id=security_context.workspace_id,
         conversation_id=security_context.conversation_id,
         turn_id=security_context.turn_id,
         sandbox_profile=str(sandbox_profile or "default"),
         filesystem_caps=tuple(filesystem_caps),
         network_caps=tuple(network_caps),
-        executable_identity=(
-            f"{security_context.principal_type}:{security_context.principal_id}"
-        ),
+        executable_identity=(f"{security_context.principal_type}:{security_context.principal_id}"),
         approval_grant=None,
     )
     mapping = asdict(snapshot)
@@ -104,6 +123,7 @@ def validate_authority_snapshot(
     autonomy: Any | None = None,
     approval_manager: Any | None = None,
     sandbox_profile: str | None = None,
+    allow_added_permissions: bool = False,
 ) -> None:
     if not envelope:
         raise PermissionError("missing execution authority snapshot")
@@ -113,9 +133,7 @@ def validate_authority_snapshot(
         raise PermissionError("invalid execution authority snapshot")
     if _digest(snapshot) != digest:
         raise PermissionError("execution authority snapshot integrity check failed")
-    expected_identity = (
-        f"{security_context.principal_type}:{security_context.principal_id}"
-    )
+    expected_identity = f"{security_context.principal_type}:{security_context.principal_id}"
     checks = {
         "workspace_id": security_context.workspace_id,
         "conversation_id": security_context.conversation_id,
@@ -133,9 +151,7 @@ def validate_authority_snapshot(
         if item.startswith(("repo.", "artifact.", "filesystem.", "state."))
     ]
     current_network = [
-        item
-        for item in current_caps
-        if item.startswith(("network.", "browser.", "mcp."))
+        item for item in current_caps if item.startswith(("network.", "browser.", "mcp."))
     ]
     if list(snapshot.get("filesystem_caps") or []) != current_fs:
         raise PermissionError("execution authority filesystem capability mismatch")
@@ -143,6 +159,7 @@ def validate_authority_snapshot(
         raise PermissionError("execution authority network capability mismatch")
 
     if policy is not None and autonomy is not None and approval_manager is not None:
+        rules = _approval_rules(approval_manager)
         current = capture_authority_snapshot(
             security_context,
             policy=policy,
@@ -153,6 +170,7 @@ def validate_authority_snapshot(
                 if sandbox_profile is not None
                 else str(snapshot.get("sandbox_profile") or "default")
             ),
+            _remembered_rules=rules,
         )["snapshot"]
         for key in (
             "policy_revision",
@@ -161,6 +179,10 @@ def validate_authority_snapshot(
             "sandbox_profile",
         ):
             if str(snapshot.get(key) or "") != str(current.get(key) or ""):
-                raise PermissionError(
-                    f"execution authority snapshot {key} is stale"
-                )
+                if (
+                    key == "approval_revision"
+                    and allow_added_permissions
+                    and _only_added_allows(str(snapshot.get(key) or ""), rules)
+                ):
+                    continue
+                raise PermissionError(f"execution authority snapshot {key} is stale")

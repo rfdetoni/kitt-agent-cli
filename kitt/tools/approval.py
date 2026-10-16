@@ -81,6 +81,10 @@ class ApprovalManager:
             merged.update(self._requests_by_binding)
             return merged
 
+    def remembered_rules_snapshot(self) -> tuple[RememberedRule, ...]:
+        with self._lock:
+            return tuple(self.remembered_rules)
+
     def _load_remembered_rules(self) -> None:
         # HistoryDatabase is private state after the full hardening package.
         if not self.db:

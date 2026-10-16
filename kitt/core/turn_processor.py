@@ -1460,11 +1460,21 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 policy=self.registry.policy,
                 autonomy=self.registry.policy.autonomy,
                 approval_manager=self.registry.approval_manager,
+                # Only this explicit, action-bound approval resume may accept
+                # new allow rules (the modal's "always allow" choice). Leases
+                # and all other authority changes retain strict validation.
+                allow_added_permissions=True,
                 sandbox_profile=str(
                     getattr(sandbox, "default_profile", "workspace-write")
                 ),
             )
         except PermissionError as exc:
+            if hist_svc:
+                hist_svc.repo.cancel_pending_action(pa.id)
+            self.pending_actions.pop(turn_id, None)
+            self.registry.approval_manager.deny(
+                pa.approval_request_id, f"Execution authority changed: {exc}"
+            )
             yield TurnFailed(
                 error=f"Execution authority changed since approval: {exc}"
             )

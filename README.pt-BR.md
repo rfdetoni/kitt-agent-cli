@@ -1,3 +1,9 @@
+# Agent CLI 0.88.2 — remembered approvals resume without a loop
+
+Saving “always allow” for a session or workspace no longer invalidates the waiting action's authority snapshot. Only explicit, action-bound approval resumes accept appended allow rules, with the entire original rule prefix preserved. Revocations, deny additions, policy/autonomy/sandbox changes, principal changes, grant mismatches and nonce replays still fail closed. Other snapshot consumers remain strict.
+
+[Release details](docs/RELEASE_0.88.2.md).
+
 # Agent CLI 0.88.1 — bounded planning with local validation
 
 A valid automatic Goal plan now needs one model generation, followed by local validation of the existing size, ID, dependency, path, criterion and registered-check constraints. One structural correction is allowed when that validation fails; a second invalid result stops planning. Transport failures are not automatically replayed.

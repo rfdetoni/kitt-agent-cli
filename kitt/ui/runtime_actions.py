@@ -388,6 +388,12 @@ async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
                 if item.get("approval_id") != pending["approval_id"]
             ]
             ui.state.status_text = "PROCESSING" if allow else "SYSTEM ONLINE"
+            if acknowledgment.get("execution_status") == "failed":
+                ui.state.add_toast(
+                    str(acknowledgment.get("execution_error") or "Approved action failed"),
+                    persistent=True,
+                )
+                ui.state.status_text = "ERROR"
         except Exception as exc:
             ui.state.add_toast(f"Approval failed: {exc}", persistent=True)
             ui.state.status_text = "ERROR"
