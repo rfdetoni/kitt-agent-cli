@@ -169,10 +169,8 @@ def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, mon
     lab = tmp_path / "re-lab"
     private = lab / "oracle" / "oem"
     private.mkdir(parents=True)
-    workspace = lab / "workspace" / ".kitt-oracle"
-    workspace.mkdir(parents=True)
     binary = b"MZ" + b"safe-fixture" * 20
-    (workspace / "event_probe.exe").write_bytes(binary)
+    (private / "event_probe.exe").write_bytes(binary)
     expected = hashlib.sha256(binary).hexdigest()
     (private / "manifest.json").write_text(json.dumps({
         "probes": {"event_auto_reset": {"path": "event_probe.exe", "sha256": expected}}
@@ -195,8 +193,8 @@ def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, mon
     monkeypatch.setattr(re_oracle_pilot, "_ssh_request",
                         lambda config, alias, name: ref)
     calls = []
-    def fixed_isolated_wine(lab, linux, binary):
-        calls.append((lab, linux, binary))
+    def fixed_isolated_wine(lab, linux, binary, expected_sha):
+        calls.append((lab, linux, binary, expected_sha))
         return 0, observation.encode(), b""
     monkeypatch.setattr(re_oracle_pilot, "_run_isolated_wine", fixed_isolated_wine)
     result = re_oracle_pilot.pilot(manifest_sha256=digest, yes=True)
@@ -204,7 +202,8 @@ def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, mon
     assert result["toolbox_vm_isolated"] is True
     assert result["candidate"]["environment"] == "isolated-ephemeral-wine-container"
     assert result["source_binary_sha256"] == expected
-    assert calls and calls[0][2] == workspace / "event_probe.exe"
+    assert calls and calls[0][2] == private / "event_probe.exe"
+    assert calls[0][3] == expected
     assert (lab / "oracle" / "pilot.json").is_file()
 
 
