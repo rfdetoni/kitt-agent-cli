@@ -8,4 +8,6 @@
 - Destructive replacement requires exact verified KITT Docker identity, private lab root, explicit user consent and image/compiler preflight. No Linux workspace or other disks are deleted.
 - Bump pyproject, Python uv lock, version metadata and documentation; keep existing QEMU guest profiles and approval boundaries.
 
+- Add operator-only fixed event_auto_reset Windows × Docker Wine pilot and SHA-bound evidence at oracle/pilot.json, with blocked/partial results kept distinct from successful matching.
+
 **Validation:** CI unit/contract checks and packaging; actual Dockur Windows 11 first-boot OpenSSH + pilot probe E2E remains an operator-environment validation gate. Failures remain BLOCKED_ENV and must not be reported as an authenticated oracle.
