@@ -20,6 +20,8 @@ def test_cli_contract_and_dry_run_flags():
     assert parsed.yes and parsed.accept_license and parsed.dry_run
     assert build_parser().parse_args(["re", "lab", "verify", "--full"]).full
     assert build_parser().parse_args(["re", "lab", "down"]).lab_action == "down"
+    assert build_parser().parse_args(["re", "lab", "status", "--json"]).lab_json
+    assert build_parser().parse_args(["re", "lab", "down", "--dry-run"]).dry_run
 
 
 def test_setup_requires_explicit_approval_before_touching_host(monkeypatch):
