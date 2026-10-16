@@ -5,7 +5,6 @@ import inspect
 import json
 import logging
 import re
-import sqlite3
 import time
 from typing import Iterator, Optional
 from urllib.parse import urlsplit
@@ -13,11 +12,9 @@ from urllib.parse import urlsplit
 from kitt.context_filter.prompt_budget import TokenCounter
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.logging import summarize_trace_messages, summarize_trace_text, trace_event
-from kitt.core.pending_action import PendingAction
 from kitt.core.turn_command import TurnCommand
 from kitt.runtime.output_retention import retain_tool_output
 from kitt.core.turn_events import (
-    ApprovalRequired,
     ThinkingCompleted,
     ThinkingStarted,
     ToolCallProposed,
@@ -38,7 +35,6 @@ from kitt.edit_format.strategy import (
 from kitt.llm.attachments import AttachmentError
 from kitt.llm.client import LLMClient
 from kitt.llm.domain import ProviderOutputLimitError
-from kitt.security.authority_snapshot import capture_authority_snapshot
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.protocol import extract_tool_reasoning_summary, parse_tool_call
 from kitt.tools.registry import ToolResult
@@ -1077,118 +1073,14 @@ class TurnToolLoopMixin:
                     files_changed=len(changed_paths),
                 )
             if tool_result.requires_approval:
-                # Pending-action registration is state mutation. Order it
-                # against cancellation instead of checking a racy boolean.
-                if not self.turn_guard.begin(cmd.turn_id):
-                    return
-                approval_error = None
-                try:
-                    hist_svc = self.history_service
-                    pa_ws = workspace_id
-                    approval_action = str(tool_result.metadata.get("approval_action") or tool_name)
-                    approval_payload = tool_result.metadata.get("approval_payload")
-                    if not isinstance(approval_payload, dict):
-                        approval_payload = tool_args
-                    action_hash = self.registry.policy.generate_action_hash(
-                        approval_action, approval_payload
-                    )
-                    approval_id = (
-                        f"req_{cmd.turn_id}_"
-                        f"{hashlib.sha256(action_hash.encode()).hexdigest()[:8]}"
-                    )
-                    self.registry.approval_manager.register_request(
-                        cmd.turn_id,
-                        cmd.conversation_id,
-                        pa_ws,
-                        action_hash,
-                        approval_id,
-                        tool_name=approval_action,
-                    )
-                    now = time.time()
-                    from kitt.security.mutation_preconditions import capture_preconditions
-                    preconditions = capture_preconditions(self.root_path, tool_name, tool_args)
-                    affected = [p.path for p in preconditions]
-                    before = {p.path: p.expected_sha256 for p in preconditions}
-                    sec_dict = security_context.to_dict()
-                    sec_dict["mutation_preconditions"] = [
-                        p.to_dict() for p in preconditions
-                    ]
-                    sandbox = getattr(
-                        getattr(self.registry, "process_runner", None),
-                        "sandbox",
-                        None,
-                    )
-                    sec_dict["authority_snapshot"] = capture_authority_snapshot(
-                        security_context,
-                        policy=self.registry.policy,
-                        autonomy=self.registry.policy.autonomy,
-                        approval_manager=self.registry.approval_manager,
-                        sandbox_profile=str(
-                            getattr(
-                                sandbox,
-                                "default_profile",
-                                "workspace-write",
-                            )
-                        ),
-                    )
-                    pa = PendingAction(
-                        f"pa_{cmd.turn_id}",
-                        approval_id,
-                        cmd.turn_id,
-                        cmd.conversation_id,
-                        pa_ws,
-                        tool_name,
-                        tool_args,
-                        action_hash,
-                        self._args_digest(tool_args),
-                        affected,
-                        before,
-                        now,
-                        0.0,  # active approval requests do not expire automatically
-                        "pending",
-                        security_context=sec_dict,
-                    )
-                    if hist_svc:
-                        hist_svc.repo.save_pending_action(pa)
-                    self.pending_actions[cmd.turn_id] = pa
-                except (ValueError, sqlite3.IntegrityError) as exc:
-                    approval_error = str(exc)
-                finally:
-                    self.turn_guard.end(cmd.turn_id)
+                from kitt.core.tool_approval import require_tool_approval
 
-                if approval_error is not None:
-                    yield TurnBlocked(
-                        reason=f"Approval registration rejected: {approval_error}"
-                    ), None, None
-                    return
-
-                if self._cancel_requested(cmd.turn_id):
-                    self.pending_actions.pop(cmd.turn_id, None)
-                    if hist_svc:
-                        try:
-                            hist_svc.repo.cancel_pending_action(pa.id)
-                        except Exception:
-                            pass
-                    # Cancelling the action must also retire its visible
-                    # approval request, otherwise the modal can reopen.
-                    self.registry.approval_manager.deny(
-                        approval_id, "Turn cancelled before approval"
-                    )
-                    return
-
-                yield ApprovalRequired(
-                    turn_id=cmd.turn_id,
-                    conversation_id=cmd.conversation_id,
-                    tool_name=approval_action,
-                    args=approval_payload,
-                    action_hash=action_hash,
-                    approval_request_id=approval_id,
-                    workspace_id=pa_ws,
-                    executable_identity=(
-                        f"{security_context.principal_type}:"
-                        f"{security_context.principal_id}"
-                    ),
-                ), None, None
+                approval_event = require_tool_approval(
+                    self, cmd, workspace_id, tool_name, tool_args,
+                    tool_result, security_context,
+                )
+                if approval_event is not None:
+                    yield approval_event, None, None
                 return
             if not tool_result.success and tool_result.error and "Execution denied by PolicyEngine" in tool_result.error:
                 policy_denials += 1
