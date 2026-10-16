@@ -158,7 +158,7 @@ def status() -> dict:
         "rea": {"installed": shutil.which("rea") is not None, "executable": shutil.which("rea")},
         "runtimes": {name: shutil.which(name) is not None for name in vm_container.RUNTIMES},
         "guests": guests,
-        "toolbox": "ephemeral; use kitt vm container toolbox --runtime podman --profile full --workspace PATH",
+        "toolbox": "ephemeral; use kitt vm container toolbox --runtime auto --profile full --workspace PATH",
     }
 
 
@@ -222,7 +222,7 @@ def managed_lab_guests():
                 raise VMError("Guest shutdown failed: " + "; ".join(failures))
 
 
-def setup(system: str, *, runtime: str = "podman", source: Path | None = None,
+def setup(system: str, *, runtime: str = "auto", source: Path | None = None,
           viewer_port: int | None = None, probe_port: int | None = None) -> dict:
     """Guided install: never fetch a guest OS or execute a silent privileged install."""
     if system == "rea":
@@ -232,6 +232,10 @@ def setup(system: str, *, runtime: str = "podman", source: Path | None = None,
             "next": "kitt plugins enable kitt-rea" if executable
                     else "Install REA with KITT root installer --with-rea; then enable kitt-rea",
         }
+    if system not in (*_SYSTEMS, "toolbox"):
+        raise VMError("Choose windows, linux, rea or toolbox")
+    from kitt.vm_container import resolve_runtime
+    runtime = resolve_runtime(runtime)
     if system == "toolbox":
         from kitt.vm_container import _runtime, _image_id, IMAGES
         binary = _runtime(runtime)
@@ -241,8 +245,6 @@ def setup(system: str, *, runtime: str = "podman", source: Path | None = None,
             return {"ready": True, "image": image, "next": "kitt vm container toolbox --runtime " + runtime + " --profile full --workspace PATH"}
         except VMError:
             return {"ready": False, "next": "kitt vm container build --runtime " + runtime + " --image toolbox --profile full"}
-    if system not in _SYSTEMS:
-        raise VMError("Choose windows, linux, rea or toolbox")
     if source is None:
         return {
             "ready": False, "next": f"kitt re setup {system} --source /path/to/{system}.iso --runtime {runtime}",

@@ -515,7 +515,7 @@ def build_parser() -> argparse.ArgumentParser:
     re_actions.add_parser("status", help="Inspect installed REA, guests and runtimes (no startup)")
     re_setup = re_actions.add_parser("setup", help="Prepare or inspect an RE environment")
     re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
-    re_setup.add_argument("--runtime", choices=["podman", "docker"], default="podman")
+    re_setup.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
     re_setup.add_argument("--source", type=Path)
     re_setup.add_argument("--viewer-port", type=int, help="Local noVNC port (defaults: 18006/18007)")
     re_setup.add_argument("--probe-port", type=int, help="Local-only SSH probe port (defaults: 18008/18009)")
@@ -553,15 +553,15 @@ def build_parser() -> argparse.ArgumentParser:
     containers = vm_commands.add_parser("container", help="QEMU guests and Linux RE toolbox in Docker/Podman")
     container_commands = containers.add_subparsers(dest="container_action", required=True)
     container_build = container_commands.add_parser("build", help="Build QEMU runner or preinstalled Linux RE toolbox image")
-    container_build.add_argument("--runtime", choices=["docker", "podman"], default="podman")
+    container_build.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
     container_build.add_argument("--image", choices=["qemu", "toolbox"], required=True)
     container_build.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_pull = container_commands.add_parser("pull", help="Fetch published QEMU and Linux RE images")
-    container_pull.add_argument("--runtime", choices=["docker", "podman"], default="podman")
+    container_pull.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
     container_pull.add_argument("--image", choices=["qemu", "toolbox"], required=True)
     container_pull.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_doctor = container_commands.add_parser("doctor", help="Check Docker/Podman and KVM")
-    container_doctor.add_argument("--runtime", choices=["docker", "podman"], default="podman")
+    container_doctor.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
     for op in ("start", "stop", "logs", "status", "credentials"):
         command = container_commands.add_parser(op)
         command.add_argument("--profile", type=Path, required=True)
@@ -574,7 +574,7 @@ def build_parser() -> argparse.ArgumentParser:
     container_snapshot.add_argument("--name", default="baseline")
     container_snapshot.add_argument("--yes", action="store_true", help="Explicit approval required for restore")
     container_toolbox = container_commands.add_parser("toolbox", help="Open RE tools shell (trusted files only)")
-    container_toolbox.add_argument("--runtime", choices=["docker", "podman"], default="podman")
+    container_toolbox.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
     container_toolbox.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_toolbox.add_argument("--workspace", type=Path, required=True)
 
@@ -978,6 +978,8 @@ def main(argv=None) -> int:
                 return 2 if report.get("blocked", 0) else 0
             if args.vm_action == "container":
                 from kitt import vm_container
+                if args.container_action in {"build", "pull", "doctor", "toolbox"}:
+                    args.runtime = vm_container.resolve_runtime(args.runtime)
                 if args.container_action == "build":
                     result = vm_container.build_image(runtime=args.runtime, image=args.image, profile=args.profile)
                 elif args.container_action == "pull":
