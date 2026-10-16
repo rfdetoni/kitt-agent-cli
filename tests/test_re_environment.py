@@ -118,3 +118,10 @@ def test_same_process_cannot_lease_guest_twice(configured, monkeypatch):
         with pytest.raises(VMError, match="already active"):
             with re.managed_lab_guests():
                 pass
+
+
+def test_re_setup_uses_selected_container_engine_in_next_command(monkeypatch):
+    monkeypatch.setattr(vm_container, "resolve_runtime", lambda runtime: "docker")
+    guide = re.setup("linux")
+    assert guide["ready"] is False
+    assert "--runtime docker" in guide["next"]
