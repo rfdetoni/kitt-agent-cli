@@ -15,6 +15,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import tempfile
 
 from kitt import re_docker_lab
 from kitt.vm_supervisor import VMError
@@ -82,26 +83,36 @@ def _lab() -> tuple[Path, dict]:
 
 
 def _compile_probe(lab: Path, linux: dict, stage: Path) -> bytes:
-    work = lab / "workspace" / ".kitt-oracle"
-    _dir(work)
+    """Build KITT-authored PE without exposing source/output to a model workspace."""
     source = ASSETS / "event_probe.c"
-    if not source.is_file():
-        raise VMError("Agent Oracle assets are missing")
-    _write(work / "event_probe.c", source.read_bytes())
-    # Only an authored, fixed C source in the isolated RE container.
-    _run([shutil.which("docker") or "docker", "exec", linux["container_id"],
-          "x86_64-w64-mingw32-gcc", "-std=c11", "-O2", "-Wall", "-Wextra",
-          "-o", "/workspace/.kitt-oracle/event_probe.exe",
-          "/workspace/.kitt-oracle/event_probe.c"], timeout=90)
-    binary = work / "event_probe.exe"
-    if not binary.is_file() or binary.is_symlink() or not 128 < binary.stat().st_size <= 8 * 1024 * 1024:
-        raise VMError("MinGW did not generate a bounded Windows x64 probe")
-    data = binary.read_bytes()
-    if not data.startswith(b"MZ"):
-        raise VMError("MinGW output is not a Windows PE executable")
+    if source.is_symlink() or not source.is_file() or source.stat().st_size > 65536:
+        raise VMError("Trusted fixed Win32 probe source is missing")
+    image_id = _run(["docker", "container", "inspect", "--format", "{{.Image}}",
+                     linux["container_id"]], timeout=15)
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id):
+        raise VMError("Cannot identify pinned RE compiler image")
+    with tempfile.TemporaryDirectory(prefix=".compile-", dir=lab / "oracle") as scratch:
+        build = Path(scratch)
+        _write(build / "event_probe.c", source.read_bytes())
+        _run(["docker", "run", "--rm", "--pull", "never",
+              "--network", "none", "--read-only", "--cap-drop", "ALL",
+              "--security-opt", "no-new-privileges", "--pids-limit", "64",
+              "--memory", "1g", "--cpus", "1",
+              "--user", f"{os.getuid()}:{os.getgid()}",
+              "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
+              "--mount", f"type=bind,src={build},dst=/build",
+              image_id, "x86_64-w64-mingw32-gcc", "-std=c11", "-O2",
+              "-Wall", "-Wextra", "-o", "/build/event_probe.exe",
+              "/build/event_probe.c"], timeout=90)
+        binary = build / "event_probe.exe"
+        if (binary.is_symlink() or not binary.is_file()
+                or not 128 < binary.stat().st_size <= 8 * 1024 * 1024):
+            raise VMError("MinGW did not generate a bounded Windows x64 probe")
+        data = binary.read_bytes()
+        if not data.startswith(b"MZ"):
+            raise VMError("MinGW output is not a Windows PE executable")
     _write(stage / "event_probe.exe", data)
     return data
-
 
 def prepare() -> dict:
     """Prepare immutable keys, pinned binary, OEM and SSH profile before mutation."""

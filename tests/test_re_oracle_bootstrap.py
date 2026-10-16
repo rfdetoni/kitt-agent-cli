@@ -169,10 +169,8 @@ def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, mon
     lab = tmp_path / "re-lab"
     private = lab / "oracle" / "oem"
     private.mkdir(parents=True)
-    workspace = lab / "workspace" / ".kitt-oracle"
-    workspace.mkdir(parents=True)
     binary = b"MZ" + b"safe-fixture" * 20
-    (workspace / "event_probe.exe").write_bytes(binary)
+    (private / "event_probe.exe").write_bytes(binary)
     expected = hashlib.sha256(binary).hexdigest()
     (private / "manifest.json").write_text(json.dumps({
         "probes": {"event_auto_reset": {"path": "event_probe.exe", "sha256": expected}}
@@ -195,8 +193,8 @@ def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, mon
     monkeypatch.setattr(re_oracle_pilot, "_ssh_request",
                         lambda config, alias, name: ref)
     calls = []
-    def fixed_isolated_wine(lab, linux, binary):
-        calls.append((lab, linux, binary))
+    def fixed_isolated_wine(lab, linux, binary, expected_sha):
+        calls.append((lab, linux, binary, expected_sha))
         return 0, observation.encode(), b""
     monkeypatch.setattr(re_oracle_pilot, "_run_isolated_wine", fixed_isolated_wine)
     result = re_oracle_pilot.pilot(manifest_sha256=digest, yes=True)
@@ -204,7 +202,8 @@ def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, mon
     assert result["toolbox_vm_isolated"] is True
     assert result["candidate"]["environment"] == "isolated-ephemeral-wine-container"
     assert result["source_binary_sha256"] == expected
-    assert calls and calls[0][2] == workspace / "event_probe.exe"
+    assert calls and calls[0][2] == private / "event_probe.exe"
+    assert calls[0][3] == expected
     assert (lab / "oracle" / "pilot.json").is_file()
 
 
@@ -241,3 +240,61 @@ def test_native_image_lock_mismatch_never_removes_existing_disk(tmp_path, monkey
         bootstrap.bootstrap(recreate=True, yes=True, accept_license=True)
     assert disk.read_bytes() == b"preserve"
     assert calls and all(argv[:2] != ["docker", "stop"] for argv in calls)
+
+
+def test_compiler_stages_trusted_source_outside_model_workspace(tmp_path, monkeypatch):
+    lab = tmp_path / "re-lab"
+    stage = lab / "oracle" / "oem"
+    stage.mkdir(parents=True)
+    (lab / "workspace").mkdir()
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["docker", "container", "inspect"]:
+            return "sha256:" + "a" * 64
+        mount = next(a for a in argv if a.startswith("type=bind,src="))
+        host_path = Path(mount.removeprefix("type=bind,src=").removesuffix(",dst=/build"))
+        assert host_path.parent == lab / "oracle"
+        assert (host_path / "event_probe.c").read_bytes() == bootstrap.ASSETS.joinpath("event_probe.c").read_bytes()
+        (host_path / "event_probe.exe").write_bytes(b"MZ" + b"a" * 200)
+        return ""
+    monkeypatch.setattr(bootstrap, "_run", run)
+    data = bootstrap._compile_probe(lab, {"container_id": "b" * 64}, stage)
+    assert data.startswith(b"MZ")
+    assert any("--network" in argv and "none" in argv and "--read-only" in argv
+               for argv in calls)
+    assert not (lab / "workspace" / ".kitt-oracle").exists()
+
+
+def test_isolated_wine_never_mounts_oem_ssh_keys_or_workspace(tmp_path, monkeypatch):
+    from kitt import re_oracle_pilot
+    from types import SimpleNamespace
+    lab = tmp_path / "re-lab"
+    private = lab / "oracle" / "oem"
+    private.mkdir(parents=True)
+    (lab / "workspace").mkdir()
+    binary = b"MZ" + b"safe" * 80
+    path = private / "event_probe.exe"
+    path.write_bytes(binary)
+    (private / "ssh_host_ed25519_key").write_text("private-key-never-mounted")
+    from hashlib import sha256
+    expected = sha256(binary).hexdigest()
+    monkeypatch.setattr(re_oracle_pilot.shutil, "which", lambda name: "/usr/bin/docker")
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[1:3] == ["container", "inspect"]:
+            return SimpleNamespace(returncode=0,
+                stdout=("sha256:" + "a" * 64).encode(), stderr=b"")
+        mount = next(x for x in argv if x.startswith("type=bind,src="))
+        assert str(private) not in mount
+        assert str(lab / "workspace") not in mount
+        assert "readonly" in mount and "--read-only" in argv
+        assert "--network" in argv and "none" in argv
+        assert "--cap-drop" in argv and "ALL" in argv
+        kwargs["stdout"].write(b'{"before":258}\n')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(re_oracle_pilot.subprocess, "run", run)
+    code, stdout, stderr = re_oracle_pilot._run_isolated_wine(
+        lab, {"container_id": "b" * 64}, path, expected)
+    assert code == 0 and stdout and not stderr and len(calls) == 2

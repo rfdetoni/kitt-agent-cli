@@ -25,10 +25,11 @@ from kitt.vm_supervisor import VMError
 PILOT = "event_auto_reset"
 
 
-def _run_isolated_wine(lab: Path, linux: dict, path: Path) -> tuple[int, bytes, bytes]:
+def _run_isolated_wine(lab: Path, linux: dict, path: Path, expected: str) -> tuple[int, bytes, bytes]:
     """Run only the fixed approved PE in a disposable networkless container."""
-    if (path.parent != lab / "workspace" / ".kitt-oracle" or path.name != "event_probe.exe"
-            or path.is_symlink() or not path.is_file()):
+    if (path.parent != lab / "oracle" / "oem" or path.name != "event_probe.exe"
+            or path.is_symlink() or not path.is_file()
+            or path.stat().st_size > 8 * 1024 * 1024):
         raise VMError("Untrusted fixed Wine pilot path")
     docker = shutil.which("docker")
     if not docker:
@@ -42,6 +43,16 @@ def _run_isolated_wine(lab: Path, linux: dict, path: Path) -> tuple[int, bytes, 
         raise VMError("Cannot pin the running Linux RE toolbox image")
     with tempfile.TemporaryDirectory(prefix=".wine-", dir=lab / "oracle") as scratch:
         cidfile = Path(scratch) / "container.cid"
+        # Mount only a validated probe copy, never the OEM directory containing
+        # the Windows SSH host private key, and never a model-writable workspace.
+        probes = Path(scratch) / "probes"
+        probes.mkdir(mode=0o700)
+        private_copy = probes / "event_probe.exe"
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != expected:
+            raise VMError("Private candidate probe does not match pinned SHA-256")
+        private_copy.write_bytes(data)
+        private_copy.chmod(0o600)
         with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
             argv = [
                 docker, "run", "--rm", "--pull", "never",
@@ -52,7 +63,7 @@ def _run_isolated_wine(lab: Path, linux: dict, path: Path) -> tuple[int, bytes, 
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
                 "--env", "HOME=/tmp", "--env", "WINEPREFIX=/tmp/.wine",
                 "--env", "WINEDEBUG=-all",
-                "--mount", "type=bind,src=" + str(path.parent) + ",dst=/probes,readonly",
+                "--mount", "type=bind,src=" + str(probes) + ",dst=/probes,readonly",
                 "--workdir", "/probes", image_id, "/usr/lib/wine/wine64",
                 "/probes/event_probe.exe",
             ]
@@ -102,7 +113,7 @@ def pilot(*, manifest_sha256: str, hosts: Path | None = None, yes: bool = False)
             raise ValueError("Wrong fixed pilot path")
     except (KeyError, TypeError, ValueError) as exc:
         raise VMError("Unrecognized fixed pilot manifest") from exc
-    path = lab / "workspace" / ".kitt-oracle" / "event_probe.exe"
+    path = lab / "oracle" / "oem" / "event_probe.exe"
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
         raise VMError("Missing bounded compiled Wine pilot binary")
     if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha:
@@ -114,7 +125,7 @@ def pilot(*, manifest_sha256: str, hosts: Path | None = None, yes: bool = False)
     # Same exact PE, fixed path, no arbitrary caller-provided CLI arguments.
     start = time.monotonic()
     try:
-        exit_code, stdout, stderr = _run_isolated_wine(lab, linux, path)
+        exit_code, stdout, stderr = _run_isolated_wine(lab, linux, path, expected_sha)
     except (VMError, OSError, subprocess.TimeoutExpired) as exc:
         return {"status": "BLOCKED_ENV", "reason": "Isolated Wine candidate unavailable: "
                 + str(exc)[:120]}
