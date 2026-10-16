@@ -315,6 +315,48 @@ class ApprovalManager:
         with self._lock:
             return self._nonce_used_unlocked(nonce)
 
+    def _persist_request(
+        self,
+        req: ApprovalRequest,
+        scope_json: str,
+        risk_level: str,
+    ) -> None:
+        """Persist before publishing; a decided request must never reopen."""
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT turn_id,conversation_id,workspace_id,tool_name,"
+                "arguments_hash,scope_json,risk_level,state "
+                "FROM approval_requests WHERE approval_id=?",
+                (req.approval_id,),
+            ).fetchone()
+            if existing is not None:
+                persisted = tuple(existing[name] for name in (
+                    "turn_id", "conversation_id", "workspace_id",
+                    "tool_name", "arguments_hash", "scope_json", "risk_level",
+                ))
+                expected = (
+                    req.turn_id, req.conversation_id, req.workspace_id,
+                    req.tool_name, req.normalized_args_hash, scope_json, risk_level,
+                )
+                if persisted != expected:
+                    raise ValueError("Approval ID is bound to a different action")
+                if existing["state"] != "PENDING":
+                    raise ValueError("Approval request has already been decided")
+                return
+            conn.execute(
+                "INSERT INTO approval_requests ("
+                "approval_id,conversation_id,turn_id,workspace_id,tool_name,"
+                "arguments_hash,scope_json,risk_level,state,nonce_hash,"
+                "requested_at,expires_at"
+                ") VALUES (?,?,?,?,?,?,?,?,'PENDING',?,?,?)",
+                (
+                    req.approval_id, req.conversation_id, req.turn_id,
+                    req.workspace_id, req.tool_name, req.normalized_args_hash,
+                    scope_json, risk_level, "", str(req.created_at), "0.0",
+                ),
+            )
+
     def register_request(
         self,
         turn_id: str,
@@ -336,33 +378,27 @@ class ApprovalManager:
             tool_name=tool_name,
             normalized_args_hash=action_hash,
             created_at=now,
-            # Active user decisions do not expire automatically. The persisted
-            # zero sentinel is replaced by a short TTL only after grant issuance.
             expires_at=0.0,
             summary=summary,
         )
+        binding = (turn_id, conversation_id, workspace_id, action_hash)
         with self._lock:
+            current = self._requests_by_id.get(approval_id)
+            if current is not None:
+                if (
+                    current.turn_id, current.conversation_id,
+                    current.workspace_id, current.normalized_args_hash,
+                    current.tool_name,
+                ) != (*binding, tool_name):
+                    raise ValueError("Approval ID is bound to a different action")
+                if current.state != "PENDING":
+                    raise ValueError("Approval request has already been decided")
+            if self.db is not None:
+                self._persist_request(req, scope_json, risk_level)
+            if current is not None:
+                return current
             self._requests_by_id[approval_id] = req
-            self._requests_by_binding[
-                (turn_id, conversation_id, workspace_id, action_hash)
-            ] = req
-
-        if self.db:
-            with self.db.get_connection() as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO approval_requests (
-                        approval_id,conversation_id,turn_id,workspace_id,tool_name,
-                        arguments_hash,scope_json,risk_level,state,nonce_hash,
-                        requested_at,expires_at
-                    ) VALUES (?,?,?,?,?,?,?,?,'PENDING',?,?,?)
-                    """,
-                    (
-                        approval_id, conversation_id, turn_id, workspace_id,
-                        tool_name, action_hash, scope_json, risk_level, "",
-                        str(now), str(req.expires_at),
-                    ),
-                )
+            self._requests_by_binding[binding] = req
         return req
 
     def _load_request_from_db(
