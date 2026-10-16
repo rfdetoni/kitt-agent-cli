@@ -175,6 +175,10 @@ def bootstrap(*, recreate: bool, yes: bool, accept_license: bool) -> dict:
         if stat.S_IMODE(credentials.stat().st_mode) & 0o077:
             raise VMError("Windows credentials have unsafe permissions")
         storage = lab / "windows"
+        # Validate image before touching the existing Windows disk.
+        image_id = _run(["docker", "image", "inspect", "--format", "{{.Id}}", "dockurr/windows"])
+        if not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id):
+            raise VMError("Pull and inspect dockurr/windows before any Windows reset")
         if existing:
             _run(["docker", "stop", "-t", "120", existing["container_id"]], timeout=145)
             _run(["docker", "rm", existing["container_id"]], timeout=30)
@@ -182,10 +186,6 @@ def bootstrap(*, recreate: bool, yes: bool, accept_license: bool) -> dict:
             _remove_disk(storage, lab)
         elif any(storage.iterdir()):
             raise VMError("Existing Windows disk without a managed container; no deletion")
-        # Pin existing, installed Dockur image; never switch image mid-run.
-        image_id = _run(["docker", "image", "inspect", "--format", "{{.Id}}", "dockurr/windows"])
-        if not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id):
-            raise VMError("Pull and inspect the official dockurr/windows image first")
         args = ["docker", "create", "--name", MANAGED, "--restart", "unless-stopped",
                 "--device", "/dev/kvm", "--device", "/dev/net/tun", "--cap-add", "NET_ADMIN",
                 "--stop-timeout", "120", "--env-file", str(credentials),
