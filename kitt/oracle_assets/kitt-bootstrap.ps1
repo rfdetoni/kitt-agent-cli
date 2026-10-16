@@ -60,7 +60,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Invalid OpenSSH configuration' }
 Set-Service -Name sshd -StartupType Automatic
 Get-NetFirewallRule -DisplayName 'KITT Oracle SSH' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName 'KITT Oracle SSH' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 22 -RemoteAddress '172.30.0.0/16' -Profile Any | Out-Null
-Restart-Service sshd
+if ((Get-Service sshd).Status -eq 'Running') { Restart-Service sshd } else { Start-Service sshd }
 # Dockur injects OEM files into C:\OEM. Remove the copied host private key.
 Remove-Item -LiteralPath (Join-Path $oem 'ssh_host_ed25519_key') -Force
 [IO.File]::WriteAllText("$root\bootstrap.status", 'READY')
