@@ -532,6 +532,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Confirm Windows guest install or destruction")
     re_oracle_bootstrap.add_argument("--accept-license", action="store_true",
         help="Confirm operator has a valid Windows license and approves Microsoft downloads")
+    re_oracle_pilot = re_oracle_actions.add_parser("pilot",
+        help="Run only the KITT-authored pinned Win32 event probe on Windows and Docker Wine")
+    re_oracle_pilot.add_argument("--hosts", type=Path, help="Private operator-owned SSH guest hosts.json")
+    re_oracle_pilot.add_argument("--manifest-sha256", required=True)
+    re_oracle_pilot.add_argument("--yes", action="store_true", help="Approve this one fixed benign probe")
     re_setup = re_actions.add_parser("setup", help="Prepare or inspect an RE environment")
     re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
     re_setup.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
@@ -974,6 +979,12 @@ def main(argv=None) -> int:
                         recreate=args.recreate, yes=args.yes, accept_license=args.accept_license)
                     print(_json.dumps(result, ensure_ascii=False))
                     return 0
+                if args.oracle_action == "pilot":
+                    from kitt import re_oracle_pilot
+                    result = re_oracle_pilot.pilot(manifest_sha256=args.manifest_sha256,
+                        hosts=args.hosts, yes=args.yes)
+                    print(_json.dumps(result, ensure_ascii=False))
+                    return 0 if result["status"] == "PASS_SCENARIO" else 1 if result["status"] == "FAIL_SCENARIO" else 2
                 from kitt import re_oracle
                 result = re_oracle.doctor(hosts=args.hosts,
                     manifest_sha256=args.manifest_sha256)
