@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -196,16 +195,16 @@ def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, mon
     monkeypatch.setattr(re_oracle_pilot, "_ssh_request",
                         lambda config, alias, name: ref)
     calls = []
-    def fake_run(argv, **kwargs):
-        calls.append(argv)
-        return SimpleNamespace(returncode=0, stdout=observation.encode(), stderr=b"")
-    monkeypatch.setattr(re_oracle_pilot.subprocess, "run", fake_run)
+    def fixed_isolated_wine(lab, linux, binary):
+        calls.append((lab, linux, binary))
+        return 0, observation.encode(), b""
+    monkeypatch.setattr(re_oracle_pilot, "_run_isolated_wine", fixed_isolated_wine)
     result = re_oracle_pilot.pilot(manifest_sha256=digest, yes=True)
     assert result["status"] == "PASS_SCENARIO"
-    assert result["toolbox_vm_isolated"] is False
+    assert result["toolbox_vm_isolated"] is True
+    assert result["candidate"]["environment"] == "isolated-ephemeral-wine-container"
     assert result["source_binary_sha256"] == expected
-    assert calls and calls[0][:3] == ["docker", "exec", "a" * 64]
-    assert calls[0][-1] == "/workspace/.kitt-oracle/event_probe.exe"
+    assert calls and calls[0][2] == workspace / "event_probe.exe"
     assert (lab / "oracle" / "pilot.json").is_file()
 
 
