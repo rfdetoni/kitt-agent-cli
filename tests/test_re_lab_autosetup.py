@@ -35,6 +35,7 @@ def test_setup_requires_explicit_approval_before_touching_host(monkeypatch):
 
 def test_preflight_failure_causes_no_directory_mutation(monkeypatch, tmp_path):
     root = tmp_path / "re-lab"
+    monkeypatch.setattr(re_lab, "_root", lambda path: root)
     monkeypatch.setattr(re_lab, "doctor", lambda **kw: {
         "ready_for_setup": False, "checks": {"kvm": False, "docker_engine": True},
     })
