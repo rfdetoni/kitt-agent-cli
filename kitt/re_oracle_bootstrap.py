@@ -120,7 +120,10 @@ def prepare() -> dict:
         item = ASSETS / name
         if not item.is_file() or item.stat().st_size > 65536:
             raise VMError("Missing or invalid Oracle OEM setup asset")
-        _write(stage / name, item.read_bytes())
+        payload = item.read_bytes()
+        if name.endswith(".bat"):
+            payload = payload.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        _write(stage / name, payload)
     _write(stage / "manifest.json", manifest)
     _write(stage / "client_ed25519.pub", (oracle / "client_ed25519.pub").read_bytes())
     _write(stage / "ssh_host_ed25519_key", (oracle / "ssh_host_ed25519_key").read_bytes())
