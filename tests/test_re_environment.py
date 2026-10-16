@@ -126,4 +126,4 @@ def test_re_setup_uses_selected_container_engine_in_next_command(monkeypatch):
     monkeypatch.setattr(vm_container, "resolve_runtime", lambda runtime: "docker")
     guide = re.setup("linux")
     assert guide["ready"] is False
-    assert "--runtime docker" in guide["next"]
+    assert "--with-re-lab --re-runtime docker" in guide["next"]
