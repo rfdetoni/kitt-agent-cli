@@ -524,6 +524,14 @@ def build_parser() -> argparse.ArgumentParser:
     re_oracle_doctor.add_argument("--hosts", type=Path, help="Private operator hosts.json")
     re_oracle_doctor.add_argument("--manifest-sha256", required=True,
         help="Expected SHA-256 of the Windows guest probe manifest")
+    re_oracle_bootstrap = re_oracle_actions.add_parser("bootstrap",
+        help="Unattended disposable Dockur Windows 11 OEM setup (requires explicit authorization)")
+    re_oracle_bootstrap.add_argument("--recreate", action="store_true",
+        help="DESTROYS the managed Windows guest disk, then reinstalls Windows 11")
+    re_oracle_bootstrap.add_argument("--yes", action="store_true",
+        help="Confirm Windows guest install or destruction")
+    re_oracle_bootstrap.add_argument("--accept-license", action="store_true",
+        help="Confirm operator has a valid Windows license and approves Microsoft downloads")
     re_setup = re_actions.add_parser("setup", help="Prepare or inspect an RE environment")
     re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
     re_setup.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
@@ -960,6 +968,12 @@ def main(argv=None) -> int:
                     result["guests"]["windows"]["oracle_ready"] = verified["oracle_ready"]
                     result["guests"]["windows"]["oracle_check"] = verified
             elif args.re_action == "oracle":
+                if args.oracle_action == "bootstrap":
+                    from kitt import re_oracle_bootstrap
+                    result = re_oracle_bootstrap.bootstrap(
+                        recreate=args.recreate, yes=args.yes, accept_license=args.accept_license)
+                    print(_json.dumps(result, ensure_ascii=False))
+                    return 0
                 from kitt import re_oracle
                 result = re_oracle.doctor(hosts=args.hosts,
                     manifest_sha256=args.manifest_sha256)
