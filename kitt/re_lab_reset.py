@@ -57,7 +57,7 @@ def _inventory(root: Path, scope: str) -> dict:
 def _secret(root: Path) -> bytes:
     key = root / "oracle" / "client_ed25519"
     if (key.is_symlink() or not key.is_file() or
-            key.stat().st_uid != os.getuid() or
+            key.stat().st_uid != os.getuid() or key.stat().st_size > 4096 or
             stat.S_IMODE(key.stat().st_mode) & 0o077):
         raise VMError("Missing operator-owned client key for scoped reset approval")
     return hashlib.sha256(key.read_bytes()).digest()
@@ -84,9 +84,11 @@ def plan(*, state_root: Path | None = None, scope: str,
 
 
 def recreate(*, state_root: Path | None = None, scope: str, confirm: str,
-             destroy_data: bool = False) -> dict:
+             destroy_data: bool = False, accept_license: bool = False) -> dict:
     if not destroy_data or not isinstance(confirm, str):
         raise VMError("Scoped reset requires --destroy-data and a --confirm token from dry-run")
+    if scope in ("windows", "all") and not accept_license:
+        raise VMError("Windows reinstall requires --accept-license before deletion")
     match = re.fullmatch(r"([0-9]{10}):([a-f0-9]{64})", confirm)
     if not match or int(time.time()) - int(match.group(1)) not in range(0, _WINDOW + 1):
         raise VMError("Scoped reset token expired or invalid")
@@ -120,6 +122,21 @@ def recreate(*, state_root: Path | None = None, scope: str, confirm: str,
             elif target.exists():
                 target.unlink()
         # Leave the root, lock file and unrelated evidence outside scope.
-    return {"status": "RESET", "scope": scope,
-            "deleted": inventory["deletes"], "oracle_ready": False,
-            "next": "kitt re lab setup --yes --accept-license"}
+    # Reuse the canonical provisioning path; on failure the reset stays explicit,
+    # and the operator receives a truthful PARTIAL state rather than a success.
+    try:
+        if scope in ("windows", "all"):
+            outcome = re_lab.setup(state_root=root, yes=True, accept_license=True)
+        elif scope == "linux":
+            re_lab._private(root / "workspace")
+            re_lab._linux(root)
+            outcome = re_lab.status(state_root=root)
+        else:
+            outcome = re_lab.status(state_root=root)
+    except (VMError, OSError) as exc:
+        return {"status": "PARTIAL", "scope": scope, "deleted": inventory["deletes"],
+                "oracle_ready": False, "reason": str(exc)[:200],
+                "next": "kitt re lab setup --yes --accept-license"}
+    return {"status": "PROVISIONING" if scope in ("windows", "all") else "RECREATED",
+            "scope": scope, "deleted": inventory["deletes"],
+            "oracle_ready": False, "result": outcome}
