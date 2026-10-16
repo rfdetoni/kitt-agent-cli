@@ -1,7 +1,7 @@
 """Automatic contract parallelism: isolate independent work and reuse verified evidence."""
 from types import SimpleNamespace
 
-from kitt.goals.parallel_children import parallel_contract_result
+from kitt.goals.parallel_children import _ready_batch, parallel_contract_result
 from kitt.security.capabilities import CAP_CHILD_SPAWN
 
 
@@ -111,3 +111,40 @@ def test_automatic_contract_does_not_parallelize_overlapping_paths():
     goal = SimpleNamespace(id="goal")
     security = SimpleNamespace(capabilities={CAP_CHILD_SPAWN})
     assert parallel_contract_result(runtime, goal, one, state, security) is None
+
+
+def test_scheduler_current_task_precedes_other_ready_tasks():
+    first = _item("one", ["src/a.py"])
+    second = _item("two", ["src/b.py"])
+    current = _item("three", ["src/c.py"], status="RUNNING")
+    runtime = SimpleNamespace(
+        goals=SimpleNamespace(contract_items=lambda goal_id: [first, second, current])
+    )
+    goal = SimpleNamespace(id="goal")
+    batch = _ready_batch(runtime, goal, current)
+
+    # With max_children=2, batch[:2] must include the claimed contract item.
+    assert [item.id for item in batch[:2]] == ["three", "one"]
+
+
+def test_parallel_batch_rejects_directory_and_nested_file_collisions():
+    current = _item("dir", ["src/"], status="RUNNING")
+    nested = _item("file", ["src/module/a.py"])
+    independent = _item("other", ["docs/readme.md"])
+    runtime = SimpleNamespace(
+        goals=SimpleNamespace(
+            contract_items=lambda goal_id: [current, nested, independent]
+        )
+    )
+
+    batch = _ready_batch(runtime, SimpleNamespace(id="goal"), current)
+    assert [item.id for item in batch] == ["dir", "other"]
+
+
+def test_parallel_batch_rejects_ambiguous_relative_scope():
+    current = _item("unsafe", ["../src/a.py"], status="RUNNING")
+    other = _item("safe", ["docs/readme.md"])
+    runtime = SimpleNamespace(
+        goals=SimpleNamespace(contract_items=lambda goal_id: [current, other])
+    )
+    assert _ready_batch(runtime, SimpleNamespace(id="goal"), current) == []
