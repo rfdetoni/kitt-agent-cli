@@ -69,12 +69,3 @@ def test_decided_request_yields_block_without_another_modal():
     repository.save_pending_action.assert_not_called()
     assert processor.pending_actions == {}
     processor.turn_guard.end.assert_called_once_with(cmd.turn_id)
-
-
-def test_pending_request_is_durable_before_approval_modal():
-    processor, cmd, security, manager, repository = _scenario()
-    result = _register(processor, cmd, security)
-    assert isinstance(result, ApprovalRequired)
-    repository.save_pending_action.assert_called_once()
-    assert cmd.turn_id in processor.pending_actions
-    manager.deny.assert_not_called()

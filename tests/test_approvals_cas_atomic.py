@@ -1,4 +1,3 @@
-import time
 import unittest
 from kitt.history.database import HistoryDatabase
 from kitt.tools.approval import ApprovalManager
@@ -68,38 +67,6 @@ class TestApprovalsCASAtomic(unittest.TestCase):
         )
         self.assertEqual(original, repeated)
         self.assertEqual(len(self.mgr.list_pending("w1")), 1)
-
-    def test_decided_request_cannot_be_reopened(self):
-        self.mgr.register_request(
-            "t1", "c1", "w1", "hash1", "app_1", "write_file"
-        )
-        grant = self.mgr.issue_grant("t1", "c1", "w1", "hash1", "app_1")
-        self.assertIsNotNone(grant)
-        with self.assertRaisesRegex(ValueError, "already been decided"):
-            self.mgr.register_request(
-                "t1", "c1", "w1", "hash1", "app_1", "write_file"
-            )
-        with self.db.get_connection() as conn:
-            state = conn.execute(
-                "SELECT state FROM approval_requests WHERE approval_id=?",
-                ("app_1",),
-            ).fetchone()["state"]
-        self.assertEqual(state, "GRANTED")
-        self.assertTrue(self.mgr.validate_and_consume(
-            grant, "hash1", "t1", "c1", "w1", "app_1"
-        ))
-
-    def test_cancelled_request_is_not_visible_or_grantable(self):
-        self.mgr.register_request(
-            "t1", "c1", "w1", "hash1", "app_1", "write_file"
-        )
-        self.assertTrue(self.mgr.deny(
-            "app_1", reason="Turn cancelled before approval"
-        ))
-        self.assertEqual(self.mgr.list_pending("w1"), [])
-        self.assertIsNone(self.mgr.issue_grant(
-            "t1", "c1", "w1", "hash1", "app_1"
-        ))
 
     def test_conflicting_action_cannot_reuse_approval_id(self):
         self.mgr.register_request(

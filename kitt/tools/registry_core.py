@@ -582,7 +582,11 @@ class ToolRegistry:
                 },
                 ttl_seconds=3600.0,
             )
-            if self.goal_service is not None:
+            # Contract approvals are resumed by resolve_goal_approval only
+            # after the pending action is consumed and its evidence persisted.
+            # Resuming here races the scheduler and makes that second resume
+            # report a failure even though the command already executed.
+            if self.goal_service is not None and not self.goal_service.contract_items(principal_id):
                 self.goal_service.resume_after_approval(
                     principal_id,
                     conversation_id=security_context.conversation_id,

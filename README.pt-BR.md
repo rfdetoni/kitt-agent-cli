@@ -1,3 +1,9 @@
+# Agent CLI 0.88.3 — honor allow-all and resume concrete approved actions
+
+The user's autonomous process permission now also applies to inline Python/Node commands. `evaluate_argv` still classifies those payloads as opaque; supervised/balanced modes require approval, read-only mode and hard denials remain enforced, and network/control-plane capability gates are unchanged.
+
+[Release details](docs/RELEASE_0.88.3.md).
+
 # Agent CLI 0.88.2 — remembered approvals resume without a loop
 
 Saving “always allow” for a session or workspace no longer invalidates the waiting action's authority snapshot. Only explicit, action-bound approval resumes accept appended allow rules, with the entire original rule prefix preserved. Revocations, deny additions, policy/autonomy/sandbox changes, principal changes, grant mismatches and nonce replays still fail closed. Other snapshot consumers remain strict.
