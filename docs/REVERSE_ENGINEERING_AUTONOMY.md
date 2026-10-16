@@ -84,3 +84,7 @@ ou `kitt re status --check-oracle --manifest-sha256 SHA_REAL`.
 Nenhum destes comandos instala servidor SSH, publica portas, inicia probes
 ou altera as aprovações do KITT. As instruções completas e bloqueios estão em
 [Windows Oracle Dockur](WINDOWS_ORACLE_DOCKUR.md).
+
+## Fully automated disposable Dockur lab
+
+The newer native Windows bootstrap uses Docker /oem and a Windows PowerShell guest RPC instead of requiring Python inside the Windows reference. Operator authorization, Windows licensing, and explicit consent to delete the current disposable Windows disk are still required. See [Windows Oracle Dockur](WINDOWS_ORACLE_DOCKUR.md). The existing SSH mission broker and manual QEMU guest flow remain supported; model approvals are not widened.

@@ -1,159 +1,103 @@
-# Windows Oracle em um Dockur já instalado
+# Disposable Windows 11 Oracle via Dockur (Agent CLI 0.88.6)
 
-O KITT **não** precisa de outra VM para usar `kitt-re-win11` como referência Win32.
-A VM do Dockur, porém, é só o ambiente de referência: `docker ps` não comprova
-login Windows, canal de probe, licenças ou prontidão do Oracle. Esta integração
-**não recria o contêiner, não altera disco e não publica novas portas**.
+The next KITT installer can bootstrap Windows 11 and its probe transport on
+**first boot** without manual OpenSSH, Python, SDK or RDP configuration in the
+guest. It uses Dockur /oem install.bat and a native Windows PowerShell
+guest_rpc implementing the same bounded version-1 probe.info/probe.run contract.
 
-## Contratos já implementados
+## Fast path: existing disposable lab (DESTROYS its Windows disk)
 
-- `kitt re status` permanece 100% local e não ativa automaticamente o Oracle.
-- `kitt re oracle doctor --manifest-sha256 <sha256>` verifica o contêiner
-  gerenciado, o perfil SSH privado do operador e faz uma solicitação
-  `{"version":1,"method":"probe.info","probe":null}` ao guest.
-- `kitt re status --check-oracle --manifest-sha256 <sha256>` incorpora o
-  diagnóstico ao JSON dessa invocação. Fora desse modo, `oracle_ready`
-  continua falso por segurança. Nenhuma capacidade é persistida a partir do
-  diagnóstico; verificações futuras precisam conferir a identidade novamente.
-- `probe.info` retorna platform, release, architecture, hash SHA-256
-  **dos bytes reais do manifesto no Windows** e contagem de probes.
-  Não executa programas.
-- `kitt vm lab doctor --hosts <arquivo>` valida o formato do perfil host
-  anterior; `kitt vm lab run` continua exigindo **dois** guests com
-  `probe.run` autenticado, reference=Windows e candidate=Linux+Wine.
-  A existência do toolbox `kitt-re-full` **não** o transforma em VM de testes.
+The operator must explicitly permit destruction and confirm Windows licensing.
+The host's KITT-managed Linux toolbox and RE workspace are retained.
 
-## Preparação manual e deliberada dentro do Windows
+    kitt re oracle bootstrap --recreate --yes --accept-license
 
-1. Abra o console local em http://127.0.0.1:8006 e confirme o Windows
-   realmente inicializado, arquitetura x64, versão/build e licença apropriada.
-2. Em uma conta com autorização administrativa **dentro da VM**, instale
-   OpenSSH Server Windows e uma versão compatível de Python (>=3.14) e
-   `kitt-agent-cli` (versão compatível) usando mídia/pacotes aprovados.
-   A instalação não é feita pelo KITT host nem força downloads.
-3. Crie um usuário Windows **sem privilégios administrativos**, exclusivo
-   para o serviço de probes, e uma chave SSH específica. No OpenSSH do
-   Windows configure a autenticação só por chave e um **ForceCommand**
-   apontando para o módulo instalado `guest_rpc`, com argumentos fixos:
-   
-   ```text
-   python -m kitt.extensions.builtin_plugins.reverse_engineering.guest_rpc --probe-root C:\kitt-probes --manifest C:\kitt-probes\manifest.json
-   ```
+Or from the root installer after updating its own version:
 
-   O caminho de `python` deve ser absoluto e verificado dentro do guest.
-   Configure `PermitTTY no`, desabilite port-forwarding, agent-forwarding e
-   shell interativo para essa conta. Use as regras efetivas do OpenSSH/Windows
-   da versão instalada; não copie um trecho de `sshd_config` sem validá-lo.
-   Uma conexão SSH com comando arbitrário precisa continuar restrita ao
-   endpoint **forçado**, sem disponibilizar PowerShell/cmd.exe.
-4. Prepare somente probes próprios, benignos, em `C:\kitt-probes`.
-   Exemplo de manifesto **dentro do Windows** (substitua SHA e arquivos
-   pelos valores realmente calculados):
-   
-   ```json
-   {
-     "probes": {
-       "event_auto_reset": {
-         "path": "event_probe.exe",
-         "sha256": "sha256-minusculo-de-64-caracteres-gerado-no-guest"
-       }
-     }
-   }
-   ```
-   
-   Use `Get-FileHash -Algorithm SHA256 C:\kitt-probes\event_probe.exe`
-   para preencher o SHA real de 64 caracteres (sem prefixo).
-   O probe autoral de sincronização está em
-   `examples/reverse_engineering/windows_event_probe.c`; compile com um
-   compilador C e SDK oficialmente licenciados, registre hash e valide
-   a execução local primeiro. Não rode binários desconhecidos nessa VM
-   nem execute provas de isolamento que o host não verificou.
-5. Após gravar o manifesto, obtenha seu hash:
-   
-   ```powershell
-   (Get-FileHash -Algorithm SHA256 C:\kitt-probes\manifest.json).Hash.ToLowerInvariant()
-   ```
-   
-   Guarde o hash de manifesto como pin aprovado pelo operador fora do
-   workspace editável pela IA.
+    ./install.sh --preset full --channel release --with-re-lab \
+      --re-runtime docker --re-oracle-bootstrap --re-oracle-recreate \
+      --accept-windows-license --yes
 
-## Conectividade privada a partir do Linux
+A new lab with no existing Windows guest does not need --recreate. Without
+--recreate an existing Windows guest is never deleted, reset or modified.
 
-A instalação atual do laboratório publica **somente**
-`127.0.0.1:8006 -> 8006/tcp`. **Não há mapeamento SSH publicado no host.**
-O NAT interno do Dockur não é um servidor SSH acessível automaticamente.
+## What the bootstrap does
 
-O operador precisa estabelecer uma rota de gerenciamento **previamente
-autorizada** para o guest, sem recriar disco/contêiner nem expor SSH na
-LAN, e conferir HostName/Port reais e fingerprint SSH do guest. Uma rota
-pode ser obtida por rede privada apropriada ou túnel autenticado, mas não
-se deve assumir que o IP `172.30.0.2` é alcançável no host. Não desabilite
-a verificação de host key (`StrictHostKeyChecking`) e não monte o Docker
-socket, chaves pessoais ou o filesystem sensível do host.
+1. Verify the KITT-managed Linux RE toolbox and its private Docker labels.
+2. Use the MinGW compiler in that toolbox to build KITT's fixed benign
+   event-synchronization PE from oracle_assets/event_probe.c. No arbitrary
+   operator file, user-provided command or external sample is executed.
+3. Generate unique SSH Ed25519 client and Windows host keys in the private
+   RE lab (mode 0700/0600). Pre-pin the host public key to known_hosts.
+   Separate client and Windows host private keys are never printed.
+4. Create Windows OEM files including manifest.json with the actual binary
+   SHA-256, a fixed PowerShell runner and OpenSSH first-boot install script.
+5. Check Dockur image availability *before* removing any existing guest.
+   If --recreate was explicitly confirmed, stop and remove only the validated
+   KITT-owned Windows container by immutable ID, then delete only its validated
+   lab/windows storage. The Linux toolbox and other user files remain intact.
+6. Create Dockur from its local pinned image, read-only mount OEM, and publish
+   only 127.0.0.1:8006 (console) and 127.0.0.1:2222 (Windows SSH).
+   The USER_PORTS=22 environment variable supports Dockur user-mode fallback.
+7. Windows unattended setup runs C:\OEM\install.bat. It installs the Microsoft
+   OpenSSH.Server optional feature, creates the nonadmin kittprobe user with
+   a random non-disclosed password, installs the locked-down SSH host key,
+   configures key-only sshd and ForceCommand, and places the fixed launcher
+   and manifest in C:\KittOracle. Windows firewall limits SSH to the guest
+   management subnet. No administrative or interactive model shell is granted.
+8. The host's private oracle/hosts.json and oracle/ssh_config pre-pin
+   StrictHostKeyChecking and the client key. The expected manifest hash is
+   stored separately in oracle/manifest.sha256.
 
-Crie arquivo SSH privado com alias `kitt-win-oracle` e valores **verificados**:
+OEM setup may require Windows Features-on-Demand / Microsoft Update access.
+If the image, compiler, network, Windows license, OpenSSH capability, guest
+firewall or first-boot script fails, report BLOCKED_ENV. There is no fallback
+to unrestricted remote PowerShell or bypass of SSH host-key validation.
 
-```sshconfig
-Host kitt-win-oracle
-    HostName <endereco-privado-alcancavel-e-verificado>
-    Port <porta-de-gerenciamento-verificada>
-    User <usuario-de-probes-sem-admin>
-    IdentityFile ~/.ssh/kitt-oracle-ed25519
-    UserKnownHostsFile ~/.ssh/kitt-oracle-known_hosts
-    StrictHostKeyChecking yes
-    BatchMode yes
-    ForwardAgent no
-    RequestTTY no
-```
+## Check real readiness
 
-Os caracteres entre `< >` são placeholders, **não** parâmetros funcionais.
-O fingerprint deve ser conferido fora de banda pelo operador; executar
-`ssh-keyscan` sem conferir a identidade não estabelece confiança.
+When the Windows console shows the installed desktop and bootstrap.status
+exists inside C:\KittOracle, run with the actual paths/hashes from bootstrap:
 
-Configure `~/.kitt/reverse-engineering/hosts.json`, modo `0600` e dono
-do operador, usando o schema já aceito pelo `mission.py`:
+    kitt re oracle doctor --hosts /ABSOLUTE/PRIVATE/hosts.json \
+      --manifest-sha256 ACTUAL_64_CHARACTER_SHA256
+    kitt re status --check-oracle --hosts /ABSOLUTE/PRIVATE/hosts.json \
+      --manifest-sha256 ACTUAL_64_CHARACTER_SHA256
 
-```json
-{
-  "schema_version": 1,
-  "ssh_config": "/home/OPERADOR/.ssh/kitt-lab-config",
-  "reference": "kitt-win-oracle",
-  "candidate": "kitt-wine-guest"
-}
-```
+The doctor validates Docker identity, SSH host key and public-key login,
+Windows x64, the SHA of the in-guest manifest and the hashes of registered
+executables. It is read-only: no probe executes during doctor.
 
-O segundo alias deve apontar para outra VM autorizada com Wine e a
-mesma versão de `guest_rpc`. O `candidate` pode estar temporariamente
-indisponível para o **doctor do Oracle**, mas é obrigatório para missões
-diferenciais. A escolha do endereço, chaves e rotas é do operador, não
-da IA. Não grave segredos na pasta do projeto.
+A successful handshake is not hypervisor attestation: guest_attested=false.
+The guest result is not globally cached and must be revalidated on use.
 
-## Validar o Windows Oracle
+## First test and Wine extension
 
-No host Linux, depois de confirmar a rota, o host key e o manifest SHA:
+The Windows guest runner accepts ONLY probe.info and probe.run with a
+registered hash-pinned probe name. The first registered probe,
+event_auto_reset, is KITT-authored, short-lived and tests CreateEventW,
+WaitForSingleObject and SetEvent in a process without external side effects.
+The Linux RE toolbox provides MinGW and Wine for this same binary. The toolbox
+is a container, not a VM isolation boundary; do not execute unknown binaries
+inside it. A full autonomous differential mission still requires configuring
+a separate approved Linux+Wine guest and the existing mission broker, or an
+operator-invoked bounded comparison that explicitly documents its isolation.
 
-```bash
-kitt re oracle doctor --manifest-sha256 SHA256_REAL_DO_MANIFESTO
-kitt re status --check-oracle --manifest-sha256 SHA256_REAL_DO_MANIFESTO
-```
+## Safety and support
 
-Ambos aceitam `--hosts /CAMINHO/PRIVADO/hosts.json` para perfil não padrão.
-O `doctor` devolve `oracle_ready: true` **somente** quando todos os
-checks passaram nesta execução. Resposta incorreta, Windows não x64,
-perfil ausente, erro SSH, manifesto divergente ou contêiner alterado
-retorna `BLOCKED_ENV` e não executa um probe.
+- Never assume running == oracle_ready.
+- Never embed Windows passwords, SSH private keys or licensed Windows media
+  in Git. Keys and the staged OEM private host key reside only in the private
+  local operator-owned lab. The Windows first-boot script removes its staged
+  host-key copy from C:\OEM after successful configuration.
+- This is an explicitly **disposable test VM**, not a production SSH setup.
+- No internet-facing RDP/SSH, Docker socket mounts, anonymous SSH,
+  AcceptAnyHostKey, or dynamic executable selection.
+- This feature does not override KITT approvals or enable auto use by a model.
+- The host console remains http://127.0.0.1:8006.
+- To preserve the current Windows OS, do not pass --recreate and do not use
+  --re-oracle-recreate in the root installer.
 
-O resultado `guest_attested: false` é proposital: host key e hash de
-manifesto não fornecem atestação criptográfica da VM.
-
-## Primeiro teste diferencial
-
-Depois do Oracle **e** guest Wine preparados, crie um manifesto de missão
-no workspace com `{"schema_version":1,"probes":["event_auto_reset"]}`.
-A execução ocorre apenas pela política do host, com os comandos do CLI
-documentados em `docs/REVERSE_ENGINEERING_AUTONOMY.md`.
-
-Nenhum resultado real de Windows/Wine, porcentagem de paridade ou E2E
-foi obtido nesta implementação. Até existir uma rota autenticada
-verificada dentro da VM existente, a integração permanece
-`BLOCKED_ENV`, mesmo que o contêiner reporte `running`.
+If OpenSSH provisioning is blocked because Windows Features-on-Demand isn't
+available, provide the signed Microsoft FoD source to Windows through the
+operator's approved installation process. Never silently disable security.

@@ -1,3 +1,9 @@
+# Agent CLI 0.88.6 — disposable Dockur Windows Oracle bootstrapping
+
+Windows 11 RE lab setup can now generate a deterministic Win32 probe, private Ed25519 SSH keys and a Dockur /oem package; Windows installs OpenSSH and a restricted PowerShell probe RPC automatically on first boot. Resetting any existing Windows guest requires explicit --recreate --yes --accept-license. The Oracle is only ready after a validated SSH handshake, never merely because Docker is running.
+
+[Bootstrap and runbook](docs/WINDOWS_ORACLE_DOCKUR.md). [Release notes](docs/RELEASE_0.88.6.md).
+
 ## Windows Oracle via Dockur existente
 
 O KITT pode verificar sob demanda o Windows 11 já instalado em `kitt-re-win11`
