@@ -176,7 +176,8 @@ def status() -> dict:
         "rea": {"installed": shutil.which("rea") is not None, "executable": shutil.which("rea")},
         "runtimes": {name: shutil.which(name) is not None for name in vm_container.RUNTIMES},
         "guests": guests,
-        "toolbox": "ephemeral; use kitt vm container toolbox --runtime auto --profile full --workspace PATH",
+        "toolbox": ("managed: kitt re shell linux" if guests["linux"].get("managed")
+                    else "ephemeral: kitt vm container toolbox --runtime auto --profile full --workspace PATH"),
     }
 
 
