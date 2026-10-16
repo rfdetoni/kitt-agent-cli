@@ -562,6 +562,12 @@ def build_parser() -> argparse.ArgumentParser:
         command = re_lab_actions.add_parser(action)
         command.add_argument("--state-root", type=Path, default=None,
             help="Private re-lab directory under the operator home")
+        if action == "status":
+            command.add_argument("--json", action="store_true", dest="lab_json",
+                help="Stable JSON status (the default)")
+        if action in ("up", "down"):
+            command.add_argument("--dry-run", "--plan", action="store_true",
+                help="Show current state and proposed lifecycle action without mutation")
         if action in ("setup",):
             command.add_argument("--runtime", choices=["docker"], default="docker")
             command.add_argument("--windows", choices=["11"], default="11")
@@ -1006,7 +1012,12 @@ def main(argv=None) -> int:
                 elif action == "verify":
                     result = re_lab.verify(state_root=args.state_root, full=args.full)
                 else:
-                    result = re_lab.operate(action, state_root=args.state_root)
+                    if args.dry_run:
+                        result = {"status": "PLAN_ONLY", "action": action,
+                                  "current": re_lab.status(state_root=args.state_root),
+                                  "destructive": False}
+                    else:
+                        result = re_lab.operate(action, state_root=args.state_root)
                 print(_json.dumps(result, ensure_ascii=False))
                 if action == "doctor":
                     return 0 if result["ready_for_setup"] else 2
