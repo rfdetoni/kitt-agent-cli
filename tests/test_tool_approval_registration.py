@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from kitt.core.tool_approval import require_tool_approval
-from kitt.core.turn_events import ApprovalRequired, TurnBlocked
+from kitt.core.turn_events import TurnBlocked
 
 
 def _scenario(*, cancelled=False, registration_error=None):
@@ -66,6 +66,7 @@ def test_decided_request_yields_block_without_another_modal():
     result = _register(processor, cmd, security)
     assert isinstance(result, TurnBlocked)
     assert "already been decided" in result.reason
-    repository.save_pending_action.assert_not_called()
+    repository.save_pending_action.assert_called_once()
+    repository.cancel_pending_action.assert_called_once()
     assert processor.pending_actions == {}
     processor.turn_guard.end.assert_called_once_with(cmd.turn_id)
