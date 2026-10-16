@@ -74,3 +74,17 @@ The guest returns exactly one JSON object containing a hash-linked receipt and e
 ## Validation
 
 CI runs mission schema/permission tests, simulated reference/candidate parallel execution, SQLite receipt handling, and guest RPC rejection cases. Real SSH, Windows VM, Wine, Ghidra and Frida E2E must be separately verified on prepared hardware before promoting unattended execution to production.
+
+## Dockur Windows Oracle (sem nova VM)
+
+O container existente `kitt-re-win11` pode ser a referência Windows após
+provisionamento explícito de OpenSSH/forced-command e manifesto de probes.
+O diagnóstico sob demanda é `kitt re oracle doctor --manifest-sha256 SHA_REAL`
+ou `kitt re status --check-oracle --manifest-sha256 SHA_REAL`.
+Nenhum destes comandos instala servidor SSH, publica portas, inicia probes
+ou altera as aprovações do KITT. As instruções completas e bloqueios estão em
+[Windows Oracle Dockur](WINDOWS_ORACLE_DOCKUR.md).
+
+## Fully automated disposable Dockur lab
+
+The newer native Windows bootstrap uses Docker /oem and a Windows PowerShell guest RPC instead of requiring Python inside the Windows reference. Operator authorization, Windows licensing, and explicit consent to delete the current disposable Windows disk are still required. See [Windows Oracle Dockur](WINDOWS_ORACLE_DOCKUR.md). The existing SSH mission broker and manual QEMU guest flow remain supported; model approvals are not widened.

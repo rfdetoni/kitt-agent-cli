@@ -103,6 +103,12 @@ jobs:
           python-version: "3.14"
       - run: python -m pip install -e .
       - run: python -m compileall -q kitt
+      - name: Parse Windows OEM PowerShell scripts
+        shell: pwsh
+        run: |
+          foreach ($asset in @('kitt/oracle_assets/kitt-bootstrap.ps1', 'kitt/oracle_assets/kitt-guest-rpc.ps1')) {
+            $null = [ScriptBlock]::Create([IO.File]::ReadAllText((Resolve-Path $asset)))
+          }
       - run: kitt --help
 
   container-runtime:

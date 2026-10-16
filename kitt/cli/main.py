@@ -512,7 +512,31 @@ def build_parser() -> argparse.ArgumentParser:
         "re", parents=[common], help="Manage lazy reverse-engineering environments",
     )
     re_actions = re_parser.add_subparsers(dest="re_action", required=True)
-    re_actions.add_parser("status", help="Inspect installed REA, guests and runtimes (no startup)")
+    re_status = re_actions.add_parser("status", help="Inspect RE environments without starting them")
+    re_status.add_argument("--check-oracle", action="store_true",
+        help="Opt in to read-only SSH readiness verification of Dockur Windows")
+    re_status.add_argument("--hosts", type=Path, help="Private operator-owned guest hosts.json")
+    re_status.add_argument("--manifest-sha256", help="Expected SHA-256 of Windows guest probe manifest")
+    re_oracle = re_actions.add_parser("oracle", help="Inspect authenticated Windows Oracle readiness")
+    re_oracle_actions = re_oracle.add_subparsers(dest="oracle_action", required=True)
+    re_oracle_doctor = re_oracle_actions.add_parser("doctor",
+        help="Read-only SSH handshake; does not run any probes or change Windows")
+    re_oracle_doctor.add_argument("--hosts", type=Path, help="Private operator hosts.json")
+    re_oracle_doctor.add_argument("--manifest-sha256", required=True,
+        help="Expected SHA-256 of the Windows guest probe manifest")
+    re_oracle_bootstrap = re_oracle_actions.add_parser("bootstrap",
+        help="Unattended disposable Dockur Windows 11 OEM setup (requires explicit authorization)")
+    re_oracle_bootstrap.add_argument("--recreate", action="store_true",
+        help="DESTROYS the managed Windows guest disk, then reinstalls Windows 11")
+    re_oracle_bootstrap.add_argument("--yes", action="store_true",
+        help="Confirm Windows guest install or destruction")
+    re_oracle_bootstrap.add_argument("--accept-license", action="store_true",
+        help="Confirm operator has a valid Windows license and approves Microsoft downloads")
+    re_oracle_pilot = re_oracle_actions.add_parser("pilot",
+        help="Run only the KITT-authored pinned Win32 event probe on Windows and Docker Wine")
+    re_oracle_pilot.add_argument("--hosts", type=Path, help="Private operator-owned SSH guest hosts.json")
+    re_oracle_pilot.add_argument("--manifest-sha256", required=True)
+    re_oracle_pilot.add_argument("--yes", action="store_true", help="Approve this one fixed benign probe")
     re_setup = re_actions.add_parser("setup", help="Prepare or inspect an RE environment")
     re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
     re_setup.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
@@ -942,6 +966,30 @@ def main(argv=None) -> int:
         try:
             if args.re_action == "status":
                 result = re_environment.status()
+                if args.check_oracle:
+                    from kitt import re_oracle
+                    verified = re_oracle.doctor(hosts=args.hosts,
+                        manifest_sha256=args.manifest_sha256 or "")
+                    result["guests"]["windows"]["oracle_ready"] = verified["oracle_ready"]
+                    result["guests"]["windows"]["oracle_check"] = verified
+            elif args.re_action == "oracle":
+                if args.oracle_action == "bootstrap":
+                    from kitt import re_oracle_bootstrap
+                    result = re_oracle_bootstrap.bootstrap(
+                        recreate=args.recreate, yes=args.yes, accept_license=args.accept_license)
+                    print(_json.dumps(result, ensure_ascii=False))
+                    return 0
+                if args.oracle_action == "pilot":
+                    from kitt import re_oracle_pilot
+                    result = re_oracle_pilot.pilot(manifest_sha256=args.manifest_sha256,
+                        hosts=args.hosts, yes=args.yes)
+                    print(_json.dumps(result, ensure_ascii=False))
+                    return 0 if result["status"] == "PASS_SCENARIO" else 1 if result["status"] == "FAIL_SCENARIO" else 2
+                from kitt import re_oracle
+                result = re_oracle.doctor(hosts=args.hosts,
+                    manifest_sha256=args.manifest_sha256)
+                print(_json.dumps(result, ensure_ascii=False))
+                return 0 if result["oracle_ready"] else 2
             elif args.re_action == "setup":
                 result = re_environment.setup(
                     args.system, runtime=args.runtime, source=args.source,
