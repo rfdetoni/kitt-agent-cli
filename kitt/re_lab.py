@@ -275,5 +275,9 @@ def verify(*, state_root: Path | None = None, full: bool = False) -> dict:
     from kitt import re_oracle_pilot
     pilot = re_oracle_pilot.pilot(manifest_sha256=digest, hosts=oracle_dir / "hosts.json",
                                  yes=True)
-    return {**checked, "pilot": pilot, "status": pilot["status"],
-            "wine_isolated": False, "lab_ready": False}
+    passed = pilot["status"] == "PASS_SCENARIO"
+    status = ("MATCH" if passed else "DIVERGENT"
+              if pilot["status"] == "FAIL_SCENARIO" else "BLOCKED_ENV")
+    return {**checked, "pilot": pilot, "status": status,
+            "wine_isolated": passed, "lab_ready": passed,
+            "guest_attested": False}
