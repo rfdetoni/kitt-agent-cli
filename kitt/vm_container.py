@@ -56,6 +56,31 @@ def _runtime(name: str, *, verify: bool = True) -> str:
     return binary
 
 
+def resolve_runtime(name: str) -> str:
+    """Select a usable engine, preferring Docker for automatic selection.
+
+    Explicit requests never fall back to a different engine. Existing VM
+    profiles remain pinned to their saved engine.
+    """
+    if name in RUNTIMES:
+        _runtime(name)
+        return name
+    if name != "auto":
+        raise VMError("Container runtime must be auto, docker or podman")
+    for candidate in RUNTIMES:
+        if not shutil.which(candidate):
+            continue
+        try:
+            _runtime(candidate)
+        except (VMError, OSError, subprocess.TimeoutExpired):
+            continue
+        return candidate
+    raise VMError(
+        "No usable Docker or Podman runtime found; check docker info or "
+        "podman info, or select --runtime explicitly"
+    )
+
+
 def _private_file(path: Path) -> Path:
     path = _path(path, exists=True)
     meta = path.stat()

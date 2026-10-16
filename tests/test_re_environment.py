@@ -14,6 +14,8 @@ from kitt.vm_supervisor import VMError
 @pytest.fixture
 def configured(tmp_path, monkeypatch):
     monkeypatch.setattr(re, "_CONFIG", tmp_path / "re-environments.json")
+    from kitt import re_docker_lab
+    monkeypatch.setattr(re_docker_lab, "inspect", lambda system: None)
     profile = tmp_path / "profile.json"
     profile.write_text('{"approved":true}', encoding="utf-8")
     monkeypatch.setattr(
@@ -118,3 +120,10 @@ def test_same_process_cannot_lease_guest_twice(configured, monkeypatch):
         with pytest.raises(VMError, match="already active"):
             with re.managed_lab_guests():
                 pass
+
+
+def test_re_setup_uses_selected_container_engine_in_next_command(monkeypatch):
+    monkeypatch.setattr(vm_container, "resolve_runtime", lambda runtime: "docker")
+    guide = re.setup("linux")
+    assert guide["ready"] is False
+    assert "--with-re-lab --re-runtime docker" in guide["next"]

@@ -16,6 +16,7 @@ from unittest.mock import patch
 from kitt.cli.main import build_parser
 from kitt.vm_container import (
     IMAGES, _read_profile, _run_args, build_image, doctor, prepare_vm, pull_image,
+    resolve_runtime,
 )
 from kitt.vm_supervisor import VMError
 
@@ -139,6 +140,28 @@ class ContainerVMTests(unittest.TestCase):
         self.assertEqual(b.profile, "full")
         normal = p.parse_args(["-p", "Add a Spring Boot endpoint"])
         self.assertNotEqual(normal.subcommand, "vm")
+
+
+    def test_autodetect_prefers_working_docker_without_falling_back_from_explicit(self):
+        def run(argv, **kwargs):
+            return SimpleNamespace(returncode=1 if "docker" in argv[0] else 0)
+        with patch("kitt.vm_container.shutil.which", side_effect=lambda n: "/usr/bin/" + n), \
+             patch("kitt.vm_container.subprocess.run", side_effect=run):
+            self.assertEqual(resolve_runtime("auto"), "podman")
+            with self.assertRaisesRegex(VMError, "not responding"):
+                resolve_runtime("docker")
+
+    def test_autodetect_uses_docker_when_healthy_and_reports_missing_engines(self):
+        with patch("kitt.vm_container.shutil.which", side_effect=lambda n: "/usr/bin/" + n), \
+             patch("kitt.vm_container.subprocess.run", return_value=SimpleNamespace(returncode=0)):
+            self.assertEqual(resolve_runtime("auto"), "docker")
+        with patch("kitt.vm_container.shutil.which", return_value=None):
+            with self.assertRaisesRegex(VMError, "No usable Docker or Podman"):
+                resolve_runtime("auto")
+        parser = build_parser()
+        self.assertEqual(parser.parse_args(["vm", "container", "doctor"]).runtime, "auto")
+        self.assertEqual(parser.parse_args(["re", "setup", "linux"]).runtime, "auto")
+        self.assertEqual(parser.parse_args(["vm", "container", "doctor", "--runtime", "docker"]).runtime, "docker")
 
 
 if __name__ == "__main__":
