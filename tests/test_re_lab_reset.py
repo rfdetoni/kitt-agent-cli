@@ -35,7 +35,7 @@ def test_plan_does_not_mutate_and_token_binds_scope(tmp_path, monkeypatch):
     first = reset.plan(scope="windows", destroy_data=True)
     assert first["inventory"]["containers"] == {"windows": "a" * 64}
     assert set(root.rglob("*")) == before
-    with pytest.raises(VMError, match="confirmation"):
+    with pytest.raises(VMError, match="identity or paths"):
         reset.recreate(scope="all", destroy_data=True, confirm=first["confirm_token"],
                        accept_license=True)
     assert (root / "windows" / "disk.img").read_bytes() == b"safe"
