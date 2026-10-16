@@ -1,3 +1,9 @@
+# Agent CLI 0.88.4 — aprovações duráveis e paralelismo sem colisões
+
+As aprovações são persistidas antes de aparecer na interface, não reabrem após uma decisão e retomam a ação concreta com as pré-condições originais. Cancelar o turno encerra a aprovação pendente. Lotes paralelos incluem a tarefa agendada e evitam colisões entre diretórios e arquivos. Mantém os contratos de allow-all e fencing de Goals da versão 0.88.3, com regressões direcionadas e sem novas dependências.
+
+[Detalhes da versão](docs/RELEASE_0.88.4.md).
+
 # Agent CLI 0.88.3 — honor allow-all and resume concrete approved actions
 
 The user's autonomous process permission now also applies to inline Python/Node commands. `evaluate_argv` still classifies those payloads as opaque; supervised/balanced modes require approval, read-only mode and hard denials remain enforced, and network/control-plane capability gates are unchanged.

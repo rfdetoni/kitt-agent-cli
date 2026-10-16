@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 
 from kitt.security.capabilities import CAP_CHILD_SPAWN
+from kitt.goals.parallel_paths import paths_overlap
 
 
 _TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT", "WAITING_APPROVAL"}
@@ -22,19 +23,17 @@ def _ready_batch(runtime, goal, current):
     items = runtime.goals.contract_items(goal.id)
     completed = {item.local_id for item in items if item.status == "DONE"}
     chosen = []
-    used = set()
-    for item in items:
+    # Reserve capacity for the task already claimed by the scheduler.
+    for item in sorted(items, key=lambda candidate: candidate.id != current.id):
         if item.kind != "task" or item.status not in {"PENDING", "RUNNING"}:
             continue
         if item.id != current.id and item.status != "PENDING":
             continue
         if not item.paths or not set(item.depends_on).issubset(completed):
             continue
-        paths = set(item.paths)
-        if used.intersection(paths):
+        if any(paths_overlap(item.paths, other.paths) for other in chosen):
             continue
         chosen.append(item)
-        used.update(paths)
     # Only batch if the scheduled item itself can run independently.
     return chosen if len(chosen) >= 2 and current.id in {x.id for x in chosen} else []
 

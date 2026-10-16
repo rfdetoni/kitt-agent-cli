@@ -1,3 +1,9 @@
+# Agent CLI 0.88.4 — durable approvals and collision-safe parallel work
+
+Approvals are persisted before appearing in the UI, cannot reopen after a decision, and resume the exact concrete action with its original mutation preconditions. Cancelling a turn retires its pending approval. Parallel Goal batches include the scheduled task and prevent overlapping directory/file work. Keeps the 0.88.3 allow-all and Goal fencing contracts, with focused regressions and no new dependencies.
+
+[Release details](docs/RELEASE_0.88.4.md).
+
 # Agent CLI 0.88.3 — honor allow-all and resume concrete approved actions
 
 The user's autonomous process permission now also applies to inline Python/Node commands. `evaluate_argv` still classifies those payloads as opaque; supervised/balanced modes require approval, read-only mode and hard denials remain enforced, and network/control-plane capability gates are unchanged.
