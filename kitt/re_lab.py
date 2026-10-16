@@ -5,19 +5,14 @@ reachable through the model-facing tool registry; the operator invokes this CLI.
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
 import re
 import secrets
 import shutil
-import socket
 import stat
-import subprocess
 import sys
-import time
 
 from kitt import re_docker_lab, re_oracle, re_oracle_bootstrap
 from kitt.vm_supervisor import VMError
@@ -67,7 +62,7 @@ def doctor(*, state_root: Path | None = None) -> dict:
         "linux": sys.platform == "linux",
         "docker_cli": shutil.which("docker") is not None,
         "kvm": os.access("/dev/kvm", os.R_OK | os.W_OK),
-        "tun": os.path.exists("/dev/net/tun"),
+        "tun": os.access("/dev/net/tun", os.R_OK | os.W_OK),
         "memory": _memory_available() >= 6 * 1024 ** 3,
         "disk": False,
         "docker_engine": False,
@@ -156,9 +151,20 @@ def _credentials(root: Path) -> None:
         if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) & 0o077:
             raise VMError("Unsafe existing Windows credentials")
         content = path.read_text("ascii")
-        if ("PASSWORD=admin" in content or "USERNAME=Docker" in content
-                or "AUTOLOGIN=Y" in content):
-            raise VMError("Legacy Windows credentials require an explicit migration, not reuse")
+        rows = content.splitlines()
+        entries = [line.split("=", 1) for line in rows]
+        if any(len(item) != 2 for item in entries):
+            raise VMError("Invalid Windows installation credentials format")
+        values = dict(entries)
+        if (len(values) != len(entries) or set(values) != {
+                "VERSION", "USERNAME", "PASSWORD", "AUTOLOGIN", "RAM_SIZE",
+                "CPU_CORES", "DISK_SIZE", "SAMBA",
+            } or values["VERSION"] != "11" or values["USERNAME"] != "KittLab"
+                or values["AUTOLOGIN"] != "N" or values["SAMBA"] != "N"
+                or values["RAM_SIZE"] != "6G" or values["CPU_CORES"] != "2"
+                or values["DISK_SIZE"] != "80G"
+                or not re.fullmatch(r"[A-Za-z0-9_-]{48,80}", values["PASSWORD"])):
+            raise VMError("Legacy or modified Windows credentials require operator migration")
         return
     if any((root / "windows").iterdir()):
         raise VMError("Existing Windows disk has no matching credentials; refusing adoption")
