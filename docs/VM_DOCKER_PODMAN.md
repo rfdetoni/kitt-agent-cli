@@ -152,3 +152,19 @@ See [native VM guide](VM_CREATION_HELPER.md) and [VM security model](VM_AUTONOMY
 The `full` profile now includes the published `rea-agents@6.4.0` CLI and a compatible Node.js 24 runtime, installed at build time. No Node/REA dependencies are added to the lighter `base` or `wine` profiles, nor to KITT's ordinary coding agent. Verify the installed image by running `rea --version` and `rea doctor --provider ghidra --json` **inside** a full toolbox shell. `GHIDRA_INSTALL_DIR` points at the pinned Ghidra in the container.
 
 For host-side governed MCP, install REA independently and explicitly enable `kitt-rea`; the toolbox executable is not automatically reachable from the host's MCP registration. See [REA integration](REA.md) for native, JavaScript/Electron, .NET and evidence comparisons. Toolboxes are containers, not a safe sandbox for executing untrusted binaries.
+
+
+## Reuse installer-managed Docker RE lab without extra QEMU guests
+
+The --with-re-lab installer already creates kitt-re-full (Linux RE toolbox)
+and kitt-re-win11 (Dockur Windows). These are separate from QEMU ISO guests.
+
+Read-only: kitt re status; kitt re setup linux; kitt re setup windows
+Explicit operator lifecycle: kitt re start linux; kitt re stop windows
+Human terminal in existing toolbox: kitt re shell linux
+
+Discovery checks labels, expected private mounts and container identity.
+Supplying --source still selects the QEMU VM flow.
+A Dockur console is not an authenticated probe oracle: oracle_ready stays
+false until a separate forced-command channel is established.
+Docker discovery never enables KITT's unattended guest autonomy.

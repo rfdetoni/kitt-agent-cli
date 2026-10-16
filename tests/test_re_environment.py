@@ -14,6 +14,8 @@ from kitt.vm_supervisor import VMError
 @pytest.fixture
 def configured(tmp_path, monkeypatch):
     monkeypatch.setattr(re, "_CONFIG", tmp_path / "re-environments.json")
+    from kitt import re_docker_lab
+    monkeypatch.setattr(re_docker_lab, "inspect", lambda system: None)
     profile = tmp_path / "profile.json"
     profile.write_text('{"approved":true}', encoding="utf-8")
     monkeypatch.setattr(
