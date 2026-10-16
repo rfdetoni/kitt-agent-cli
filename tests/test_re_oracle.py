@@ -56,6 +56,19 @@ def test_guest_info_rejects_duplicate_and_outside_manifest(probe_manifest):
         guest_rpc.handle({"version": 1, "method": "probe.info", "probe": None}, root, manifest)
 
 
+def test_guest_info_blocks_missing_or_changed_pinned_binary(probe_manifest):
+    root, manifest, _ = probe_manifest
+    exe = root / "event.exe"
+    exe.write_bytes(b"modified")
+    with pytest.raises(ProbeError, match="changed"):
+        guest_rpc.handle({"version": 1, "method": "probe.info", "probe": None},
+                         root, manifest)
+    exe.unlink()
+    with pytest.raises(ProbeError, match="Invalid probe file"):
+        guest_rpc.handle({"version": 1, "method": "probe.info", "probe": None},
+                         root, manifest)
+
+
 def test_probe_guest_info_checks_platform_and_schema(monkeypatch):
     request = []
     def exchange(hosts, alias, body, *, timeout):
