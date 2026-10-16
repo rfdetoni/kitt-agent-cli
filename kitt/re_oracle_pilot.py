@@ -11,7 +11,7 @@ from pathlib import Path
 import subprocess
 import time
 
-from kitt import re_docker_lab, re_oracle, re_oracle_bootstrap
+from kitt import re_oracle, re_oracle_bootstrap
 from kitt.extensions.builtin_plugins.reverse_engineering.mission import _hosts, _ssh_request
 from kitt.extensions.builtin_plugins.reverse_engineering.probe_evidence import (
     EvidenceError, _verify, compare_probe_receipts,
@@ -61,7 +61,7 @@ def pilot(*, manifest_sha256: str, hosts: Path | None = None, yes: bool = False)
              "/workspace/.kitt-oracle/event_probe.exe"],
             capture_output=True, timeout=60, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired):
         return {"status": "BLOCKED_ENV", "reason": "Wine guest pilot unavailable or timed out"}
     if len(wine.stdout) > 65536 or len(wine.stderr) > 65536:
         return {"status": "BLOCKED_ENV", "reason": "Wine pilot output truncated"}
