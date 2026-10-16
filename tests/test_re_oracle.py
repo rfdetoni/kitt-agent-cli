@@ -113,3 +113,18 @@ def test_oracle_doctor_rejects_untrusted_docker_and_ssh(monkeypatch):
     monkeypatch.setattr(re_oracle, "_hosts",
                         lambda hosts: (_ for _ in ()).throw(mission.MissionError("untrusted profile")))
     assert re_oracle.doctor(manifest_sha256="a" * 64)["status"] == "BLOCKED_ENV"
+
+
+def test_oracle_cli_args_are_explicit_and_opt_in():
+    from kitt.cli.main import build_parser
+    parser = build_parser()
+    oracle = parser.parse_args(["re", "oracle", "doctor", "--manifest-sha256", "a" * 64])
+    assert oracle.re_action == "oracle"
+    assert oracle.oracle_action == "doctor"
+    assert oracle.manifest_sha256 == "a" * 64
+    default = parser.parse_args(["re", "status"])
+    assert default.check_oracle is False
+    checked = parser.parse_args(["re", "status", "--check-oracle",
+                                "--manifest-sha256", "b" * 64])
+    assert checked.check_oracle is True
+    assert checked.manifest_sha256 == "b" * 64
