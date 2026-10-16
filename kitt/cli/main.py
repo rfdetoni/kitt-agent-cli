@@ -529,6 +529,8 @@ def build_parser() -> argparse.ArgumentParser:
     for re_operation in ("start", "stop"):
         re_command = re_actions.add_parser(re_operation)
         re_command.add_argument("system", choices=["windows", "linux"])
+    re_shell = re_actions.add_parser("shell", help="Open an operator terminal in the managed Linux RE toolbox")
+    re_shell.add_argument("system", choices=["linux"])
 
     vm_parser = subparsers.add_parser(
         "vm", parents=[common], help="Run autonomous KITT inside an isolated QEMU guest",
@@ -951,6 +953,8 @@ def main(argv=None) -> int:
                 result = re_environment.set_auto(args.system, args.state == "on")
             elif args.re_action == "start":
                 result = re_environment.ensure(args.system)
+            elif args.re_action == "shell":
+                return re_environment.shell(args.system)
             else:
                 result = re_environment.stop(args.system)
             print(_json.dumps(result, ensure_ascii=False))
