@@ -5,7 +5,6 @@ reachable through the model-facing tool registry; the operator invokes this CLI.
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import hmac
 import json
@@ -207,23 +206,26 @@ def setup(*, state_root: Path | None = None, runtime: str = "docker",
         raise VMError("Only Docker, Windows 11, Linux RE full are currently supported")
     if not yes or not accept_license:
         raise VMError("Setup requires --yes and --accept-license (Windows license)")
+    root = _root(state_root)
+    original = re_docker_lab.inspect("windows")
+    if original is not None:
+        linux = re_docker_lab.inspect("linux")
+        if linux is None or Path(linux["workspace"]).parent != root:
+            raise VMError("Existing Windows is not associated with the selected lab root")
+        return {**status(state_root=root), "status": "EXISTING_UNVERIFIED",
+                "message": "Existing Windows preserved; run verify to check the Oracle"}
     preflight = doctor(state_root=state_root)
     if not preflight["ready_for_setup"]:
         raise VMError("RE lab preflight blocked: " + ", ".join(
             key for key, ok in preflight["checks"].items() if not ok))
-    root = _root(state_root)
     _private(root)
     for folder in ("workspace", "windows", "oracle"):
         _private(root / folder)
+    import fcntl  # only after Linux preflight; 'doctor' must run on other OSes
     with (root / ".lock").open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        original = re_docker_lab.inspect("windows")
-        if original is not None:
-            existing_root = Path(re_docker_lab.inspect("linux")["workspace"]).parent if re_docker_lab.inspect("linux") else None
-            if existing_root != root:
-                raise VMError("Windows already exists; lab root mismatch")
-            return {**status(state_root=root), "status": "EXISTING_UNVERIFIED",
-                    "message": "Existing Windows preserved; run verify to check the Oracle"}
+        if re_docker_lab.inspect("windows") is not None:
+            raise VMError("Windows appeared during setup; inspect existing lab and retry")
         if any((root / "windows").iterdir()):
             raise VMError("Nonempty Windows disk without validated container; no overwrite")
         _linux(root)
