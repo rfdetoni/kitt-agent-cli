@@ -229,9 +229,10 @@ def setup(*, state_root: Path | None = None, runtime: str = "docker",
         _linux(root)
         _credentials(root)
         image_id = _image_lock(root)
-        result = re_oracle_bootstrap.bootstrap(recreate=False, yes=True, accept_license=True)
-        return {**result, "root": str(root), "image_id": image_id, "status": "PROVISIONING",
-                "oracle_ready": False, "wine": "UNVERIFIED"}
+    # bootstrap takes the same file lock independently: never hold it here.
+    result = re_oracle_bootstrap.bootstrap(recreate=False, yes=True, accept_license=True)
+    return {**result, "root": str(root), "image_id": image_id, "status": "PROVISIONING",
+            "oracle_ready": False, "wine": "UNVERIFIED"}
 
 
 def operate(action: str, *, state_root: Path | None = None) -> dict:
