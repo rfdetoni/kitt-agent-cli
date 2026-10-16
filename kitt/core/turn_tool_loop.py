@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import re
+import sqlite3
 import time
 from typing import Iterator, Optional
 from urllib.parse import urlsplit
@@ -1147,10 +1148,10 @@ class TurnToolLoopMixin:
                         "pending",
                         security_context=sec_dict,
                     )
-                    self.pending_actions[cmd.turn_id] = pa
                     if hist_svc:
                         hist_svc.repo.save_pending_action(pa)
-                except ValueError as exc:
+                    self.pending_actions[cmd.turn_id] = pa
+                except (ValueError, sqlite3.IntegrityError) as exc:
                     approval_error = str(exc)
                 finally:
                     self.turn_guard.end(cmd.turn_id)
