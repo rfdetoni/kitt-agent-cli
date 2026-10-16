@@ -558,6 +558,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     re_lab = re_actions.add_parser("lab", help="Explicit managed Linux RE + Dockur Windows lab")
     re_lab_actions = re_lab.add_subparsers(dest="lab_action", required=True)
+    re_recreate = re_lab_actions.add_parser("recreate",
+        help="Explicitly reset only KITT-owned lab resources with a recent token")
+    re_recreate.add_argument("--state-root", type=Path, default=None)
+    re_recreate.add_argument("--scope", choices=["windows", "linux", "wine", "all"], required=True)
+    re_recreate.add_argument("--destroy-data", action="store_true")
+    re_recreate.add_argument("--dry-run", "--plan", action="store_true")
+    re_recreate.add_argument("--confirm", default=None,
+        help="Recent HMAC token from recreate --dry-run; never implied by --yes")
+    re_recreate.add_argument("--accept-license", action="store_true",
+        help="Permit reinstalling a Windows guest after an explicitly approved reset")
     for action in ("doctor", "status", "setup", "up", "down", "verify"):
         command = re_lab_actions.add_parser(action)
         command.add_argument("--state-root", type=Path, default=None,
@@ -992,7 +1002,18 @@ def main(argv=None) -> int:
             if args.re_action == "lab":
                 from kitt import re_lab
                 action = args.lab_action
-                if action == "doctor":
+                if action == "recreate":
+                    from kitt import re_lab_reset
+                    if args.dry_run:
+                        result = re_lab_reset.plan(
+                            state_root=args.state_root, scope=args.scope,
+                            destroy_data=args.destroy_data)
+                    else:
+                        result = re_lab_reset.recreate(
+                            state_root=args.state_root, scope=args.scope,
+                            confirm=args.confirm, destroy_data=args.destroy_data,
+                            accept_license=args.accept_license)
+                elif action == "doctor":
                     result = re_lab.doctor(state_root=args.state_root)
                 elif action == "status":
                     result = re_lab.status(state_root=args.state_root)
