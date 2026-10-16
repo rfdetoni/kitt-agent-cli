@@ -109,10 +109,13 @@ def _mission(path: Path, workspace: Path) -> list[str]:
     return names
 
 
-def _ssh_request(hosts: dict, alias: str, probe: str) -> dict:
+def _ssh_exchange(hosts: dict, alias: str, request: dict, *, timeout: int = 90) -> dict:
+    """One fixed-protocol request over the operator-pinned SSH transport."""
     ssh = shutil.which("ssh")
     if not ssh:
         raise MissionError("OpenSSH client is not installed")
+    if alias not in (hosts["reference"], hosts["candidate"]):
+        raise MissionError("SSH alias is not in the approved guest profile")
     argv = [
         ssh, "-T", "-F", hosts["ssh_config"],
         "-o", "BatchMode=yes",
@@ -121,7 +124,7 @@ def _ssh_request(hosts: dict, alias: str, probe: str) -> dict:
         "-o", "ConnectTimeout=10",
         "--", alias,
     ]
-    body = json.dumps({"version": 1, "method": "probe.run", "probe": probe}, separators=(",", ":")) + "\n"
+    body = json.dumps(request, separators=(",", ":")) + "\n"
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         process = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=out, stderr=err,
@@ -131,7 +134,7 @@ def _ssh_request(hosts: dict, alias: str, probe: str) -> dict:
             assert process.stdin is not None
             process.stdin.write(body.encode("utf-8"))
             process.stdin.close()
-            status = process.wait(timeout=90)
+            status = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             raise MissionError(f"Remote guest {alias} timed out; automatic replay is forbidden") from exc
         finally:
@@ -155,13 +158,43 @@ def _ssh_request(hosts: dict, alias: str, probe: str) -> dict:
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_duplicates)
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise MissionError("Malformed guest response") from exc
-    if not isinstance(data, dict) or set(data) != {"version", "receipt"} or data["version"] != 1:
+    if not isinstance(data, dict):
+        raise MissionError("Unexpected guest response")
+    return data
+
+
+def _ssh_request(hosts: dict, alias: str, probe: str) -> dict:
+    data = _ssh_exchange(hosts, alias, {"version": 1, "method": "probe.run", "probe": probe})
+    if set(data) != {"version", "receipt"} or data["version"] != 1:
         raise MissionError("Unexpected guest response")
     receipt = data["receipt"]
     _verify(receipt)
     if receipt["probe"] != probe:
         raise MissionError("Guest receipt probe mismatch")
     return receipt
+
+
+def probe_guest_info(hosts: dict, *, alias: str | None = None) -> dict:
+    """Validate read-only guest identity without running any probe or script."""
+    target = alias or hosts["reference"]
+    data = _ssh_exchange(hosts, target, {"version": 1, "method": "probe.info", "probe": None},
+                         timeout=20)
+    if set(data) != {"version", "guest"} or type(data["version"]) is not int or data["version"] != 1:
+        raise MissionError("Guest does not support the probe.info protocol")
+    guest = data["guest"]
+    if not isinstance(guest, dict) or set(guest) != {
+        "platform", "release", "architecture", "manifest_sha256", "probe_count"
+    }:
+        raise MissionError("Invalid guest identity response")
+    if (guest["platform"] != "Windows" or not isinstance(guest["release"], str)
+            or not 1 <= len(guest["release"]) <= 128
+            or guest["architecture"] not in ("AMD64", "x86_64")
+            or not isinstance(guest["manifest_sha256"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", guest["manifest_sha256"])
+            or type(guest["probe_count"]) is not int
+            or not 1 <= guest["probe_count"] <= 64):
+        raise MissionError("Reference guest identity, architecture or manifest is invalid")
+    return guest
 
 
 def run_mission(workspace: Path, mission_file: Path, hosts_file: Path,
