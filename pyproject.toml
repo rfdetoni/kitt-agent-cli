@@ -31,7 +31,7 @@ kitt = "kitt.cli.main:main"
 include = ["kitt*"]
 
 [tool.setuptools.package-data]
-"kitt" = ["vm_assets/*"]
+"kitt" = ["vm_assets/*", "oracle_assets/*"]
 "*" = ["plugin.toml"]
 "kitt.extensions.builtin_plugins.reverse_engineering" = ["plugin.toml", "ghidra_scripts/*.java", "frida_scripts/*.js"]
 
