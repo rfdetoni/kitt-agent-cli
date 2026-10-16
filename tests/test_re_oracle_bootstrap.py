@@ -147,3 +147,63 @@ def test_oracle_bootstrap_cli_requires_gate_flags():
                                      "--recreate", "--yes", "--accept-license"])
     assert args.re_action == "oracle" and args.oracle_action == "bootstrap"
     assert args.recreate and args.yes and args.accept_license
+
+
+def test_pilot_never_executes_without_explicit_operator_approval(monkeypatch):
+    from kitt import re_oracle_pilot
+    monkeypatch.setattr(re_oracle_pilot.re_oracle, "doctor",
+                        lambda **kwargs: (_ for _ in ()).throw(AssertionError("Unexpected network call")))
+    with pytest.raises(VMError, match="--yes"):
+        re_oracle_pilot.pilot(manifest_sha256="a" * 64)
+
+
+def test_pilot_is_blocked_without_authenticated_windows(monkeypatch):
+    from kitt import re_oracle_pilot
+    monkeypatch.setattr(re_oracle_pilot.re_oracle, "doctor",
+                        lambda **kwargs: {"oracle_ready": False, "reason": "SSH unavailable"})
+    result = re_oracle_pilot.pilot(manifest_sha256="a" * 64, yes=True)
+    assert result["status"] == "BLOCKED_ENV"
+
+
+def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, monkeypatch):
+    from kitt import re_oracle_pilot
+    lab = tmp_path / "re-lab"
+    private = lab / "oracle" / "oem"
+    private.mkdir(parents=True)
+    workspace = lab / "workspace" / ".kitt-oracle"
+    workspace.mkdir(parents=True)
+    binary = b"MZ" + b"safe-fixture" * 20
+    (workspace / "event_probe.exe").write_bytes(binary)
+    expected = hashlib.sha256(binary).hexdigest()
+    (private / "manifest.json").write_text(json.dumps({
+        "probes": {"event_auto_reset": {"path": "event_probe.exe", "sha256": expected}}
+    }))
+    digest = hashlib.sha256((private / "manifest.json").read_bytes()).hexdigest()
+    monkeypatch.setattr(re_oracle_pilot.re_oracle, "doctor",
+                        lambda **kwargs: {"oracle_ready": True})
+    monkeypatch.setattr(re_oracle_pilot.re_oracle_bootstrap, "_lab",
+                        lambda: (lab, {"container_id": "a" * 64}))
+    monkeypatch.setattr(re_oracle_pilot, "_hosts",
+                        lambda path: {"reference": "kitt-win-oracle", "candidate": "wine"})
+    observation = '{"before":258,"signaled":0,"consumed":258}\n'
+    ref = {"schema_version": 1, "probe": "event_auto_reset", "probe_sha256": expected,
+           "platform": "Windows", "release": "11", "exit_code": 0,
+           "timed_out": False, "truncated": False, "duration_ms": 1.5,
+           "stdout": observation, "stderr": ""}
+    ref["sha256"] = hashlib.sha256(
+        json.dumps(ref, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(re_oracle_pilot, "_ssh_request",
+                        lambda config, alias, name: ref)
+    calls = []
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout=observation.encode(), stderr=b"")
+    monkeypatch.setattr(re_oracle_pilot.subprocess, "run", fake_run)
+    result = re_oracle_pilot.pilot(manifest_sha256=digest, yes=True)
+    assert result["status"] == "PASS_SCENARIO"
+    assert result["toolbox_vm_isolated"] is False
+    assert result["source_binary_sha256"] == expected
+    assert calls and calls[0][:3] == ["docker", "exec", "a" * 64]
+    assert calls[0][-1] == "/workspace/.kitt-oracle/event_probe.exe"
+    assert (lab / "oracle" / "pilot.json").is_file()
