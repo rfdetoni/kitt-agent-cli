@@ -1,3 +1,12 @@
+## Windows Oracle via Dockur existente
+
+O KITT pode verificar sob demanda o Windows 11 já instalado em `kitt-re-win11`
+por meio de `kitt re oracle doctor --manifest-sha256 SHA_REAL` e
+`kitt re status --check-oracle --manifest-sha256 SHA_REAL`. O operador precisa
+provisionar o SSH com comando forçado e um manifesto imutável no guest; o
+estado do Docker não autoriza testes automaticamente. Leia
+[Windows Oracle Dockur](docs/WINDOWS_ORACLE_DOCKUR.md).
+
 # Agent CLI 0.88.5 — managed Docker RE lab discovery and runtime auto-selection
 
 Detect an available Docker/Podman engine (Docker preferred) without silently overriding explicit selection. Inspect installer-owned `kitt-re-full` and `kitt-re-win11` with image identity, private bind-mount and isolation validation; allow operator-only start/stop and a Linux toolbox shell, without creating duplicate QEMU guests or granting Windows oracle/SSH authority. Existing QEMU profiles and unattended approval boundaries are preserved.

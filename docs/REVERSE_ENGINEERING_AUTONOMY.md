@@ -74,3 +74,13 @@ The guest returns exactly one JSON object containing a hash-linked receipt and e
 ## Validation
 
 CI runs mission schema/permission tests, simulated reference/candidate parallel execution, SQLite receipt handling, and guest RPC rejection cases. Real SSH, Windows VM, Wine, Ghidra and Frida E2E must be separately verified on prepared hardware before promoting unattended execution to production.
+
+## Dockur Windows Oracle (sem nova VM)
+
+O container existente `kitt-re-win11` pode ser a referência Windows após
+provisionamento explícito de OpenSSH/forced-command e manifesto de probes.
+O diagnóstico sob demanda é `kitt re oracle doctor --manifest-sha256 SHA_REAL`
+ou `kitt re status --check-oracle --manifest-sha256 SHA_REAL`.
+Nenhum destes comandos instala servidor SSH, publica portas, inicia probes
+ou altera as aprovações do KITT. As instruções completas e bloqueios estão em
+[Windows Oracle Dockur](WINDOWS_ORACLE_DOCKUR.md).
