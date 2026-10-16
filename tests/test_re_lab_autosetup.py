@@ -2,10 +2,7 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 import stat
-from types import SimpleNamespace
 
 import pytest
 
@@ -56,7 +53,7 @@ def test_credentials_are_random_private_and_idempotent(tmp_path):
     re_lab._credentials(root)
     assert path.read_text() == first
     path.write_text("VERSION=11\nUSERNAME=Docker\nPASSWORD=admin\nAUTOLOGIN=Y\n")
-    with pytest.raises(VMError, match="Legacy Windows credentials"):
+    with pytest.raises(VMError, match="Legacy or modified Windows credentials"):
         re_lab._credentials(root)
 
 
