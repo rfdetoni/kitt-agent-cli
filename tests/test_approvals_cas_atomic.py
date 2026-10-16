@@ -89,6 +89,18 @@ class TestApprovalsCASAtomic(unittest.TestCase):
             grant, "hash1", "t1", "c1", "w1", "app_1"
         ))
 
+    def test_cancelled_request_is_not_visible_or_grantable(self):
+        self.mgr.register_request(
+            "t1", "c1", "w1", "hash1", "app_1", "write_file"
+        )
+        self.assertTrue(self.mgr.deny(
+            "app_1", reason="Turn cancelled before approval"
+        ))
+        self.assertEqual(self.mgr.list_pending("w1"), [])
+        self.assertIsNone(self.mgr.issue_grant(
+            "t1", "c1", "w1", "hash1", "app_1"
+        ))
+
     def test_conflicting_action_cannot_reuse_approval_id(self):
         self.mgr.register_request(
             "t1", "c1", "w1", "hash1", "app_1", "write_file"

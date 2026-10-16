@@ -1080,6 +1080,7 @@ class TurnToolLoopMixin:
                 # against cancellation instead of checking a racy boolean.
                 if not self.turn_guard.begin(cmd.turn_id):
                     return
+                approval_error = None
                 try:
                     hist_svc = self.history_service
                     pa_ws = workspace_id
@@ -1149,8 +1150,16 @@ class TurnToolLoopMixin:
                     self.pending_actions[cmd.turn_id] = pa
                     if hist_svc:
                         hist_svc.repo.save_pending_action(pa)
+                except ValueError as exc:
+                    approval_error = str(exc)
                 finally:
                     self.turn_guard.end(cmd.turn_id)
+
+                if approval_error is not None:
+                    yield TurnBlocked(
+                        reason=f"Approval registration rejected: {approval_error}"
+                    ), None, None
+                    return
 
                 if self._cancel_requested(cmd.turn_id):
                     self.pending_actions.pop(cmd.turn_id, None)
@@ -1159,6 +1168,11 @@ class TurnToolLoopMixin:
                             hist_svc.repo.cancel_pending_action(pa.id)
                         except Exception:
                             pass
+                    # Cancelling the action must also retire its visible
+                    # approval request, otherwise the modal can reopen.
+                    self.registry.approval_manager.deny(
+                        approval_id, "Turn cancelled before approval"
+                    )
                     return
 
                 yield ApprovalRequired(
