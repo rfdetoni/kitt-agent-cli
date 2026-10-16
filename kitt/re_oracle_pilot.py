@@ -57,7 +57,7 @@ def pilot(*, manifest_sha256: str, hosts: Path | None = None, yes: bool = False)
     start = time.monotonic()
     try:
         wine = subprocess.run(
-            ["docker", "exec", linux["container_id"], "wine",
+            ["docker", "exec", linux["container_id"], "/usr/lib/wine/wine64",
              "/workspace/.kitt-oracle/event_probe.exe"],
             capture_output=True, timeout=60, check=False,
         )
