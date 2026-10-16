@@ -556,6 +556,41 @@ def build_parser() -> argparse.ArgumentParser:
     re_shell = re_actions.add_parser("shell", help="Open an operator terminal in the managed Linux RE toolbox")
     re_shell.add_argument("system", choices=["linux"])
 
+    re_lab = re_actions.add_parser("lab", help="Explicit managed Linux RE + Dockur Windows lab")
+    re_lab_actions = re_lab.add_subparsers(dest="lab_action", required=True)
+    re_recreate = re_lab_actions.add_parser("recreate",
+        help="Explicitly reset only KITT-owned lab resources with a recent token")
+    re_recreate.add_argument("--state-root", type=Path, default=None)
+    re_recreate.add_argument("--scope", choices=["windows", "linux", "wine", "all"], required=True)
+    re_recreate.add_argument("--destroy-data", action="store_true")
+    re_recreate.add_argument("--dry-run", "--plan", action="store_true")
+    re_recreate.add_argument("--confirm", default=None,
+        help="Recent HMAC token from recreate --dry-run; never implied by --yes")
+    re_recreate.add_argument("--accept-license", action="store_true",
+        help="Permit reinstalling a Windows guest after an explicitly approved reset")
+    for action in ("doctor", "status", "setup", "up", "down", "verify"):
+        command = re_lab_actions.add_parser(action)
+        command.add_argument("--state-root", type=Path, default=None,
+            help="Private re-lab directory under the operator home")
+        if action == "status":
+            command.add_argument("--json", action="store_true", dest="lab_json",
+                help="Stable JSON status (the default)")
+        if action in ("up", "down"):
+            command.add_argument("--dry-run", "--plan", action="store_true",
+                help="Show current state and proposed lifecycle action without mutation")
+        if action in ("setup",):
+            command.add_argument("--runtime", choices=["docker"], default="docker")
+            command.add_argument("--windows", choices=["11"], default="11")
+            command.add_argument("--linux-profile", choices=["full"], default="full")
+            command.add_argument("--yes", action="store_true", help="Approve non-destructive provisioning")
+            command.add_argument("--accept-license", action="store_true",
+                help="Confirm a valid Windows license and authorized downloads")
+            command.add_argument("--dry-run", "--plan", action="store_true",
+                help="Show preflight and intended operation without mutation")
+        if action == "verify":
+            command.add_argument("--full", action="store_true",
+                help="Also run the fixed bounded Win32 event pilot on Windows and Wine")
+
     vm_parser = subparsers.add_parser(
         "vm", parents=[common], help="Run autonomous KITT inside an isolated QEMU guest",
     )
@@ -964,6 +999,54 @@ def main(argv=None) -> int:
         from kitt.vm_supervisor import VMError
         import json as _json
         try:
+            if args.re_action == "lab":
+                from kitt import re_lab
+                action = args.lab_action
+                if action == "recreate":
+                    from kitt import re_lab_reset
+                    if args.dry_run:
+                        result = re_lab_reset.plan(
+                            state_root=args.state_root, scope=args.scope,
+                            destroy_data=args.destroy_data)
+                    else:
+                        result = re_lab_reset.recreate(
+                            state_root=args.state_root, scope=args.scope,
+                            confirm=args.confirm, destroy_data=args.destroy_data,
+                            accept_license=args.accept_license)
+                elif action == "doctor":
+                    result = re_lab.doctor(state_root=args.state_root)
+                elif action == "status":
+                    result = re_lab.status(state_root=args.state_root)
+                elif action == "setup":
+                    if args.dry_run:
+                        result = {"status": "PLAN_ONLY", "preflight": re_lab.doctor(
+                            state_root=args.state_root),
+                            "operations": ["reuse/create Linux RE full toolbox",
+                                           "prepare official Dockur image and OEM",
+                                           "install Windows 11 guest only if missing"],
+                            "destructive": False}
+                    else:
+                        result = re_lab.setup(
+                            state_root=args.state_root, runtime=args.runtime,
+                            windows=args.windows, linux_profile=args.linux_profile,
+                            yes=args.yes, accept_license=args.accept_license)
+                elif action == "verify":
+                    result = re_lab.verify(state_root=args.state_root, full=args.full)
+                else:
+                    if args.dry_run:
+                        result = {"status": "PLAN_ONLY", "action": action,
+                                  "current": re_lab.status(state_root=args.state_root),
+                                  "destructive": False}
+                    else:
+                        result = re_lab.operate(action, state_root=args.state_root)
+                print(_json.dumps(result, ensure_ascii=False))
+                if action == "doctor":
+                    return 0 if result["ready_for_setup"] else 2
+                if action == "verify":
+                    return 0 if result.get("oracle_ready") and (
+                        not args.full or result.get("pilot", {}).get("status") == "PASS_SCENARIO"
+                    ) else 2
+                return 0
             if args.re_action == "status":
                 result = re_environment.status()
                 if args.check_oracle:

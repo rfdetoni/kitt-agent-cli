@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -196,14 +195,49 @@ def test_fixed_pilot_compares_two_receipts_without_arbitrary_shell(tmp_path, mon
     monkeypatch.setattr(re_oracle_pilot, "_ssh_request",
                         lambda config, alias, name: ref)
     calls = []
-    def fake_run(argv, **kwargs):
-        calls.append(argv)
-        return SimpleNamespace(returncode=0, stdout=observation.encode(), stderr=b"")
-    monkeypatch.setattr(re_oracle_pilot.subprocess, "run", fake_run)
+    def fixed_isolated_wine(lab, linux, binary):
+        calls.append((lab, linux, binary))
+        return 0, observation.encode(), b""
+    monkeypatch.setattr(re_oracle_pilot, "_run_isolated_wine", fixed_isolated_wine)
     result = re_oracle_pilot.pilot(manifest_sha256=digest, yes=True)
     assert result["status"] == "PASS_SCENARIO"
-    assert result["toolbox_vm_isolated"] is False
+    assert result["toolbox_vm_isolated"] is True
+    assert result["candidate"]["environment"] == "isolated-ephemeral-wine-container"
     assert result["source_binary_sha256"] == expected
-    assert calls and calls[0][:3] == ["docker", "exec", "a" * 64]
-    assert calls[0][-1] == "/workspace/.kitt-oracle/event_probe.exe"
+    assert calls and calls[0][2] == workspace / "event_probe.exe"
     assert (lab / "oracle" / "pilot.json").is_file()
+
+
+def test_native_image_lock_mismatch_never_removes_existing_disk(tmp_path, monkeypatch):
+    """Reject a retagged Dockur image before stopping or deleting anything."""
+    lab = tmp_path / "re-lab"
+    (lab / "windows").mkdir(parents=True)
+    (lab / "oracle").mkdir()
+    disk = lab / "windows" / "disk.img"
+    disk.write_bytes(b"preserve")
+    (lab / ".lock").touch()
+    credentials = lab / "windows.env"
+    credentials.write_text("VERSION=11\n")
+    credentials.chmod(0o600)
+    (lab / "oracle" / "image.lock.json").write_text(json.dumps({
+        "image_id": "sha256:" + "a" * 64,
+        "repo_digest": "dockurr/windows@sha256:" + "b" * 64,
+    }))
+    (lab / "oracle" / "image.lock.json").chmod(0o600)
+    monkeypatch.setattr(bootstrap, "_lab", lambda: (lab, {"container_id": "a" * 64}))
+    monkeypatch.setattr(bootstrap.re_docker_lab, "inspect",
+                        lambda role: {"container_id": "c" * 64})
+    monkeypatch.setattr(bootstrap, "prepare",
+                        lambda: {"oem": str(lab / "oracle"), "hosts": "unused",
+                                 "manifest_sha256": "d" * 64})
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["docker", "image", "inspect"]:
+            return "sha256:" + "e" * 64
+        raise AssertionError("No Docker mutation allowed after image mismatch")
+    monkeypatch.setattr(bootstrap, "_run", run)
+    with pytest.raises(VMError, match="image identity changed"):
+        bootstrap.bootstrap(recreate=True, yes=True, accept_license=True)
+    assert disk.read_bytes() == b"preserve"
+    assert calls and all(argv[:2] != ["docker", "stop"] for argv in calls)
