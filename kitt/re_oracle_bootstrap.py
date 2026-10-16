@@ -198,6 +198,23 @@ def bootstrap(*, recreate: bool, yes: bool, accept_license: bool) -> dict:
         image_id = _run(["docker", "image", "inspect", "--format", "{{.Id}}", "dockurr/windows"])
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id):
             raise VMError("Pull and inspect dockurr/windows before any Windows reset")
+        # Native 're lab setup' fixes the official registry digest before
+        # permitting guest creation. Do not trust mutable local tags alone.
+        image_lock = lab / "oracle" / "image.lock.json"
+        if image_lock.exists() or image_lock.is_symlink():
+            if (image_lock.is_symlink() or not image_lock.is_file()
+                    or stat.S_IMODE(image_lock.stat().st_mode) & 0o077):
+                raise VMError("Untrusted Dockur image lock")
+            try:
+                pinned = json.loads(image_lock.read_text("ascii"))
+            except (ValueError, UnicodeError) as exc:
+                raise VMError("Invalid Dockur image lock") from exc
+            if (not isinstance(pinned, dict) or set(pinned) != {"image_id", "repo_digest"}
+                    or pinned["image_id"] != image_id
+                    or not re.fullmatch(
+                        r"(?:docker.io/)?dockurr/windows@sha256:[a-f0-9]{64}",
+                        str(pinned["repo_digest"]))):
+                raise VMError("Dockur image identity changed since approval")
         if existing:
             _run(["docker", "stop", "-t", "120", existing["container_id"]], timeout=145)
             _run(["docker", "rm", existing["container_id"]], timeout=30)
