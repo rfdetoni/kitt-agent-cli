@@ -6,7 +6,6 @@ Secrets stay under the private RE lab, outside the model-writable workspace.
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
