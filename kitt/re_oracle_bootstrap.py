@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import stat
 import subprocess
 
@@ -177,6 +178,22 @@ def bootstrap(*, recreate: bool, yes: bool, accept_license: bool) -> dict:
         if stat.S_IMODE(credentials.stat().st_mode) & 0o077:
             raise VMError("Windows credentials have unsafe permissions")
         storage = lab / "windows"
+        # Reject occupied probe ports unless the currently verified managed
+        # Windows container itself owns the exact loopback binding.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(("127.0.0.1", HOST_PORT))
+            except OSError as exc:
+                bound = ""
+                if existing:
+                    result = subprocess.run(
+                        ["docker", "port", existing["container_id"], "22/tcp"],
+                        capture_output=True, timeout=15, check=False,
+                    )
+                    if result.returncode == 0:
+                        bound = result.stdout.decode("ascii", "replace").strip()
+                if bound != f"127.0.0.1:{HOST_PORT}":
+                    raise VMError("Oracle SSH port 127.0.0.1:2222 is occupied") from exc
         # Validate image before touching the existing Windows disk.
         image_id = _run(["docker", "image", "inspect", "--format", "{{.Id}}", "dockurr/windows"])
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id):
