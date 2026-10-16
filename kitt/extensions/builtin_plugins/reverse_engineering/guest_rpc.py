@@ -13,7 +13,7 @@ import platform
 import re
 import sys
 
-from .probe_runner import ProbeError, run_probe
+from .probe_runner import ProbeError, _pin_file, run_probe
 
 MAX_REQUEST_BYTES = 4096
 
@@ -49,7 +49,7 @@ def handle(request: dict, root: Path, manifest: Path,
         if not isinstance(parsed, dict) or not isinstance(parsed.get("probes"), dict):
             raise ProbeError("Guest manifest has no probe registry")
         probes = parsed["probes"]
-        if len(probes) > 64 or any(
+        if not 1 <= len(probes) <= 16 or any(
             not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name)
             or not isinstance(entry, dict) or set(entry) != {"path", "sha256"}
             or not isinstance(entry["sha256"], str)
@@ -57,6 +57,10 @@ def handle(request: dict, root: Path, manifest: Path,
             for name, entry in probes.items()
         ):
             raise ProbeError("Invalid guest probe registry")
+        # Read-only integrity check of each operator-pinned executable.
+        # This does not run the binaries or accept shell arguments.
+        for entry in probes.values():
+            _pin_file(root, entry["path"], entry["sha256"])
         return {"version": 1, "guest": {
             "platform": platform.system(), "release": platform.release(),
             "architecture": platform.machine(),
