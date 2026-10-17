@@ -72,11 +72,13 @@ def _git_changes(source: Path, prefix: str) -> dict:
            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
     try:
         changed = subprocess.run(
-            ["git", "-C", str(source), "status", "--porcelain=v1", "-z",
+            ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+             "-C", str(source), "status", "--porcelain=v1", "-z",
              "--untracked-files=all"], env=env, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, timeout=30, check=False)
         checked = subprocess.run(
-            ["git", "-C", str(source), "diff", "--check", "--no-ext-diff"],
+            ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+             "-C", str(source), "diff", "--check", "--no-ext-diff"],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=30, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
