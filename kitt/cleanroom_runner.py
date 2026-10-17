@@ -97,8 +97,10 @@ def run_offline_implementer(
         raise CleanRoomEnvironmentError("pinned offline image unavailable or wrong identity")
     with tempfile.TemporaryDirectory(prefix="kitt-cleanroom-run-", dir=private) as tmp:
         out, err = Path(tmp) / "stdout", Path(tmp) / "stderr"
+        cidfile = Path(tmp) / "container.cid"
         argv = [
             executable, "run", "--rm", "--pull", "never",
+            "--cidfile", str(cidfile),
             "--network", "none", "--read-only", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--pids-limit", "128", "--memory", "4g", "--cpus", "2",
@@ -121,10 +123,20 @@ def run_offline_implementer(
                     check=False,
                 )
             except subprocess.TimeoutExpired as exc:
-                # A fixed --rm invocation can survive Docker CLI timeout. This
-                # runner does not claim that a timed-out container was cleaned.
+                # Kill only the exact CID created by this invocation. Never use
+                # a name or broad Docker cleanup.
+                if cidfile.is_file() and not cidfile.is_symlink():
+                    cid = cidfile.read_text("ascii").strip()
+                    if re.fullmatch(r"[a-f0-9]{64}", cid):
+                        try:
+                            subprocess.run(
+                                [executable, "rm", "--force", cid], env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=20, check=False)
+                        except (OSError, subprocess.TimeoutExpired):
+                            pass
                 raise CleanRoomEnvironmentError(
-                    "implementer timed out: inspect container runtime before retry"
+                    "implementer timed out; container cleanup may require operator verification"
                 ) from exc
         return {
             "status": "IMPLEMENTER_EXITED_UNVERIFIED" if completed.returncode == 0
