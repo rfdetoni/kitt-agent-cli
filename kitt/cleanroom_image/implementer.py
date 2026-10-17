@@ -62,6 +62,46 @@ def _module_path(obj: dict) -> str:
     return "dlls/" + obj["target_dll"][:-4].lower() + "/"
 
 
+def _context_from_approved_checkout(prefix: str, symbol: str) -> str:
+    """Include ONLY bounded source excerpts from B's Wine checkout, never A."""
+    directory = Path("/wine") / prefix
+    excerpts = []
+    visited = 0
+    budget = 18000
+    for path in sorted(directory.rglob("*")):
+        visited += 1
+        if visited > 1200 or budget <= 0:
+            break
+        if path.is_symlink() or not path.is_file() or path.suffix not in {".c", ".h", ".spec"}:
+            continue
+        if path.stat().st_size > 128 * 1024:
+            continue
+        data = path.read_bytes()
+        try:
+            lines = data.decode("utf-8", "strict").splitlines()
+        except UnicodeError:
+            continue
+        hits = [i for i, line in enumerate(lines) if symbol in line]
+        if not hits:
+            continue
+        for at in hits[:2]:
+            start = max(0, at - 16)
+            end = min(len(lines), at + 44)
+            rel = path.relative_to(Path("/wine")).as_posix()
+            excerpt = "# " + rel + " lines " + str(start + 1) + "-" + str(end) + "\n"
+            excerpt += "\n".join(lines[start:end]) + "\n"
+            encoded = excerpt.encode("utf-8")
+            if len(encoded) > budget:
+                break
+            excerpts.append(excerpt)
+            budget -= len(encoded)
+            if len(excerpts) >= 6:
+                break
+        if len(excerpts) >= 6:
+            break
+    return "\n".join(excerpts)
+
+
 def _patch_paths(patch: str, prefix: str) -> None:
     """Restrict all diff metadata and changes to the target DLL tree."""
     if not patch.startswith("diff --git "):
@@ -95,6 +135,9 @@ def _patch_paths(patch: str, prefix: str) -> None:
 
 def _check_path(name: str, prefix: str) -> None:
     path = PurePosixPath(name)
+    if (not name.endswith((".c", ".h", ".spec", ".in"))
+            or any(part == ".git" for part in name.split("/"))):
+        raise ValueError("patch changes a non-source or git control file")
     if (not name.startswith(prefix) or name.endswith("/") or
             any(bit in ("", ".", "..") for bit in name.split("/")) or
             "\x00" in name or "\\" in name or path.is_absolute() or
@@ -132,7 +175,9 @@ def main() -> int:
             "All modified files MUST be beneath " + prefix + ". "
             "Do not use code fences, absolute paths or shell commands.\n"
             "Approved specification:\n" +
-            json.dumps(spec, sort_keys=True, separators=(",", ":")) + "\n"
+            json.dumps(spec, sort_keys=True, separators=(",", ":")) + "\n" +
+            "Approved implementation checkout excerpts (NOT Windows internals):\n" +
+            _context_from_approved_checkout(prefix, spec["function_name"]) + "\n"
         )
         response = subprocess.run(
             [str(binary), "--model", str(model), "--prompt", prompt,
