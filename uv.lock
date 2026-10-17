@@ -51,7 +51,7 @@ tui = [
 [package.metadata]
 requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1,<1" },
-    { name = "kitt-protocol", git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=77090d73d0714f86aadf41a13a7c9ee9a7f1590a" },
+    { name = "kitt-protocol", git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=4df5fedcbfdfd86e12a187a2549354d36e966d8e" },
     { name = "prompt-toolkit", specifier = ">=3.0.52,<4" },
     { name = "prompt-toolkit", marker = "extra == 'tui'", specifier = ">=3.0.52,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
@@ -62,7 +62,7 @@ provides-extras = ["tui", "dev"]
 [[package]]
 name = "kitt-protocol"
 version = "0.14.1"
-source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=77090d73d0714f86aadf41a13a7c9ee9a7f1590a#77090d73d0714f86aadf41a13a7c9ee9a7f1590a" }
+source = { git = "https://github.com/rfdetoni/kitt-protocol.git?subdirectory=sdk%2Fpython&rev=4df5fedcbfdfd86e12a187a2549354d36e966d8e#4df5fedcbfdfd86e12a187a2549354d36e966d8e" }
 
 [[package]]
 name = "packaging"
