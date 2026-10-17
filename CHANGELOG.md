@@ -1,0 +1,612 @@
+# Changelog — K.I.T.T. Agent CLI
+
+Histórico integral dos anúncios de release anteriormente mantidos no README. Detalhes por versão permanecem em `docs/RELEASE_*.md`.
+
+## Agent CLI 0.88.10 — offline Clean-Room RE pipeline
+
+Adds locally built GGUF implementer images, signed operator-only `kitt re cleanroom run` orchestration, independent offline tests and chained audit receipts. No new-code Windows Oracle conformance claim. [Release notes](docs/RELEASE_0.88.10.md) and [workflow](docs/CLEANROOM_RE.md).
+
+## Agent CLI 0.88.9 — controlled clean-room RE contracts
+
+Validated black-box API contract sealing and detached Ed25519 independent-review authorization before optional networkless OCI implementer execution use an immutable image and a separately reviewed Wine workspace. Run-offline never claims independent winetest or Windows Oracle success. See [Clean-Room RE workflow](docs/CLEANROOM_RE.md) and [release 0.88.9](docs/RELEASE_0.88.9.md).
+
+## Agent CLI 0.88.6 — disposable Dockur Windows Oracle bootstrapping
+
+Windows 11 RE lab setup can now generate a deterministic Win32 probe, private Ed25519 SSH keys and a Dockur /oem package; Windows installs OpenSSH and a restricted PowerShell probe RPC automatically on first boot. Resetting any existing Windows guest requires explicit --recreate --yes --accept-license. The Oracle is only ready after a validated SSH handshake, never merely because Docker is running.
+
+[Bootstrap and runbook](docs/WINDOWS_ORACLE_DOCKUR.md). [Release notes](docs/RELEASE_0.88.6.md).
+
+## Agent CLI 0.88.5 — managed Docker RE lab discovery and runtime auto-selection
+
+Detect an available Docker/Podman engine (Docker preferred) without silently overriding explicit selection. Inspect installer-owned `kitt-re-full` and `kitt-re-win11` with image identity, private bind-mount and isolation validation; allow operator-only start/stop and a Linux toolbox shell, without creating duplicate QEMU guests or granting Windows oracle/SSH authority. Existing QEMU profiles and unattended approval boundaries are preserved.
+
+[Release details](docs/RELEASE_0.88.5.md).
+
+## Agent CLI 0.88.4 — durable approvals and collision-safe parallel work
+
+Approvals are persisted before appearing in the UI, cannot reopen after a decision, and resume the exact concrete action with its original mutation preconditions. Cancelling a turn retires its pending approval. Parallel Goal batches include the scheduled task and prevent overlapping directory/file work. Keeps the 0.88.3 allow-all and Goal fencing contracts, with focused regressions and no new dependencies.
+
+[Release details](docs/RELEASE_0.88.4.md).
+
+## Agent CLI 0.88.3 — honor allow-all and resume concrete approved actions
+
+The user's autonomous process permission now also applies to inline Python/Node commands. `evaluate_argv` still classifies those payloads as opaque; supervised/balanced modes require approval, read-only mode and hard denials remain enforced, and network/control-plane capability gates are unchanged.
+
+[Release details](docs/RELEASE_0.88.3.md).
+
+## Agent CLI 0.88.2 — remembered approvals resume without a loop
+
+Saving “always allow” for a session or workspace no longer invalidates the waiting action's authority snapshot. Only explicit, action-bound approval resumes accept appended allow rules, with the entire original rule prefix preserved. Revocations, deny additions, policy/autonomy/sandbox changes, principal changes, grant mismatches and nonce replays still fail closed. Other snapshot consumers remain strict.
+
+[Release details](docs/RELEASE_0.88.2.md).
+
+## Agent CLI 0.88.1 — bounded planning with local validation
+
+A valid automatic Goal plan now needs one model generation, followed by local validation of the existing size, ID, dependency, path, criterion and registered-check constraints. One structural correction is allowed when that validation fails; a second invalid result stops planning. Transport failures are not automatically replayed.
+
+[Release details](docs/RELEASE_0.88.1.md).
+
+## Agent CLI 0.88.0 — JSON model responses
+
+Planning, advisory architecture, contract review, independent validation, senior review, completion reports and host-tool recovery now request ordinary JSON. Structured results use the strict shared JSON decoder; textual host actions dispatch from the canonical JSON action object. Duplicate keys, non-finite values and competing objects fail closed.
+
+[Release details](docs/RELEASE_0.88.0.md).
+
+## Agent CLI 0.87.29 — optional local multilingual semantic engine
+
+PT-BR, English and Spanish explicit task commands are resolved locally without generating an auxiliary LLM classification request. An optional Ollama multilingual E5 Q8 classifier abstains on uncertain input; the original user request is always authoritative and remains in the execution prompt. The engine is **disabled by default** until independently calibrated. Use `/semantic doctor`, `/semantic status`, and the [Code-RAG guide](docs/CODE_RAG.md). Direct installers support explicit `--prepare-semantic-model` (Linux) or `-PrepareSemanticModel` (Windows) and never pull weights implicitly. [Release notes](docs/RELEASE_0.87.29.md).
+
+## Agent CLI 0.87.27 — live planning and reviewer progress
+
+Planning now shows **the actual phase** (PLAN/REVIEW/REVISION, attempt 1/3), a continually updating stage timer, an explicit *waiting for LLM* label, and scoped entries in the transcript. The Agent dashboard replaces the misleading fixed progress percentage with **AGUARDO** during provider waits. The phase closes cleanly on success, cancellation, or errors. [Release notes](docs/RELEASE_0.87.27.md).
+
+## Agent CLI 0.87.26 — non-mutating final contract validation
+
+Preserves model-authored FINAL acceptance criteria, checks, paths and dependencies during host contract validation, while retaining aggregate 64-path/64-criterion/12-check limits. The independent pre-mutation reviewer sees the exact validated proposal, not an expanded 49-criterion final step. This prevents systematic revision loops for large mission plans with optional/environment-gated stages; task checks continue running at their own steps. See [release details](docs/RELEASE_0.87.26.md).
+
+## Agent CLI 0.87.25 — configurable LLM routing per specialist
+
+Specialist workers can now select distinct existing TaskRouter profiles (direct API, local Ollama or separate KITT reverse-proxy instances), using automatic, preferred or fixed routing with privacy-aware fallbacks. Settings are editable via `kitt agents model` and `/agent model`; models are bound to the child session and reused after approval/resume. See [routing release notes](docs/RELEASE_0.87.25.md).
+
+## Agent CLI 0.87.23 — pluggable specialist agents
+
+Adds a trusted, declarative AgentRegistry with built-in Code, Creative, Investigator, Critic and Tester profiles, per-agent role/tool/budget/time contracts, and deterministic task-to-specialist selection. Workspace/global plugins can register agents via [agents.<id>] TOML plus a hashed persona Markdown; plugin content requires explicit per-workspace trust. Agents use existing ChildAgentManager and scheduler/worktree security boundaries, with no second planner or privilege elevation. CLI wizard: `kitt agents create`; TUI: `/agent` menu, `/agent run`, `/agent team`, `/agent msg`, `/agent inbox`. Family messages are durable and delivered at the next child turn boundary, not as live interrupts. See [release details](docs/RELEASE_0.87.23.md).
+
+## Agent CLI 0.87.22 — selective indexed retrieval and graph changes
+
+Repository context now prefers a complete FTS5 index for regular lexical requests; native Rust lexical search remains the fallback and the primary path for diagnostic and exact-path requests. Targeted graph edits refresh only impacted source adjacencies instead of rebuilding every edge. [Release notes](docs/RELEASE_0.87.22.md).
+
+## Agent CLI 0.87.21 — responsive repository indexing
+
+Full reconciliation now reads and parses source files outside the shared SQLite lock. File updates use short transactions, re-check metadata before committing parsed snapshots, and avoid deleting paths changed by targeted updates after scan start. [Release notes](docs/RELEASE_0.87.21.md).
+
+## Agent CLI 0.87.20 — revision-safe embeddings and durable-source backfill
+
+Asynchronous embedding writes carry the original Memory content hash. A bounded workspace backfill uses Memory's durable missing-vector queue when semantic search succeeds; unfinished items survive process restarts. Automatic backfill excludes secret, ephemeral and conversation memories. Full graph rebuild batches SQL edges. Requires Memory 0.10.2. [Release details](docs/RELEASE_0.87.20.md).
+
+## Agent CLI 0.87.19 — opt-in local vector memory
+
+The existing Ollama embedding provider now supports opt-in hybrid memory retrieval via kitt-memoryd 0.10.0. Set `KITT_MEMORY_EMBED_MODEL` to an installed model; `KITT_MEMORY_EMBED_URL` defaults to `http://127.0.0.1:11434` and accepts loopback HTTP only. A single lazy worker and bounded queue index successful remembers; search uses a short provider deadline and falls back to FTS5. No remote egress or automatic model downloads. See [release details](docs/RELEASE_0.87.19.md).
+
+## Agent CLI 0.87.18 — incremental index performance
+
+FTS5 rows are deleted by indexed rowid, avoiding full scans of UNINDEXED file_id. SQLite indexes now cover qualified symbols and per-file chunks. Full index refresh avoids reading unchanged files and redundant consistency scans on each edit; consistency is still verified at startup. See [release notes](docs/RELEASE_0.87.18.md).
+
+## Agent CLI 0.87.17 — targeted Goal review correction
+
+A `REVISE` reviewer verdict now retains the prior host-validated
+plan as an editing baseline and sends only its unresolved issues for
+correction. Revisions are revalidated and reviewed before any
+execution; bounded retries and permission gates remain intact.
+See [release notes](docs/RELEASE_0.87.17.md).
+
+## Agent CLI 0.87.16 — live goal planning feedback
+
+Automatic Goals now report planner/reviewer phases, bounded retry attempts
+and task execution status directly in the TUI, including over daemon IPC.
+A valid plan can still be revised up to three times before host execution;
+the UI now distinguishes that activity from real tool calls.
+See [release notes](docs/RELEASE_0.87.16.md).
+
+## Agent CLI 0.87.15 — lazy RE lab cleanup and toolbox menu
+
+A host-owned mission lease prevents concurrent lazy lab runs. Mission-started
+guests are stopped on normal completion or errors, while already-running VMs
+are preserved. The Agent CLI `/re` panel can now launch the temporary RE
+toolbox shell directly. See [release 0.87.15](docs/RELEASE_0.87.15.md).
+
+## Agent CLI 0.87.14 — host-owned lazy RE environments and TUI
+
+The Agent CLI now offers `/re` and `kitt re` for discovery, guest
+profile enrollment, controlled on-demand VM startup, and guided ISO/QCOW2
+setup with Podman/Docker. Regular coding sessions do not start VMs.
+Only operator-approved lab profiles can auto-start. See the
+[RE environment guide](docs/RE_LAZY_ENVIRONMENTS.md) and
+[release 0.87.14](docs/RELEASE_0.87.14.md).
+
+## 0.87.3 — browser gateway forwarding
+
+FailoverLLMClient now delegates scoped browser-gateway capability discovery to the selected primary client only, without granting authority through fallback providers. Host trust and origin checks remain mandatory.
+
+## Release 0.86.5 — Virtualized list mouse wheel
+
+Fixes a second mouse-wheel movement in virtualized TUI panels (Conversations, Timeline, command palette, model selection, diff and Reverse Proxy): selecting the next/previous item already refreshes the visible slice, so scrolling the underlying Window as well moved the content twice. The wheel handler now changes the model index only, leaving ordinary transcript and nonvirtual scroll handlers unchanged. Includes a behavioral regression test. Full notes: [v0.86.5](docs/RELEASE_0.86.5.md).
+
+## Release 0.86.4 — Rendered mouse coordinates and accurate transcript scrolling
+
+Fixed the follow-up mouse regression: prompt_toolkit already translates screen clicks to content coordinates, so a second KITT scroll offset incorrectly targeted modal actions. Transcript wheel scrolling now uses the renderer's actual viewport instead of subtracting visual window height from logical line count (which breaks wrapped output). History expansion preserves the visible position, and debug logs record received wheel events by surface. Includes terminal-level SGR wheel and scrolled-modal tests, without adding a TUI framework or changing the proxy. See [release notes](docs/RELEASE_0.86.4.md).
+
+## Release 0.86.3 — TUI approvals, workarea scrolling and Reverse Proxy controls
+
+Selections in the approval modal dismiss it immediately without canceling the pending decision; concurrent mouse/keyboard submissions are serialized, and failed daemon acknowledgments restore the request. Workspace-scoped remembered `run_command` rules now apply only to the matching executor identity; explicit denials remain authoritative. Transcript scrolling is routed to the workarea even without an overlay, and Reverse Proxy context tabs restore focus and refresh data. OpenTUI-inspired interaction principles are implemented using the existing `prompt_toolkit` stack. See [release notes](docs/RELEASE_0.86.3.md).
+
+## Release 0.86.1 — Parallel child admission and live monitoring
+
+The task-plan host can dispatch multiple **independent** child tasks using `plan.dispatch_ready` (up to four by default), sharing one parent budget while keeping per-child permissions, worktrees, browser sessions and verification requirements. `Ctrl+X, A` opens the Agent monitor; the provider endpoint chord is now `Ctrl+X, E`. Automatic durable Goals contracts now opportunistically fan out independent file-scoped implementation items in autonomous mode, while the existing GoalScheduler retains lease ownership and independently validates each completed item. Tasks with overlapping files or unsatisfied dependencies remain sequential. See [release notes](docs/RELEASE_0.86.1.md).
+
+## Release 0.85.0 — Structured Agent results
+
+Planning and review/validation/completion reports return one JSON object without textual markers. With reverse-proxy contract v3, the model puts that object directly in content, avoiding double serialization. Protocol 0.10.0 owns the identifiers and strict result decoder; Proxy 5.0.0 is the compatible companion. WebChat continues to own token limits. See [release notes](docs/RELEASE_0.85.0.md).
+
+## Release 0.84.10 — WebChat owns token limits
+
+Reverse-proxy turns leave context and output token limits to WebChat. Local profile placeholders and token quotas no longer reject or truncate prompts, reviews, conversation messages or tool observations. Token estimates remain telemetry, and operational limits stay active. Failed prompt preparation receives scoped diagnostics.
+
+See [release notes](docs/RELEASE_0.84.10.md).
+
+## Release 0.84.9 — Cancellation, selected inputs and build verification
+
+Automatic contracts register the planning turn for cancellation and refuse work after cancellation. Selected text files and attachment references survive planning and durable execution. Full Node verification includes check/build scripts and directory targets, and reports whether workspace verification actually ran. The native bridge invalidates changed files and validates symbol paths before scoped reads. Tool argument limits come from kitt-protocol.
+
+See [release notes](docs/RELEASE_0.84.9.md).
+
+## Release 0.84.8 — live durable-contract progress
+
+Automatic durable contracts now forward safe inner-turn progress to the outer user turn. While T01/T02/... execute, the TUI receives thinking, context, tool and edit events instead of appearing stalled between contract checkpoints.
+
+Planning itself now emits visible thinking state. Interactive memory recall is bounded to four seconds and degrades to empty recall when kitt-memoryd is temporarily unavailable; recall remains contextual enrichment rather than execution authority. Prompt construction and memory recall now have separate latency telemetry. See [release notes](docs/RELEASE_0.84.8.md).
+
+## Release 0.84.7 — immediate TUI session transition on submit
+
+Submitting the first prompt now leaves the home screen immediately, before daemon connection/attachment and automatic-contract bootstrap complete. The session shows the submitted prompt, `STARTING` status and the active core task instead of appearing frozen.
+
+`TurnStarted` reconciles the optimistic prompt instead of duplicating it. Startup failures keep the session visible, switch to `ERROR`, mark the core task failed and surface a persistent toast. See [release notes](docs/RELEASE_0.84.7.md).
+
+## Release 0.84.6 — complete Goals/TaskPlan verification separation
+
+GOAL-owned durable contract items without a nested TaskPlan no longer receive TaskPlan host-execution/verification state in their model context. This removes the remaining contradictory instruction that could still tell the model to run registered TaskPlan verification even though `GoalStepVerifier` owns post-turn validation.
+
+Agent 0.84.5 already stopped the generic TaskPlan gate from rejecting such final responses; 0.84.6 completes the same root-cause fix at context construction. Real TaskPlans retain their host context and completion gate unchanged. Tool budgets are unchanged. See [release notes](docs/RELEASE_0.84.6.md).
+
+## Release 0.84.5 — goal-contract loop verification ownership
+
+Goal-owned durable contract items no longer pass through the nested per-turn TaskPlan completion gate when that turn has no TaskPlan. The Goals contract already owns post-turn deterministic checks, independent validation and retry; forcing the inner turn through TaskPlan verification produced a false `plan.verify` path, consumed the remaining tool budget, and prevented the contract from advancing.
+
+Contract item prompts now explicitly keep `plan.submit/plan.verify` out of that nested path. Real TaskPlans still retain the existing host completion gate unchanged. See [release notes](docs/RELEASE_0.84.5.md).
+
+## Release 0.84.4 — durable loop hardening
+
+Automatic contracts now require at least one executable task plus final integration validation, and HIGH/CRITICAL planned paths receive a bounded read-only semantic review before the first mutation. Host-owned resolvable blocks retry the same contract item instead of consuming global scheduler failure budgets; terminal blocks are committed explicitly.
+
+Existing LSP operations for definition, hover, semantic references, diagnostics, outline and call hierarchy are now wired to the runtime instead of being dead registrations. ContextEpoch/cache-region reconciliation remains authoritative, with provider-reported cache hits recorded as durable telemetry when available. See [release notes](docs/RELEASE_0.84.4.md).
+
+## Release 0.84.3 — refresh stale managed Reverse Proxy control plane
+
+Managed Reverse Proxy start/restart now refreshes a resident control plane once per Agent process before creating services. This fixes upgrades where an older control-plane process remained on port 2999 and silently ignored the newer `log_file` and ownership fields even though the installed Reverse Proxy binary was current.
+
+When Agent logging is configured, the returned managed instance must also report a proxy log path in the same directory; otherwise startup fails explicitly instead of silently logging elsewhere. Restart recreates the instance with the Agent's current logging settings. See [release notes](docs/RELEASE_0.84.3.md).
+
+## Release 0.84.2 — automatic durable contracts
+
+Persisted user turns in `mode=auto` now use the durable Plan → Execute → Validate → Retry contract by default. The planner decomposes the request, GoalScheduler executes one item at a time, validation failures retry the same item, and completion still requires every item plus final integration validation to pass.
+
+Managed Reverse Proxy instances started from the Agent inherit the Agent logging level/content, write their own log file in the same log directory, and are tied to the Agent process lifecycle. See [release notes](docs/RELEASE_0.84.2.md).
+
+## Release 0.84.1 — focused goal-step verification
+
+The durable task-contract behavior from 0.84.0 is unchanged, but the implementation is now structurally smaller: `GoalStepExecutor` only executes turns and delegates post-turn verification. Mutation snapshots, adversarial-review runtime and completion verification live in focused modules instead of one oversized executor. See [release notes](docs/RELEASE_0.84.1.md).
+
+## Release 0.84.0 — durable Plan → Execute → Validate → Retry contracts
+
+Large requests can now be decomposed into a bounded persistent task contract on top of the existing Goals scheduler. Each item is executed, checked with host-owned verification, independently validated, and retried in place until it passes or its attempt budget is exhausted. The scheduler owns the lease-fenced state transition, and a contract goal cannot become `SUCCEEDED` until every item, including final integration validation, is `DONE`.
+
+Contract plans cannot grant capabilities or inject arbitrary command argv. `no_history=True` now also isolates local conversation context and Reverse Proxy provider sessions for planner/validator turns. No KITT Protocol, Reverse Proxy, or KITT Memory wire change was required.
+
+Use `kitt -p "..." --contract --allow write,run` to plan and inspect before execution, add `--contract-yes` for immediate start, or use `/contract`, `/contract-status`, and `/contract-resume` interactively. See [release notes](docs/RELEASE_0.84.0.md).
+
+## Release 0.83.19 — consistent endpoint trust in model selection
+
+The pending model-selection/authentication path now grants the same exact-origin trust as explicit Reverse Proxy role binding and `/model`. Non-default managed ports stay usable when selected through either UI path, without trusting workspace configuration or neighboring endpoints. See [release notes](docs/RELEASE_0.83.19.md).
+
+## Release 0.83.18 — Trust the explicitly selected managed proxy endpoint
+
+Selecting a Reverse Proxy instance for Context, Code or Validation now records its exact origin in the existing private endpoint trust store before saving the router. This fixes `Refusing provider egress` for newly allocated ports such as 3001. Merely listing or starting a service and workspace configuration do not grant trust. See [release notes](docs/RELEASE_0.83.18.md).
+
+## Release 0.83.17 — REA MCP and evidence-qualified completion
+
+Add an optional built-in REA adapter that registers an installed local `rea mcp` server through the existing governed MCP boundary; KITT never downloads REA implicitly. Evidence records now retain authority, kind, confidence, coverage, limitations, producer metadata and a provenance digest in schema 11. The existing task-plan ledger projects verification obligations and residual unknowns into the trusted output contract so incomplete work stays explicit without introducing a second scheduler, ledger or wire protocol.
+
+See [release notes](docs/RELEASE_0.83.17.md) and [REA integration](docs/REA.md).
+
+## Release 0.83.16 — execution boundary hardening
+
+Contain native Python fallback reads with RepositoryScanner and WorkspaceFileSystem. Run user regex in a disposable process with a 3 second execution deadline. Reserve both move/rename paths. Capture file and directory mutations before execution and guard rollback against changed contents. Directory recovery is bounded to 1000 entries/32 MiB and refuses links. Verify directory descendants. Recover the latest run state beyond 10000 events. Reject invalid UTF-8 in proxy SSE. Bound memory context to 8 seconds and receipt telemetry to 1 second; submit one receipt batch. A memory outage blocks the turn with a recoverable retry failure. Reconnect daemon streams by delivered cursor, deduplicate replay and buffer live events during attachment without resubmitting mutations. Release path leases if resource acquisition fails. Source-tree CLI version agrees with package version. Add release-critical regressions.
+
+See [release notes](docs/RELEASE_0.83.16.md).
+
+## Agent CLI 0.83.15 — task-plan child-manager wiring
+
+Task-plan host-state evaluation now uses the retained-agent manager rather than the spawn-only `ChildTools` adapter, fixing the pre-dispatch `ChildTools.repo` crash seen before the first Reverse Proxy request.
+
+See [release notes](docs/RELEASE_0.83.15.md).
+
+## Agent CLI 0.83.14 — reverse-proxy pre-dispatch hardening
+
+Reverse-proxy turns now retry only provably pre-accept connectivity failures, reserve actual estimated prompt usage instead of the whole remaining allowance, and emit explicit diagnostics around the boundary before model transport. Ambiguous connection failures remain non-retryable to avoid duplicating browser-backed turns.
+
+See [release notes](docs/RELEASE_0.83.14.md).
+
+## Agent CLI 0.83.13 — remaining local agentic invariants
+
+This patch closes the remaining locally-testable authority, isolation, compaction, no-progress and execution-policy gaps without adding a new protocol, scheduler or authority. Managed-process controls are regression-tested against their original AuthoritySnapshot; real Git worktrees prove child isolation/integration/discard; compaction retains critical execution diagnostics; unchanged reread loops stop deterministically; opaque interpreter eval wrappers fail closed even under `allow-all`; and learning/experiment analytics remain privacy-safe and never auto-promote candidates.
+
+See [release notes](docs/RELEASE_0.83.13.md).
+
+## Agent CLI 0.83.12 — per-conversation concurrency and proven recovery
+
+Active turns in the same conversation are now serialized at admission while different conversations continue to execute in parallel. This release also adds deterministic evidence for FIFO resource fairness, selective rollback, exact snapshot/artifact recovery, and bounded query/page retrieval for large artifacts.
+
+See [release notes](docs/RELEASE_0.83.12.md).
+
+## Agent CLI 0.83.11 — bounded cancellation and race-free artifact GC
+
+The Agent now bounds both active turns and synchronous producer threads that remain alive after cancellation: new prompts can recover from blocked calls without allowing orphan threads to grow without limit. Artifact GC also rechecks references under a SQLite write reservation immediately before deleting a shared blob, closing the TOCTOU window found during the 0.83.10 review.
+
+See [release notes](docs/RELEASE_0.83.11.md).
+
+## Agent CLI 0.83.10 — runtime integrity and cancellation
+
+This release fixes three concrete runtime failures without introducing a new architecture: artifact garbage collection no longer removes content-addressed blobs that are still referenced; cancelled synchronous turns no longer permanently consume all global prompt capacity; and long-running mutations renew the existing coordination leases while the tool is active.
+
+Artifact ownership is also stricter: a `turn_id` now requires a valid matching conversation.
+
+See [release notes](docs/RELEASE_0.83.10.md).
+
+## Agent CLI 0.83.9 — authoritative native execution flow
+
+Agent CLI now keeps turn lifecycle, completion validation, and tool execution on native `TurnProcessor`, `TurnToolLoopMixin`, and `ToolRegistry` entrypoints instead of replacing methods at runtime. Existing policy, approval, durable evidence, replay, post-edit verification, and cancellation controls are reused unchanged. Role-policy denials also return a valid `ToolResult` instead of raising while constructing the denial.
+
+No shared Protocol field or cross-repository contract changed. Reverse Proxy **4.9.3** and KITT Protocol **0.9.0** remain compatible.
+
+See [release notes](docs/RELEASE_0.83.9.md).
+
+## Agent CLI 0.83.8 — canonical Reverse Proxy transport
+
+Agent CLI now locks the Reverse Proxy request boundary to structural `tools/tool_choice`, typed `kitt_context` and protocol-owned `kitt_meta`. Regression coverage explicitly rejects reintroduction of legacy `functions/function_call` transport and stale textual `Tool Contract` authority. The existing canonical `<kitt-tool>` bridge remains an internal Agent representation after native tool-call extraction; no additional semantic aliases are introduced.
+
+This release pairs with Reverse Proxy **4.9.3** and KITT Protocol **0.9.0**.
+
+See [release notes](docs/RELEASE_0.83.8.md).
+
+## Agent CLI 0.83.7 — recoverable retry attempt identity
+
+Persisted safe retries now recover the latest durable `attempt_id` after interruption, use deterministic attempt numbering, and reject stale completion from an older attempt. Side-effecting uncertain operations remain fail-closed.
+
+See [release notes](docs/RELEASE_0.83.7.md).
+
+## Agent CLI 0.83.6 — durable tool attempt identity
+
+Tool execution receipts now expose a stable logical `operation_id` plus a per-attempt `attempt_id`. Confirmed side effects remain replay-only, unresolved side effects remain blocked as uncertain, and only safe non-side-effect retries allocate a new attempt without changing the logical operation.
+
+See [release notes](docs/RELEASE_0.83.6.md) for the invariants and regression evidence.
+
+## Agent CLI 0.83.5 — Memory 0.9 protocol alignment
+
+Agent CLI now resolves KITT Protocol **0.9.0** and aligns its shared-memory client with KITT Memory **0.9.0**. Progressive hydration explicitly skips unused provenance, search exposes bounded exclusion/context-hint controls, and the client supports deterministic baseline/ETag requests without changing the existing agent loop or creating a second memory authority.
+
+See [release notes](docs/RELEASE_0.83.5.md) for compatibility and regression coverage.
+
+## Agent CLI 0.83.4 — bounded model-journal checkpointing
+
+Model dispatch no longer forces every derived event-ledger projection to checkpoint before the provider request. `ModelRequestPrepared` remains durable in the append-only ledger, while projection checkpoints keep their normal sparse cadence and periodic checkpoints are written in one SQLite transaction. This removes redundant write-lock acquisitions from the Agent → Reverse Proxy critical path without weakening replay durability. The release also removes a duplicate `concurrent.futures` import.
+
+See [release notes](docs/RELEASE_0.83.4.md) for the failure analysis and regression coverage.
+
+## Agent CLI 0.83.3 — gateway hardening and host surface actions
+
+An OpenAI-compatible local backend needs an explicit loopback endpoint to count as local. Only the Ollama protocol has a known implicit loopback default.
+
+## Agent CLI 0.83.0 — bounded gateway lifecycle
+
+See [release notes](docs/RELEASE_0.83.0.md) for cancellation, privacy, upstream budgets, exact file pagination and Memory reconciliation.
+
+## Agent CLI 0.82.3 — durable continuous-agent runtime
+
+Agent CLI 0.82.3 adds durable agent-family messaging, passivation/revival, a
+reviewable continual-harness refinement pipeline, persistent heartbeats and
+schedules, bounded program-session state, provider parking/failover and a
+line-oriented \`kitt rpc\` headless surface. These features extend the existing
+host-owned runtime; no arbitrary model \`eval\`/\`exec\`, second memory store or
+parallel workflow engine was introduced.
+
+The implementation reuses existing child/session ledgers, \`scheduled_tasks\`,
+\`RuntimeStateStore\`, SafeRuntime capabilities, session branching/export and
+Models.dev freshness/runtime discovery. See
+[docs/CONTINUOUS_AGENT_RUNTIME.md](docs/CONTINUOUS_AGENT_RUNTIME.md).
+
+## Agent CLI 0.82.0 — host-owned plans, evidence and child containment
+
+Agent CLI 0.82.0 adds optional bounded task DAGs to the existing `kitt_runtime` pipeline. The host assigns IDs, selects dependency-ready tasks, delegates through the existing child manager and approves completion from current verification evidence. Required checks use exact registered argv through normal policy, approval, sandbox and budget controls. A child report or stdout success marker cannot approve completion.
+
+This release pairs with Protocol **0.7.0** and Reverse Proxy **4.8.0**. Typed host state is refreshed before each model round trip; incompatible proxy capabilities produce an actionable error. Child spawn is serialized, leaf workers cannot delegate, late results cannot resurrect cancelled children, active tool commands receive cancellation, and POSIX child workers supervise loss of their parent. Approval waits pause active duration without resetting usage. Automatic rollback checks current content before restoring an earlier snapshot.
+
+See [docs/AGENTIC_PLANNING.md](docs/AGENTIC_PLANNING.md) for operations, limits, verification semantics and remaining E2E gates. The 30 acceptance requirements still need the release-SHA evidence prescribed by [docs/AGENTIC_RUNTIME_ACCEPTANCE.md](docs/AGENTIC_RUNTIME_ACCEPTANCE.md).
+
+## Previous release: Agent CLI 0.81.1 — safe state upgrades and bounded-loop hardening
+
+Agent CLI 0.81.1 restores transactional upgrades for persisted Agent state through schema 10, so workspaces on schemas 7, 8 or 9 no longer fail at startup after an update. The v10 security migration invalidates only legacy global remembered-approval rules that cannot be safely assigned to a workspace; conversation history, event ledger and child-session state are preserved. `kitt doctor` now reports state-schema compatibility explicitly, reset backups use SQLite's backup API so WAL-backed state is captured safely, and predictable schema failures are rendered as concise CLI errors instead of raw tracebacks.
+
+The Agent now treats `agent_loop_action_budget` as a bounded-loop checkpoint cadence rather than a total per-turn tool limit. The independent runaway ceiling remains a turn-level safety budget and defaults to 24 tool calls. Installers require the same Python **3.14+** floor declared by the package and perform an installed state-schema smoke check.
+
+This release is paired with KITT Reverse Proxy **4.7.5**, which carries explicit loop epoch/action counters across tool round trips and prevents checkpoint state from disappearing after the boundary action.
+
+## Agent CLI 0.81.0 — progressive memory, replay safety and structural-only transport
+
+Agent CLI 0.81.0 completes the current Agent Engineering slice without introducing a second workflow or memory engine. Provider transport is now structural-only: typed `ContextEnvelope`, native tool definitions and `KittRequestMetadata` are the authoritative path, while the old prompt-parsing/injection helpers were removed. Sync, async and recoverable Reverse Proxy retries preserve request metadata and conversation correlation.
+
+Memory context now uses KITT Memory 0.7 progressive retrieval (`memory.search` → `memory.get`, with bounded snippets retained when full hydration exceeds the memory budget) instead of a fixed `recall(limit=8)` path. KITT Memory remains the sole durable semantic-memory authority.
+
+Execution durability is hardened with explicit event replay/idempotency tests, selective workspace snapshot diff/preview/restore, per-conversation runtime lifecycle tests, repeated-reread no-progress coverage and one global stage-aware execution budget. Classifier, condenser, execution model calls, validation tools and child leases all debit the same turn wallet; stage accounting is telemetry, not separate authority.
+
+The earlier engineering baseline targeted KITT Protocol **0.6.0**, KITT Memory **0.7.0**, KITT Reverse Proxy **4.7.4** and Assistant Runtime **0.2.27**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) and [docs/AGENTIC_RUNTIME_ACCEPTANCE.md](docs/AGENTIC_RUNTIME_ACCEPTANCE.md).
+
+## Agent CLI 0.80.5 — strict structural request identity
+
+Agent CLI 0.80.5 keeps `KittRequestMetadata` strict end to end. The execution-stream boundary now requires explicit `conversation_id`, `turn_id` and structured `route`; the tool-loop boundary likewise rejects execution without an explicit agent route. Production paths pass the real turn identity, while test harnesses use explicit structural fixtures instead of empty strings, placeholder identities or prompt-derived routing.
+
+The same request ID remains unique per model call and shared through the protocol-owned metadata/header correlation path. Typed `kitt_context`, structural tool definitions, streaming/reasoning cleanup, TTFT telemetry and reverse-proxy session continuity remain unchanged; no textual `Memory:`, `Repo Map:` or `Tool Contract:` parsing was restored.
+
+This patch keeps the Agent Engineering ownership model introduced in 0.80.x: durable EventLedger/RunCoordinator state, ContextEpoch/recovery refs, global budgets with child leases, authority snapshots, selective rollback, managed background processes, structural roles, bounded skill/plugin discovery, Memory lifecycle evidence and privacy-safe `kitt learn`. It is paired with KITT Protocol **0.5.2**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.4** and Assistant Runtime **0.2.26**.
+
+## Agent CLI 0.80.2 — hardened agent engineering runtime
+
+Agent CLI 0.80.2 completes the durable Agent Engineering rollout with structural agent roles, bounded skill discovery, managed background-process lifecycle, public Memory lifecycle evidence, privacy-safe `kitt learn` analytics, stronger no-progress recovery and provider usage reconciliation.
+
+`DISCOVER / ARCHITECT / IMPLEMENT / VERIFY / REVIEW` are enforced by host-side tool/mutation policy rather than prompt persona. Managed processes now expose `process.start/read/stdin/signal/stop/resume`, persist `PROCESS_OUTPUT` / `PROCESS_EXIT` observations and revalidate the original authority snapshot before control operations. Skill discovery is bounded by roots, depth, file count and byte budgets before semantic selection.
+
+`kitt learn`, `kitt learn suggest` and `kitt learn experiment ...` expose anonymized local evidence and control/candidate comparisons without automatic promotion. Memory lifecycle hooks are digest-only and feed the shared `kitt-memoryd` job pipeline; raw prompts/tool arguments are not copied into a parallel memory store.
+
+Agent CLI 0.80.0 moved execution durability, recovery and authority into deterministic host-owned contracts without creating a second agent runtime. The append-only EventLedger and RunCoordinator now track replayable run state, workspace mutations stay leased through verification and rollback, and each turn uses one global execution budget that delegates bounded wallet slices to retained subagents with persisted lineage.
+
+Model context now carries a content-derived ContextEpoch across memory, repository evidence, skills, plugin/tool surface, policy/formatting constraints and provider configuration. Large exact context remains recoverable through ArtifactStore references, and compaction writes a structured checkpoint with exact source recovery instead of making the summary the only remaining evidence.
+
+Approval resumes revalidate an ExecutionAuthoritySnapshot against current policy, autonomy, sandbox and capabilities. Workspace “always allow” rules use typed SavedPermission semantics and can be bound to the executable principal, while plugins may declare typed export capabilities that are enforced in both in-process and isolated-worker execution.
+
+Pre-mutation WorkspaceSnapshots support exact rollback when post-edit verification fails. Memory recall is traceable through kitt-memory RecallTrace/MemoryConsumptionReceipt contracts, and terminal Task Episodes emit efficiency plus evidence-backed learning candidates without silently auto-applying runtime changes.
+
+This release is designed for KITT Protocol **0.5.1**, KITT Memory **0.6.1**, KITT Reverse Proxy **4.7.1** and Assistant Runtime **0.2.26**. See [docs/AGENT_ENGINEERING.md](docs/AGENT_ENGINEERING.md) for ownership boundaries, invariants and implementation details.
+
+## Agent CLI 0.79.0 — LLM-first bounded execution loops
+
+Reverse-proxy/WebChat execution now uses agent-contract **v2** with a language-neutral `agent-loop`. The original human request is forwarded verbatim and is the semantic authority: Agent CLI no longer compiles, translates, summarizes, or lexically classifies natural-language intent before WebChat decides what to do.
+
+KITT remains deterministic where it should be: capability scoping, policy/approval, repository/process execution, host evidence, cancellation, token bounds and validation gates. The model owns a short execution loop with an objective, completion criteria and status. After the configured `agent_loop_action_budget` host round trips (default **4**), the Reverse Proxy requires a checkpoint so the model reassesses actual evidence before continuing.
+
+The first agent-loop mutation requires repository evidence, and any mutation still requires a successful host build/test/check before final completion when validation is available. This is an internal ecosystem protocol change; Agent CLI 0.79.0 is paired with Reverse Proxy 4.7.0 and does not retain agent-contract v1 compatibility.
+
+## Agent CLI 0.78.11 — transcript copy and WebChat continuity
+
+Agent CLI 0.78.11 restores native terminal text selection/copy on the main transcript while keeping mouse interaction available in menus and modal surfaces. The `Ctrl+O` expand/collapse hint is now rendered only on the latest tool/thought block that the shortcut can actually toggle.
+
+Together with KITT Reverse Proxy 4.6.8, fresh browser-backed WebChat sessions also preserve prior API conversation context without repeatedly replaying it on subsequent turns.
+
+## Agent CLI 0.78.10 — main-first ecosystem dependencies
+
+Internal K.I.T.T. VCS dependencies now follow sibling `main` branches instead of embedding cross-repository commit SHAs. The root ecosystem installer remains responsible for composing the current sibling sources and recording the exact fetched revisions as provenance.
+
+## Agent CLI 0.78.9 — Ctrl+C cancellation recovery
+
+Agent CLI 0.78.9 makes cancellation a hard boundary for the local TUI execution lane. If a provider/tool thread is still unwinding after **Ctrl+C**, the bridge retires that single-worker executor and starts the next prompt on a fresh worker instead of queueing behind the cancelled turn. Generation-aware cleanup also prevents a stale consumer from clearing the replacement turn state.
+
+Agent CLI 0.78.8 no longer treats an invalid model/chat response as an automatic end of the conversation. Recoverable reverse-proxy failures preserve the active session and are surfaced in the TUI with explicit **Continue** and **Retry** actions (keyboard or mouse).
+
+Recovery starts from the same conversation state and instructs the model not to replay tool calls or mutations that already succeeded. Network/protocol failures that are not declared recoverable remain normal failures.
+
+Agent CLI 0.78.7 also keeps the original user prompt authoritative when building bounded execution slices and emits the `agent.startup` debug identity event for stale-runtime diagnosis.
+
+[Português (Brasil)](README.pt-BR.md)
+
+<p align="center">
+  <strong>Local-first autonomous coding-agent control plane.</strong><br>
+  Python orchestration · SQLite/FTS5 workspace intelligence · optional Rust acceleration · MCP · plugins · multi-agent execution
+</p>
+
+<p align="center">
+  <a href="https://github.com/rfdetoni/kitt-agent-cli/blob/main/LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Python 3.14+" src="https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Local first" src="https://img.shields.io/badge/design-local--first-6f42c1">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-FTS5-003B57?logo=sqlite&logoColor=white">
+</p>
+
+K.I.T.T. Agent CLI is the execution and orchestration layer of the K.I.T.T. ecosystem. It combines repository intelligence, provider/model routing, goals, child agents, memory-aware context, policy enforcement, approvals, plugins and external tools behind a compact model-facing runtime.
+
+The Agent remains portable Python. Deterministic CPU/data-heavy work can be accelerated by the shared Rust `kitt_native` extension without changing the model-facing API.
+
+---
+
+## Agent CLI 0.72.3 — Reverse Proxy mouse polish
+
+- Reverse Proxy action buttons now expose visible hover feedback while preserving identical cell geometry between normal and hovered states.
+- Click activation continues to use the same semantic controller actions as keyboard shortcuts, with press/release target matching.
+- This patch completes the mouse/scroll/modal cleanup introduced in 0.72.2 without adding a new renderer or UI dependency.
+
+## Agent CLI 0.73.0 — performance hardening
+
+Agent CLI 0.73.0 reduces steady-state overhead without changing the tool or TUI contracts:
+
+- Reverse Proxy lifecycle operations prefer the resident loopback control plane and retain CLI subprocess fallback for older proxy versions or recovery.
+- The local TUI event bridge wakes on producer notifications instead of polling an empty queue every 10 ms.
+- Transcript rendering caches stable prompt_toolkit fragments per block; streaming/running blocks invalidate only their own cached projection.
+- Turn finalization avoids building large temporary concatenated history strings purely for token accounting.
+- `python scripts/benchmark_tui.py` measures cold and warm rendering for a 500-block transcript.
+
+## Agent CLI 0.74.0 — long-session efficiency and approval durability
+
+Agent CLI 0.74.0 completes the performance hardening started in 0.73:
+
+- Pending human approvals and persisted PendingAction records no longer carry an automatic timeout. The existing TTL applies only to an already-issued single-use ApprovalGrant.
+- The execution loop uses an incremental TokenLedger so unchanged messages are not re-estimated on every tool/rebudget pass.
+- Prompt truncation starts from the calibrated character/token ratio and uses a small bounded correction loop instead of binary-searching large payloads.
+- The retained transcript is virtualized during normal operation. The most recent block window is rendered first, scrolling upward expands it, and Ctrl+Home materializes the full retained transcript.
+- Transcript block ids are monotonic across the 500-block retention rollover, preventing cache-key collisions in long sessions.
+- `python scripts/benchmark_tui.py` now covers 100, 1,000 and 10,000-block scenarios; `python scripts/benchmark_context_budget.py` measures 32 KiB, 256 KiB and 1 MiB token-budget workloads.
+
+## Agent CLI 0.74.1 — compatibility hardening
+
+This patch completes the 0.74 performance work with two compatibility safeguards:
+
+- token accounting is lazily initialized for partial test/harness TurnProcessor construction while normal runtime behavior remains incremental;
+- persisted PendingAction records explicitly retain the zero-expiry sentinel across repository round trips, keeping user-facing approvals actionable until a decision/cancel while issued grants remain short-lived and single-use.
+
+The Reverse Proxy control guide is also aligned with the profile-scoped BrowserHost introduced in Reverse Proxy 4.4.
+
+
+### Shared memory contract 0.2
+
+Agent 0.74.3 pins kitt-protocol 0.2.0. The shared-memory client can pass an optional conversation `scope_key` and point-in-time `as_of` to kittd while keeping workspace calls source-compatible. Conversation-scoped writes require an explicit key, and an explicit recall limit of `0` remains empty rather than being coerced to one result.
+
+
+### Assistant/runtime alignment
+
+Agent 0.74.3 pins the validated kitt-assistant 0.1.4 / runtime 0.2.16 snapshot in CI, PR checks, architecture validation and release composition. This freezes the schema-v4 shared-memory integration at the same Assistant revision used by the ecosystem lock.
+
+## Agent CLI 0.74.4 — memory and approval consistency
+
+Agent CLI 0.74.4 removes two remaining split-brain state paths:
+
+- Agent-created project memory is persisted first in the Agent structured store and mirrored to shared `kitt-memory` when available. Shared recall is merged with local records instead of replacing them, so restarting or losing `kittd` cannot make locally durable memories disappear.
+- Markdown memory is now recovery-only, uses cross-process lock + atomic replace, and no longer seeds invented user preferences or project rules.
+- Clearing project memory archives the Agent's structured records and removes exact shared mirrors when the daemon is reachable.
+- Approval denial now persists the durable state before updating the in-memory broker, matching grant/consume fail-closed semantics.
+- That historical 0.74.4 release still supported Python 3.12+, but the current package and CI policy has since advanced to Python 3.14+ across supported desktop operating systems. See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
+
+## Agent CLI 0.74.6 — current-interpreter and protocol alignment
+
+Agent CLI 0.74.6 requires Python 3.14+, matching the interpreter validated across the ecosystem. It pins KITT Protocol 0.2.1 and the Assistant 0.1.6/runtime 0.2.18 snapshot, while preserving the memory-authority, approval-durability and daemon-protocol fixes introduced in 0.74.4.
+
+
+### 0.74.6 container alignment
+
+The official Agent container now uses Python 3.14, matching the package's declared and CI-validated interpreter floor. This fixes the 0.74.5 release-container failure where the Docker image still used Python 3.12.
+
+## Agent CLI 0.75.0 — semantic UI, Backend IR and long-session state
+
+Agent 0.75.0 adopts KITT Protocol 0.3.0 and completes the clean-room semantic UI/backend architecture.
+
+- `surface.*` SafeRuntime operations publish, patch, query and route semantic actions through the host-owned allowlisted Surface catalog. Surface payloads are declarative data, never executable UI code; semantic actions return to the host runtime rather than invoking arbitrary tools.
+- `backend.validate`, `backend.plan` and `backend.compile` provide a Backend IR for schemas, entities, queries, commands, endpoints, events, workflows, policies, jobs and observability. The model describes intent; deterministic host code validates dependencies, emits impact-oriented ChangeSets and compiles bounded Python/TypeScript/Rust contract files. Actual repository mutation still uses `repo.write_file` / `patch.apply` and the normal policy/approval path.
+- Context compaction now stores a structured WorkingState containing objective, current state, constraints/decisions, affected artifacts, errors/corrections, pending work and validation evidence.
+- Large consumed host-tool results are externalized to ArtifactStore before their active-context message is replaced by a deterministic receipt. `artifacts.search` and paged `artifacts.hydrate` recover only the relevant evidence later.
+- Browser-backed reverse-proxy histories remain byte-stable and skip receipt mutation.
+
+The implementation is independent KITT code and does not copy OpenUI/OpenViking source, APIs or naming.
+
+## Agent CLI 0.75.1 release alignment
+
+0.75.1 is the promoted semantic-IR snapshot after cross-platform validation. It keeps the 0.75 Surface/Backend IR feature set, fixes Surface projection to occur on completed tool events, and aligns runtime fallback/package/lock version metadata for deterministic release automation.
+
+## Agent CLI 0.77.1 — Assistant 0.1.10 composition alignment
+
+Agent CLI 0.77.1 keeps the 0.77 evidence-first runtime behavior unchanged and updates the frozen Assistant companion revision used by CI, PR validation, architecture checks and release composition to Assistant 0.1.10 / runtime 0.2.21. Package and uv-lock metadata are aligned to the patch release.
+
+## Agent CLI 0.77.0 — evidence-first agentic execution
+
+## Assistant compatibility for 0.77.0
+
+Agent CLI 0.77.0 CI, PR checks, architecture validation and release composition are pinned to **K.I.T.T. Assistant 0.1.10 / kitt-assistant-runtime 0.2.21**. The companion runtime accepts Agent 0.76.x and 0.77.x; daemon/remote ownership, durable approvals and standalone kitt-memory authority remain unchanged.
+
+
+
+Agent CLI 0.77.0 hardens application-sized coding requests without requiring the user to split prompts manually:
+
+- broad IMPLEMENT/DEBUG/REFACTOR turns begin with exactly one read-only repository inspection;
+- discovery runs before the optional Architect, reducing time-to-first-tool and avoiding planning against incomplete evidence;
+- the complete user objective remains authoritative while the execution loop advances through bounded milestones and host observations;
+- existing files continue to use the adaptive edit-strategy selector, with symbol edits and compact patches preferred over unnecessary whole-file rewrites;
+- official OpenAI Chat, OpenAI Responses, Anthropic and Gemini streaming adapters report explicit max-output truncation as a typed recoverable condition;
+- truncation recovery discards the incomplete action and requests one smaller complete action, bounded to two recoveries rather than concatenating partial JSON, diffs or source text.
+
+## Agent CLI 0.76.1 — TUI and reverse-proxy reliability
+
+Agent CLI 0.76.1 fixes retained-TUI interaction and managed reverse-proxy startup regressions:
+
+- transcript mouse-wheel scrolling is bidirectional: when follow-tail is disabled, the retained cursor is anchored to the requested vertical scroll row instead of snapping the window back toward the top;
+- the red K.I.T.T. scanner advances whenever animations are enabled, including idle/home states where the HUD remains visible;
+- Reverse Proxy `service start` and `service restart` use a dedicated 330-second startup budget over both the resident control channel and CLI compatibility fallback, while ordinary management calls keep their short timeout;
+- regression coverage now exercises downward scrolling, idle scanner movement, and startup-timeout selection.
+
+## Agent CLI 0.76.0 — single memory authority
+
+Agent memory is now exclusively owned by `kitt-memory 0.4+` through the standalone loopback service `kitt-memoryd`.
+
+- The Agent no longer persists `memories`, `memory_evidence`, `dream_runs`, memory vectors, knowledge concepts/links or correction memories in its HistoryDatabase.
+- Schema migration v7 removes those obsolete local tables.
+- Dreaming still performs ORIENT/GATHER/CONSOLIDATE/VALIDATE in the Agent because it uses conversation history and model routing, but all durable dream commits, status transitions, evidence/provenance and maintenance are sent to kitt-memoryd.
+- `.kitt/memory/MEMORY.md` is a regenerable projection only; it is not a fallback database.
+- If kitt-memoryd is unavailable, memory operations fail explicitly instead of silently creating a second local authority.
+- The native subsystem no longer maintains a separate memory vector/knowledge/correction store. Semantic retrieval belongs to kitt-memory.
+
+## Agent CLI 0.77.3 — autonomy, modal and action-summary reliability
+
+Agent CLI 0.77.3 fixes three user-facing execution issues:
+
+- `/autonomy allow-all` is authoritative for ordinary model-initiated commands. Missing strong OS sandbox support no longer silently converts an ALLOW decision into a second ASK modal; dangerous argv remains DENY, while explicit network and control-plane elevation still require dedicated authority.
+- The approval surface is a true pointer modal. Blank clicks are consumed by the permission surface and only the visible approval labels are clickable, preventing focus clicks or modal-body clicks from falling through to the underlying TUI.
+- Reverse Proxy `reasoning_summary` metadata is preserved through the native tool bridge and projected into the TUI as the primary description of what the model is doing and why, with the concrete tool/command shown underneath as technical detail. The summary remains bounded public progress metadata, not chain-of-thought.
+
+## Agent CLI 0.77.2 — Assistant 0.1.11 compatibility pin
+
+- CI now composes the Agent against the promoted Assistant 0.1.11 snapshot, which fixes the Linux voice-disabled native build used by the root ecosystem installer when ALSA development headers are unavailable.
+- Agent runtime behavior and public tool/protocol contracts are unchanged from 0.77.1.
+- Package metadata, source-tree fallback version and `uv.lock` are aligned at 0.77.2.
+
+## Agent CLI 0.78.2 — dead-code and authority cleanup
+
+- removes the obsolete Agent-local hybrid memory implementation and keeps durable corrections/concepts/links in `kitt-memoryd` only;
+- removes dead native event wiring and obsolete native-memory parameters;
+- current Agent history schema is created directly for new state and older local schema revisions are intentionally rejected instead of migrated;
+- bundled first-party inspection plugins share one loader implementation instead of one Python setup wrapper per plugin;
+- CI validates the current Memory/Assistant/Toolbox ecosystem revisions and adds unused-symbol checks.
+
+## Agent CLI 0.78.3 — validated dead-code cleanup
+
+- removes unused Python imports and local bindings exposed by the new Ruff gate while preserving intentional public compatibility exports;
+- restores explicit compatibility aliases for `PromptToolkitBackend` and historical turn helpers instead of relying on incidental imports;
+- restores the history timestamp dependency required by workspace persistence;
+- keeps the standalone `kitt-memoryd` authority and current-schema-only Agent state policy introduced in 0.78.2;
+- validates the cleanup across Docker, Prime Architecture, full CI and multi-OS PR checks before ecosystem promotion.
+
+## Agent CLI 0.78.4 — staged reverse-proxy execution
+
+- Broad implementation turns now preserve the deterministic `DISCOVERY` phase in the structured reverse-proxy turn envelope even after the textual tool contract is converted to native tools.
+- The first model action is one evidence-gathering repository operation; execution then advances one host tool/result round trip at a time instead of asking the model to produce a project-sized action bundle.
+- Equivalent semantic IR and raw user requests are deduplicated before provider execution when the extracted Goal is nearly identical to the original request; non-equivalent requirements keep the original text.
+- This release is designed for Reverse Proxy 4.6.3, whose session bootstrap/delta contract prevents full workspace/tool context from being replayed on every tool continuation.
+
+## Agent CLI 0.78.5 — staged reverse-proxy prompts
+
+- Reverse-proxy execution no longer forwards the generated Agent persona or textual Tool Contract after route/tool extraction; the proxy receives tools structurally.
+- The turn envelope carries a deterministic three-stage plan: `discovery -> mutation -> validation`, with only the current phase exposed to the model.
+- Trusted incremental orchestration sent to the reverse proxy is bounded to 4 KiB; workspace evidence remains a structured untrusted turn payload.
+- Direct/local providers keep their existing prompt behavior; the compaction applies specifically to the KITT reverse-proxy boundary.
+
+## Agent CLI 0.78.6 — structural reverse-proxy tools
+
+- Tool schemas now travel structurally from the execution request through the model/client boundary instead of being rediscovered from prompt text.
+- Reverse-proxy prompt compaction can safely remove the textual `Tool Contract` without dropping `kitt_runtime`.
+- The structural schema preserves the exact per-turn `kitt_runtime.operation` allowlist; host policy and approval checks remain authoritative.
+- Added a regression test for compact discovery prompts with structural tools.
+
+### Optional offline multilingual lexicon
+
+The local PT-BR/EN/ES lexicon optionally imports UniMorph inflections, Open Multilingual Wordnet suggestions, and build-time wordfreq/Snowball/spaCy metadata. It makes no runtime downloads; all corpus licensing and operator-owned index setup are documented in [SEMANTIC_LEXICON.md](docs/SEMANTIC_LEXICON.md). This path is opt-in and never grants execution permission.
