@@ -6,7 +6,6 @@ building an image does not establish trusted model provenance or license rights.
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 import re
 import shutil
