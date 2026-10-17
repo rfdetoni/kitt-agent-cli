@@ -106,3 +106,29 @@ def test_pipeline_never_claims_conformance_from_green_tests(tmp_path, monkeypatc
     assert result["new_code_oracle_match_verified"] is False
     logs = list((private / sealed["run_id"]).glob("audit-*.json"))
     assert len(logs) == 3
+
+
+def test_pipeline_rejects_validator_mutating_implementation(tmp_path, monkeypatch):
+    wine, file = _git_repo(tmp_path)
+    private, sealed = _seal(tmp_path)
+    script = tmp_path / "run.sh"
+    script.write_text("#!/bin/sh\nset -eu\nexit 0\n")
+    monkeypatch.setattr("kitt.cleanroom_pipeline._trusted_script",
+                        lambda *_: (script, script.read_bytes()))
+    def implement(*_a, **_k):
+        file.write_text("int before = 2;\n")
+        return {"status": "IMPLEMENTER_EXITED_UNVERIFIED", "exit_code": 0}
+    def test_runner(*_a, **_k):
+        file.write_text("int before = 3;\n")
+        return {"status": "TEST_COMMAND_EXIT_0_NOT_ATTESTED", "exit_code": 0}
+    monkeypatch.setattr("kitt.cleanroom_pipeline.run_offline_implementer", implement)
+    monkeypatch.setattr("kitt.cleanroom_pipeline._validate_independently", test_runner)
+    with pytest.raises(CleanRoomEnvironmentError, match="test.*changed"):
+        run_pipeline(
+            sealed["run_id"], expected_sha256=sealed["contract_sha256"],
+            wine_source=wine, implementer_image="sha256:" + "1" * 64,
+            validator_image="sha256:" + "2" * 64,
+            test_script=script, test_signature=tmp_path / "missing.sig",
+            test_sha256=hashlib.sha256(script.read_bytes()).hexdigest(),
+            state_root=private, approved=True,
+        )
