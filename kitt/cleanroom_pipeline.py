@@ -107,8 +107,19 @@ def _git_changes(source: Path, prefix: str) -> dict:
         names.append(path)
     if not 1 <= len(names) <= 32:
         raise CleanRoomEnvironmentError("unexpected number of changed files")
+    content_digest = hashlib.sha256()
+    for path in sorted(names):
+        file_path = source / path
+        if (file_path.is_symlink() or not file_path.is_file()
+                or file_path.stat().st_size > 16 * 1024 * 1024):
+            raise CleanRoomEnvironmentError("modified source is not a bounded regular file")
+        content_digest.update(path.encode("utf-8") + b"\0")
+        with file_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                content_digest.update(chunk)
     return {"changed_count": len(names),
-            "changed_paths_sha256": hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()}
+            "changed_paths_sha256": hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest(),
+            "changed_content_sha256": content_digest.hexdigest()}
 
 
 def _append_receipt(directory: Path, data: dict) -> dict:
