@@ -134,15 +134,6 @@ def run_offline_implementer(
     # Never inherit DOCKER_HOST, CONTAINER_HOST, model keys or dynamic CLI config.
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(Path.home()),
            "LANG": "C", "LC_ALL": "C"}
-    try:
-        inspect = subprocess.run(
-            [*command_prefix, "image", "inspect", "--format", "{{.Id}}", image],
-            env=env, capture_output=True, timeout=20, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise CleanRoomEnvironmentError("offline OCI image inspection unavailable") from exc
-    if inspect.returncode or inspect.stdout.decode("ascii", "replace").strip() != image:
-        raise CleanRoomEnvironmentError("pinned offline image unavailable or wrong identity")
     with tempfile.TemporaryDirectory(prefix="kitt-cleanroom-run-", dir=private) as tmp:
         # Bind an immutable-by-convention, newly created snapshot. Verify the
         # signed bytes and expected digest of that same snapshot to avoid a
@@ -156,6 +147,16 @@ def run_offline_implementer(
         _create_private_file(Path(tmp), "approved-contract.json", original)
         spec.chmod(0o400)
         _verify_independent_review(private, run_id, spec)
+        # Verify the signed snapshot before touching the OCI runtime.
+        try:
+            inspect = subprocess.run(
+                [*command_prefix, "image", "inspect", "--format", "{{.Id}}", image],
+                env=env, capture_output=True, timeout=20, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise CleanRoomEnvironmentError("offline OCI image inspection unavailable") from exc
+        if inspect.returncode or inspect.stdout.decode("ascii", "replace").strip() != image:
+            raise CleanRoomEnvironmentError("pinned offline image unavailable or wrong identity")
         out, err = Path(tmp) / "stdout", Path(tmp) / "stderr"
         cidfile = Path(tmp) / "container.cid"
         argv = [
