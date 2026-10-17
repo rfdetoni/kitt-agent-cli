@@ -242,6 +242,12 @@ def run_pipeline(
         verified = _validate_independently(
             source, validator_image, pinned, engine=engine,
             timeout_seconds=timeout_seconds, state_root=private)
+        after_tests = _git_changes(source, prefix)
+        if after_tests != changed:
+            _append_receipt(directory, {"stage": "independent_test",
+                                        "status": "VALIDATION_FAILED",
+                                        "reason": "test changed approved implementation sources"})
+            raise CleanRoomEnvironmentError("independent tests changed implementation source files")
         _append_receipt(directory, {"stage": "independent_test", **verified,
                                     "changed": changed})
         return {
