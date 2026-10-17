@@ -156,13 +156,13 @@ def main() -> int:
         if dirty.returncode or dirty.stdout:
             return fail("Wine checkout must be clean before model writes")
         verified = subprocess.run(
-            ["git", "-C", "/wine", "apply", "--check", "--no-ext-diff", "-"],
+            ["git", "-C", "/wine", "apply", "--check", "-"],
             input=patch.encode(), env=env, capture_output=True, timeout=30, check=False,
         )
         if verified.returncode:
             return fail("offline patch failed git apply --check")
         applied = subprocess.run(
-            ["git", "-C", "/wine", "apply", "--no-ext-diff", "-"],
+            ["git", "-C", "/wine", "apply", "-"],
             input=patch.encode(), env=env, capture_output=True, timeout=30, check=False,
         )
         if applied.returncode:
