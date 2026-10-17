@@ -15,7 +15,8 @@ import stat
 import subprocess
 import tempfile
 
-from kitt.cleanroom_handoff import _secure_root, verify
+from kitt.cleanroom_handoff import _secure_root, _read_source, _create_private_file, verify
+from kitt_protocol.cleanroom import canonical_cleanroom_bytes, decode_cleanroom_contract
 
 _HASH = re.compile(r"(?:sha256:)?[a-f0-9]{64}\Z")
 _IMAGE = re.compile(r"sha256:[a-f0-9]{64}\Z")
@@ -29,7 +30,7 @@ class CleanRoomEnvironmentError(RuntimeError):
 TRUSTED_REVIEW_KEY = Path("/etc/kitt/cleanroom-reviewer.pub.pem")
 
 
-def _verify_independent_review(private: Path, run_id: str) -> None:
+def _verify_independent_review(private: Path, run_id: str, spec: Path) -> None:
     """Require an external Ed25519 signature checked against a root-owned key.
 
     Neither a command-line --approve flag nor a reviewer name grants authority.
@@ -50,7 +51,6 @@ def _verify_independent_review(private: Path, run_id: str) -> None:
     openssl = shutil.which("openssl")
     if not openssl:
         raise CleanRoomEnvironmentError("OpenSSL signature verification unavailable")
-    spec = private / run_id / "contract.json"
     result = subprocess.run(
         [openssl, "pkeyutl", "-verify", "-pubin", "-inkey", str(key),
          "-rawin", "-in", str(spec), "-sigfile", str(signature)],
@@ -125,7 +125,6 @@ def run_offline_implementer(
     spec = private / run_id / "contract.json"
     if spec.is_symlink() or not spec.is_file():
         raise CleanRoomEnvironmentError("missing sealed contract")
-    _verify_independent_review(private, run_id)
     # Never inherit DOCKER_HOST, CONTAINER_HOST, model keys or dynamic CLI config.
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(Path.home()),
            "LANG": "C", "LC_ALL": "C"}
@@ -136,6 +135,18 @@ def run_offline_implementer(
     if inspect.returncode or inspect.stdout.decode("ascii", "replace").strip() != image:
         raise CleanRoomEnvironmentError("pinned offline image unavailable or wrong identity")
     with tempfile.TemporaryDirectory(prefix="kitt-cleanroom-run-", dir=private) as tmp:
+        # Bind an immutable-by-convention, newly created snapshot. Verify the
+        # signed bytes and expected digest of that same snapshot to avoid a
+        # verify-then-mount race on the mutable original path.
+        original = _read_source(spec)
+        parsed = decode_cleanroom_contract(original)
+        canonical = canonical_cleanroom_bytes(parsed)
+        if hashlib.sha256(canonical).hexdigest() != expected_sha256 or original != canonical + b"\n":
+            raise CleanRoomEnvironmentError("sealed contract changed before sandbox handoff")
+        spec = Path(tmp) / "approved-contract.json"
+        _create_private_file(Path(tmp), "approved-contract.json", original)
+        spec.chmod(0o400)
+        _verify_independent_review(private, run_id, spec)
         out, err = Path(tmp) / "stdout", Path(tmp) / "stderr"
         cidfile = Path(tmp) / "container.cid"
         argv = [
