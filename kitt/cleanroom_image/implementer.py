@@ -136,7 +136,9 @@ def main() -> int:
         )
         response = subprocess.run(
             [str(binary), "--model", str(model), "--prompt", prompt,
-             "--n-predict", str(MAX_OUTPUT_TOKENS), "--temp", "0"],
+             "--n-predict", str(MAX_OUTPUT_TOKENS), "--temp", "0",
+             "--no-display-prompt", "--no-show-timings",
+             "--no-conversation", "--single-turn"],
             cwd="/wine", env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LANG": "C"},
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=300, check=False,
