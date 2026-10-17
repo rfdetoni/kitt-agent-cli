@@ -75,8 +75,11 @@ def _worktree(path: Path, private: Path) -> Path:
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
         raise CleanRoomEnvironmentError("Wine source must be an operator-owned directory")
     git = source / ".git"
-    if git.is_symlink() or not git.exists():
-        raise CleanRoomEnvironmentError("Wine source needs a separately prepared Git checkout")
+    if (git.is_symlink() or not git.is_dir() or git.stat().st_uid != os.getuid()
+            or (git / "config").is_symlink() or not (git / "config").is_file()):
+        raise CleanRoomEnvironmentError(
+            "Wine source needs a local operator-owned Git checkout, not a linked worktree"
+        )
     return source
 
 
