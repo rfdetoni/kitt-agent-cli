@@ -24,3 +24,49 @@ Limitations and mandatory gates:
 - The launcher does not provide a verified independent winetest build or Windows Oracle E2E; SUCCESS must not be inferred from IMPLEMENTER_EXITED_UNVERIFIED.
 - Path containment and scanner heuristics are not proof against all semantic leakage. Keep A and B as independently isolated OS-level principals, prohibit shared cloud sessions, memories, artifacts and direct children.send, and review new workflow integrations before enabling them.
 - The image ID is operator-selected and must be trusted via independent build provenance. The runner does not build or attest the image.
+
+
+## Complete offline execution path (Agent CLI 0.88.10)
+
+The image builder uses only an operator-preloaded base image, a locally provided
+GGUF file and the local `llama-cli` executable. The base image must already
+contain Python 3, Git, a POSIX shell and the desired Wine build/test toolchain.
+No model is fetched and no remote model session is used.
+
+`kitt re cleanroom build-image --base-image sha256:BASE --model /ABS/model.gguf --llama-cli /ABS/llama-cli --engine docker`
+
+The generated `sha256:IMAGE` is a build artifact, **not** attestation of
+the supplied model, executable or base-image provenance. Use only independently
+reviewed and license-compliant assets. The bundled offline agent reads only the
+approved JSON behavior contract and bounded references from a *clean Wine
+implementation checkout*. It generates one scoped Git patch, with no shell tools,
+network or shared conversation. The host subsequently checks all changed paths.
+
+`kitt re cleanroom run RUN_ID --sha256 CONTRACT_SHA --wine-source /ABS/WINE --image sha256:IMPLEMENTER --validator-image sha256:VALIDATOR --test-script /ABS/approved-test.sh --test-signature /ABS/approved-test.sig --test-sha256 TEST_SHA --approve`
+
+The test plan is a POSIX shell file that an independent reviewer must sign
+with Ed25519 using the public key trusted by the host. Unlike the model, the
+independent validation stage runs a fixed operator-approved test script in a
+*separate, pinned, networkless OCI image*. It receives only the approved checkout
+and signed test plan, never the analyst workspace or private handoff artifacts.
+The plan must perform the appropriate build and winetest for that checkout;
+a successful shell exit alone is NOT proof that any particular test ran.
+
+Use `--require-fixed-oracle-pilot` to check the existing Dockur Windows
+event-auto-reset scenario before implementing. That pilot confirms only
+the fixed probe, not behavior of the modified API. Full independently observed
+Windows-vs-new-Wine differential conformance is still outstanding.
+
+The final state is `NEEDS_INDEPENDENT_ORACLE_CONFORMANCE` even after
+test command exit 0, and the CLI returns nonzero until the external conformance
+gate is implemented and verified. Never classify this state as 100% Clean-Room.
+A chain of SHA-256 receipt files is written into private operator storage,
+but complete chain integrity needs an independently retained signed root digest.
+
+Limitations: image input must be preinstalled, no automated Windows license
+acquisition or arbitrary proprietary binary execution is permitted, and the
+independent reviewer private key must not exist on either agent host.
+The OCI containers share the Linux kernel; move untrusted samples to isolated
+VMs. The offline agent uses one bounded local model generation, not an open-ended
+autonomous retry loop. Runtime and legal/source-provenance verification require
+independent evidence.
