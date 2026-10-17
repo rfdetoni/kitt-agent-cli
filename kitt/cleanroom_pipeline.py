@@ -51,16 +51,19 @@ def _trusted_script(script: Path, signature: Path, digest: str) -> tuple[Path, b
     openssl = shutil.which("openssl")
     if not openssl:
         raise CleanRoomEnvironmentError("openssl verification unavailable")
-    try:
-        verified = subprocess.run(
-            [openssl, "pkeyutl", "-verify", "-pubin", "-inkey", str(key),
-             "-rawin", "-in", str(script), "-sigfile", str(signature)],
-            env={"PATH": "/usr/bin:/bin", "LANG": "C"}, capture_output=True,
-            stdin=subprocess.DEVNULL, timeout=20, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise CleanRoomEnvironmentError("independent test-signature verification unavailable") from exc
-    if verified.returncode:
-        raise CleanRoomEnvironmentError("independent test-signature verification failed")
+    with tempfile.TemporaryDirectory(prefix="kitt-signed-test-") as scratch:
+        copy = Path(scratch) / "reviewed-test.sh"
+        _create_private_file(Path(scratch), "reviewed-test.sh", data)
+        try:
+            verified = subprocess.run(
+                [openssl, "pkeyutl", "-verify", "-pubin", "-inkey", str(key),
+                 "-rawin", "-in", str(copy), "-sigfile", str(signature)],
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, capture_output=True,
+                stdin=subprocess.DEVNULL, timeout=20, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise CleanRoomEnvironmentError("independent test-signature verification unavailable") from exc
+        if verified.returncode:
+            raise CleanRoomEnvironmentError("independent test-signature verification failed")
     return script, data
 
 
@@ -189,7 +192,7 @@ def run_pipeline(
     test_signature: Path, test_sha256: str,
     state_root: Path | None = None, engine: str = "docker",
     approved: bool = False, timeout_seconds: int = 600,
-    oracle_manifest_sha256: str | None = None,
+    require_fixed_oracle_pilot: bool = False,
 ) -> dict:
     """Run isolated implementation then independent signed tests.
 
@@ -221,10 +224,10 @@ def run_pipeline(
                                     "validator_image": validator_image,
                                     "test_script_sha256": test_sha256})
         oracle = None
-        if oracle_manifest_sha256:
+        if require_fixed_oracle_pilot:
             from kitt import re_lab
             oracle = re_lab.verify(full=True)
-            if oracle.get("status") not in {"PASS_SCENARIO", "READY"}:
+            if oracle.get("pilot", {}).get("status") != "PASS_SCENARIO":
                 _append_receipt(directory, {"status": "BLOCKED_ENV", "gate": "fixed_oracle_pilot"})
                 return {"status": "BLOCKED_ENV", "gate": "fixed_oracle_pilot"}
         implement = run_offline_implementer(
