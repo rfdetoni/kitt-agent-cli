@@ -537,6 +537,21 @@ def build_parser() -> argparse.ArgumentParser:
     re_oracle_pilot.add_argument("--hosts", type=Path, help="Private operator-owned SSH guest hosts.json")
     re_oracle_pilot.add_argument("--manifest-sha256", required=True)
     re_oracle_pilot.add_argument("--yes", action="store_true", help="Approve this one fixed benign probe")
+    re_cleanroom = re_actions.add_parser("cleanroom",
+        help="Validate, seal and verify reviewed black-box API contracts (never executes agents)")
+    re_clean_actions = re_cleanroom.add_subparsers(dest="cleanroom_action", required=True)
+    re_clean_validate = re_clean_actions.add_parser("validate", help="Reject leaked or malformed API behavior")
+    re_clean_validate.add_argument("contract_file", type=Path)
+    re_clean_seal = re_clean_actions.add_parser("seal", help="Seal independently reviewed contract")
+    re_clean_seal.add_argument("contract_file", type=Path)
+    re_clean_seal.add_argument("--reviewer", required=True,
+        help="Independent human reviewer identifier; an assertion, not a verified identity")
+    re_clean_seal.add_argument("--state-root", type=Path, default=None)
+    re_clean_verify = re_clean_actions.add_parser("verify", help="Verify independent pinned digest")
+    re_clean_verify.add_argument("run_id")
+    re_clean_verify.add_argument("--sha256", required=True, dest="expected_sha256")
+    re_clean_verify.add_argument("--state-root", type=Path, default=None)
+
     re_setup = re_actions.add_parser("setup", help="Prepare or inspect an RE environment")
     re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
     re_setup.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
@@ -999,6 +1014,19 @@ def main(argv=None) -> int:
         from kitt.vm_supervisor import VMError
         import json as _json
         try:
+            if args.re_action == "cleanroom":
+                from kitt import cleanroom_handoff
+                if args.cleanroom_action == "validate":
+                    result = cleanroom_handoff.validate(args.contract_file)
+                elif args.cleanroom_action == "seal":
+                    result = cleanroom_handoff.seal(
+                        args.contract_file, reviewer=args.reviewer, state_root=args.state_root)
+                else:
+                    result = cleanroom_handoff.verify(
+                        args.run_id, expected_sha256=args.expected_sha256,
+                        state_root=args.state_root)
+                print(_json.dumps(result, ensure_ascii=False))
+                return 0
             if args.re_action == "lab":
                 from kitt import re_lab
                 action = args.lab_action
