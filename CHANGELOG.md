@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.11 — Protocol 0.14.2 pin and canonical CHANGELOG
+
+Aligns immutable Protocol commit, Agent metadata and uv.lock. No behavioral changes to the offline Clean-Room pipeline; E2E Windows Oracle remains unverified. [Notas](docs/RELEASE_0.88.11.md).
+
 Histórico integral dos anúncios de release anteriormente mantidos no README. Detalhes por versão permanecem em `docs/RELEASE_*.md`.
 
 ## Agent CLI 0.88.10 — offline Clean-Room RE pipeline
