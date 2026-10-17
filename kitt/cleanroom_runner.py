@@ -111,6 +111,10 @@ def run_offline_implementer(
     executable = shutil.which(engine)
     if not executable:
         raise CleanRoomEnvironmentError("container runtime unavailable")
+    # Force local runtimes even when the operator's default client context
+    # points at a remote daemon. Never inherit DOCKER_HOST or CONTAINER_HOST.
+    command_prefix = ([executable, "--context", "default"] if engine == "docker"
+                      else [executable, "--remote=false"])
     if os.name != "posix":
         raise CleanRoomEnvironmentError("offline implementer requires Linux")
     private = _secure_root(state_root or (Path.home() / ".local/share/kitt/cleanroom"))
@@ -126,7 +130,7 @@ def run_offline_implementer(
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(Path.home()),
            "LANG": "C", "LC_ALL": "C"}
     inspect = subprocess.run(
-        [executable, "image", "inspect", "--format", "{{.Id}}", image],
+        [ *command_prefix, "image", "inspect", "--format", "{{.Id}}", image],
         env=env, capture_output=True, timeout=20, check=False,
     )
     if inspect.returncode or inspect.stdout.decode("ascii", "replace").strip() != image:
@@ -135,7 +139,7 @@ def run_offline_implementer(
         out, err = Path(tmp) / "stdout", Path(tmp) / "stderr"
         cidfile = Path(tmp) / "container.cid"
         argv = [
-            executable, "run", "--rm", "--pull", "never",
+            *command_prefix, "run", "--rm", "--pull", "never",
             "--cidfile", str(cidfile),
             "--network", "none", "--read-only", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
@@ -166,7 +170,7 @@ def run_offline_implementer(
                     if re.fullmatch(r"[a-f0-9]{64}", cid):
                         try:
                             subprocess.run(
-                                [executable, "rm", "--force", cid], env=env,
+                                [*command_prefix, "rm", "--force", cid], env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 timeout=20, check=False)
                         except (OSError, subprocess.TimeoutExpired):
