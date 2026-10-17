@@ -1,3 +1,7 @@
+# Agent CLI 0.88.9 — controlled clean-room RE contracts
+
+Validated black-box API contract sealing and optional networkless OCI implementer execution use an immutable image and a separately reviewed Wine workspace. Run-offline never claims independent winetest or Windows Oracle success. See [Clean-Room RE workflow](docs/CLEANROOM_RE.md) and [release 0.88.9](docs/RELEASE_0.88.9.md).
+
 # Agent CLI 0.88.6 — disposable Dockur Windows Oracle bootstrapping
 
 Windows 11 RE lab setup can now generate a deterministic Win32 probe, private Ed25519 SSH keys and a Dockur /oem package; Windows installs OpenSSH and a restricted PowerShell probe RPC automatically on first boot. Resetting any existing Windows guest requires explicit --recreate --yes --accept-license. The Oracle is only ready after a validated SSH handshake, never merely because Docker is running.
