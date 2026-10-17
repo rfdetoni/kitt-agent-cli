@@ -53,6 +53,7 @@ def test_only_approved_spec_and_implementer_checkout_mounted(tmp_path, monkeypat
         kw["stderr"].write(b"")
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr("kitt.cleanroom_runner.shutil.which", lambda x: "/usr/bin/docker")
+    monkeypatch.setattr("kitt.cleanroom_runner._verify_independent_review", lambda *_: None)
     monkeypatch.setattr("kitt.cleanroom_runner.subprocess.run", fake_run)
     result = run_offline_implementer(
         sealed["run_id"], expected_sha256=sealed["contract_sha256"],
@@ -77,4 +78,14 @@ def test_refuse_wine_checkout_containing_private_seals(tmp_path, monkeypatch):
         run_offline_implementer(
             sealed["run_id"], expected_sha256=sealed["contract_sha256"],
             wine_source=root, state_root=root, image=IMAGE, approved=True,
+        )
+
+
+def test_denies_unsigned_handoff_before_container_execution(tmp_path, monkeypatch):
+    wine, root, sealed = _fixture(tmp_path)
+    monkeypatch.setattr("kitt.cleanroom_runner.shutil.which", lambda x: "/usr/bin/docker")
+    with pytest.raises(CleanRoomEnvironmentError, match="reviewer"):
+        run_offline_implementer(
+            sealed["run_id"], expected_sha256=sealed["contract_sha256"],
+            wine_source=wine, state_root=root, image=IMAGE, approved=True,
         )
