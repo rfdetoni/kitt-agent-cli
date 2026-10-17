@@ -267,6 +267,20 @@ class ChildAgentManager:
         agent_role: str | None = None,
         model_route: dict | None = None,
     ):
+        # Reserved Clean-Room personas must never inherit a parent conversation,
+        # model session, artifact store or child messaging channel. Host authority
+        # routes them through the separately signed offline RE pipeline.
+        cleanroom_personas = {"spec-extractor", "wine-implementer",
+                              "cleanroom-spec-extractor", "cleanroom-wine-implementer"}
+        candidate = str(name or "").strip().lower()
+        profile_marker = str(task or "")[:600].lower()
+        if (candidate in cleanroom_personas or
+                any(f"[specialist profile: {slug}]" in profile_marker
+                    for slug in cleanroom_personas)):
+            raise PermissionError(
+                "Clean-Room agents require kitt re cleanroom; retained-agent spawn "
+                "shares host-managed context and is prohibited"
+            )
         if security_context is not None and security_context.principal_type == "CHILD":
             raise PermissionError("Leaf child agents cannot spawn subagents")
         if self._closed:
