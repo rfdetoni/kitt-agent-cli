@@ -1,3 +1,7 @@
+# Agent CLI 0.88.10 — offline Clean-Room RE pipeline
+
+Adds locally built GGUF implementer images, signed operator-only `kitt re cleanroom run` orchestration, independent offline tests and chained audit receipts. No new-code Windows Oracle conformance claim. [Release notes](docs/RELEASE_0.88.10.md) and [workflow](docs/CLEANROOM_RE.md).
+
 # Agent CLI 0.88.9 — controlled clean-room RE contracts
 
 Validated black-box API contract sealing and detached Ed25519 independent-review authorization before optional networkless OCI implementer execution use an immutable image and a separately reviewed Wine workspace. Run-offline never claims independent winetest or Windows Oracle success. See [Clean-Room RE workflow](docs/CLEANROOM_RE.md) and [release 0.88.9](docs/RELEASE_0.88.9.md).
