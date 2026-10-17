@@ -26,6 +26,41 @@ class CleanRoomEnvironmentError(RuntimeError):
     pass
 
 
+TRUSTED_REVIEW_KEY = Path("/etc/kitt/cleanroom-reviewer.pub.pem")
+
+
+def _verify_independent_review(private: Path, run_id: str) -> None:
+    """Require an external Ed25519 signature checked against a root-owned key.
+
+    Neither a command-line --approve flag nor a reviewer name grants authority.
+    The reviewer private key MUST be held outside both KITT agent environments.
+    """
+    key = TRUSTED_REVIEW_KEY
+    signature = private / run_id / "reviewer.sig"
+    if key.is_symlink() or not key.is_file():
+        raise CleanRoomEnvironmentError("no trusted independent reviewer key")
+    key_info = key.stat()
+    if not stat.S_ISREG(key_info.st_mode) or key_info.st_uid != 0 or key_info.st_mode & 0o022:
+        raise CleanRoomEnvironmentError("reviewer public key must be root-owned and not writable")
+    if signature.is_symlink() or not signature.is_file():
+        raise CleanRoomEnvironmentError("missing independent reviewer signature")
+    sig_info = signature.stat()
+    if not stat.S_ISREG(sig_info.st_mode) or sig_info.st_size != 64:
+        raise CleanRoomEnvironmentError("invalid Ed25519 reviewer signature")
+    openssl = shutil.which("openssl")
+    if not openssl:
+        raise CleanRoomEnvironmentError("OpenSSL signature verification unavailable")
+    spec = private / run_id / "contract.json"
+    result = subprocess.run(
+        [openssl, "pkeyutl", "-verify", "-pubin", "-inkey", str(key),
+         "-rawin", "-in", str(spec), "-sigfile", str(signature)],
+        env={"PATH": "/usr/bin:/bin", "LANG": "C"}, stdin=subprocess.DEVNULL,
+        capture_output=True, timeout=20, check=False,
+    )
+    if result.returncode:
+        raise CleanRoomEnvironmentError("independent review signature failed")
+
+
 def _worktree(path: Path, private: Path) -> Path:
     if not path.is_absolute() or path.is_symlink():
         raise CleanRoomEnvironmentError("Wine source root must be absolute and not a symlink")
@@ -86,6 +121,7 @@ def run_offline_implementer(
     spec = private / run_id / "contract.json"
     if spec.is_symlink() or not spec.is_file():
         raise CleanRoomEnvironmentError("missing sealed contract")
+    _verify_independent_review(private, run_id)
     # Never inherit DOCKER_HOST, CONTAINER_HOST, model keys or dynamic CLI config.
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(Path.home()),
            "LANG": "C", "LC_ALL": "C"}
