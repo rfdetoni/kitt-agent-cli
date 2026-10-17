@@ -551,6 +551,14 @@ def build_parser() -> argparse.ArgumentParser:
     re_clean_verify.add_argument("run_id")
     re_clean_verify.add_argument("--sha256", required=True, dest="expected_sha256")
     re_clean_verify.add_argument("--state-root", type=Path, default=None)
+    re_clean_build = re_clean_actions.add_parser("build-image",
+        help="Build an entirely offline model + llama-cli OCI implementer from local assets")
+    re_clean_build.add_argument("--base-image", required=True,
+        help="Pre-cached local sha256 image ID with Python, Git and Wine build dependencies")
+    re_clean_build.add_argument("--model", type=Path, required=True)
+    re_clean_build.add_argument("--llama-cli", type=Path, required=True)
+    re_clean_build.add_argument("--engine", choices=["docker", "podman"], default="docker")
+
     re_clean_run = re_clean_actions.add_parser("run-offline",
         help="Run SHA-pinned offline implementer OCI image without network or analyst mounts")
     re_clean_run.add_argument("run_id")
@@ -1035,6 +1043,15 @@ def main(argv=None) -> int:
                     result = cleanroom_handoff.verify(
                         args.run_id, expected_sha256=args.expected_sha256,
                         state_root=args.state_root)
+                elif args.cleanroom_action == "build-image":
+                    from kitt.cleanroom_image_builder import build_image
+                    from kitt.cleanroom_runner import CleanRoomEnvironmentError
+                    try:
+                        result = build_image(
+                            base_image=args.base_image, model=args.model,
+                            llama_cli=args.llama_cli, engine=args.engine)
+                    except CleanRoomEnvironmentError as exc:
+                        result = {"status": "BLOCKED_ENV", "reason": str(exc)}
                 else:
                     from kitt.cleanroom_runner import run_offline_implementer, CleanRoomEnvironmentError
                     try:
