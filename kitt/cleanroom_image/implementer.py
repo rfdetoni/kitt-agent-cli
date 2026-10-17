@@ -164,6 +164,14 @@ def main() -> int:
         prefix = _module_path(spec)
         if not (Path("/wine") / prefix).is_dir():
             return fail("target module not present in authorized Wine checkout")
+        git_env = {"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LANG": "C",
+                   "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+        baseline = subprocess.run(
+            ["git", "-C", "/wine", "status", "--porcelain=v1",
+             "--untracked-files=all"], env=git_env,
+            capture_output=True, timeout=20, check=False)
+        if baseline.returncode or baseline.stdout:
+            return fail("unreviewed files exist in Wine implementation checkout")
         model = Path("/opt/models/implementer.gguf")
         binary = Path("/usr/local/bin/llama-cli")
         if not model.is_file() or not binary.is_file():
