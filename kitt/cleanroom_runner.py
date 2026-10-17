@@ -51,12 +51,15 @@ def _verify_independent_review(private: Path, run_id: str, spec: Path) -> None:
     openssl = shutil.which("openssl")
     if not openssl:
         raise CleanRoomEnvironmentError("OpenSSL signature verification unavailable")
-    result = subprocess.run(
-        [openssl, "pkeyutl", "-verify", "-pubin", "-inkey", str(key),
-         "-rawin", "-in", str(spec), "-sigfile", str(signature)],
-        env={"PATH": "/usr/bin:/bin", "LANG": "C"}, stdin=subprocess.DEVNULL,
-        capture_output=True, timeout=20, check=False,
-    )
+    try:
+        result = subprocess.run(
+            [openssl, "pkeyutl", "-verify", "-pubin", "-inkey", str(key),
+             "-rawin", "-in", str(spec), "-sigfile", str(signature)],
+            env={"PATH": "/usr/bin:/bin", "LANG": "C"}, stdin=subprocess.DEVNULL,
+            capture_output=True, timeout=20, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CleanRoomEnvironmentError("review signature verifier unavailable") from exc
     if result.returncode:
         raise CleanRoomEnvironmentError("independent review signature failed")
 
@@ -128,10 +131,13 @@ def run_offline_implementer(
     # Never inherit DOCKER_HOST, CONTAINER_HOST, model keys or dynamic CLI config.
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(Path.home()),
            "LANG": "C", "LC_ALL": "C"}
-    inspect = subprocess.run(
-        [ *command_prefix, "image", "inspect", "--format", "{{.Id}}", image],
-        env=env, capture_output=True, timeout=20, check=False,
-    )
+    try:
+        inspect = subprocess.run(
+            [*command_prefix, "image", "inspect", "--format", "{{.Id}}", image],
+            env=env, capture_output=True, timeout=20, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CleanRoomEnvironmentError("offline OCI image inspection unavailable") from exc
     if inspect.returncode or inspect.stdout.decode("ascii", "replace").strip() != image:
         raise CleanRoomEnvironmentError("pinned offline image unavailable or wrong identity")
     with tempfile.TemporaryDirectory(prefix="kitt-cleanroom-run-", dir=private) as tmp:
