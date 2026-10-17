@@ -570,6 +570,22 @@ def build_parser() -> argparse.ArgumentParser:
     re_clean_run.add_argument("--state-root", type=Path, default=None)
     re_clean_run.add_argument("--approve", action="store_true", help="Explicit human run approval")
 
+    re_clean_pipeline = re_clean_actions.add_parser("run",
+        help="Execute signed contract, isolated offline implementer and independently signed tests")
+    re_clean_pipeline.add_argument("run_id")
+    re_clean_pipeline.add_argument("--sha256", dest="expected_sha256", required=True)
+    re_clean_pipeline.add_argument("--wine-source", required=True, type=Path)
+    re_clean_pipeline.add_argument("--image", required=True, dest="implementer_image")
+    re_clean_pipeline.add_argument("--validator-image", required=True)
+    re_clean_pipeline.add_argument("--test-script", required=True, type=Path)
+    re_clean_pipeline.add_argument("--test-signature", required=True, type=Path)
+    re_clean_pipeline.add_argument("--test-sha256", required=True)
+    re_clean_pipeline.add_argument("--engine", choices=["docker", "podman"], default="docker")
+    re_clean_pipeline.add_argument("--state-root", type=Path, default=None)
+    re_clean_pipeline.add_argument("--require-fixed-oracle-pilot", action="store_true")
+    re_clean_pipeline.add_argument("--approve", action="store_true",
+        help="Independent signed review is mandatory in addition to operator approval")
+
     re_setup = re_actions.add_parser("setup", help="Prepare or inspect an RE environment")
     re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
     re_setup.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
@@ -1052,6 +1068,23 @@ def main(argv=None) -> int:
                             llama_cli=args.llama_cli, engine=args.engine)
                     except CleanRoomEnvironmentError as exc:
                         result = {"status": "BLOCKED_ENV", "reason": str(exc)}
+                elif args.cleanroom_action == "run":
+                    from kitt.cleanroom_pipeline import run_pipeline
+                    from kitt.cleanroom_runner import CleanRoomEnvironmentError
+                    try:
+                        result = run_pipeline(
+                            args.run_id, expected_sha256=args.expected_sha256,
+                            wine_source=args.wine_source,
+                            implementer_image=args.implementer_image,
+                            validator_image=args.validator_image,
+                            test_script=args.test_script,
+                            test_signature=args.test_signature,
+                            test_sha256=args.test_sha256,
+                            state_root=args.state_root,
+                            engine=args.engine, approved=args.approve,
+                            require_fixed_oracle_pilot=args.require_fixed_oracle_pilot)
+                    except (CleanRoomEnvironmentError, PermissionError, ValueError) as exc:
+                        result = {"status": "BLOCKED_ENV", "reason": str(exc)}
                 else:
                     from kitt.cleanroom_runner import run_offline_implementer, CleanRoomEnvironmentError
                     try:
@@ -1063,7 +1096,10 @@ def main(argv=None) -> int:
                     except CleanRoomEnvironmentError as exc:
                         result = {"status": "BLOCKED_ENV", "reason": str(exc)}
                 print(_json.dumps(result, ensure_ascii=False))
-                return (0 if result["status"] not in {"BLOCKED_ENV", "IMPLEMENTER_FAILED"}
+                return (0 if result["status"] in {"VALID_NEEDS_INDEPENDENT_REVIEW",
+                                                   "SEALED_NOT_EXECUTABLE",
+                                                   "VERIFIED_NOT_EXECUTABLE",
+                                                   "IMAGE_BUILT_NOT_ATTESTED"}
                         else 2)
             if args.re_action == "lab":
                 from kitt import re_lab
