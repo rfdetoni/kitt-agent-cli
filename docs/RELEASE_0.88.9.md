@@ -11,3 +11,5 @@ Adds a strict, operator-reviewed black-box API specification lifecycle:
 Dependency: kitt-protocol 0.14.1 pinned to a concrete Git SHA. Version, Python lock and release metadata aligned.
 
 The implementation validates a trusted detached reviewer signature but does NOT independently establish a reviewer's organizational identity, certify an OCI image, provide an offline model image, prove source provenance, or complete real Windows/Wine end-to-end tests. Independently review the behavior specification and image, and treat missing OS isolation, runtime or guest Oracle as BLOCKED_ENV. No proprietary code, registers, offsets, or decompiled pseudo-code should flow to the implementation workspace.
+
+Security follow-up: the runner re-reads and canonicalizes the exact contract, verifies its trusted SHA-256, makes a private read-only per-execution snapshot and verifies the independent Ed25519 signature against that snapshot before mounting it into OCI. This closes a mutable-source verify-to-mount race. An operational OCI guest end-to-end test is still required.
