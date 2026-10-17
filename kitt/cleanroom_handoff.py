@@ -38,12 +38,11 @@ def _secure_root(directory: Path) -> Path:
 
 def _read_source(path: Path) -> bytes:
     path = Path(path).expanduser()
-    if path.is_symlink() or not path.is_file():
-        raise CleanRoomContractError("source must be a regular non-symlink file")
-    info = path.stat()
-    if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SOURCE:
-        raise CleanRoomContractError("invalid contract file size")
-    with path.open("rb") as handle:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb", closefd=True) as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SOURCE:
+            raise CleanRoomContractError("source must be a bounded regular file")
         raw = handle.read(_MAX_SOURCE + 1)
     if len(raw) > _MAX_SOURCE:
         raise CleanRoomContractError("contract file exceeds byte limit")
