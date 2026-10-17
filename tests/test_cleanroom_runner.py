@@ -47,7 +47,7 @@ def test_only_approved_spec_and_implementer_checkout_mounted(tmp_path, monkeypat
     commands = []
     def fake_run(argv, **kw):
         commands.append(argv)
-        if argv[1:3] == ["image", "inspect"]:
+        if "image" in argv and "inspect" in argv:
             return SimpleNamespace(returncode=0, stdout=(IMAGE + "\n").encode())
         kw["stdout"].write(b"offline pass")
         kw["stderr"].write(b"")
@@ -65,6 +65,7 @@ def test_only_approved_spec_and_implementer_checkout_mounted(tmp_path, monkeypat
     assert cmd[cmd.index("--network") + 1] == "none"
     assert cmd[cmd.index("--cap-drop") + 1] == "ALL"
     assert "--read-only" in cmd and "no-new-privileges" in cmd
+    assert cmd[1:3] == ["--context", "default"]
     assert any("dst=/cleanroom/contract.json,readonly" in item for item in cmd)
     assert "--entrypoint" in cmd
     assert result["independent_winetest_passed"] is False
