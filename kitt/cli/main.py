@@ -551,6 +551,16 @@ def build_parser() -> argparse.ArgumentParser:
     re_clean_verify.add_argument("run_id")
     re_clean_verify.add_argument("--sha256", required=True, dest="expected_sha256")
     re_clean_verify.add_argument("--state-root", type=Path, default=None)
+    re_clean_run = re_clean_actions.add_parser("run-offline",
+        help="Run SHA-pinned offline implementer OCI image without network or analyst mounts")
+    re_clean_run.add_argument("run_id")
+    re_clean_run.add_argument("--sha256", required=True, dest="expected_sha256")
+    re_clean_run.add_argument("--wine-source", type=Path, required=True,
+        help="Separate operator-approved Wine/ReactOS checkout, never the analyst workspace")
+    re_clean_run.add_argument("--image", required=True, help="Local trusted sha256:<digest> image ID")
+    re_clean_run.add_argument("--engine", choices=["docker", "podman"], default="docker")
+    re_clean_run.add_argument("--state-root", type=Path, default=None)
+    re_clean_run.add_argument("--approve", action="store_true", help="Explicit human run approval")
 
     re_setup = re_actions.add_parser("setup", help="Prepare or inspect an RE environment")
     re_setup.add_argument("system", choices=["windows", "linux", "rea", "toolbox"])
@@ -1021,12 +1031,23 @@ def main(argv=None) -> int:
                 elif args.cleanroom_action == "seal":
                     result = cleanroom_handoff.seal(
                         args.contract_file, reviewer=args.reviewer, state_root=args.state_root)
-                else:
+                elif args.cleanroom_action == "verify":
                     result = cleanroom_handoff.verify(
                         args.run_id, expected_sha256=args.expected_sha256,
                         state_root=args.state_root)
+                else:
+                    from kitt.cleanroom_runner import run_offline_implementer, CleanRoomEnvironmentError
+                    try:
+                        result = run_offline_implementer(
+                            args.run_id, expected_sha256=args.expected_sha256,
+                            wine_source=args.wine_source, image=args.image,
+                            state_root=args.state_root, engine=args.engine,
+                            approved=args.approve)
+                    except CleanRoomEnvironmentError as exc:
+                        result = {"status": "BLOCKED_ENV", "reason": str(exc)}
                 print(_json.dumps(result, ensure_ascii=False))
-                return 0
+                return (0 if result["status"] not in {"BLOCKED_ENV", "IMPLEMENTER_FAILED"}
+                        else 2)
             if args.re_action == "lab":
                 from kitt import re_lab
                 action = args.lab_action
