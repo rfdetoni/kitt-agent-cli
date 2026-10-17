@@ -15,6 +15,7 @@ def _fixture(tmp_path):
     wine = tmp_path / "wine"
     wine.mkdir()
     (wine / ".git").mkdir()
+    (wine / ".git" / "config").write_text("[core]\n\trepositoryformatversion = 0\n")
     source = tmp_path / "spec.json"
     source.write_text(json.dumps({
         "target_dll": "kernel32.dll",
