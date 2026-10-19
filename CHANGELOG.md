@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.19 — network-native tool instructions and batched reads
+
+Align agent-loop host-tool instructions with the proxy's native network function calling: keep the existing six-field JSON response for WebChat, but accept one provider-native function call where available. Encourage `repo.batch_read` for up to eight independent authorized reads, preserving per-call IDs and host permission checks. This is prompt guidance on existing capabilities, not an additional command grammar or any new host authority.
+
+
 ## 0.88.18 — smaller host-tool feedback and safer empty-completion handling
 
 Scout refactoring extracts deterministic tool evidence, discovery, and browser-trace helpers from the agent tool loop without changing their public import surface. Repeated host-result instructions are sent only on the initial tool or when exploration stalls; an empty JSON/blank agent-loop answer cannot close a turn as success. No new provider calls or additional authorization capabilities. [Notas](docs/RELEASE_0.88.18.md).
