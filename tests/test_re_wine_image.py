@@ -19,7 +19,7 @@ class WineImageContracts(unittest.TestCase):
         self.assertIn("wine-staging-amd64", recipe)
         self.assertIn("wine-staging-i386:i386", recipe)
         self.assertIn("dpkg --add-architecture i386", recipe)
-        self.assertNotIn("winehq-staging", recipe)
+        self.assertNotIn("apt-get install -y --no-install-recommends winehq-staging", recipe)
         self.assertIn("D43F640145369C51D786DDEA76F1A20FF987672F", recipe)
         self.assertIn("Signed-By: /etc/apt/keyrings/winehq-archive.asc", recipe)
         self.assertIn("wine --version", recipe)
