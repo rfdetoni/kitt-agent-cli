@@ -44,17 +44,23 @@ RUN set -eu; \
       'Signed-By: /etc/apt/keyrings/winehq-archive.asc' \
       > /etc/apt/sources.list.d/kitt-winehq-staging.sources; \
     apt-get update; \
-    apt-get install -y --no-install-recommends \
-      wine-staging wine-staging-amd64; \
+    # Install the official 64-bit Staging payload. Its optional metapackage \
+    # requires i386 and is intentionally omitted for this 64-bit-only lab. \
+    apt-get install -y --no-install-recommends wine-staging-amd64; \
     rm -rf /var/lib/apt/lists/*; \
     test -x /usr/bin/wine; \
     test -x /usr/lib/wine/wine64; \
-    test -x /opt/wine-staging/bin/wine; \
+    if test -x /opt/wine-staging/bin/wine; then \
+      staging=/opt/wine-staging/bin/wine; \
+    else \
+      test -x /opt/wine-staging/bin/wine64; \
+      staging=/opt/wine-staging/bin/wine64; \
+    fi; \
     ln -s /usr/lib/wine/wine64 /usr/local/bin/wine64; \
-    ln -s /opt/wine-staging/bin/wine /usr/local/bin/wine-staging; \
+    ln -s "$staging" /usr/local/bin/wine-staging; \
     install -d -m 0755 /usr/share/kitt; \
     dpkg-query -W -f='${Package}=${Version}\n' \
-      wine wine64 wine-staging wine-staging-amd64 \
+      wine wine64 wine-staging-amd64 \
       > /usr/share/kitt/re-wine-packages.lock; \
     wine --version; \
     wine64 --version; \
