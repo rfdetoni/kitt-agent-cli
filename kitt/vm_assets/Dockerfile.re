@@ -25,9 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # WineHQ Staging is an actual independent Wine distribution, not a renamed
 # Debian Wine binary. Keep the Debian /usr/bin/wine as the reference engine.
 # WineHQ's signed Debian Trixie repo supplies /opt/wine-staging/bin/wine.
+# Both x64 and i386 payloads are required for the official staging launcher.
 # The known long-lived WineHQ key fingerprint is verified before apt uses it.
 ARG WINEHQ_KEY_FINGERPRINT=D43F640145369C51D786DDEA76F1A20FF987672F
 RUN set -eu; \
+    dpkg --add-architecture i386; \
     install -d -m 0755 /etc/apt/keyrings; \
     curl --fail --location --retry 3 --proto '=https' \
       https://dl.winehq.org/wine-builds/winehq.key \
@@ -40,30 +42,23 @@ RUN set -eu; \
       'URIs: https://dl.winehq.org/wine-builds/debian' \
       'Suites: trixie' \
       'Components: main' \
-      'Architectures: amd64' \
+      'Architectures: amd64 i386' \
       'Signed-By: /etc/apt/keyrings/winehq-archive.asc' \
       > /etc/apt/sources.list.d/kitt-winehq-staging.sources; \
     apt-get update; \
-    # Install the official 64-bit Staging payload. Its optional metapackage \
-    # requires i386 and is intentionally omitted for this 64-bit-only lab. \
-    apt-get install -y --no-install-recommends wine-staging-amd64; \
+    # Wine-Staging's launcher belongs to the complete signed package set,
+    # not to the amd64 payload installed on its own.
+    apt-get install -y --no-install-recommends \
+      wine-staging wine-staging-amd64 wine-staging-i386:i386; \
     rm -rf /var/lib/apt/lists/*; \
-    echo 'KITT WINE DIAGNOSTICS (binary paths only)'; \
-    ls -ld /opt/wine-staging /opt/wine-staging/bin /usr/lib/wine /usr/bin/wine || true; \
-    dpkg -L wine-staging-amd64 | grep -E '/(bin|wine64)/' | head -40 || true; \
     test -x /usr/bin/wine; \
     test -x /usr/lib/wine/wine64; \
-    if test -x /opt/wine-staging/bin/wine; then \
-      staging=/opt/wine-staging/bin/wine; \
-    else \
-      test -x /opt/wine-staging/bin/wine64; \
-      staging=/opt/wine-staging/bin/wine64; \
-    fi; \
+    test -x /opt/wine-staging/bin/wine; \
     ln -s /usr/lib/wine/wine64 /usr/local/bin/wine64; \
-    ln -s "$staging" /usr/local/bin/wine-staging; \
+    ln -s /opt/wine-staging/bin/wine /usr/local/bin/wine-staging; \
     install -d -m 0755 /usr/share/kitt; \
     dpkg-query -W -f='${Package}=${Version}\n' \
-      wine wine64 wine-staging-amd64 \
+      wine wine64 wine-staging wine-staging-amd64 wine-staging-i386:i386 \
       > /usr/share/kitt/re-wine-packages.lock; \
     wine --version; \
     wine64 --version; \
