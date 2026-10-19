@@ -1,7 +1,7 @@
 """Small, operator-owned capability snapshot for the LLM-first execution prompt.
 
 Observations are advisory, never approvals or capabilities granted to a model.
-Only inspect the managed RE lab when the operator explicitly mentions it.
+Only describe the managed RE lab when the operator explicitly mentions it.
 """
 from __future__ import annotations
 
@@ -15,12 +15,19 @@ import shutil
 def capability_snapshot_for_prompt(prompt: str, workspace: Path) -> str:
     root = Path(workspace)
     text = str(prompt or "").casefold()
-    re_task = bool(re.search(r"\b(re.lab|kitt.re|guest.linux|linux.guest|wine.staging|wine staging|oracle)\b", text))
+    re_task = bool(re.search(
+        r"\b(?:re.lab|kitt[ -]re|guest[ -]linux|linux[ -]guest|wine[ -]staging|oracle)\b",
+        text,
+    ))
     snapshot = {
         "schema_version": 1,
         "workspace_is_git": (root / ".git").exists(),
         "host_commands": {name: bool(shutil.which(name)) for name in ("git", "docker")},
         "tools": "use exact tool-schema operations; policy approval is still required",
+        "recommended_workflow": (
+            "repo.read or repo.search, patch.apply or repo.write_file, "
+            "process.run for authorized validation; avoid redundant status/help commands"
+        ),
     }
     if re_task:
         # Docker is deliberately not probed from the model: the lab topology is

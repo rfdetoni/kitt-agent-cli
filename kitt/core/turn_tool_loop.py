@@ -151,6 +151,33 @@ _OBSERVATIONAL_ACTIONS = frozenset(
 )
 
 
+def _is_environment_discovery(operation: str, tool_args: object) -> bool:
+    """Count environment probes, not Git mutations or productive commands."""
+    if operation in {"repo.list", "repo.context_map"}:
+        return True
+    if operation != "process.run" or not isinstance(tool_args, dict):
+        return False
+    args = tool_args.get("arguments")
+    argv = args.get("argv") if isinstance(args, dict) else None
+    if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
+        return False
+    name = argv[0].rsplit("/", 1)[-1]
+    if name in {"pwd", "ls", "which", "whereis", "uname", "df"}:
+        return True
+    if name == "git":
+        return len(argv) > 1 and argv[1] in {"--version", "status", "rev-parse", "remote"}
+    if name == "docker":
+        return len(argv) > 1 and argv[1] in {"--version", "inspect", "ps", "info"}
+    if name == "kitt":
+        return len(argv) > 1 and (
+            argv[1] in {"--version", "--help"}
+            or (len(argv) > 3 and argv[1:4] in (
+                ["re", "lab", "status"], ["re", "lab", "doctor"]
+            ))
+        )
+    return False
+
+
 def _stuck_sequence(fingerprints: list[str]) -> bool:
     recent = fingerprints[-4:]
     return (
@@ -1175,20 +1202,7 @@ class TurnToolLoopMixin:
                     self.turn_guard.end(cmd.turn_id)
                 output_str = retained.preview
             operation = _runtime_operation_name(tool_name, tool_args)
-            argv = tool_args.get("arguments", {}).get("argv", []) if isinstance(tool_args, dict) else []
-            is_environment_discovery = (
-                operation in {"repo.list", "repo.context_map"}
-                or (
-                    operation == "process.run"
-                    and isinstance(argv, list)
-                    and bool(argv)
-                    and str(argv[0]).rsplit("/", 1)[-1] in {
-                        "pwd", "ls", "which", "whereis", "uname", "df", "docker", "git", "kitt"
-                    }
-                    and not any(str(item) in {"clone", "fetch", "push", "commit", "pull"}
-                                for item in argv[1:])
-                )
-            )
+            is_environment_discovery = _is_environment_discovery(operation, tool_args)
             if is_environment_discovery:
                 discovery_streak += 1
                 discovery_total += 1

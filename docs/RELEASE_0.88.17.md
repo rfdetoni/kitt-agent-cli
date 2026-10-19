@@ -18,8 +18,9 @@ the host-owned causes, not ChatGPT Web processing speed.
   contract/checklists, and ignores orchestration field names for repository
   symbol ranking.
 - Tool-loop metrics distinguish repeated environment discovery, with an
-  explicit checkpoint after four consecutive discovery calls. Normal
-  coding/test operations and safety policy remain unchanged.
+  explicit checkpoint after four consecutive discovery calls; Git staging,
+  commits and Docker guest execution are not counted as discovery.
+  Normal coding/test operations and safety policy remain unchanged.
 - `kitt re lab stage-wine --approve` stages only the official Wine-Staging
   Git repository on the networked operator host into the existing Linux
   bind mount. Requires an interactive terminal; never modifies Windows or

@@ -52,7 +52,17 @@ def stage_wine(*, state_root: Path | None = None, approve: bool = False) -> dict
     # Keep the staging directory private and discard partial clones on failure.
     with tempfile.TemporaryDirectory(prefix=".wine-stage-", dir=sources) as tmp:
         target = Path(tmp) / "source"
-        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        # Ignore Git URL rewriting and credential helpers from operator config.
+        env = {
+            key: value for key, value in os.environ.items()
+            if key != "GIT_CONFIG_COUNT" and not key.startswith(
+                ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+            )
+        }
+        env.update({
+            "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+        })
         try:
             cloned = subprocess.run(
                 ["git", "clone", "--depth", "1", "--", OFFICIAL_WINE_STAGING, str(target)],

@@ -73,3 +73,55 @@ def test_wine_stage_rejects_noninteractive_model_calls():
 def test_wine_stage_parser():
     args = build_parser().parse_args(["re", "lab", "stage-wine", "--approve"])
     assert args.lab_action == "stage-wine" and args.approve is True
+
+
+def test_discovery_classifier_excludes_real_mutation():
+    from kitt.core.turn_tool_loop import _is_environment_discovery as discovery
+
+    def args(*argv):
+        return {"operation": "process.run", "arguments": {"argv": list(argv)}}
+
+    assert discovery("process.run", args("git", "status", "--short"))
+    assert discovery("process.run", args("kitt", "re", "lab", "status"))
+    assert discovery("repo.list", {"operation": "repo.list", "arguments": {"path": "."}})
+    assert not discovery("process.run", args("git", "add", "."))
+    assert not discovery("process.run", args("git", "commit", "-m", "fix"))
+    assert not discovery("process.run", args("docker", "exec", "kitt-re-full", "test"))
+    assert not discovery("process.run", {"operation": "process.run", "arguments": None})
+
+
+def test_wine_stage_clones_official_source_in_shared_workspace(tmp_path, monkeypatch):
+    from kitt import re_source_stage as source
+    lab = tmp_path / "re-lab"
+    ws = lab / "workspace"
+    ws.mkdir(parents=True)
+    monkeypatch.setattr(source.re_lab, "_root", lambda _: lab)
+    monkeypatch.setattr(source.re_docker_lab, "inspect", lambda role: {
+        "status": "running", "workspace": str(ws)
+    })
+    monkeypatch.setattr(source.os, "getuid", lambda: ws.stat().st_uid)
+    monkeypatch.setattr(source.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(source.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(source.shutil, "which", lambda _: "/usr/bin/git")
+    calls = []
+    def git(argv, **kwargs):
+        calls.append(argv)
+        if argv[1] == "clone":
+            dest = Path(argv[-1])
+            dest.mkdir()
+            (dest / "README.md").write_text("source")
+            return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=0, stdout="a" * 40 + "\n")
+
+    monkeypatch.setattr(source.subprocess, "run", git)
+    result = source.stage_wine(approve=True)
+    assert result["status"] == "STAGED"
+    assert result["commit"] == "a" * 40
+    assert result["guest_path"] == "/workspace/sources/wine-staging"
+    assert (ws / "sources" / "wine-staging" / "README.md").read_text() == "source"
+    assert calls[0][1:5] == ["clone", "--depth", "1", "--"]
+    assert source.OFFICIAL_WINE_STAGING in calls[0]
+    assert result["guest_network_enabled"] is False
+    with pytest.raises(VMError, match="already exists"):
+        source.stage_wine(approve=True)
+    assert len(calls) == 2
