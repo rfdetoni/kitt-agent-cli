@@ -37,6 +37,13 @@ class ReadBatchTests(unittest.TestCase):
         self.assertEqual(status.data['agent_contract_version'], 'v5')
         self.assertFalse(self.runtime.execute('runtime.capabilities', {'enable_unsafe': True}).success)
 
+    def test_batch_is_available_in_host_and_model_operation_catalogs(self):
+        from kitt.core.turn_processor import TurnProcessor
+        from kitt.tools.registry import runtime_operation_names
+        self.assertIn('repo.batch_read', runtime_operation_names())
+        self.assertIn('repo.batch_read',
+                      TurnProcessor._runtime_operations_for_tools(['read_file']))
+
     def test_read_only_parallel_batch_maintains_order_and_receipts(self):
         def fake_read(args, *_):
             return SafeRuntimeResult(True, 'repo.read', data={'path': args['path']})

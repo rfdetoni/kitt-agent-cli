@@ -25,8 +25,9 @@ def capability_snapshot_for_prompt(prompt: str, workspace: Path) -> str:
         "host_commands": {name: bool(shutil.which(name)) for name in ("git", "docker")},
         "tools": "use exact tool-schema operations; policy approval is still required",
         "recommended_workflow": (
-            "repo.read or repo.search, patch.apply or repo.write_file, "
-            "process.run for authorized validation; avoid redundant status/help commands"
+            "repo.batch_read for up to eight independent repo.read/repo.list calls, "
+            "repo.search for targeted lookup, patch.apply or repo.write_file for edits, "
+            "process.run only for authorized validation; do not repeat cached host receipts"
         ),
     }
     if re_task:

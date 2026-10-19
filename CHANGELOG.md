@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.18 — smaller host-tool feedback and safer empty-completion handling
+
+Scout refactoring extracts deterministic tool evidence, discovery, and browser-trace helpers from the agent tool loop without changing their public import surface. Repeated host-result instructions are sent only on the initial tool or when exploration stalls; an empty JSON/blank agent-loop answer cannot close a turn as success. No new provider calls or additional authorization capabilities. [Notas](docs/RELEASE_0.88.18.md).
+
+
 ## 0.88.17 — execution discovery bootstrap and RE host source staging
 
 Adds one host-owned capability snapshot for reverse-proxy agent-loop prompts, a single JSON action format rather than conflicting XML tool examples, contract-aware context retrieval, discovery metrics and a bounded repeated-discovery checkpoint. Adds operator-only, non-destructive Wine-Staging host clone into the networkless RE toolbox's shared workspace, without exposing SSH credentials or guest internet access. Tests, uv.lock and runbooks updated. [Notas](docs/RELEASE_0.88.17.md).

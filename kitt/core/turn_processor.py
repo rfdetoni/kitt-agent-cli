@@ -637,7 +637,7 @@ class TurnProcessor(
         edit_strategy: str = "",
     ) -> tuple[str, ...]:
         """Expose authorized operations, optionally prioritizing an edit strategy."""
-        from kitt.runtime.core_runtime import OPERATION_SPECS
+        from kitt.runtime.safe_runtime import OPERATION_SPECS
 
         capabilities = capabilities_for_tools(planned_tools or [])
         default_edits = (
@@ -662,7 +662,7 @@ class TurnProcessor(
         }
         edits = edit_orders.get(str(edit_strategy or ""), default_edits)
         preferred_order = (
-            "repo.read", "repo.list", "repo.search", "repo.inspect_symbol",
+            "repo.read", "repo.list", "repo.batch_read", "repo.search", "repo.inspect_symbol",
             "repo.read_symbol", "repo.references",
             "flow.execute", "program.execute",
             "plan.submit", "plan.inspect", "plan.next", "plan.dispatch", "plan.dispatch_ready", "plan.verify", "plan.checkpoint",

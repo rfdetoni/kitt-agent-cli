@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from kitt.tools import registry_core as _core
 
-# The operation catalog is immutable and authoritative in core_runtime.
-# SafeRuntime implements specialized handlers without mutating or extending it.
-from kitt.runtime.core_runtime import OPERATION_SPECS
+# Read the exact extended registry executed by SafeRuntime, not only its base.
+# Otherwise model-facing schemas silently omit supported bounded host operations.
+from kitt.runtime.safe_runtime import OPERATION_SPECS
 
 
 ToolResult = _core.ToolResult
@@ -72,7 +72,9 @@ class ToolRegistry(_core.ToolRegistry):
                 # writes, or unified diff vs SEARCH/REPLACE patches).
                 tool["description"] = (
                     "Safe runtime. process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}; "
-                    "argv-only/no shell; file edits use repo.write_file or patch.apply; "
+                    "argv-only/no shell; for independent read/list calls use "
+                    "repo.batch_read {calls:[{id,operation,arguments:{path}}]} (max 8); "
+                    "batch never permits writes; file edits use repo.write_file or patch.apply; "
                     "patch.apply accepts SEARCH/REPLACE or unified diff; "
                     "sandbox.python {code,inputs?,result_var?} runs AST-only compute, "
                     "no imports/files/network/shell."
