@@ -294,7 +294,7 @@ class ContractPlanner:
             return None
         try:
             relative = self.fs.relative(paths[0])
-        except (ValueError, OSError):
+        except (PermissionError, ValueError, OSError):
             return None
         if relative == ".":
             return None

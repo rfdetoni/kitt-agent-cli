@@ -55,9 +55,7 @@ def stage_wine(*, state_root: Path | None = None, approve: bool = False) -> dict
         # Ignore Git URL rewriting and credential helpers from operator config.
         env = {
             key: value for key, value in os.environ.items()
-            if key != "GIT_CONFIG_COUNT" and not key.startswith(
-                ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
-            )
+            if not key.startswith("GIT_")
         }
         env.update({
             "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
