@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.16 — isolated Wine pilot private HOME
+
+Fix the Windows-versus-Wine differential pilot: the non-root Wine process previously received root-owned `HOME=/tmp` and exited 1 before executing the known PE. Use a mode 0700 private HOME beneath the disposable tmpfs and a fixed, constant shell bootstrap to create it, preserving non-root UID, immutable image, pinned PE, read-only root, no network and no privileges. Reject invalid Windows reference receipts before Wine execution; report only the bounded Wine exit code, not raw probe stderr. Adds regression tests, runbook and synchronized uv.lock / protocol pin. [Notas](docs/RELEASE_0.88.16.md).
+
+
 ## 0.88.15 — preserve SSH diagnostics on early TCP rejection
 
 A closed SSH transport may raise BrokenPipeError during stdin write/close before the client exit status is read. Handle it so the sanitized SSH_UNAVAILABLE classification remains actionable; add a deterministic fake-process regression. No dependency or security-policy changes. [Notas](docs/RELEASE_0.88.15.md).

@@ -69,6 +69,17 @@ running. Check the local noVNC console, Docker published TCP/22 and Windows
 sshd first. Preserve SSH host-key pinning and do not recreate the Windows disk
 without separate explicit operator approval.
 
+## Differential pilot Wine HOME fix (0.88.16)
+
+If the guest's `probe.run` succeeds but `kitt re lab verify --full` returns
+`Invalid probe receipt: Probe execution was not complete and successful`,
+inspect the non-root Wine candidate. The old pilot set `HOME=/tmp` and
+Wine refused to create its prefix in a root-owned `/tmp` mount; the new
+pilot initializes a UID-owned `HOME=/tmp/kitt-home` inside the ephemeral
+tmpfs before running the pinned PE. Failure reports only the Wine exit code,
+not guest stderr or credentials. The guest Windows disk does **not** need
+recreation and no alternate Wine engine or host package is installed.
+
 ## Check real readiness
 
 When the Windows console shows the installed desktop and bootstrap.status
