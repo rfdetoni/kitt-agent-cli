@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.15 — preserve SSH diagnostics on early TCP rejection
+
+A closed SSH transport may raise BrokenPipeError during stdin write/close before the client exit status is read. Handle it so the sanitized SSH_UNAVAILABLE classification remains actionable; add a deterministic fake-process regression. No dependency or security-policy changes. [Notas](docs/RELEASE_0.88.15.md).
+
+
 ## 0.88.14 — diagnósticos SSH no Windows Oracle
 
 Classifica SSH_UNAVAILABLE, SSH_TIMEOUT, SSH_DISCONNECTED, SSH_AUTH_FAILED e SSH_HOST_KEY_REJECTED sem expor stderr privado. Apenas o handshake read-only probe.info pode repetir uma vez falha de transporte transitória; execução de probes jamais é repetida automaticamente. Bootstrap registra PROVISIONING/FAILED/READY no guest. Mantém pins do Protocol 0.14.2; sincroniza uv.lock e metadados. [Notas](docs/RELEASE_0.88.14.md).

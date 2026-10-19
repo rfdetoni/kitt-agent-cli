@@ -148,8 +148,16 @@ def _ssh_exchange(hosts: dict, alias: str, request: dict, *, timeout: int = 90) 
         )
         try:
             assert process.stdin is not None
-            process.stdin.write(body.encode("utf-8"))
-            process.stdin.close()
+            # SSH may reject TCP before it reads stdin. Preserve stderr and
+            # the real ssh exit code instead of leaking a BrokenPipeError.
+            try:
+                process.stdin.write(body.encode("utf-8"))
+            except BrokenPipeError:
+                pass
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
             status = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             raise MissionError(f"Remote guest {alias} timed out; automatic replay is forbidden") from exc
