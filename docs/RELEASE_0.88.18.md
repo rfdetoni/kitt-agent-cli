@@ -5,3 +5,5 @@
 - Fail closed for a blank or bare empty-object response in `agent-loop` instead of representing it as successful task completion.
 - Keep host approval, execution budgets, verification, and snapshot-based state unchanged. Do not cache mutable filesystem reads without invalidation.
 - Validation: `python -m compileall -q kitt/core/turn_tool_loop.py kitt/core/turn_tool_helpers.py`; `python -m pytest -q tests/test_turn_processor_decomposition.py tests/test_completion_contract.py tests/test_goal_contract.py`. Browser/provider benchmarks must be repeated on an authenticated local instance before claims about speedups.
+
+- The model-facing `kitt_runtime` catalog now advertises the existing `repo.batch_read` operation with its bounded read-only syntax. The capability snapshot prefers batch reads over repeated LLM round-trips; the host keeps its unchanged operation schema and per-child policy validation.
