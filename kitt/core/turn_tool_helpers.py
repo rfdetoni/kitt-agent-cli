@@ -314,13 +314,13 @@ def _browser_trace_result(
     }
 
 
-def _tool_feedback_suffix(discovery_streak: int, tool_calls: int) -> str:
+def _tool_feedback_suffix(discovery_streak: int, tool_calls: int, operation: str) -> str:
     """Avoid replaying generic completion instructions after every tool call."""
     if discovery_streak >= 4:
         return ("\n[KITT DISCOVERY CHECKPOINT] Reuse the previous host receipts. "
                 "Execute a permitted next step or report the actual blocker; "
                 "do not repeat discovery commands.")
-    if tool_calls == 1:
+    if tool_calls == 1 and operation in _OBSERVATIONAL_ACTIONS:
         return ("\nA read-only receipt is not evidence of a requested write. "
                 "Continue only with the necessary permitted action.")
     return ""

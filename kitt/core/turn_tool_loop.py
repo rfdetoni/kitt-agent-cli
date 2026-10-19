@@ -931,7 +931,7 @@ class TurnToolLoopMixin:
                 consecutive=discovery_streak, total=discovery_total,
             )
             tool_prefix = _host_tool_prefix(tool_name, host_status)
-            tool_suffix = _tool_feedback_suffix(discovery_streak, tool_calls)
+            tool_suffix = _tool_feedback_suffix(discovery_streak, tool_calls, operation)
             output_str = self._fit_tool_output(
                 request.system_prompt,
                 execution_messages,
