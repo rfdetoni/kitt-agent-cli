@@ -151,6 +151,33 @@ _OBSERVATIONAL_ACTIONS = frozenset(
 )
 
 
+def _is_environment_discovery(operation: str, tool_args: object) -> bool:
+    """Count environment probes, not Git mutations or productive commands."""
+    if operation in {"repo.list", "repo.context_map"}:
+        return True
+    if operation != "process.run" or not isinstance(tool_args, dict):
+        return False
+    args = tool_args.get("arguments")
+    argv = args.get("argv") if isinstance(args, dict) else None
+    if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
+        return False
+    name = argv[0].rsplit("/", 1)[-1]
+    if name in {"pwd", "ls", "which", "whereis", "uname", "df"}:
+        return True
+    if name == "git":
+        return len(argv) > 1 and argv[1] in {"--version", "status", "rev-parse", "remote"}
+    if name == "docker":
+        return len(argv) > 1 and argv[1] in {"--version", "inspect", "ps", "info"}
+    if name == "kitt":
+        return len(argv) > 1 and (
+            argv[1] in {"--version", "--help"}
+            or (len(argv) > 3 and argv[1:4] in (
+                ["re", "lab", "status"], ["re", "lab", "doctor"]
+            ))
+        )
+    return False
+
+
 def _stuck_sequence(fingerprints: list[str]) -> bool:
     recent = fingerprints[-4:]
     return (
@@ -407,6 +434,8 @@ class TurnToolLoopMixin:
         tool_calls = 0
         malformed_calls = 0
         policy_denials = 0
+        discovery_streak = 0
+        discovery_total = 0
         output_limit_recoveries = 0
         edit_repairs_pending: set[str] = set()
 
@@ -1172,12 +1201,31 @@ class TurnToolLoopMixin:
                 finally:
                     self.turn_guard.end(cmd.turn_id)
                 output_str = retained.preview
+            operation = _runtime_operation_name(tool_name, tool_args)
+            is_environment_discovery = _is_environment_discovery(operation, tool_args)
+            if is_environment_discovery:
+                discovery_streak += 1
+                discovery_total += 1
+            else:
+                discovery_streak = 0
+            trace_event(
+                logger, "tool_loop.discovery_metric", turn_id=cmd.turn_id,
+                operation=operation, discovery=is_environment_discovery,
+                consecutive=discovery_streak, total=discovery_total,
+            )
             tool_prefix = _host_tool_prefix(tool_name, host_status)
             tool_suffix = (
                 "\nIf the user's request is now satisfied, STOP calling tools and answer "
                 "directly with a concise summary. A read/list/search result never satisfies "
                 "a requested workspace mutation; in that case, call the minimal mutation tool next."
             )
+            if discovery_streak >= 4:
+                tool_suffix += (
+                    "\n[KITT DISCOVERY CHECKPOINT] Multiple environment inspections "
+                    "without implementation. The previous host receipts are authoritative. "
+                    "Choose the smallest permitted execution or report a concrete policy "
+                    "blocker; do not rerun version/status/help/list commands."
+                )
             output_str = self._fit_tool_output(
                 request.system_prompt,
                 execution_messages,

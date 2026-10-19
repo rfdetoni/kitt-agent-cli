@@ -10,6 +10,22 @@ from typing import Any, Tuple
 from kitt.router.features import TaskFeatureExtractor
 
 
+def task_retrieval_text(value: str) -> str:
+    """Extract operator objective from orchestrator-generated planner text."""
+    text = str(value or "")
+    start, end = "[ORIGINAL REQUEST DATA]", "[END ORIGINAL REQUEST DATA]"
+    if start in text and end in text:
+        body = text.split(start, 1)[1].split(end, 1)[0].strip()
+        if body:
+            return body
+    # Goal progress/checklists are not repository symbols. Keep the actual
+    # implementation request preceding those delimiters.
+    for marker in ("[KITT CONTRACT PROGRESS]", "[KITT AUTONOMOUS COMPLETION CONTRACT]"):
+        if marker in text:
+            text = text.split(marker, 1)[0]
+    return text.strip()
+
+
 @dataclass(frozen=True)
 class QueryPlan:
     intent: str
@@ -62,6 +78,7 @@ class QueryPlanner:
         candidate_limit: int,
         deadline_ms: int,
     ) -> QueryPlan:
+        prompt = task_retrieval_text(prompt)
         features = TaskFeatureExtractor.extract(prompt, explicit_files=explicit_files)
         trace_paths = tuple(path for path in cls._TRACE_PATH_RE.findall(prompt) if not path.startswith("<"))
         paths = tuple(dict.fromkeys((*features.paths, *trace_paths, *explicit_files)))

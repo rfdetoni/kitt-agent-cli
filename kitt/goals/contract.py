@@ -271,6 +271,58 @@ class ContractPlanner:
             if registry is not None:
                 registry.token(self.source_command.turn_id).raise_if_cancelled()
 
+    def _simple_single_file_plan(self, objective: str) -> list[dict[str, Any]] | None:
+        """Skip remote decomposition only for one unambiguous file edit.
+
+        This is not an authorization shortcut: both items pass validate()
+        and the normal goal executor, approval and verification still run.
+        """
+        import re
+
+        text = str(objective or "").strip()
+        if not 12 <= len(text) <= 180 or "\n" in text:
+            return None
+        if not re.match(
+            r"(?i)^\s*(?:corrija|corrigir|ajuste|atualize|altere|fix|update|edit)\b",
+            text,
+        ):
+            return None
+        if re.search(r"(?i)\b(?:and|then|after|before|depois|antes|tamb[eé]m)\b|\s+e\s+", text):
+            return None
+        paths = re.findall(r"(?<![\w/])(?:[\w.-]+/)*[\w.-]+\.[A-Za-z0-9]{1,8}\b", text)
+        if len(paths) != 1 or paths[0].startswith(".") or "/" in paths[0] and ".." in paths[0].split("/"):
+            return None
+        try:
+            relative = self.fs.relative(paths[0])
+        except (PermissionError, ValueError, OSError):
+            return None
+        if relative == ".":
+            return None
+        payload = {
+            "items": [
+                {
+                    "local_id": "T01", "kind": "task", "title": "Apply focused file edit",
+                    "prompt": text,
+                    "validation_prompt": (
+                        "Inspect " + relative + " and verify the requested edit; "
+                        "run available relevant checks."
+                    ),
+                    "success_criteria": ["Requested single-file edit applied and verified."],
+                    "check_ids": [], "paths": [relative], "depends_on": [],
+                },
+                {
+                    "local_id": "FINAL", "kind": "final", "title": "Integration validation",
+                    "prompt": "Verify the original request and absence of unrelated changes.",
+                    "validation_prompt": "Verify scope, final file content and any available checks.",
+                    "success_criteria": [
+                        "Original request is satisfied without unrelated changes."
+                    ],
+                    "check_ids": [], "paths": [], "depends_on": ["T01"],
+                },
+            ]
+        }
+        return self.validate(payload)
+
     def iter_plan(
         self,
         conversation_id: str,
@@ -282,6 +334,11 @@ class ContractPlanner:
         self._check_cancelled()
         if not str(superprompt or "").strip():
             raise ValueError("Contract objective is required")
+        simple = self._simple_single_file_plan(superprompt)
+        if simple is not None:
+            self._check_cancelled()
+            yield ContractProgress(phase="accepted", attempt=0, max_attempts=0)
+            return simple
 
         base_prompt = self._planning_prompt(superprompt.strip(), self.known_check_ids)
         prompt = base_prompt
