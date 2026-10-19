@@ -32,8 +32,17 @@ def capability_snapshot_for_prompt(prompt: str, workspace: Path) -> str:
     if re_task:
         # Docker is deliberately not probed from the model: the lab topology is
         # operator-configured. Never assume a container is running/attested.
+        # Bound the expensive Docker read to one snapshot per relevant turn.
+        # These observations remain advisory and are never an execution grant.
+        try:
+            from kitt import re_docker_lab
+            current = re_docker_lab.inspect("linux")
+            linux_state = str(current.get("status") or "unknown") if current else "missing"
+        except (OSError, ValueError, RuntimeError):
+            linux_state = "unknown"
         snapshot["re_lab"] = {
-            "linux_container": "kitt-re-full (verify live status before use)",
+            "linux_container": "kitt-re-full",
+            "linux_status": linux_state,
             "linux_network": "none",
             "guest_workspace": "/workspace",
             "host_shared_workspace": "~/.local/share/kitt/re-lab/workspace",

@@ -125,3 +125,21 @@ def test_wine_stage_clones_official_source_in_shared_workspace(tmp_path, monkeyp
     with pytest.raises(VMError, match="already exists"):
         source.stage_wine(approve=True)
     assert len(calls) == 2
+
+
+def test_single_file_goal_uses_local_planner_without_llm(tmp_path):
+    from kitt.goals.contract import ContractPlanner
+    from kitt.security.workspace_fs import WorkspaceFileSystem
+    planner = ContractPlanner.__new__(ContractPlanner)
+    planner.fs = WorkspaceFileSystem(tmp_path)
+    planner.known_check_ids = []
+    items = planner._simple_single_file_plan("Atualize README.md corrigindo um título")
+    assert len(items) == 2
+    assert items[0]["paths"] == ["README.md"]
+    assert items[-1]["kind"] == "final"
+    assert planner._simple_single_file_plan(
+        "Clone Wine Staging e gere um inventário de DLLs"
+    ) is None
+    assert planner._simple_single_file_plan(
+        "Atualize README.md e CHANGELOG.md"
+    ) is None

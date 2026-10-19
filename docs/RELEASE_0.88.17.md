@@ -17,6 +17,10 @@ the host-owned causes, not ChatGPT Web processing speed.
 - Retrieval strips scaffolded original-request markers and subsequent KITT
   contract/checklists, and ignores orchestration field names for repository
   symbol ranking.
+- A narrowly scoped single-file edit uses deterministic contract decomposition
+  rather than a separate slow remote planning call. Both task and FINAL still
+  go through the normal host contract validator and independent quality gates;
+  multi-step, ambiguous and cross-file requests continue to use the LLM planner.
 - Tool-loop metrics distinguish repeated environment discovery, with an
   explicit checkpoint after four consecutive discovery calls; Git staging,
   commits and Docker guest execution are not counted as discovery.
