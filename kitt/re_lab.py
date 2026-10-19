@@ -175,20 +175,15 @@ def _credentials(root: Path) -> None:
         stream.write(content)
 
 
-def _linux(root: Path) -> None:
-    existing = re_docker_lab.inspect("linux")
-    if existing is not None:
-        if Path(existing["workspace"]).parent != root:
-            raise VMError("Existing Linux lab belongs to another root; refusing takeover")
-        re_docker_lab.operate("linux", "start")
-        return
-    from kitt import vm_container
-    try:
-        vm_container.pull_image(runtime="docker", image="toolbox", profile="full")
-    except VMError:
-        vm_container.build_image(runtime="docker", image="toolbox", profile="full")
-    image = vm_container._image_id(shutil.which("docker") or "docker", vm_container.IMAGES["full"])
+def _create_linux_container(root: Path, image: str) -> None:
+    """Create only the labelled toolbox; do not mutate its workspace or Windows."""
+    if not _HEX.fullmatch(image):
+        raise VMError("Linux RE image must be an immutable Docker sha256 ID")
     workspace = root / "workspace"
+    if (workspace.is_symlink() or not workspace.is_dir()
+            or workspace.resolve(strict=True) != workspace
+            or workspace.stat().st_uid != os.getuid()):
+        raise VMError("Untrusted RE Linux workspace; preserving the existing guest")
     _call(["create", "--name", "kitt-re-full", "--restart", "unless-stopped",
            "--network", "none", "--cap-drop", "ALL",
            "--security-opt", "no-new-privileges",
@@ -202,6 +197,83 @@ def _linux(root: Path) -> None:
            "--label", "dev.kitt.re-root=" + str(root),
            image, "sleep", "infinity"], timeout=120)
     re_docker_lab.operate("linux", "start")
+
+
+def _linux(root: Path) -> None:
+    existing = re_docker_lab.inspect("linux")
+    if existing is not None:
+        if Path(existing["workspace"]).parent != root:
+            raise VMError("Existing Linux lab belongs to another root; refusing takeover")
+        re_docker_lab.operate("linux", "start")
+        return
+    from kitt import vm_container
+    try:
+        vm_container.pull_image(runtime="docker", image="toolbox", profile="full")
+    except VMError:
+        vm_container.build_image(runtime="docker", image="toolbox", profile="full")
+    image = vm_container._image_id(shutil.which("docker") or "docker", vm_container.IMAGES["full"])
+    _create_linux_container(root, image)
+
+
+def upgrade_linux(*, state_root: Path | None = None, approve: bool = False) -> dict:
+    """Replace ONLY a validated KITT Linux container, retaining the workspace.
+
+    Never recreate/delete volumes or Windows; a failed replacement is rolled
+    back to the immutable Docker image ID of the previous managed container.
+    """
+    if approve is not True:
+        raise VMError("Linux RE upgrade requires explicit --approve")
+    root = _root(state_root)
+    existing = re_docker_lab.inspect("linux")
+    if (existing is None or existing.get("managed") is not True
+            or Path(existing.get("workspace", "")).parent != root):
+        raise VMError("Cannot upgrade missing or unowned Linux RE guest")
+    from kitt import vm_container
+    docker = shutil.which("docker")
+    if not docker:
+        raise VMError("Docker is required for the managed RE lab")
+    # Refuse silently pulling or rebuilding: operator must prepare the new image.
+    candidate = vm_container._image_id(docker, vm_container.IMAGES["full"])
+    if not _HEX.fullmatch(candidate):
+        raise VMError("New RE Linux image ID is untrusted")
+    previous = _call(["container", "inspect", "--format", "{{.Image}}",
+                      existing["container_id"]], timeout=20)
+    if not _HEX.fullmatch(previous):
+        raise VMError("Old RE Linux image identity is untrusted")
+    if candidate == previous:
+        return {"status": "UNCHANGED", "image": candidate,
+                "workspace_preserved": True, "windows_preserved": True}
+    # Exercise the pinned new image without guest mounts, network or credentials.
+    _call(["run", "--rm", "--pull", "never", "--network", "none",
+           "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+           "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
+           "--user", str(os.getuid()) + ":" + str(os.getgid()),
+           "--env", "HOME=/tmp", candidate, "/bin/sh", "-ec",
+           "command -v wine; command -v wine64; command -v wine-staging; "
+           "wine --version; wine64 --version; wine-staging --version; "
+           "test -s /usr/share/kitt/re-wine-packages.lock"], timeout=90)
+    # The validated container and workspace remain unchanged until preflight ends.
+    try:
+        if existing["status"] == "running":
+            re_docker_lab.operate("linux", "stop")
+        _call(["rm", existing["container_id"]], timeout=45)
+        _create_linux_container(root, candidate)
+    except (VMError, OSError) as exc:
+        # Existing Docker image content is retained by immutable ID.
+        # Remove only a half-created KITT-labelled Linux container.
+        current = re_docker_lab.inspect("linux")
+        if current is not None:
+            _call(["rm", "--force", current["container_id"]], timeout=45)
+        try:
+            _create_linux_container(root, previous)
+        except (VMError, OSError) as restore_exc:
+            raise VMError("RE Linux upgrade failed and automatic rollback failed; "
+                          "workspace and Windows were not removed") from restore_exc
+        raise VMError("RE Linux upgrade failed; previous image restored, "
+                      "workspace and Windows preserved") from exc
+    return {"status": "UPGRADED", "image": candidate, "previous_image": previous,
+            "workspace_preserved": True, "windows_preserved": True,
+            "oracle_ready": False}
 
 
 def setup(*, state_root: Path | None = None, runtime: str = "docker",
