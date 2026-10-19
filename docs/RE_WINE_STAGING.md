@@ -2,7 +2,7 @@
 
 The KITT full Linux RE guest is an isolated Docker container, **not** a virtual machine.
 The full and wine profiles now include two genuine Wine installations on Debian
-Trixie (amd64):
+Trixie (amd64, with i386 enabled only inside the image):
 
 | Command | Provenance and purpose |
 | --- | --- |
@@ -14,8 +14,10 @@ The WineHQ package index is authenticated with an explicit per-repository
 `Signed-By` key and its expected full public-key fingerprint is checked during
 build. Installed package versions are recorded in
 `/usr/share/kitt/re-wine-packages.lock`. No WineHQ repository is added to
-the host. This build installs the **amd64 payload only**. It does not silently
-promise an i386 runtime or 32-bit Windows compatibility. Binary package
+the host. The real WineHQ Staging launcher requires both `wine-staging-amd64` and
+`wine-staging-i386:i386`, so the image installs both and verifies the package
+set. The Debian `wine` and `wine64` baseline remains separate. This is a
+runtime provisioning step, not proof that every Win32 application works. Binary package
 installation does **not** include an editable Wine-Staging source checkout.
 
 ## Rebuild the image on your host
