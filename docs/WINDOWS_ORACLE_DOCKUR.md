@@ -56,7 +56,7 @@ to unrestricted remote PowerShell or bypass of SSH host-key validation.
 
 ## SSH diagnostics and recovery
 
-Agent CLI 0.88.14 maps known SSH errors to phase-specific statuses without
+Agent CLI 0.88.15 maps known SSH errors to phase-specific statuses without
 printing raw stderr: SSH_UNAVAILABLE, SSH_TIMEOUT, SSH_DISCONNECTED,
 SSH_AUTH_FAILED, SSH_HOST_KEY_REJECTED and SSH_FAILED.
 The read-only probe.info handshake alone may repeat once on a transient

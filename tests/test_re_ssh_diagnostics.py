@@ -61,3 +61,35 @@ def test_oracle_doctor_reports_ssh_phase_without_readiness(monkeypatch):
     result = re_oracle.doctor(manifest_sha256="a" * 64)
     assert result["status"] == "SSH_UNAVAILABLE"
     assert result["oracle_ready"] is False
+
+
+def test_ssh_early_exit_broken_pipe_retains_classified_stderr(monkeypatch):
+    class ClosedStdin:
+        def write(self, _body):
+            raise BrokenPipeError("ssh exited")
+        def close(self):
+            raise BrokenPipeError("ssh exited")
+
+    class FakePopen:
+        def __init__(self, *args, stderr, **kwargs):
+            self.stdin = ClosedStdin()
+            self.pid = 999999999
+            stderr.write(b"ssh: connect to host 127.0.0.1 port 2222: Connection refused")
+        def wait(self, timeout=None):
+            return 255
+        def poll(self):
+            return 255
+        def kill(self):
+            pass
+
+    def missing_process(*_args):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(mission.shutil, "which", lambda _: "/usr/bin/ssh")
+    monkeypatch.setattr(mission.subprocess, "Popen", FakePopen)
+    if hasattr(mission.os, "killpg"):
+        monkeypatch.setattr(mission.os, "killpg", missing_process)
+    hosts = {"reference": "oracle", "candidate": "wine", "ssh_config": "/tmp/ssh_config"}
+    with pytest.raises(mission.MissionError, match="SSH_UNAVAILABLE"):
+        mission._ssh_exchange(hosts, "oracle",
+                              {"version": 1, "method": "probe.info", "probe": None})
