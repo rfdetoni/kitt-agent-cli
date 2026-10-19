@@ -4,6 +4,7 @@ $ProgressPreference = 'SilentlyContinue'
 $root = 'C:\KittOracle'
 $oem = 'C:\OEM'
 New-Item -Path $root -ItemType Directory -Force | Out-Null
+[IO.File]::WriteAllText("$root\\bootstrap.status", 'PROVISIONING')
 $capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
 if ($capability.State -ne 'Installed') {
     Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null

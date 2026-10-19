@@ -67,6 +67,30 @@ expiry; all scopes require --destroy-data. A failed reinstall reports PARTIAL
 rather than declaring readiness. The global workspace is never deleted by
 the windows-only scope.
 
+## Oracle diagnosis (safe, non-destructive)
+
+Use `kitt re lab verify --full` only after Windows provisioning completes. It checks
+pinned SSH and manifest **before** running any differential pilot.
+`SSH_UNAVAILABLE` means unreachable/refused transport; `SSH_TIMEOUT` means
+connection timeout; `SSH_DISCONNECTED` means a closed connection;
+`SSH_AUTH_FAILED` means public-key login denied; `SSH_HOST_KEY_REJECTED`
+means the pinned identity was rejected. `SSH_FAILED` covers unrecognized SSH
+errors. `BLOCKED_ENV` remains for other environment or contract failures.
+
+During first boot, inspect `http://127.0.0.1:8006` and the guest's
+`C:\\KittOracle\\bootstrap.status` (PROVISIONING, FAILED or READY).
+Neither a running Docker container nor PROVISIONING means Oracle READY.
+Retry is limited to one additional **read-only** probe.info handshake for
+recognized transient transport errors; no automatic setup, reset, key
+replacement or probe.run replay is allowed. SSH stderr is never copied into
+the CLI response. Operator diagnostics:
+
+    docker port kitt-re-win11 22/tcp
+    docker logs --tail 100 kitt-re-win11
+    kitt re lab verify
+
+Never run `recreate` just to recover a refused SSH connection.
+
 ## Verified states and limitations
 
 - Setup returns PROVISIONING, not READY. Docker running or noVNC is not an
