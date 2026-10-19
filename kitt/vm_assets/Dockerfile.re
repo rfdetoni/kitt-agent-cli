@@ -48,6 +48,9 @@ RUN set -eu; \
     # requires i386 and is intentionally omitted for this 64-bit-only lab. \
     apt-get install -y --no-install-recommends wine-staging-amd64; \
     rm -rf /var/lib/apt/lists/*; \
+    echo 'KITT WINE DIAGNOSTICS (binary paths only)'; \
+    ls -ld /opt/wine-staging /opt/wine-staging/bin /usr/lib/wine /usr/bin/wine || true; \
+    dpkg -L wine-staging-amd64 | grep -E '/(bin|wine64)/' | head -40 || true; \
     test -x /usr/bin/wine; \
     test -x /usr/lib/wine/wine64; \
     if test -x /opt/wine-staging/bin/wine; then \
