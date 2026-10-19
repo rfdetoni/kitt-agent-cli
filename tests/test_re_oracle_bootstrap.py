@@ -292,9 +292,52 @@ def test_isolated_wine_never_mounts_oem_ssh_keys_or_workspace(tmp_path, monkeypa
         assert "readonly" in mount and "--read-only" in argv
         assert "--network" in argv and "none" in argv
         assert "--cap-drop" in argv and "ALL" in argv
+        assert "HOME=/tmp/kitt-home" in argv
+        assert "WINEPREFIX=/tmp/kitt-home/.wine" in argv
+        assert "/tmp:rw,nosuid,nodev,size=512m,mode=1777" in argv
+        assert argv[-3:-1] == ["/bin/sh", "-c"]
+        assert argv[-1] == 'umask 077; mkdir -p -- "$HOME" && exec /usr/lib/wine/wine64 /probes/event_probe.exe'
+        assert "HOME=/tmp" not in argv
         kwargs["stdout"].write(b'{"before":258}\n')
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(re_oracle_pilot.subprocess, "run", run)
     code, stdout, stderr = re_oracle_pilot._run_isolated_wine(
         lab, {"container_id": "b" * 64}, path, expected)
     assert code == 0 and stdout and not stderr and len(calls) == 2
+
+
+def test_pilot_exposes_bounded_wine_exit_code_not_raw_stderr(tmp_path, monkeypatch):
+    from kitt import re_oracle_pilot
+    lab = tmp_path / "re-lab"
+    oem = lab / "oracle" / "oem"
+    oem.mkdir(parents=True)
+    binary = b"MZ" + b"safe-fixture" * 20
+    (oem / "event_probe.exe").write_bytes(binary)
+    digest = hashlib.sha256(binary).hexdigest()
+    (oem / "manifest.json").write_text(json.dumps({
+        "probes": {"event_auto_reset": {"path": "event_probe.exe", "sha256": digest}}
+    }), encoding="utf-8")
+    manifest_hash = hashlib.sha256((oem / "manifest.json").read_bytes()).hexdigest()
+    receipt = {
+        "schema_version": 1, "probe": "event_auto_reset", "probe_sha256": digest,
+        "platform": "Windows", "release": "11", "exit_code": 0,
+        "timed_out": False, "truncated": False, "duration_ms": 1,
+        "stdout": '{"before":258,"signaled":0,"consumed":258}', "stderr": "",
+    }
+    receipt["sha256"] = hashlib.sha256(json.dumps(
+        receipt, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(re_oracle_pilot.re_oracle, "doctor",
+                        lambda **kw: {"oracle_ready": True})
+    monkeypatch.setattr(re_oracle_pilot.re_oracle_bootstrap, "_lab",
+                        lambda: (lab, {"container_id": "a" * 64}))
+    monkeypatch.setattr(re_oracle_pilot, "_hosts",
+                        lambda _: {"reference": "kitt-win-oracle"})
+    monkeypatch.setattr(re_oracle_pilot, "_ssh_request",
+                        lambda *args: receipt)
+    monkeypatch.setattr(re_oracle_pilot, "_run_isolated_wine",
+                        lambda *args: (1, b"", b"private-path-or-password"))
+    result = re_oracle_pilot.pilot(manifest_sha256=manifest_hash, yes=True)
+    assert result["status"] == "BLOCKED_ENV"
+    assert "exit_code=1" in result["reason"]
+    assert "private-path-or-password" not in str(result)

@@ -61,11 +61,15 @@ def _run_isolated_wine(lab: Path, linux: dict, path: Path, expected: str) -> tup
                 "--pids-limit", "64", "--memory", "1g", "--cpus", "1",
                 "--user", str(os.getuid()) + ":" + str(os.getgid()),
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
-                "--env", "HOME=/tmp", "--env", "WINEPREFIX=/tmp/.wine",
+                # Wine rejects HOME=/tmp because tmpfs /tmp belongs to root,
+                # while this process intentionally runs as a non-root host UID.
+                # Create a private, UID-owned HOME inside the disposable tmpfs.
+                "--env", "HOME=/tmp/kitt-home",
+                "--env", "WINEPREFIX=/tmp/kitt-home/.wine",
                 "--env", "WINEDEBUG=-all",
                 "--mount", "type=bind,src=" + str(probes) + ",dst=/probes,readonly",
-                "--workdir", "/probes", image_id, "/usr/lib/wine/wine64",
-                "/probes/event_probe.exe",
+                "--workdir", "/probes", image_id, "/bin/sh", "-c",
+                'umask 077; mkdir -p -- "$HOME" && exec /usr/lib/wine/wine64 /probes/event_probe.exe',
             ]
             try:
                 result = subprocess.run(argv, stdout=out, stderr=err,
@@ -122,6 +126,12 @@ def pilot(*, manifest_sha256: str, hosts: Path | None = None, yes: bool = False)
     reference = _ssh_request(cfg, cfg["reference"], PILOT)
     if reference["platform"] != "Windows" or reference["probe_sha256"] != expected_sha:
         raise VMError("Windows pilot receipt identity or binary SHA differs")
+    # Verify the reference receipt before executing the Wine candidate.
+    try:
+        _verify(reference)
+    except (EvidenceError, ValueError) as exc:
+        return {"status": "BLOCKED_ENV",
+                "reason": "Windows probe receipt invalid: " + str(exc)[:120]}
     # Same exact PE, fixed path, no arbitrary caller-provided CLI arguments.
     start = time.monotonic()
     try:
@@ -129,6 +139,10 @@ def pilot(*, manifest_sha256: str, hosts: Path | None = None, yes: bool = False)
     except (VMError, OSError, subprocess.TimeoutExpired) as exc:
         return {"status": "BLOCKED_ENV", "reason": "Isolated Wine candidate unavailable: "
                 + str(exc)[:120]}
+    if exit_code != 0:
+        # Do not echo untrusted guest/PE stderr into operator or model output.
+        return {"status": "BLOCKED_ENV",
+                "reason": f"Wine probe failed (exit_code={exit_code}; output withheld)"}
     candidate = {
         "schema_version": 1, "probe": PILOT, "probe_sha256": expected_sha,
         "platform": "Linux+Wine", "release": "docker-linux-wine",
@@ -141,7 +155,6 @@ def pilot(*, manifest_sha256: str, hosts: Path | None = None, yes: bool = False)
         json.dumps(candidate, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     try:
-        _verify(reference)
         _verify(candidate)
         outcome = compare_probe_receipts(reference, candidate)
     except (EvidenceError, ValueError) as exc:

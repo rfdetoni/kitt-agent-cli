@@ -77,6 +77,26 @@ Prefer disposable prefixes under `/tmp` for untrusted sample testing.
 The container shares the host kernel: use a dedicated VM for unsafe third-party
 samples.
 
+## Isolated Oracle pilot and Wine HOME (Agent CLI 0.88.16)
+
+The Docker differential pilot runs Wine under the host UID with a read-only
+root, a temporary networkless tmpfs, and the hash-pinned KITT-authored PE.
+The initial launcher used `HOME=/tmp`; Debian Wine rejects this because
+the root-owned /tmp mount is not owned by the non-root caller. The pilot now
+sets `HOME=/tmp/kitt-home` and `WINEPREFIX=/tmp/kitt-home/.wine`, creates
+the private HOME using a constant no-input shell preamble (`umask 077`),
+then execs the fixed 64-bit Wine loader. No host HOME, credentials, workspace
+or Windows OEM directory is mounted.
+
+A nonzero Wine exit reports only `Wine probe failed (exit_code=N; output
+withheld)`; the validator still fails closed on timeouts, incomplete receipts
+or divergent JSON observations. There is no need to install wine32 for the
+64-bit event_auto_reset pilot and no change to the Linux RE image pin.
+
+Check using `kitt re lab verify --full` after upgrading Agent CLI.
+Actual Windows/Dockurr and Wine E2E must be validated on the operator's
+machine; mock-based CI is not a real guest run.
+
 ## Validation and limits
 
 The CI image workflow must actually build the Wine and full profiles and
