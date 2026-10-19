@@ -22,11 +22,18 @@ installation does **not** include an editable Wine-Staging source checkout.
 
 ## Rebuild the image on your host
 
-Run **on the Linux host, outside `kitt re shell linux`**:
+Run **on the Linux host, outside `kitt re shell linux`**, with Agent CLI
+0.88.13 or newer. Prefer the CI-built published image:
+
+```sh
+kitt vm container pull --runtime docker --image toolbox --profile full
+docker image inspect --format '{{.Id}}' kitt/linux-re:full-0.86.11
+```
+
+Or build the image locally from the checked-out Agent CLI source:
 
 ```sh
 kitt vm container build --runtime docker --image toolbox --profile full
-docker image inspect --format '{{.Id}}' kitt/linux-re:full-0.86.11
 ```
 
 For the existing managed `kitt-re-full`, replace only its container while
