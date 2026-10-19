@@ -83,9 +83,21 @@ def respond(request: dict, *, state_root: Path | None = None) -> dict | None:
             observation = status(state_root=state_root)
             if not isinstance(observation, dict):
                 raise ValueError("Unrecognized guest status")
-            # No credentials or host file content is returned.
-            allowed = ("status", "guests", "oracle_ready", "ssh", "wine", "probe", "note")
-            result_data = {k: observation[k] for k in allowed if k in observation}
+            # Only status metadata may cross the MCP boundary: no host paths,
+            # container IDs, SSH configuration or analyst artefacts.
+            guests = observation.get("guests")
+            cleaned = {}
+            if isinstance(guests, dict):
+                for role in ("linux", "windows"):
+                    entry = guests.get(role)
+                    if isinstance(entry, dict):
+                        cleaned[role] = {
+                            k: entry[k] for k in ("status", "backend", "environment", "managed")
+                            if type(entry.get(k)) in (str, bool)
+                        }
+            result_data = {"status": observation.get("status", "BLOCKED_ENV"),
+                           "guests": cleaned, "oracle_ready": False,
+                           "guest_attested": False}
         elif name == "windows_oracle_doctor" and set(args) == {"manifest_sha256"}:
             digest = args["manifest_sha256"]
             if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
