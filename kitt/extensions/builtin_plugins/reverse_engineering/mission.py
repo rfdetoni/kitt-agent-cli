@@ -109,6 +109,22 @@ def _mission(path: Path, workspace: Path) -> list[str]:
     return names
 
 
+def _ssh_failure_code(stderr: bytes) -> str:
+    """Classify known SSH failures without exposing host, username or key paths."""
+    message = stderr.decode("utf-8", "replace").lower()[-8192:]
+    if "host key verification failed" in message or "remote host identification has changed" in message:
+        return "SSH_HOST_KEY_REJECTED"
+    if "permission denied" in message or "authentication failed" in message:
+        return "SSH_AUTH_FAILED"
+    if "connection refused" in message or "no route to host" in message or "network is unreachable" in message or "could not resolve hostname" in message:
+        return "SSH_UNAVAILABLE"
+    if "connection timed out" in message or "operation timed out" in message:
+        return "SSH_TIMEOUT"
+    if "connection closed" in message or "kex_exchange_identification" in message:
+        return "SSH_DISCONNECTED"
+    return "SSH_FAILED"
+
+
 def _ssh_exchange(hosts: dict, alias: str, request: dict, *, timeout: int = 90) -> dict:
     """One fixed-protocol request over the operator-pinned SSH transport."""
     ssh = shutil.which("ssh")
@@ -153,7 +169,9 @@ def _ssh_exchange(hosts: dict, alias: str, request: dict, *, timeout: int = 90) 
         out.seek(0)
         raw = out.read(MAX_REMOTE_OUTPUT)
         if status != 0:
-            raise MissionError(f"Guest {alias} exited {status}; do not auto-retry side effects")
+            err.seek(0)
+            code = _ssh_failure_code(err.read(8192))
+            raise MissionError(f"Guest {alias}: {code} (ssh exit {status}; no probe replay)")
     try:
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_duplicates)
     except (ValueError, UnicodeError, RecursionError) as exc:
@@ -177,8 +195,18 @@ def _ssh_request(hosts: dict, alias: str, probe: str) -> dict:
 def probe_guest_info(hosts: dict, *, alias: str | None = None) -> dict:
     """Validate read-only guest identity without running any probe or script."""
     target = alias or hosts["reference"]
-    data = _ssh_exchange(hosts, target, {"version": 1, "method": "probe.info", "probe": None},
-                         timeout=20)
+    # Only the side-effect-free probe.info handshake can be retried. Never retry probe.run.
+    for attempt in range(2):
+        try:
+            data = _ssh_exchange(hosts, target,
+                                 {"version": 1, "method": "probe.info", "probe": None},
+                                 timeout=20)
+            break
+        except MissionError as exc:
+            if attempt or not any(code in str(exc) for code in
+                                  ("SSH_UNAVAILABLE", "SSH_TIMEOUT", "SSH_DISCONNECTED")):
+                raise
+
     if set(data) != {"version", "guest"} or type(data["version"]) is not int or data["version"] != 1:
         raise MissionError("Guest does not support the probe.info protocol")
     guest = data["guest"]

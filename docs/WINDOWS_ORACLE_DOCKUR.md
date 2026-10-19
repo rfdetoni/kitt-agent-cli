@@ -54,6 +54,21 @@ If the image, compiler, network, Windows license, OpenSSH capability, guest
 firewall or first-boot script fails, report BLOCKED_ENV. There is no fallback
 to unrestricted remote PowerShell or bypass of SSH host-key validation.
 
+## SSH diagnostics and recovery
+
+Agent CLI 0.88.14 maps known SSH errors to phase-specific statuses without
+printing raw stderr: SSH_UNAVAILABLE, SSH_TIMEOUT, SSH_DISCONNECTED,
+SSH_AUTH_FAILED, SSH_HOST_KEY_REJECTED and SSH_FAILED.
+The read-only probe.info handshake alone may repeat once on a transient
+transport error. Mutating probe.run requests never repeat automatically.
+
+The OEM records C:\\KittOracle\\bootstrap.status as PROVISIONING, then
+READY on completion or FAILED when the installer can record failure. A missing
+file is not proof of installation failure: the Windows first boot may still be
+running. Check the local noVNC console, Docker published TCP/22 and Windows
+sshd first. Preserve SSH host-key pinning and do not recreate the Windows disk
+without separate explicit operator approval.
+
 ## Check real readiness
 
 When the Windows console shows the installed desktop and bootstrap.status

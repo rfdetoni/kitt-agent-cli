@@ -45,5 +45,9 @@ def doctor(*, manifest_sha256: str, hosts: Path | None = None) -> dict:
                 "transport": "operator-pinned-ssh-forced-command",
                 "guest": identity, "guest_attested": False}
     except (MissionError, VMError, OSError, ValueError) as exc:
-        return {"oracle_ready": False, "status": "BLOCKED_ENV",
-                "reason": str(exc)[:200]}
+        # Preserve the actionable SSH phase without echoing remote stderr or secrets.
+        reason = str(exc)[:200]
+        states = ("SSH_UNAVAILABLE", "SSH_TIMEOUT", "SSH_DISCONNECTED",
+                  "SSH_AUTH_FAILED", "SSH_HOST_KEY_REJECTED", "SSH_FAILED")
+        state = next((item for item in states if item in reason), "BLOCKED_ENV")
+        return {"oracle_ready": False, "status": state, "reason": reason}

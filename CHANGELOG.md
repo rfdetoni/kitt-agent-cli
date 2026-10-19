@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.14 — diagnósticos SSH no Windows Oracle
+
+Classifica SSH_UNAVAILABLE, SSH_TIMEOUT, SSH_DISCONNECTED, SSH_AUTH_FAILED e SSH_HOST_KEY_REJECTED sem expor stderr privado. Apenas o handshake read-only probe.info pode repetir uma vez falha de transporte transitória; execução de probes jamais é repetida automaticamente. Bootstrap registra PROVISIONING/FAILED/READY no guest. Mantém pins do Protocol 0.14.2; sincroniza uv.lock e metadados. [Notas](docs/RELEASE_0.88.14.md).
+
+
 ## 0.88.13 — Linux RE guest: Wine, Wine64 and WineHQ Staging
 
 New image 0.86.11 adds independent Debian Wine and signed WineHQ Staging amd64/i386 with runtime checks. Adds `kitt re lab upgrade-linux --approve` with isolated preflight, workspace preservation and rollback. [Instruções](docs/RE_WINE_STAGING.md) · [Notas](docs/RELEASE_0.88.13.md).
