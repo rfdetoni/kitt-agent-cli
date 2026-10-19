@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.12 — MCP de guests RE com acesso somente leitura
+
+Servidor MCP stdio `kitt.re_guest_mcp` com status Linux/Windows e verificação do Windows Oracle. Bloqueia shell/execução arbitrária, exige manifesto SHA-256 e remove caminhos/identificadores privados; ativação explícita pelo operador. [Notas](docs/RELEASE_0.88.12.md).
+
 ## 0.88.11 — Protocol 0.14.2 pin and canonical CHANGELOG
 
 Aligns immutable Protocol commit, Agent metadata and uv.lock. No behavioral changes to the offline Clean-Room pipeline; E2E Windows Oracle remains unverified. [Notas](docs/RELEASE_0.88.11.md).
