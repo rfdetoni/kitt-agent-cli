@@ -617,6 +617,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Recent HMAC token from recreate --dry-run; never implied by --yes")
     re_recreate.add_argument("--accept-license", action="store_true",
         help="Permit reinstalling a Windows guest after an explicitly approved reset")
+    upgrade = re_lab_actions.add_parser(
+        "upgrade-linux", help="Replace managed Linux toolbox with locally prepared full image; preserve workspace and Windows")
+    upgrade.add_argument("--state-root", type=Path, default=None)
+    upgrade.add_argument("--approve", action="store_true",
+                         help="Confirm managed Linux container replacement; never deletes workspace")
     for action in ("doctor", "status", "setup", "up", "down", "verify"):
         command = re_lab_actions.add_parser(action)
         command.add_argument("--state-root", type=Path, default=None,
@@ -1134,6 +1139,9 @@ def main(argv=None) -> int:
                             yes=args.yes, accept_license=args.accept_license)
                 elif action == "verify":
                     result = re_lab.verify(state_root=args.state_root, full=args.full)
+                elif action == "upgrade-linux":
+                    result = re_lab.upgrade_linux(
+                        state_root=args.state_root, approve=args.approve)
                 else:
                     if args.dry_run:
                         result = {"status": "PLAN_ONLY", "action": action,
