@@ -28,8 +28,8 @@ jobs:
       - name: Build Debian QEMU plus noVNC container
         run: |
           set -euo pipefail
-          docker build -f kitt/vm_assets/Dockerfile.qemu -t kitt/qemu-vm:0.86.10 kitt/vm_assets
-          docker run --rm --entrypoint sh kitt/qemu-vm:0.86.10 -c \
+          docker build -f kitt/vm_assets/Dockerfile.qemu -t kitt/qemu-vm:0.86.11 kitt/vm_assets
+          docker run --rm --entrypoint sh kitt/qemu-vm:0.86.11 -c \
             'command -v qemu-system-x86_64 && command -v qemu-img && command -v swtpm && command -v websockify'
       - name: Publish pinned QEMU image
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -38,8 +38,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker tag kitt/qemu-vm:0.86.10 ghcr.io/rfdetoni/kitt-qemu-vm:0.86.10
-          docker push ghcr.io/rfdetoni/kitt-qemu-vm:0.86.10
+          docker tag kitt/qemu-vm:0.86.11 ghcr.io/rfdetoni/kitt-qemu-vm:0.86.11
+          docker push ghcr.io/rfdetoni/kitt-qemu-vm:0.86.11
 
   re-toolbox:
     runs-on: ubuntu-latest
@@ -54,18 +54,18 @@ jobs:
       - name: Build Debian RE image with GDB/LLDB
         run: |
           set -euo pipefail
-          docker build -f kitt/vm_assets/Dockerfile.re --target base -t kitt/linux-re:base-0.86.10 kitt/vm_assets
-          docker run --rm kitt/linux-re:base-0.86.10 gdb --version
+          docker build -f kitt/vm_assets/Dockerfile.re --target base -t kitt/linux-re:base-0.86.11 kitt/vm_assets
+          docker run --rm kitt/linux-re:base-0.86.11 gdb --version
       - name: Build Wine/MinGW image
         run: |
           set -euo pipefail
-          docker build -f kitt/vm_assets/Dockerfile.re --target wine -t kitt/linux-re:wine-0.86.10 kitt/vm_assets
-          docker run --rm kitt/linux-re:wine-0.86.10 sh -c 'command -v wine || command -v wine64; command -v x86_64-w64-mingw32-gcc'
+          docker build -f kitt/vm_assets/Dockerfile.re --target wine -t kitt/linux-re:wine-0.86.11 kitt/vm_assets
+          docker run --rm kitt/linux-re:wine-0.86.11 sh -c 'command -v wine || command -v wine64; command -v x86_64-w64-mingw32-gcc'
       - name: Build full image with verified Ghidra and Frida
         run: |
           set -euo pipefail
-          docker build -f kitt/vm_assets/Dockerfile.re --target full -t kitt/linux-re:full-0.86.10 kitt/vm_assets
-          docker run --rm kitt/linux-re:full-0.86.10 sh -c \
+          docker build -f kitt/vm_assets/Dockerfile.re --target full -t kitt/linux-re:full-0.86.11 kitt/vm_assets
+          docker run --rm kitt/linux-re:full-0.86.11 sh -c \
             'test -f /opt/ghidra/support/analyzeHeadless && python -c "import frida; print(frida.__version__)" && node --version && rea --version'
       - name: Publish pinned RE images
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -75,6 +75,6 @@ jobs:
           set -euo pipefail
           echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for tier in base wine full; do
-            docker tag "kitt/linux-re:$tier-0.86.10" "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.86.10"
-            docker push "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.86.10"
+            docker tag "kitt/linux-re:$tier-0.86.11" "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.86.11"
+            docker push "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.86.11"
           done
