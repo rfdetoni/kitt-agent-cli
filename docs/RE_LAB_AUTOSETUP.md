@@ -36,6 +36,27 @@ Fixed, benign differential event-probe pilot using Windows and current toolbox W
 
     kitt re lab verify --full
 
+## Host source staging for networkless Linux RE
+
+The managed `kitt-re-full` has `--network none`, and the Linux guest cannot
+clone GitHub repositories directly. An operator with host network access can
+stage the official Wine-Staging patch repository in the bind-mounted workspace:
+
+```bash
+kitt re lab stage-wine --approve
+kitt re shell linux
+ls /workspace/sources/wine-staging
+```
+
+This command runs Git only on the host, requires an interactive operator
+terminal, checks the managed Linux workspace and refuses to replace existing
+source trees. It reports the exact Git commit and exposes the same source under
+`/workspace/sources/wine-staging`. It does not stage Wine upstream itself,
+apply patches, enable guest network, authenticate GitHub, or grant model access
+to arbitrary guest processes. The Wine-Staging repository is a patch collection;
+a comprehensive DLL stub inventory also requires a compatible upstream Wine
+source checkout.
+
 ## Ownership and persistence
 
 KITT uses private data under ~/.local/share/kitt/re-lab (0700/0600).

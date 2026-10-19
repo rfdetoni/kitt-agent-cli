@@ -713,9 +713,31 @@ class TurnProcessor(
         runtime_definition["args"] = runtime_args
         return [runtime_definition]
 
-    def _tool_instructions(self, enabled_tools, planned_tools=None) -> str:
+    def _tool_instructions(
+        self, enabled_tools, planned_tools=None, *,
+        agent_envelope: bool = False, capability_snapshot: str = "",
+    ) -> str:
         if not enabled_tools:
             return "No host tools are enabled. Answer directly."
+
+        if agent_envelope and "kitt_runtime" in enabled_tools and len(enabled_tools) == 1:
+            # The gateway already receives the exact tool schema separately.
+            # Do not teach its model the legacy <kitt-tool> response format.
+            return (
+                "Host tool: kitt_runtime. Use ONLY the operations enumerated in "
+                "the host-provided tool schema. A request MUST be one JSON object "
+                "with action=use_tool, tool=kitt_runtime, "
+                "tool_input={operation,arguments}, content=null, "
+                "reasoning_summary and loop=null. "
+                "Do not use XML tool tags. "
+                "repo.write_file creates files; patch.apply edits files; "
+                "process.run takes argv arrays, not shell strings, and cannot "
+                "create workspace files using shell redirection. "
+                "Host policy alone decides network access and approvals. "
+                "Avoid repeated environment discovery; act on the snapshot "
+                "and use host receipts to validate actual work.\n"
+                + capability_snapshot
+            )
 
         if "kitt_runtime" in enabled_tools and len(enabled_tools) == 1:
             edit_strategy = str(

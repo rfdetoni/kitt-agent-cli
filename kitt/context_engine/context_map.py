@@ -10,6 +10,9 @@ _STOP = {
     "the", "and", "for", "with", "from", "this", "that", "into", "when",
     "then", "uma", "para", "com", "como", "este", "esta", "isso", "que",
     "implementar", "implementation", "fix", "corrigir", "adicionar", "add",
+    "prefer", "each", "kind", "task", "final", "local_id", "depends_on",
+    "validation_prompt", "success_criteria", "check_ids", "items",
+    "original", "request", "data", "contract", "kitt",
 }
 
 

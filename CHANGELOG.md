@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.17 — execution discovery bootstrap and RE host source staging
+
+Adds one host-owned capability snapshot for reverse-proxy agent-loop prompts, a single JSON action format rather than conflicting XML tool examples, contract-aware context retrieval, discovery metrics and a bounded repeated-discovery checkpoint. Adds operator-only, non-destructive Wine-Staging host clone into the networkless RE toolbox's shared workspace, without exposing SSH credentials or guest internet access. Tests, uv.lock and runbooks updated. [Notas](docs/RELEASE_0.88.17.md).
+
+
 ## 0.88.16 — isolated Wine pilot private HOME
 
 Fix the Windows-versus-Wine differential pilot: the non-root Wine process previously received root-owned `HOME=/tmp` and exited 1 before executing the known PE. Use a mode 0700 private HOME beneath the disposable tmpfs and a fixed, constant shell bootstrap to create it, preserving non-root UID, immutable image, pinned PE, read-only root, no network and no privileges. Reject invalid Windows reference receipts before Wine execution; report only the bounded Wine exit code, not raw probe stderr. Adds regression tests, runbook and synchronized uv.lock / protocol pin. [Notas](docs/RELEASE_0.88.16.md).

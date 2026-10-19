@@ -407,6 +407,8 @@ class TurnToolLoopMixin:
         tool_calls = 0
         malformed_calls = 0
         policy_denials = 0
+        discovery_streak = 0
+        discovery_total = 0
         output_limit_recoveries = 0
         edit_repairs_pending: set[str] = set()
 
@@ -1172,12 +1174,44 @@ class TurnToolLoopMixin:
                 finally:
                     self.turn_guard.end(cmd.turn_id)
                 output_str = retained.preview
+            operation = _runtime_operation_name(tool_name, tool_args)
+            argv = tool_args.get("arguments", {}).get("argv", []) if isinstance(tool_args, dict) else []
+            is_environment_discovery = (
+                operation in {"repo.list", "repo.context_map"}
+                or (
+                    operation == "process.run"
+                    and isinstance(argv, list)
+                    and bool(argv)
+                    and str(argv[0]).rsplit("/", 1)[-1] in {
+                        "pwd", "ls", "which", "whereis", "uname", "df", "docker", "git", "kitt"
+                    }
+                    and not any(str(item) in {"clone", "fetch", "push", "commit", "pull"}
+                                for item in argv[1:])
+                )
+            )
+            if is_environment_discovery:
+                discovery_streak += 1
+                discovery_total += 1
+            else:
+                discovery_streak = 0
+            trace_event(
+                logger, "tool_loop.discovery_metric", turn_id=cmd.turn_id,
+                operation=operation, discovery=is_environment_discovery,
+                consecutive=discovery_streak, total=discovery_total,
+            )
             tool_prefix = _host_tool_prefix(tool_name, host_status)
             tool_suffix = (
                 "\nIf the user's request is now satisfied, STOP calling tools and answer "
                 "directly with a concise summary. A read/list/search result never satisfies "
                 "a requested workspace mutation; in that case, call the minimal mutation tool next."
             )
+            if discovery_streak >= 4:
+                tool_suffix += (
+                    "\n[KITT DISCOVERY CHECKPOINT] Multiple environment inspections "
+                    "without implementation. The previous host receipts are authoritative. "
+                    "Choose the smallest permitted execution or report a concrete policy "
+                    "blocker; do not rerun version/status/help/list commands."
+                )
             output_str = self._fit_tool_output(
                 request.system_prompt,
                 execution_messages,

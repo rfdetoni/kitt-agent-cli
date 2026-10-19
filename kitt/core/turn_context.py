@@ -472,6 +472,10 @@ class TurnContextMixin:
             query_elements.append(cmd.prompt)
         query_elements.extend(working_paths)
         context_query = " ".join(dict.fromkeys(query_elements)) if query_elements else cmd.prompt
+        # A generated Goal/Planner prompt may quote a lengthy schema. Search
+        # for the operator's objective, not the orchestration contract fields.
+        from kitt.context.query_plan import task_retrieval_text
+        context_query = task_retrieval_text(context_query)
         retrieval_ratio = getattr(self.config, "context_retrieval_token_ratio", 0.25)
         adaptive_fn = self._adaptive_retrieval_ratio_fn
         if adaptive_fn is not None:
@@ -676,10 +680,18 @@ class TurnContextMixin:
             if plan.enabled_tools and not cmd.no_history and self.harness_service and self.history_service
             else ""
         )
+        capability_snapshot = ""
+        if llm_first_proxy and plan.enabled_tools:
+            from kitt.core.host_capabilities import capability_snapshot_for_prompt
+            capability_snapshot = capability_snapshot_for_prompt(
+                cmd.prompt, self.root_path
+            )
         tool_instructions = (
             self._tool_instructions(
                 tools_for_contract,
                 planned_tools=plan.enabled_tools,
+                agent_envelope=llm_first_proxy,
+                capability_snapshot=capability_snapshot,
             )
             if plan.enabled_tools
             else ""

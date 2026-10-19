@@ -617,6 +617,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Recent HMAC token from recreate --dry-run; never implied by --yes")
     re_recreate.add_argument("--accept-license", action="store_true",
         help="Permit reinstalling a Windows guest after an explicitly approved reset")
+    stage = re_lab_actions.add_parser(
+        "stage-wine", help="Operator-only clone official Wine-Staging on host into guest shared workspace")
+    stage.add_argument("--state-root", type=Path, default=None)
+    stage.add_argument("--approve", action="store_true",
+                       help="Approve the fixed GitHub clone on the networked host")
     upgrade = re_lab_actions.add_parser(
         "upgrade-linux", help="Replace managed Linux toolbox with locally prepared full image; preserve workspace and Windows")
     upgrade.add_argument("--state-root", type=Path, default=None)
@@ -1139,6 +1144,9 @@ def main(argv=None) -> int:
                             yes=args.yes, accept_license=args.accept_license)
                 elif action == "verify":
                     result = re_lab.verify(state_root=args.state_root, full=args.full)
+                elif action == "stage-wine":
+                    from kitt.re_source_stage import stage_wine
+                    result = stage_wine(state_root=args.state_root, approve=args.approve)
                 elif action == "upgrade-linux":
                     result = re_lab.upgrade_linux(
                         state_root=args.state_root, approve=args.approve)
