@@ -26,7 +26,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md LICENSE ./
 COPY kitt ./kitt
-RUN python -m pip install --no-cache-dir .
+RUN --mount=type=cache,id=kitt-cli-pip,target=/root/.cache/pip python -m pip install .
 
 RUN mkdir -p /workspace /home/kitt/.kitt \
     && chown -R kitt:kitt /workspace /home/kitt /app
