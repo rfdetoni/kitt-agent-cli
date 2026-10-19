@@ -57,7 +57,6 @@ from kitt.core.turn_tool_helpers import (
     _goal_needs_first_host_action,
     _task_plan_context,
     _observational_fingerprint,
-    _browser_trace_origin,
     _browser_trace_call,
     _browser_trace_result,
     _tool_feedback_suffix,
