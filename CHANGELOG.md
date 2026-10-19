@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.13 — Linux RE guest: Wine, Wine64 and WineHQ Staging
+
+New image 0.86.11 adds independent Debian Wine and signed WineHQ Staging amd64/i386 with runtime checks. Adds `kitt re lab upgrade-linux --approve` with isolated preflight, workspace preservation and rollback. [Instruções](docs/RE_WINE_STAGING.md) · [Notas](docs/RELEASE_0.88.13.md).
+
 ## 0.88.12 — MCP de guests RE com acesso somente leitura
 
 Servidor MCP stdio `kitt.re_guest_mcp` com status Linux/Windows e verificação do Windows Oracle. Bloqueia shell/execução arbitrária, exige manifesto SHA-256 e remove caminhos/identificadores privados; ativação explícita pelo operador. [Notas](docs/RELEASE_0.88.12.md).
