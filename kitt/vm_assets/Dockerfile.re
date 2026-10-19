@@ -15,9 +15,50 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 CMD ["/bin/sh"]
+# Provide Debian Wine as a stable comparison baseline, including its
+# user-facing launcher (wine64 alone does not install /usr/bin/wine).
 FROM base AS wine
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wine64 mingw-w64 && rm -rf /var/lib/apt/lists/*
+    wine wine64 mingw-w64 fonts-wine gnupg \
+ && rm -rf /var/lib/apt/lists/*
+
+# WineHQ Staging is an actual independent Wine distribution, not a renamed
+# Debian Wine binary. Keep the Debian /usr/bin/wine as the reference engine.
+# WineHQ's signed Debian Trixie repo supplies /opt/wine-staging/bin/wine.
+# The known long-lived WineHQ key fingerprint is verified before apt uses it.
+ARG WINEHQ_KEY_FINGERPRINT=D43F640145369C51D786DDEA76F1A20FF987672F
+RUN set -eu; \
+    install -d -m 0755 /etc/apt/keyrings; \
+    curl --fail --location --retry 3 --proto '=https' \
+      https://dl.winehq.org/wine-builds/winehq.key \
+      --output /etc/apt/keyrings/winehq-archive.asc; \
+    actual="$(gpg --batch --show-keys --with-colons \
+      /etc/apt/keyrings/winehq-archive.asc | awk -F: '$1=="fpr" {print $10; exit}')"; \
+    test "$actual" = "$WINEHQ_KEY_FINGERPRINT"; \
+    printf '%s\n' \
+      'Types: deb' \
+      'URIs: https://dl.winehq.org/wine-builds/debian' \
+      'Suites: trixie' \
+      'Components: main' \
+      'Architectures: amd64' \
+      'Signed-By: /etc/apt/keyrings/winehq-archive.asc' \
+      > /etc/apt/sources.list.d/kitt-winehq-staging.sources; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      wine-staging wine-staging-amd64; \
+    rm -rf /var/lib/apt/lists/*; \
+    test -x /usr/bin/wine; \
+    test -x /usr/lib/wine/wine64; \
+    test -x /opt/wine-staging/bin/wine; \
+    ln -s /usr/lib/wine/wine64 /usr/local/bin/wine64; \
+    ln -s /opt/wine-staging/bin/wine /usr/local/bin/wine-staging; \
+    install -d -m 0755 /usr/share/kitt; \
+    dpkg-query -W -f='${Package}=${Version}\n' \
+      wine wine64 wine-staging wine-staging-amd64 \
+      > /usr/share/kitt/re-wine-packages.lock; \
+    wine --version; \
+    wine64 --version; \
+    wine-staging --version
 CMD ["/bin/sh"]
 FROM wine AS full
 # Keep the REA runtime in full only. base/wine images remain lightweight.
@@ -43,8 +84,10 @@ RUN python3 -m venv /opt/frida \
  && /opt/frida/bin/pip install --no-cache-dir \
     "frida==${FRIDA_VERSION}" "frida-tools==${FRIDA_TOOLS_VERSION}"
 ENV PATH="/opt/frida/bin:${PATH}"
-# Validate that the installed REA CLI, Node runtime, Ghidra and Frida are available.
-RUN node --version \
+# Validate both independent Wine distributions, REA, Ghidra and Frida at build time.
+RUN wine --version && wine64 --version && wine-staging --version \
+ && test -s /usr/share/kitt/re-wine-packages.lock \
+ && node --version \
  && rea --version \
  && test -f /opt/ghidra/support/analyzeHeadless \
  && /opt/frida/bin/python -c 'import frida; print(frida.__version__)'
