@@ -82,7 +82,11 @@ def paths_from_tool_start(runtime, event) -> list[str]:
         inner: dict[str, Any] = (
             dict(raw_inner) if isinstance(raw_inner, dict) else {}
         )
-        if operation == "repo.edit_symbol":
+        if operation == "repo.write_file":
+            path = inner.get("path") or inner.get("file")
+            if path:
+                paths.append(str(path))
+        elif operation == "repo.edit_symbol":
             path = (
                 inner.get("path")
                 or inner.get("file")

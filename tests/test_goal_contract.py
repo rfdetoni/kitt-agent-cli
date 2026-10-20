@@ -584,6 +584,19 @@ class GoalContractTests(unittest.TestCase):
         self.assertTrue(result["task_plan_context"])
         self.assertEqual(user_turn.context_calls, 1)
 
+    def test_runtime_write_path_is_included_in_goal_review(self):
+        from kitt.goals.review_snapshot import paths_from_tool_start
+        event = SimpleNamespace(
+            tool_name="kitt_runtime",
+            args={"operation": "repo.write_file",
+                  "arguments": {"path": "reports/t01-win32u-inventory.py",
+                                "content": "print(1)"}},
+        )
+        self.assertEqual(
+            paths_from_tool_start(SimpleNamespace(), event),
+            ["reports/t01-win32u-inventory.py"],
+        )
+
     def test_previous_host_reads_survive_new_goal_turn_and_mutations_invalidate(self):
         state = RuntimeStateStore(self.db, "ws", "conv")
         journal = GoalEvidenceJournal(state, "goal_1", "T01")
