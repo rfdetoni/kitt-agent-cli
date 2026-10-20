@@ -235,8 +235,12 @@ class LazyInstructionSelector:
         remaining = self.max_total_chars
         materialized: list[InstructionDescriptor] = []
         for index, item in enumerate(selected):
+            if remaining <= 0:
+                break
             slots = max(1, len(selected) - index)
-            budget = max(256, remaining // slots)
+            # Even when many instructions compete for the budget, never
+            # spend more characters than remain in the shared context window.
+            budget = min(remaining, max(256, remaining // slots))
             excerpt = self._excerpt(item, query, budget)
             remaining = max(0, remaining - len(excerpt))
             materialized.append(
