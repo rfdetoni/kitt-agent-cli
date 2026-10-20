@@ -43,16 +43,20 @@ class GoalStepExecutor:
         lowered = value.casefold()
         if "execution denied by policyengine" in lowered or "capability is not granted" in lowered:
             return "POLICY"
+        if "command sandbox unavailable" in lowered or "requires functional bubblewrap" in lowered:
+            return "ENVIRONMENT"
         return "UNSPECIFIED"
 
     @staticmethod
     def _ambiguous_webchat_capture(error: str) -> bool:
         """A submitted browser turn may have completed; do not resend it."""
         value = str(error or "").casefold()
-        return (
-            "kitt reverse proxy" in value
-            and "ui_timeout" in value
-            and "no model action was received or executed" in value
+        return "kitt reverse proxy" in value and (
+            ("ui_timeout" in value and "no model action was received or executed" in value)
+            or ("do not automatically replay" in value and (
+                "unknown submission state" in value
+                or "possibly submitted webchat turn" in value
+            ))
         )
 
     def __init__(self, runtime_getter, reviewer_factory=None):

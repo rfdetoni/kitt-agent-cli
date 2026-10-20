@@ -366,6 +366,20 @@ class GoalContractTests(unittest.TestCase):
         exhausted = replace(goal, turns_used=goal.max_turns)
         self.assertEqual(scheduler._budget_reason(exhausted, time.time()), "turn budget exceeded")
 
+    def test_uncertain_proxy_submission_and_sandbox_block_do_not_retry(self):
+        self.assertTrue(GoalStepExecutor._ambiguous_webchat_capture(
+            "KITT reverse proxy stream timed out with unknown submission state; "
+            "do not automatically replay the logical request."
+        ))
+        self.assertTrue(GoalStepExecutor._ambiguous_webchat_capture(
+            "KITT reverse proxy returned an ambiguous request timeout; "
+            "do not automatically replay a possibly submitted WebChat turn."
+        ))
+        self.assertEqual(GoalStepExecutor._blocked_category(
+            "Command sandbox unavailable: Strong sandbox profile workspace-write "
+            "requires functional bubblewrap >= 0.12"
+        ), "ENVIRONMENT")
+
     def test_budget_checkpoint_is_a_resumable_goal_block(self):
         self.assertEqual(
             GoalStepExecutor._blocked_category(
