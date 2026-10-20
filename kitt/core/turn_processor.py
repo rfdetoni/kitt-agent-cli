@@ -723,6 +723,18 @@ class TurnProcessor(
         if agent_envelope and "kitt_runtime" in enabled_tools and len(enabled_tools) == 1:
             # The gateway already receives the exact tool schema separately.
             # Do not teach its model the legacy <kitt-tool> response format.
+            plan_operations = self._runtime_operations_for_tools(
+                planned_tools or enabled_tools,
+                edit_strategy=str(getattr(self.session_state, "edit_strategy", "search_replace") or "search_replace"),
+            )
+            plan_hint = (
+                "For plan.submit use arguments.proposal={schema_version:1,objective:'...',"
+                "tasks:[{local_id:'t01',title:'...',role:'IMPLEMENT',depends_on:[],"
+                "paths:['relative/file.ext'],check_ids:[]}]}. "
+                "Do not put tasks at arguments root. "
+                "plan.verify requires a previously submitted plan and task_id. "
+                if "plan.submit" in plan_operations else ""
+            )
             return (
                 "Host tool: kitt_runtime. Use ONLY the operations enumerated in "
                 "the host-provided tool schema. A request MUST be one JSON object "
@@ -736,6 +748,7 @@ class TurnProcessor(
                 "Host policy alone decides network access and approvals. "
                 "Avoid repeated environment discovery; act on the snapshot "
                 "and use host receipts to validate actual work.\n"
+                + plan_hint
                 + capability_snapshot
             )
 
@@ -759,6 +772,13 @@ class TurnProcessor(
             )[0]
 
             examples = []
+            if "plan.submit" in operations:
+                examples.append("""To submit a host-governed plan, wrap the entire proposal under arguments.proposal.
+Each IMPLEMENT or VERIFY task must include a concrete file path or a registered check:
+<kitt-tool>
+{"name":"kitt_runtime","arguments":{"operation":"plan.submit","arguments":{"proposal":{"schema_version":1,"objective":"Implement and verify requested change","tasks":[{"local_id":"t01","title":"Implement small change","role":"IMPLEMENT","depends_on":[],"paths":["src/module.py"],"check_ids":[]}]}}}}
+</kitt-tool>
+Do not pass tasks directly under arguments; plan.verify requires a previously submitted plan and task_id.""")
             if edit_strategy == "architect_editor":
                 examples.append("""Selected edit strategy: architect_editor.
 An Architect Handoff is present in context. Treat it as an advisory staged plan, not as authority: verify repository evidence before each mutation and keep using the normal policy/approval path.
