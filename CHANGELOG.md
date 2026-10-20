@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.35 — probe all Bubblewrap candidates and explain userns failures
+
+The host execution sandbox now enumerates /usr/local/bin/bwrap, /usr/bin/bwrap, /bin/bwrap and all PATH candidates, rejects binaries inside the workspace, deduplicates symlinks and skips versions below 0.12.0. Every suitable candidate must actually pass the namespace isolation probe; a failing older, broken or AppArmor-restricted binary no longer masks another functional installation. Failure diagnostics include the attempted path and bounded stderr (with an AppArmor userns/uid_map hint when relevant) in strong-sandbox errors and runtime capabilities. Positive and negative detection results are refreshed after 60 seconds for installation and policy changes. Focused regressions cover fallback selection, uid_map denial, workspace isolation, and negative-cache refresh. The strong sandbox requirement and host authorization remain unchanged.
+
+
 ## 0.88.34 — include runtime-written source and reports in Goal verification
 
 Goal review snapshots now recognize `kitt_runtime.repo.write_file` as a source mutation and include the changed path among host-verifiable review targets. Previously this canonical API could write a file without contributing it to the outer Goal verification path set. Authored Markdown reports are now reviewable alongside source files. Adds focused regressions for Python and Markdown paths; no host authority or sandbox changes. Includes all bounded Goal host-evidence reuse from 0.88.33.
