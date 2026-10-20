@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import queue
 import threading
@@ -11,6 +12,8 @@ from pathlib import Path
 
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import TextDelta, TurnCancelled, TurnCompleted, TurnEvent, TurnFailed
+
+logger = logging.getLogger(__name__)
 
 _END = object()
 
