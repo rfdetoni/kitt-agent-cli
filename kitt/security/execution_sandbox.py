@@ -348,6 +348,35 @@ class ExecutionSandbox:
                 unique.append(path)
         return tuple(unique)
 
+    @classmethod
+    def _append_resolver_mounts(
+        cls,
+        wrapped: list[str],
+        resolver_paths: Sequence[Path],
+        *,
+        masked_root: Path,
+    ) -> None:
+        """Rebind only resolved resolver files masked by /run, never symlink destinations."""
+        mounted: set[Path] = set()
+        for resolver in resolver_paths:
+            try:
+                target = resolver.resolve(strict=True)
+                relative = target.relative_to(masked_root)
+                if target in mounted or not target.is_file():
+                    continue
+            except (OSError, ValueError):
+                continue
+            # /run has just been replaced with an empty tmpfs. Restore only
+            # the directory chain needed by the resolver file, not host /run.
+            parent = masked_root
+            for component in relative.parts[:-1]:
+                parent /= component
+                cls._append_sequence(wrapped, "--dir", str(parent))
+            cls._append_sequence(
+                wrapped, "--ro-bind-try", str(target), str(target)
+            )
+            mounted.add(target)
+
     def _bwrap_plan(
         self,
         executable: str,
@@ -380,25 +409,24 @@ class ExecutionSandbox:
             if hidden_root.is_dir():
                 self._append_sequence(wrapped, "--tmpfs", str(hidden_root))
 
-        # /etc/resolv.conf is commonly a symlink into /run. Rebind the host
-        # resolver inputs as read-only after masking /run so network-enabled
-        # profiles keep DNS without exposing runtime sockets.
-        for resolver_path in (
-            Path("/etc/resolv.conf"),
-            Path("/etc/hosts"),
-            Path("/etc/nsswitch.conf"),
-        ):
-            if resolver_path.exists():
-                self._append_sequence(
-                    wrapped,
-                    "--ro-bind-try",
-                    str(resolver_path),
-                    str(resolver_path),
-                )
+        # The root filesystem is already mounted read-only. Only resolver
+        # files hidden behind the new /run tmpfs need to be reintroduced.
+        # Binding /etc/resolv.conf to itself is invalid when it is a symlink
+        # (Ubuntu/systemd-resolved): Bubblewrap rejects symlink destinations.
+        network_isolated = profile == "workspace-write"
+        if not network_isolated:
+            self._append_resolver_mounts(
+                wrapped,
+                (
+                    Path("/etc/resolv.conf"),
+                    Path("/etc/hosts"),
+                    Path("/etc/nsswitch.conf"),
+                ),
+                masked_root=Path("/run"),
+            )
 
         self._append_sequence(wrapped, "--bind", str(scratch), str(scratch))
 
-        network_isolated = profile == "workspace-write"
         if network_isolated:
             wrapped.append("--unshare-net")
         if profile in {"workspace-write", "workspace-write+network"}:

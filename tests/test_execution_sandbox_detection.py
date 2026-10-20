@@ -116,3 +116,43 @@ def test_failed_probe_is_refreshed_after_bounded_cache_interval(tmp_path):
         current_time[0] += 61
         assert sandbox.is_strong_available()
         assert sandbox.bubblewrap_executable() == str(candidate)
+
+
+def test_symlinked_resolv_conf_is_bound_at_canonical_run_target(tmp_path):
+    masked_run = tmp_path / "run"
+    resolved_dir = masked_run / "systemd" / "resolve"
+    resolved_dir.mkdir(parents=True)
+    target = resolved_dir / "stub-resolv.conf"
+    target.write_text("nameserver 127.0.0.53\\n")
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    resolver = etc / "resolv.conf"
+    resolver.symlink_to(target)
+    original_file = etc / "hosts"
+    original_file.write_text("127.0.0.1 localhost\\n")
+    args = []
+    ExecutionSandbox._append_resolver_mounts(
+        args, (resolver, original_file), masked_root=masked_run
+    )
+    assert args == [
+        "--dir", str(masked_run / "systemd"),
+        "--dir", str(resolved_dir),
+        "--ro-bind-try", str(target), str(target),
+    ]
+    assert str(resolver) not in args
+    assert str(original_file) not in args
+
+
+def test_workspace_write_does_not_reintroduce_host_dns_after_run_mask(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    sandbox = ExecutionSandbox(workspace)
+    with patch.object(sandbox, "_scratch", return_value=scratch), (
+        patch.object(sandbox, "_sensitive_host_paths", return_value=())
+    ), patch.object(sandbox, "_append_resolver_mounts") as resolver_mounts:
+        sandbox._bwrap_plan("bwrap", "workspace-write", ["/usr/bin/true"], workspace)
+        resolver_mounts.assert_not_called()
+        sandbox._bwrap_plan("bwrap", "workspace-write+network", ["/usr/bin/true"], workspace)
+        resolver_mounts.assert_called_once()
