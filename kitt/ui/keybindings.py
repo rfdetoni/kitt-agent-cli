@@ -556,6 +556,10 @@ def build_key_bindings(ui):
 
     @kb.add("a", filter=permission, eager=True)
     @kb.add("A", filter=permission, eager=True)
+    def _(event): asyncio.create_task(ui.resolve_approval("allow_all"))
+
+    @kb.add("w", filter=permission, eager=True)
+    @kb.add("W", filter=permission, eager=True)
     def _(event): asyncio.create_task(ui.resolve_approval("always_workspace"))
 
     @kb.add("s", filter=permission, eager=True)
