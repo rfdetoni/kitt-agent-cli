@@ -156,6 +156,35 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
                 ui.request_exit()
                 await asyncio.wait_for(task, 2)
 
+
+    async def test_modal_letter_shortcuts_are_dispatched_with_active_overlay(self):
+        from unittest.mock import AsyncMock
+        with create_pipe_input() as pipe:
+            ui = KittUIApp(self.runtime, "tui", input=pipe, output=DummyOutput(), no_animation=True)
+            ui.build_application()
+            task = asyncio.create_task(ui.run_async())
+            try:
+                await asyncio.sleep(0.05)
+                ui.resolve_approval = AsyncMock()
+                ui.state.pending_approvals.append({"approval_id": "keyboard", "tool_name": "run_command"})
+                ui.open_overlay("permission", ui.permission_control)
+                pipe.send_text("A")
+                await asyncio.sleep(0.12)
+                ui.resolve_approval.assert_awaited_once_with("always_workspace")
+                ui.close_overlay(cancel_pending=False)
+                ui._set_autonomy_profile = AsyncMock()
+                ui.open_overlay("autonomy_control", ui.autonomy_control)
+                pipe.send_text("a")
+                await asyncio.sleep(0.12)
+                ui._set_autonomy_profile.assert_awaited_once_with("autonomous")
+                ui._set_autonomy_profile.reset_mock()
+                pipe.send_text("S")
+                await asyncio.sleep(0.12)
+                ui._set_autonomy_profile.assert_awaited_once_with("supervised")
+            finally:
+                ui.request_exit()
+                await asyncio.wait_for(task, 2)
+
     async def test_permission_click_closes_modal_without_revoking_daemon_grant(self):
         opened = asyncio.Event()
         release = asyncio.Event()

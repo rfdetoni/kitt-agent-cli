@@ -41,6 +41,25 @@ class ToolResultEvidenceRegressionTests(unittest.TestCase):
         self.assertIn("ENOENT", fitted)
         self.assertIn("/workspace/package.json", fitted)
 
+    def test_retained_tool_output_includes_evidence_and_bounded_hydration_hint(self):
+        from types import SimpleNamespace
+        from kitt.runtime.output_retention import retain_tool_output
+        class ArtifactStub:
+            def put(self, **kwargs):
+                self.saved = kwargs["content"]
+                return SimpleNamespace(id="art_test")
+        store = ArtifactStub()
+        payload = "ERROR: partial batch failure\\n" + ("sample " * 2000)
+        retained = retain_tool_output(
+            payload, threshold_chars=400, artifact_tools=store,
+            workspace_id="ws", conversation_id="conv", turn_id="turn", tool_name="kitt_runtime",
+        )
+        self.assertTrue(retained.retained)
+        self.assertEqual(store.saved, payload)
+        self.assertIn("partial batch failure", retained.preview)
+        self.assertIn("artifacts.hydrate", retained.preview)
+        self.assertLess(len(retained.preview), 600)
+
     def test_failed_host_tool_preserves_error_and_diagnostic_output(self):
         status, payload = _format_host_tool_result(
             success=False,
