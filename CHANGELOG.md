@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.19 — explicit-only Agent loop tool dispatch
+
+Agent-loop execution accepts only canonical JSON actions or complete `<kitt-tool>` and `<tool_call>` envelopes; never derive host tools from prose, code examples, or incomplete frames. The existing `repo.batch_read` handles independent parallel reads with bounded receipts; writes remain sequential. Bump project and lock, add focused tests. [Notes](docs/RELEASE_0.88.19.md).
+
+
 ## 0.88.18 — smaller host-tool feedback and safer empty-completion handling
 
 Scout refactoring extracts deterministic tool evidence, discovery, and browser-trace helpers from the agent tool loop without changing their public import surface. Repeated host-result instructions are sent only on the initial tool or when exploration stalls; an empty JSON/blank agent-loop answer cannot close a turn as success. No new provider calls or additional authorization capabilities. [Notas](docs/RELEASE_0.88.18.md).

@@ -334,7 +334,7 @@ class TurnToolLoopMixin:
             general_call = None
             if python_args is None:
                 try:
-                    general_call = parse_tool_call(full_response)
+                    general_call = parse_tool_call(full_response, explicit_only=effective_agent_route == "agent-loop")
                 except (ValueError, TypeError) as exc:
                     malformed_calls += 1
                     if malformed_calls > 2:
