@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.29 — consistent workspace autonomy and polyglot instructions
+
+Partial autonomy settings now default to the same autonomous level as newly created workspaces. An explicitly persisted supervised or read-only choice still wins; the host policy and sandbox remain authoritative. ContextResolver no longer silently discards legitimate AGENTS.md content from Python/Node/Bun/TypeScript polyglot repositories based on a filename heuristic. Both behaviors have focused regressions.
+
+
 ## 0.88.28 — resumable execution budgets and descriptive batch IDs
 
 Exhausting an Agent turn's model/tool wallet now emits a typed host checkpoint instead of an unqualified terminal failure. The existing GoalScheduler classifies this as a resumable INCOMPLETE item under its finite retry/turn policy; successful host actions remain durable, and rejected budget calls are not misreported as executed. Descriptive unique `repo.batch_read` IDs up to 64 characters are supported with actionable diagnostics. The automatic contract planner now scopes very large target inventories to bounded initial implementation batches with explicit remaining PENDING work. The host's strict sandbox and independent clean-room validation requirements are unchanged.

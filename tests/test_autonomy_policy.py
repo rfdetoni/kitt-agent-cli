@@ -24,6 +24,12 @@ class TestAutonomyPolicy(unittest.TestCase):
             self.assertEqual(AutonomyStore(temp).get().allow_run_command_auto, False)
             self.assertEqual(AutonomyStore(temp, persistence_enabled=False).get().level, "autonomous")
 
+    def test_partial_autonomy_defaults_to_workspace_autonomous_but_explicit_ask_wins(self):
+        self.assertEqual(AutonomyPolicy.from_dict({}).level, "autonomous")
+        self.assertTrue(AutonomyPolicy.from_dict({}).allow_run_command_auto)
+        self.assertEqual(AutonomyPolicy.from_dict({"level": "supervised"}).level, "supervised")
+        self.assertFalse(AutonomyPolicy.from_dict({"level": "supervised"}).allow_run_command_auto)
+
     def test_preset_definitions(self):
         ro = AutonomyPolicy.preset("read_only")
         self.assertFalse(ro.allow_file_write_auto)

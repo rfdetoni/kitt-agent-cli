@@ -55,7 +55,7 @@ class ContextResolver:
         target_file_path: Optional[str] = None,
     ) -> List[ContextItem]:
         merged = self.agents_reader.get_merged_agents_rules(target_file_path)
-        if not merged or self._agents_incoherent_with_workspace(merged):
+        if not merged:
             return []
         return [
             ContextItem(
@@ -66,17 +66,6 @@ class ContextResolver:
                 estimated_tokens=TokenCounter.count_tokens(merged),
             )
         ]
-
-    def _agents_incoherent_with_workspace(self, content: str) -> bool:
-        lower = content.lower()
-        python_markers = (self.root_path / "kitt").is_dir() or (
-            self.root_path / "pyproject.toml"
-        ).exists()
-        node_markers = (self.root_path / "package.json").exists() or (
-            self.root_path / "src"
-        ).is_dir()
-        claims_node_stack = all(term in lower for term in ("node", "bun", "typescript"))
-        return python_markers and claims_node_stack and not node_markers
 
     def resolve_explicit_files(
         self,

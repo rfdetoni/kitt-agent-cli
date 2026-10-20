@@ -52,7 +52,7 @@ class AutonomyPolicy:
     def from_dict(cls, data: dict) -> "AutonomyPolicy":
         if not isinstance(data, dict):
             raise ValueError("Autonomy policy must be an object")
-        base = cls.preset(data.get("level", "supervised"))
+        base = cls.preset(data.get("level", "autonomous"))
 
         def boolean(name: str, default: bool) -> bool:
             value = data.get(name, default)
