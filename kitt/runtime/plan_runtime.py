@@ -90,6 +90,11 @@ def execute_plan_action(self, operation, args, turn_id, origin, security_context
                   "running": len(running) + len(started),
                   "requires_verification": True})
     else:
+        if plans.inspect(conv, turn_id) is None:
+            raise ValueError(
+                "plan.verify requires an existing plan for this turn; submit a valid "
+                "arguments.proposal first or call plan.inspect to inspect the current state."
+            )
         task, steps, digest = plans.verification_steps(conv, turn_id, args.get("task_id"), security_context)
         checks = dict(task["checks"])
         for step in steps:
