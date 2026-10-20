@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.25 — stop repeating unavailable host sandbox operations
+
+A failed host process action caused by missing Bubblewrap sandbox support remains visible as an execution failure. The agent is told that unchanged retries cannot succeed and the same action is blocked on its next attempt within the turn. Other authorized host tools and validation routes remain available. No sandbox policy, approval authority or reverse-proxy wire contract is weakened. A focused regression covers sandbox failures without classifying ordinary process test failures as environmental blockers.
+
+
 ## 0.88.24 — actionable plan contracts and host sandbox diagnostics
 
 Explain the exact `arguments.proposal` wire contract when models mistakenly submit `tasks` at the top level, and teach both model-facing tool envelopes the validated `schema_version`, `objective`, `local_id`, `title`, `role`, `depends_on`, `paths` and `check_ids` format. `plan.verify` reports the missing plan prerequisite explicitly. When automatic host execution cannot acquire the required Bubblewrap OS sandbox, explain the environment repair instead of suggesting another autonomy approval. Preserve strict isolation, workspace scope, capabilities and execution budgets. Regression coverage in `tests/test_plan_runtime_diagnostics.py`.

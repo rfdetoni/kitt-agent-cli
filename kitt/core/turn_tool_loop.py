@@ -51,6 +51,7 @@ from kitt.core.turn_tool_helpers import (
     _side_effecting_tool_call,
     _runtime_operation_name,
     _is_environment_discovery,
+    _nonretryable_host_environment_failure,
     _stuck_sequence,
     _completion_recovery_exhausted,
     _goal_contract_uses_outer_verification,
@@ -149,6 +150,7 @@ class TurnToolLoopMixin:
         malformed_calls = 0
         policy_denials = 0
         denied_calls: set[str] = set()
+        blocked_environment_calls: dict[str, str] = {}
         model_rounds = 0
         discovery_streak = 0
         discovery_total = 0
@@ -469,6 +471,12 @@ class TurnToolLoopMixin:
             denied_identity = _canonical_tool_args({"name": tool_name, "arguments": tool_args})
             if denied_identity in denied_calls:
                 yield TurnBlocked(reason="Host policy already denied this exact tool action."), None, None
+                return
+            if denied_identity in blocked_environment_calls:
+                yield TurnBlocked(
+                    reason="Repeated host operation cannot run in the current sandbox: "
+                    + blocked_environment_calls[denied_identity]
+                ), None, None
                 return
             reasoning_summary = extract_tool_reasoning_summary(full_response)
             if reasoning_summary:
@@ -865,6 +873,12 @@ class TurnToolLoopMixin:
                     },
                 ])
                 continue
+            environment_blocked = (
+                not tool_result.success
+                and _nonretryable_host_environment_failure(tool_name, tool_args, tool_result.error)
+            )
+            if environment_blocked:
+                blocked_environment_calls[denied_identity] = str(tool_result.error)
             touched_paths = self._paths_from_tool(tool_name, tool_args, tool_result)
             if touched_paths:
                 if not self.turn_guard.begin(cmd.turn_id):
@@ -953,6 +967,15 @@ class TurnToolLoopMixin:
             )
             tool_prefix = _host_tool_prefix(tool_name, host_status)
             tool_suffix = _tool_feedback_suffix(discovery_streak, tool_calls, operation)
+            if environment_blocked:
+                tool_suffix += (
+                    "\n[KITT HOST SANDBOX BLOCKED]\n"
+                    "The required host sandbox is unavailable. An identical process.run "
+                    "or run_command cannot succeed until the host environment is repaired. "
+                    "Do not disable sandbox isolation, replace it with unsandboxed shell "
+                    "execution, or repeat this action unchanged. Use other authorized "
+                    "operations when possible; otherwise report the verification blocker."
+                )
             output_str = self._fit_tool_output(
                 request.system_prompt,
                 execution_messages,

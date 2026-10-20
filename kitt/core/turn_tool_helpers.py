@@ -143,6 +143,17 @@ def _is_environment_discovery(operation: str, tool_args: object) -> bool:
     return False
 
 
+def _nonretryable_host_environment_failure(tool_name: str, tool_args: object, error: object) -> bool:
+    """Identify host sandbox provisioning failures that an identical retry cannot fix.
+
+    This is not an authorization bypass or a classifier for ordinary test failures.
+    """
+    if _runtime_operation_name(tool_name, tool_args) not in {"process.run", "run_command"}:
+        return False
+    detail = str(error or "").casefold()
+    return "command sandbox unavailable" in detail and "bubblewrap" in detail
+
+
 def _stuck_sequence(fingerprints: list[str]) -> bool:
     recent = fingerprints[-4:]
     return (
