@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.32 — no-progress detection for batches and terminal blocker classification
+
+A successful `repo.batch_read` is now treated as an observation rather than as task progress, closing a loop escape where repeating unchanged batched read results reset the stall detector. A Goal step now classifies repeated host policy denials and unavailable sandbox operations with their original POLICY/ENVIRONMENT categories instead of generic blockers. These paths cannot be mistaken for finished work or resolved by identical retries. Two small regressions exercise both cases. This release preserves the host's security boundary, existing proxy contract and all 0.88.31 behavior.
+
+
 ## 0.88.31 — host sandbox preflight in tool definitions and runtime capabilities
 
 Report the availability of the actual strong workspace process sandbox before the first attempted process.run operation. The Agent model-facing tool description and the host runtime.capabilities result expose a bounded diagnostic (`functional bubblewrap>=0.12`) while leaving authorized repo mutations and VM executor tools available. No unsandboxed fallback, capability escalation or weaker Bubblewrap version is introduced. Adds a regression for unavailable strong sandbox and preserves the same trusted host operation catalog.
