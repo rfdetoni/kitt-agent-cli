@@ -231,10 +231,6 @@ class RunCommandHandler:
             automatic = (
                 ctx.approval_grant is None and is_automatic_origin(ctx.origin)
             )
-            autonomy = getattr(getattr(ctx.registry, "policy", None), "autonomy", None)
-            autonomous_command = bool(
-                getattr(autonomy, "allow_run_command_auto", False)
-            )
             sandbox_profile = (
                 "workspace-write+network"
                 if network_requested
@@ -245,7 +241,10 @@ class RunCommandHandler:
                 timeout_seconds=timeout_seconds,
                 cwd=cwd,
                 sandbox_profile=sandbox_profile,
-                require_strong_sandbox=automatic and not autonomous_command,
+                # Automatic host process execution must stay inside an OS
+                # sandbox even with autonomous mode selected. VM guest tools
+                # use their own authenticated execution boundary.
+                require_strong_sandbox=automatic,
                 **({"cancellation": ctx.registry.cancellation_registry.token(ctx.turn_id)}
                    if getattr(ctx.registry, "cancellation_registry", None) is not None and ctx.turn_id else {}),
             )

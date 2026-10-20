@@ -1,0 +1,8 @@
+# Agent CLI 0.88.22 — autonomous defaults within trusted boundaries
+
+- **New workspaces (including ephemeral sessions)** start in `autonomous` / `allow-all`. Autonomy selected by the human operator is saved outside repository-controlled files and continues across restart; an existing `supervised` or `read_only` preference is never overwritten.
+- **Workspace tools**: automatic eligible writes, patches, subprocesses and child agents don't require a routine approval dialog. Larger per-turn automatic risk/action quotas allow long coding jobs without turning into approval loops. This does not override capability, ownership or execution-fencing checks.
+- **VMs**: continue to use authenticated guest/VM execution channels; no implicit host access or invented VM attestations. Tools that enter the guest can leverage autonomous defaults subject to guest controls.
+- **Host processes**: a strong OS sandbox is required for automatic `process.run`. A VM does not implicitly attest the host process runner; when bubblewrap >= 0.12 is absent or broken, fail with an actionable sandbox error instead of silently executing unconfined commands. The user can still grant explicit command approvals via Autonomy where supported, but this cannot bypass host policy.
+- **Operator control**: A/1 = autonomous, S/2 = ask, D/3 = read-only. The ASK/DENY choices persist in workspace-private state. No workspace-local file can grant permissions to itself.
+- **Unchanged restrictions**: protected secrets and `.git` direct file reads, unauthorized network access, KITT control-plane mutations, dangerous argv, path traversal and cross-workspace mutations.

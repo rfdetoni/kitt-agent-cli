@@ -4,6 +4,26 @@ from kitt.core.autonomy_policy import AutonomyPolicy
 from kitt.tools.policy_engine import PolicyEngine
 
 class TestAutonomyPolicy(unittest.TestCase):
+    def test_new_workspace_is_autonomous_but_saved_restrictions_win(self):
+        import tempfile
+        from kitt.core.autonomy_store import AutonomyStore
+        from kitt.tools.policy_engine import PolicyEngine
+
+        with tempfile.TemporaryDirectory() as temp:
+            store = AutonomyStore(temp)
+            self.assertEqual(store.get().level, "autonomous")
+            self.assertEqual(PolicyEngine(autonomy=store.get()).evaluate_tool(
+                "run_command", {"argv": ["pytest"]}), "ALLOW")
+            self.assertEqual(PolicyEngine(autonomy=store.get()).evaluate_tool(
+                "write_file", {"path": "src/app.py"}), "ALLOW")
+            # Operator restrictions override the default, including across restart.
+            store.set_preset("supervised")
+            self.assertEqual(AutonomyStore(temp).get().level, "supervised")
+            store.set_preset("read_only")
+            self.assertEqual(AutonomyStore(temp).get().level, "read_only")
+            self.assertEqual(AutonomyStore(temp).get().allow_run_command_auto, False)
+            self.assertEqual(AutonomyStore(temp, persistence_enabled=False).get().level, "autonomous")
+
     def test_preset_definitions(self):
         ro = AutonomyPolicy.preset("read_only")
         self.assertFalse(ro.allow_file_write_auto)
@@ -23,6 +43,8 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertTrue(aut.allow_file_write_auto)
         self.assertTrue(aut.allow_run_command_auto)
         self.assertTrue(aut.auto_review_enabled)
+        self.assertEqual(aut.max_auto_actions_per_turn, 1000)
+        self.assertEqual(aut.max_auto_risk_per_turn, 10000)
         self.assertFalse(ro.auto_review_enabled)
         self.assertFalse(sup.auto_review_enabled)
 
@@ -54,7 +76,12 @@ class TestAutonomyPolicy(unittest.TestCase):
                     origin="AGENT",
                 )
                 self.assertFalse(result.requires_approval, result.error)
-                self.assertTrue(result.success, result.error)
+                if registry.process_runner.sandbox.is_strong_available("workspace-write"):
+                    self.assertTrue(result.success, result.error)
+                    self.assertTrue(result.metadata["sandbox"]["strong"])
+                else:
+                    self.assertFalse(result.success)
+                    self.assertIn("sandbox unavailable", result.error.lower())
             finally:
                 registry.close()
 
