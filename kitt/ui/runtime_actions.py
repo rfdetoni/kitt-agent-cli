@@ -255,6 +255,8 @@ async def _set_autonomy_profile(ui, preset: str, *, notify: bool = True) -> None
     effective = preset
     if await ui._ensure_daemon_management():
         response = await ui.bridge.set_autonomy(preset)
+        if not isinstance(response, dict) or response.get("status") not in (None, "ok") or response.get("error"):
+            raise RuntimeError(str(response.get("error") or "Daemon rejected autonomy change"))
         effective = str(response.get("preset") or preset)
     store = getattr(ui.runtime, "autonomy_store", None)
     policy = store.set_preset(effective) if store else None
@@ -333,7 +335,10 @@ async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
         return
 
     remember_scope = None
-    if mode is True or mode == "once":
+    allow_all = mode in {"allow_all", "allow-all"}
+    if allow_all:
+        allow = True
+    elif mode is True or mode == "once":
         allow = True
     elif mode is False or mode == "deny":
         allow = False
@@ -383,6 +388,12 @@ async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
                 )
             acknowledgment = await ui.bridge.resolve_approval(pending["approval_id"], allow)
             _require_daemon_approval_ack(acknowledgment, allow=allow)
+            # Grant the pending action under its original authority snapshot;
+            # only then elevate subsequent workspace actions. Reversing this
+            # order invalidates the exact-action approval on resume.
+            if allow_all:
+                await _set_autonomy_profile(ui, "autonomous", notify=False)
+                ui.state.add_toast("Allow-all ativo neste workspace.")
             ui.state.pending_approvals[:] = [
                 item for item in ui.state.pending_approvals
                 if item.get("approval_id") != pending["approval_id"]
@@ -459,6 +470,9 @@ async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
                     running_tool.started_at = time.time()
                     running_tool.text = running_tool.text.replace(" ⏸ (aguardando aprovação)", "").replace(" ⏸", "").strip()
                 await ui.bridge.continue_turn(pending["turn_id"], grant)
+        if allow_all:
+            await _set_autonomy_profile(ui, "autonomous", notify=False)
+            ui.state.add_toast("Allow-all ativo neste workspace.")
         except Exception as exc:
             ui.state.add_toast(f"Approval failed: {exc}", persistent=True)
             ui.state.status_text = "ERROR"
