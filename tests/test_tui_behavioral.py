@@ -170,7 +170,7 @@ class TestTUIBehavioralRequirements(unittest.IsolatedAsyncioTestCase):
                 ui.open_overlay("permission", ui.permission_control)
                 pipe.send_text("A")
                 await asyncio.sleep(0.12)
-                ui.resolve_approval.assert_awaited_once_with("always_workspace")
+                ui.resolve_approval.assert_awaited_once_with("allow_all")
                 ui.close_overlay(cancel_pending=False)
                 ui._set_autonomy_profile = AsyncMock()
                 ui.open_overlay("autonomy_control", ui.autonomy_control)
