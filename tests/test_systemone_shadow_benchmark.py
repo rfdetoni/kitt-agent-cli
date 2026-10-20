@@ -29,3 +29,20 @@ def test_only_loopback_decision_api_is_accepted():
             assert False, "off-contract endpoint accepted"
         except ValueError:
             pass
+
+def test_shadow_benchmark_supports_noul_and_score_without_dispatching_tools():
+    cases = [{
+        "state": "pytest blocked", "expected": {"blocked": True, "severity": 2.5},
+        "questions": {
+            "blocked": {"type": "noul", "instructions": "Is validation blocked?"},
+            "severity": {"type": "score", "instructions": "Rate the severity",
+                         "criteria": ["low", "medium", "high", "critical"]},
+        },
+    }]
+    result = evaluate(cases, lambda _: {"answers": {
+        "blocked": {"noul": 0.8}, "severity": {"score": 2.1},
+    }})
+    assert result["answers"] == 2
+    assert result["noul_accuracy"] == 1.0
+    assert abs(result["noul_brier"] - 0.04) < 0.000001
+    assert abs(result["score_mae"] - 0.4) < 0.000001

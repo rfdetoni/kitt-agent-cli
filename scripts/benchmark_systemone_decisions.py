@@ -67,9 +67,12 @@ def decide_http(url: str, model: str, case: dict, *, timeout: float) -> dict:
 
 
 def evaluate(cases: list[dict], decide) -> dict:
-    correct = total = baseline_correct = baseline_total = invalid = 0
+    choice_correct = choice_total = baseline_correct = baseline_total = invalid = 0
+    noul_correct = noul_total = score_total = 0
+    score_errors: list[float] = []
     latencies: list[float] = []
-    brier_values: list[float] = []
+    choice_brier: list[float] = []
+    noul_brier: list[float] = []
     for case in cases:
         started = time.perf_counter()
         try:
@@ -78,36 +81,56 @@ def evaluate(cases: list[dict], decide) -> dict:
             if not isinstance(answers, dict):
                 raise ValueError("Missing answers")
             for key, expected in case["expected"].items():
-                if not isinstance(expected, str):
-                    raise ValueError("Expected choice must be a string")
                 baseline = case.get("baseline") or {}
-                if key in baseline:
+                if key in baseline and isinstance(expected, str):
                     baseline_total += 1
                     baseline_correct += int(baseline[key] == expected)
                 ans = answers.get(key)
-                if not isinstance(ans, dict) or not isinstance(ans.get("choice"), str):
+                if not isinstance(ans, dict):
                     invalid += 1
                     continue
-                total += 1
-                correct += int(ans["choice"] == expected)
-                probabilities = ans.get("probabilities")
-                if isinstance(probabilities, dict):
-                    numbers = {str(k): float(v) for k, v in probabilities.items()}
-                    if numbers and all(0 <= v <= 1 for v in numbers.values()):
-                        brier_values.append(sum(
-                            (v - float(k == expected)) ** 2 for k, v in numbers.items()
-                        ))
-        except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError):
+                if isinstance(expected, bool):
+                    p = float(ans.get("noul", -1))
+                    if not 0 <= p <= 1:
+                        invalid += 1
+                        continue
+                    noul_total += 1
+                    noul_correct += int((p >= 0.5) == expected)
+                    noul_brier.append((p - float(expected)) ** 2)
+                elif isinstance(expected, (int, float)):
+                    score = float(ans.get("score", float("nan")))
+                    if not -1000 <= score <= 1000:
+                        invalid += 1
+                        continue
+                    score_total += 1
+                    score_errors.append(abs(score - expected))
+                elif isinstance(expected, str) and isinstance(ans.get("choice"), str):
+                    choice_total += 1
+                    choice_correct += int(ans["choice"] == expected)
+                    probabilities = ans.get("probabilities")
+                    if isinstance(probabilities, dict):
+                        numbers = {str(k): float(v) for k, v in probabilities.items()}
+                        if numbers and all(0 <= v <= 1 for v in numbers.values()):
+                            choice_brier.append(sum(
+                                (v - float(k == expected)) ** 2 for k, v in numbers.items()
+                            ))
+                else:
+                    invalid += 1
+        except (ValueError, KeyError, TypeError, OSError):
             invalid += max(1, len(case["expected"]))
         finally:
             latencies.append((time.perf_counter() - started) * 1000)
     ordered = sorted(latencies)
     return {
-        "cases": len(cases), "answers": total, "correct": correct,
-        "accuracy": correct / total if total else None,
+        "cases": len(cases), "answers": choice_total + noul_total + score_total,
+        "correct": choice_correct,
+        "accuracy": choice_correct / choice_total if choice_total else None,
         "baseline_accuracy": baseline_correct / baseline_total if baseline_total else None,
         "invalid_answers": invalid,
-        "brier": statistics.mean(brier_values) if brier_values else None,
+        "brier": statistics.mean(choice_brier) if choice_brier else None,
+        "noul_accuracy": noul_correct / noul_total if noul_total else None,
+        "noul_brier": statistics.mean(noul_brier) if noul_brier else None,
+        "score_mae": statistics.mean(score_errors) if score_errors else None,
         "latency_p50_ms": statistics.median(ordered),
         "latency_p95_ms": ordered[min(len(ordered) - 1, max(0, int(len(ordered) * .95) - 1))],
         "mode": "shadow_only",
