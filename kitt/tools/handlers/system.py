@@ -251,7 +251,13 @@ class RunCommandHandler:
         except FileNotFoundError:
             return ToolResult(False, "", f"Executable or cwd not found for process.run: {argv[0]}")
         except SandboxUnavailable as exc:
-            return ToolResult(False, "", f"Command sandbox unavailable: {exc}")
+            return ToolResult(
+                False, "",
+                f"Command sandbox unavailable: {exc}. Automatic host execution requires a "
+                "functional OS sandbox; check bubblewrap version and user-namespace support "
+                "on the host, or run authorized commands through an authenticated isolated VM. "
+                "Do not retry this host command until the sandbox environment changes.",
+            )
         except (NotADirectoryError, PermissionError, OSError, ValueError) as exc:
             return ToolResult(False, "", f"Command execution failed: {exc}")
         output, metadata, compacted = _optimized_process_output(
