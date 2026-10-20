@@ -38,6 +38,22 @@ class HostEnvironmentBlockerTests(unittest.TestCase):
             success=True, output="written", error=None,
         ))
 
+    def test_repeated_successful_read_batches_do_not_reset_stall_detection(self):
+        arguments = {"operation": "repo.batch_read", "arguments": {
+            "calls": [{"id": "one", "operation": "repo.read",
+                       "arguments": {"path": "README.md"}}],
+        }}
+        observed = _tool_stall_fingerprint(
+            "kitt_runtime", arguments, success=True,
+            output='{"calls":[{"id":"one","success":true}]}', error=None,
+        )
+        self.assertIsNotNone(observed)
+        self.assertTrue(_stuck_sequence([observed, observed, observed]))
+        self.assertIsNone(_tool_stall_fingerprint(
+            "kitt_runtime", {"operation": "repo.write_file", "arguments": {"path": "x"}},
+            success=True, output="written", error=None,
+        ))
+
     def test_other_failures_can_be_replanned_or_retried(self):
         self.assertFalse(_nonretryable_host_environment_failure(
             "kitt_runtime", {"operation": "process.run"}, "pytest returned exit code 1",

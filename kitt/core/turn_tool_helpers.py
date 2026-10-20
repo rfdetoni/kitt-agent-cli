@@ -99,6 +99,7 @@ _OBSERVATIONAL_ACTIONS = frozenset(
     {
         "repo.read",
         "repo.list",
+        "repo.batch_read",
         "repo.search",
         "repo.inspect_symbol",
         "repo.read_symbol",
