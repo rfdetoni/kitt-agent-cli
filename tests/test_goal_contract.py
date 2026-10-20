@@ -596,6 +596,11 @@ class GoalContractTests(unittest.TestCase):
             paths_from_tool_start(SimpleNamespace(), event),
             ["reports/t01-win32u-inventory.py"],
         )
+        event.args["arguments"]["path"] = "reports/t01-verification.md"
+        self.assertEqual(
+            paths_from_tool_start(SimpleNamespace(), event),
+            ["reports/t01-verification.md"],
+        )
 
     def test_previous_host_reads_survive_new_goal_turn_and_mutations_invalidate(self):
         state = RuntimeStateStore(self.db, "ws", "conv")

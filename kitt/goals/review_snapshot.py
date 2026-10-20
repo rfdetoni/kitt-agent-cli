@@ -12,7 +12,7 @@ MAX_REVIEW_SNAPSHOT_CHARS = 120_000
 MAX_REVIEW_FILES = 24
 MAX_REVIEW_FILE_CHARS = 24_000
 _REVIEWABLE_EXTENSIONS = frozenset({
-    ".py", ".pyi", ".rs", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx",
+    ".py", ".pyi", ".md", ".rs", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx",
     ".java", ".kt", ".kts", ".go", ".c", ".cc", ".cpp", ".h", ".hpp",
     ".cs", ".rb", ".php", ".sql", ".sh", ".bash", ".zsh", ".ps1",
     ".toml", ".yaml", ".yml", ".json", ".xml", ".gradle", ".properties",
