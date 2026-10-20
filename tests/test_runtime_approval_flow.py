@@ -27,6 +27,9 @@ def model_goal(tmp_path):
         str(tmp_path), RuntimeConfig(history_enabled=True, persistence_enabled=True)
     )
     try:
+        # Approval roundtrips explicitly run under ASK; other tests select
+        # autonomous mode themselves.
+        runtime.policy.autonomy = runtime.autonomy_store.set_preset("supervised")
         conversation_id = runtime.history.new_conversation("model approval flow")["id"]
         items = [
             dict(
@@ -150,7 +153,12 @@ def test_allow_all_model_process_does_not_request_approval(model_goal, tmp_path)
     runtime.policy.autonomy = AutonomyPolicy.preset("allow-all")
     events = model_process_call(runtime, security, command_args())
     assert not any(isinstance(event, (ApprovalRequired, TurnFailed)) for event in events), events
-    assert (tmp_path / "executed.txt").read_text() == "once\n"
+    # Automatic host commands must not run unconfined on CI runners lacking
+    # bubblewrap. The test's concern is absence of recurrent approvals.
+    if runtime.registry.process_runner.sandbox.is_strong_available("workspace-write"):
+        assert (tmp_path / "executed.txt").read_text() == "once\n"
+    else:
+        assert not (tmp_path / "executed.txt").exists()
 
 
 @pytest.mark.parametrize("changed_while_waiting", [False, True])
