@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.33 — durable host evidence for long-running goal retries
+
+A new bounded Goal evidence journal persists successful read/list/search receipts in the existing session-scoped RuntimeStateStore and rehydrates them into the next turn of the same contract item. The journal handles successful children of partially failed repo.batch_read calls, preserves previously captured text when an unchanged-read dedup placeholder is returned, and invalidates entries for successful file mutations or unscoped process actions. Host evidence is explicitly marked untrusted and never authorizes actions or satisfies acceptance gates. Two focused regressions cover cross-turn reuse, stale evidence invalidation and partial batch recovery. This addresses repeated repository inspection without relying on optional semantic memory recall.
+
+
 ## 0.88.32 — no-progress detection for batches and terminal blocker classification
 
 A successful `repo.batch_read` is now treated as an observation rather than as task progress, closing a loop escape where repeating unchanged batched read results reset the stall detector. A Goal step now classifies repeated host policy denials and unavailable sandbox operations with their original POLICY/ENVIRONMENT categories instead of generic blockers. These paths cannot be mistaken for finished work or resolved by identical retries. Two small regressions exercise both cases. This release preserves the host's security boundary, existing proxy contract and all 0.88.31 behavior.
