@@ -14,6 +14,7 @@ from kitt.core.turn_events import (
 from kitt.goals.completion import AutonomousCompletionEngine
 from kitt.goals.auto_contract import goal_active_turn_key, goal_inputs_key
 from kitt.goals.contract_execution import build_contract_prompt, prepare_contract_step
+from kitt.goals.evidence_journal import GoalEvidenceJournal
 from kitt.goals.gates import QualityGateRunner
 from kitt.runtime.state import RuntimeStateStore
 from kitt.goals.review_snapshot import paths_from_tool_start
@@ -108,7 +109,14 @@ class GoalStepExecutor:
         completion_state = contract_step.completion_state
         completion = self._completion_engine(runtime, step_goal)
 
-        prompt = build_contract_prompt(runtime, goal, contract_step, resume)
+        evidence_journal = (
+            GoalEvidenceJournal(state, goal.id, contract_item.local_id)
+            if contract_item is not None else None
+        )
+        prompt = build_contract_prompt(
+            runtime, goal, contract_step, resume,
+            previous_evidence=evidence_journal.context() if evidence_journal else "",
+        )
         prompt = completion.build_execution_prompt(step_goal, prompt, completion_state)
 
         security = ExecutionSecurityContext(
@@ -147,6 +155,7 @@ class GoalStepExecutor:
             prior_review_paths.extend(list(resume.get("affected_paths") or []))
         current_review_paths = []
         pending_mutation_paths = {}
+        pending_tool_calls = {}
         active_turn_key = goal_active_turn_key(goal.id)
         state.set(
             active_turn_key,
@@ -164,11 +173,19 @@ class GoalStepExecutor:
                 for event in runtime.processor.run_turn(command):
                     publish_goal_progress(goal.id, event)
                     if isinstance(event, ToolStarted):
+                        pending_tool_calls[event.call_id] = (event.tool_name, event.args)
                         paths = paths_from_tool_start(runtime, event)
                         if paths:
                             pending_mutation_paths[event.call_id] = paths
                     elif isinstance(event, ToolCompleted):
                         paths = pending_mutation_paths.pop(event.call_id, [])
+                        call = pending_tool_calls.pop(event.call_id, None)
+                        if evidence_journal is not None and call is not None:
+                            evidence_journal.observe(
+                                call[0], call[1], success=bool(event.success),
+                                output=event.output,
+                                changed_paths=paths if event.success else None,
+                            )
                         if event.success and paths:
                             current_review_paths.extend(paths)
                     elif isinstance(event, EditApplied):

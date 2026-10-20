@@ -23,6 +23,8 @@ from kitt.core.turn_tool_loop import (
 )
 from kitt.goals.contract import ContractPlanner
 from kitt.goals.contract_execution import ContractStep, build_contract_prompt
+from kitt.goals.evidence_journal import GoalEvidenceJournal
+from kitt.runtime.state import RuntimeStateStore
 from kitt.goals.contract_store import ContractLeaseError
 from kitt.goals.auto_contract import (
     automatic_contract_capabilities,
@@ -581,6 +583,54 @@ class GoalContractTests(unittest.TestCase):
         )
         self.assertTrue(result["task_plan_context"])
         self.assertEqual(user_turn.context_calls, 1)
+
+    def test_previous_host_reads_survive_new_goal_turn_and_mutations_invalidate(self):
+        state = RuntimeStateStore(self.db, "ws", "conv")
+        journal = GoalEvidenceJournal(state, "goal_1", "T01")
+        args = {"operation": "repo.read", "arguments": {"path": "reports/generator.py"}}
+        journal.observe("kitt_runtime", args, success=True, output="def parse(): pass")
+        journal.observe("kitt_runtime", args, success=True,
+                        output='{"deduplicated":true,"unchanged":true}')
+        resumed = GoalEvidenceJournal(state, "goal_1", "T01").context()
+        self.assertIn("def parse(): pass", resumed)
+        self.assertNotIn("deduplicated", resumed)
+        runtime = SimpleNamespace(goals=SimpleNamespace(
+            contract_items=lambda _id: [
+                SimpleNamespace(local_id="T01", status="RUNNING")
+            ]
+        ))
+        step = ContractStep(
+            item=SimpleNamespace(local_id="T01"),
+            goal=SimpleNamespace(objective="Implement parser"), 
+            completion_key="completion", completion_state=None,
+        )
+        prompt = build_contract_prompt(
+            runtime, SimpleNamespace(id="goal_1"), step, None,
+            previous_evidence=resumed,
+        )
+        self.assertIn("def parse(): pass", prompt)
+        journal.observe("kitt_runtime",
+                        {"operation": "patch.apply", "arguments": {"patch": "..."}},
+                        success=True, output="patched",
+                        changed_paths=["reports/generator.py"])
+        self.assertNotIn("def parse(): pass", journal.context())
+
+    def test_batch_reads_are_recovered_even_if_a_sibling_read_failed(self):
+        state = RuntimeStateStore(self.db, "ws", "conv")
+        journal = GoalEvidenceJournal(state, "goal_1", "T02")
+        calls = {"operation": "repo.batch_read", "arguments": {"calls": [
+            {"id": "a", "operation": "repo.read", "arguments": {"path": "reports/a.py"}},
+            {"id": "b", "operation": "repo.read", "arguments": {"path": "reports/b.py"}},
+        ]}}
+        journal.observe("kitt_runtime", calls, success=False, output=json.dumps({
+            "calls": [
+                {"id": "a", "operation": "repo.read", "success": True, "data": "A evidence"},
+                {"id": "b", "operation": "repo.read", "success": False, "error": "not found"},
+            ]
+        }))
+        context = journal.context()
+        self.assertIn("A evidence", context)
+        self.assertNotIn("reports/b.py", context)
 
     def test_contract_step_prompt_rejects_nested_task_plan_verification(self):
         item = SimpleNamespace(local_id="T01", status="RUNNING")

@@ -36,7 +36,9 @@ def prepare_contract_step(runtime, goal, state) -> ContractStep:
     return ContractStep(item, step_goal, key, completion_state)
 
 
-def build_contract_prompt(runtime, goal, step: ContractStep, resume) -> str:
+def build_contract_prompt(
+    runtime, goal, step: ContractStep, resume, *, previous_evidence: str = ""
+) -> str:
     prompt = step.goal.objective
     if step.item is not None:
         progress = " | ".join(
@@ -50,6 +52,8 @@ def build_contract_prompt(runtime, goal, step: ContractStep, resume) -> str:
             "plan.submit/plan.verify for it. The host performs authoritative "
             "post-turn checks and independent validation after your final response."
         )
+    if previous_evidence:
+        prompt += "\n\n" + previous_evidence
     if isinstance(resume, dict):
         approved_output = str(resume.get("tool_output") or "")[:32768]
         prompt = (
