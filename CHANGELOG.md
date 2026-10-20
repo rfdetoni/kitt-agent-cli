@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.24 — actionable plan contracts and host sandbox diagnostics
+
+Explain the exact `arguments.proposal` wire contract when models mistakenly submit `tasks` at the top level, and teach both model-facing tool envelopes the validated `schema_version`, `objective`, `local_id`, `title`, `role`, `depends_on`, `paths` and `check_ids` format. `plan.verify` reports the missing plan prerequisite explicitly. When automatic host execution cannot acquire the required Bubblewrap OS sandbox, explain the environment repair instead of suggesting another autonomy approval. Preserve strict isolation, workspace scope, capabilities and execution budgets. Regression coverage in `tests/test_plan_runtime_diagnostics.py`.
+
+
 ## 0.88.23 — workspace-wide allow-all from approval menu
 
 The approval modal now distinguishes [A] Allow-all (persist autonomous mode for the current workspace) from [w] remembering a single tool. The pending grant executes under its original authority snapshot; later actions use the persisted autonomous mode. A failed autonomy RPC cannot reopen an already granted request. The TUI rejects daemon autonomy errors rather than silently diverging from the daemon. Host path and sandbox capability boundaries remain enforced.
