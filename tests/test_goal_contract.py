@@ -366,6 +366,20 @@ class GoalContractTests(unittest.TestCase):
         exhausted = replace(goal, turns_used=goal.max_turns)
         self.assertEqual(scheduler._budget_reason(exhausted, time.time()), "turn budget exceeded")
 
+    def test_budget_checkpoint_is_a_resumable_goal_block(self):
+        self.assertEqual(
+            GoalStepExecutor._blocked_category(
+                "Execution budget checkpoint: tool call budget exceeded"
+            ),
+            "RESOLVABLE",
+        )
+        self.assertEqual(
+            GoalStepExecutor._blocked_category(
+                "Execution denied by PolicyEngine for process.run"
+            ),
+            "POLICY",
+        )
+
     def test_capture_timeout_requires_explicit_resume_and_consumes_no_global_retries(self):
         error = (
             "KITT reverse proxy: ui_timeout: ChatGPT finished, but no fresh "

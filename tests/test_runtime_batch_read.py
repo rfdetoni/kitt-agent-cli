@@ -54,6 +54,14 @@ class ReadBatchTests(unittest.TestCase):
         self.assertEqual([(x['id'], x['data']['path']) for x in result.data['calls']],
                          [('a', 'a.py'), ('b', 'b.py')])
 
+    def test_descriptive_unique_batch_id_is_valid(self):
+        identifier = "verify-discrepancy-classification-20261020-v4"
+        with patch.object(self.runtime, '_op_repo_read',
+                          return_value=SafeRuntimeResult(True, 'repo.read', data={'ok': True})):
+            result = self._run([self._read(identifier, 'README.md')])
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.data['calls'][0]['id'], identifier)
+
     def test_invalid_batch_fails_before_first_execution(self):
         bad = [
             [self._read('a', 'a'), self._read('a', 'b')],

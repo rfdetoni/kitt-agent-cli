@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.28 — resumable execution budgets and descriptive batch IDs
+
+Exhausting an Agent turn's model/tool wallet now emits a typed host checkpoint instead of an unqualified terminal failure. The existing GoalScheduler classifies this as a resumable INCOMPLETE item under its finite retry/turn policy; successful host actions remain durable, and rejected budget calls are not misreported as executed. Descriptive unique `repo.batch_read` IDs up to 64 characters are supported with actionable diagnostics. The automatic contract planner now scopes very large target inventories to bounded initial implementation batches with explicit remaining PENDING work. The host's strict sandbox and independent clean-room validation requirements are unchanged.
+
+
 ## 0.88.27 — detect alternating no-progress host outcomes
 
 The agent-loop now detects unchanged two-step failure/observation cycles such as a failing build followed by repeatedly reading the same file. The same bounded detector handles identical failed operations and identical read results; a successful non-observational host action resets the streak. This closes a progress-monitoring gap without adding model calls, overriding host authorization, or changing the Reverse Proxy protocol. Adds a targeted regression for the alternating case.
