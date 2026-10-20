@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import queue
 import threading
@@ -11,6 +12,8 @@ from pathlib import Path
 
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import TextDelta, TurnCancelled, TurnCompleted, TurnEvent, TurnFailed
+
+logger = logging.getLogger(__name__)
 
 _END = object()
 
@@ -237,12 +240,19 @@ class TurnEventBridge:
             )
         except Exception:
             pass
+        # The daemon owns execution authority. Never overwrite its persisted
+        # autonomy with an unrelated/stale TUI snapshot on reconnect.
+        # Synchronize the local display/policy from the authoritative status.
         try:
-            await self._daemon_bridge.set_autonomy(
-                self.runtime.autonomy_store.get().level
-            )
+            status = await self._daemon_bridge.get_autonomy()
+            current_level = str(status["preset"])
+            if self.runtime.autonomy_store.get().level != current_level:
+                current = self.runtime.autonomy_store.set_preset(current_level)
+                self.runtime.processor.registry.policy.autonomy = current
         except Exception:
-            pass
+            # Older daemons may not yet implement the read-only status action.
+            # Fail closed: do not send a replacement policy to the daemon.
+            logger.warning("Unable to read daemon autonomy status; retaining daemon policy")
         return True
 
     async def start(self, prompt, conversation_id, explicit_files=frozenset(),

@@ -35,8 +35,9 @@ class DaemonBootstrapSingleFlightTests(unittest.IsolatedAsyncioTestCase):
             async def set_reasoning(self, *_):
                 calls.append("reasoning")
 
-            async def set_autonomy(self, *_):
-                calls.append("autonomy")
+            async def get_autonomy(self):
+                calls.append("autonomy.read")
+                return {"preset": "autonomous"}
 
             async def close(self):
                 pass
@@ -44,8 +45,14 @@ class DaemonBootstrapSingleFlightTests(unittest.IsolatedAsyncioTestCase):
         rt = SimpleNamespace(
             config=SimpleNamespace(daemon_enabled=True),
             canonical_root="/tmp/kitt-test-daemon-bootstrap",
-            processor=SimpleNamespace(reasoning_effort=50),
-            autonomy_store=SimpleNamespace(get=lambda: SimpleNamespace(level="allow-all")),
+            processor=SimpleNamespace(
+                reasoning_effort=50,
+                registry=SimpleNamespace(policy=SimpleNamespace(autonomy=None)),
+            ),
+            autonomy_store=SimpleNamespace(
+                get=lambda: SimpleNamespace(level="supervised"),
+                set_preset=lambda level: SimpleNamespace(level=level)
+            ),
             events=None,
         )
         bridge = TurnEventBridge(rt, lambda event: None, lambda: None)
@@ -56,8 +63,9 @@ class DaemonBootstrapSingleFlightTests(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual(results, [True, True, True])
             self.assertEqual(
-                calls, ["connect", "logging", "attach", "reasoning", "autonomy"]
+                calls, ["connect", "logging", "attach", "reasoning", "autonomy.read"]
             )
+            self.assertEqual(rt.processor.registry.policy.autonomy.level, "autonomous")
         finally:
             bridge._executor.shutdown(wait=False, cancel_futures=True)
 
