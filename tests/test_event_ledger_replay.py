@@ -108,6 +108,7 @@ def test_completed_mutation_execution_is_replayed_from_receipt_not_reserved_agai
         conversation_id=conversation_id,
         workspace_id="workspace-1",
         enabled_tools=["run_command"],
+        origin="USER",  # receipt idempotency, independent of host sandbox availability
     )
     assert result.success, result.error
     assert (tmp_path / "count.txt").read_text(encoding="utf-8") == "x"

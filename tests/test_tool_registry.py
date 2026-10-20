@@ -79,6 +79,7 @@ class TestToolRegistry(unittest.TestCase):
                 "timeout_seconds": 30,
             },
             enabled_tools=["run_command"],
+            origin="USER",  # explicit invocation; cwd test is not a sandbox test
         )
 
         self.assertTrue(res.success, res.error)
@@ -98,6 +99,10 @@ class TestToolRegistry(unittest.TestCase):
             self.registry.process_runner.sandbox,
             "is_strong_available",
             return_value=False,
+        ), mock.patch.object(
+            self.registry.process_runner.sandbox,
+            "_probe_bwrap",
+            return_value=None,
         ):
             result = self.registry.execute_tool(
                 "run_command",
@@ -109,10 +114,9 @@ class TestToolRegistry(unittest.TestCase):
                 enabled_tools=["run_command"],
             )
 
-        self.assertTrue(result.success, result.error)
+        self.assertFalse(result.success)
         self.assertFalse(result.requires_approval)
-        self.assertIn("Python", result.output)
-        self.assertFalse(result.metadata["sandbox"]["strong"])
+        self.assertIn("sandbox unavailable", result.error.lower())
 
     def test_run_command_network_requires_explicit_elevation(self):
         self.registry.policy.autonomy = AutonomyPolicy.preset("autonomous")
