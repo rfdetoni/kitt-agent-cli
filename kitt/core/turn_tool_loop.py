@@ -148,6 +148,8 @@ class TurnToolLoopMixin:
         tool_calls = 0
         malformed_calls = 0
         policy_denials = 0
+        denied_calls: set[str] = set()
+        model_rounds = 0
         discovery_streak = 0
         discovery_total = 0
         output_limit_recoveries = 0
@@ -190,6 +192,7 @@ class TurnToolLoopMixin:
                     }
                     else request.context_envelope
                 )
+                model_rounds += 1
                 model_round_started_at = time.perf_counter()
                 stream_kwargs = {
                     "turn_id": cmd.turn_id,
@@ -461,6 +464,12 @@ class TurnToolLoopMixin:
                     return
             tool_calls += 1
             tool_name, tool_args = ("python_compute", python_args) if python_args is not None else general_call
+            # Once the host denies an exact action, never ask the host to run
+            # that same action again in this turn.
+            denied_identity = _canonical_tool_args({"name": tool_name, "arguments": tool_args})
+            if denied_identity in denied_calls:
+                yield TurnBlocked(reason="Host policy already denied this exact tool action."), None, None
+                return
             reasoning_summary = extract_tool_reasoning_summary(full_response)
             if reasoning_summary:
                 display_args = dict(tool_args) if isinstance(tool_args, dict) else {}
@@ -829,6 +838,7 @@ class TurnToolLoopMixin:
                     yield approval_event, None, None
                 return
             if not tool_result.success and tool_result.error and "Execution denied by PolicyEngine" in tool_result.error:
+                denied_calls.add(denied_identity)
                 policy_denials += 1
                 if policy_denials > 2:
                     yield TurnBlocked(reason=tool_result.error), None, None
@@ -902,7 +912,18 @@ class TurnToolLoopMixin:
                 output=tool_result.output,
                 error=tool_result.error,
             )
-            if len(output_str) > self.config.max_tool_output_chars and self.registry.artifact_tools:
+            operation = _runtime_operation_name(tool_name, tool_args)
+            if len(output_str) > self.config.max_tool_output_chars and operation in {
+                "artifacts.read", "artifact_read", "artifacts.hydrate", "artifacts.retrieve"
+            }:
+                # The payload has already been persisted; retaining this read
+                # would create another artifact and trap the model in a loop.
+                limit = max(256, int(self.config.max_tool_output_chars))
+                output_str = output_str[:limit] + (
+                    "\n[Artifact content truncated inline; use artifacts.hydrate with "
+                    "artifact_id, offset and max_bytes for bounded pages.]"
+                )
+            elif len(output_str) > self.config.max_tool_output_chars and self.registry.artifact_tools:
                 if not self.turn_guard.begin(cmd.turn_id):
                     return
                 try:
@@ -966,6 +987,8 @@ class TurnToolLoopMixin:
             tool_calls=tool_calls,
             malformed_calls=malformed_calls,
             policy_denials=policy_denials,
+            model_rounds=model_rounds,
+            repeated_denials_prevented=len(denied_calls),
             final_response=summarize_trace_text(full_response),
             execution_messages=summarize_trace_messages(execution_messages),
         )

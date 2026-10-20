@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.20 — approval hotkeys and tool-loop recovery
+
+Make permission and autonomy shortcuts eager and add A/S/D shortcuts to the autonomy modal; clarify displayed controls. Prevent artifact reads from generating further artifacts, retain a bounded preview in oversized host feedback, and refuse repeating an identical policy-denied action within one turn. Record model-round count in tool-loop telemetry. [Notes](docs/RELEASE_0.88.20.md).
+
+
 ## 0.88.19 — explicit-only Agent loop tool dispatch
 
 Agent-loop execution accepts only canonical JSON actions or complete `<kitt-tool>` and `<tool_call>` envelopes; never derive host tools from prose, code examples, or incomplete frames. The existing `repo.batch_read` handles independent parallel reads with bounded receipts; writes remain sequential. Bump project and lock, add focused tests. [Notes](docs/RELEASE_0.88.19.md).

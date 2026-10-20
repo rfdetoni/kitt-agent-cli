@@ -82,24 +82,24 @@ def _autonomy_text(ui) -> str:
         f"│ Perfil Atual: [ {curr.level.upper()} ]  Comandos: [ {command_mode} ]\n" +
         "│\n" +
         "│ Política para comandos e alterações:\n" +
-        f"│ {hover_marker('autonomy.profile', 'autonomous')}[1] ALLOW ALL : Executar automaticamente dentro das regras críticas\n" +
-        f"│ {hover_marker('autonomy.profile', 'supervised')}[2] ASK       : Pedir aprovação antes de comandos e alterações\n" +
-        f"│ {hover_marker('autonomy.profile', 'read_only')}[3] DENY      : Bloquear comandos, alterações e subagentes\n" +
+        f"│ {hover_marker('autonomy.profile', 'autonomous')}[1/A] ALLOW ALL : Executar automaticamente dentro das regras críticas\n" +
+        f"│ {hover_marker('autonomy.profile', 'supervised')}[2/S] ASK       : Pedir aprovação antes de comandos e alterações\n" +
+        f"│ {hover_marker('autonomy.profile', 'read_only')}[3/D] DENY      : Bloquear comandos, alterações e subagentes\n" +
         "│\n" +
         "│ Regras Salvas no Workspace:\n" +
         f"{rules_str}\n" +
         "│\n" +
-        "│ Controles: [1] Allow All  [2] Ask  [3] Deny  [r] Limpar Regras  [Esc] Sair\n" +
+        "│ Controles: [1/A] Allow All  [2/S] Ask  [3/D] Deny  [r] Limpar Regras  [Esc] Sair\n" +
         t.format_primary("└────────────────────────────────────────────────────────────────────────────┘")
     )
     text = strip_ansi(text)
     ui.interactions.begin("autonomy")
     for row, line in enumerate(text.splitlines()):
-        if "[1] ALLOW ALL" in line:
+        if "[1/A] ALLOW ALL" in line:
             ui.interactions.add_row("autonomy", row, "autonomy.profile", "autonomous")
-        elif "[2] ASK" in line:
+        elif "[2/S] ASK" in line:
             ui.interactions.add_row("autonomy", row, "autonomy.profile", "supervised")
-        elif "[3] DENY" in line:
+        elif "[3/D] DENY" in line:
             ui.interactions.add_row("autonomy", row, "autonomy.profile", "read_only")
         elif "Controles:" in line:
             ui.interactions.add_text(
