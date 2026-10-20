@@ -470,9 +470,9 @@ async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
                     running_tool.started_at = time.time()
                     running_tool.text = running_tool.text.replace(" ⏸ (aguardando aprovação)", "").replace(" ⏸", "").strip()
                 await ui.bridge.continue_turn(pending["turn_id"], grant)
-        if allow_all:
-            await _set_autonomy_profile(ui, "autonomous", notify=False)
-            ui.state.add_toast("Allow-all ativo neste workspace.")
+            if allow_all:
+                await _set_autonomy_profile(ui, "autonomous", notify=False)
+                ui.state.add_toast("Allow-all ativo neste workspace.")
         except Exception as exc:
             ui.state.add_toast(f"Approval failed: {exc}", persistent=True)
             ui.state.status_text = "ERROR"
