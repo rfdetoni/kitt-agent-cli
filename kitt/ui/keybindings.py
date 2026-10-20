@@ -533,7 +533,8 @@ def build_key_bindings(ui):
     def _(event):
         ui.request_exit()
 
-    @kb.add("y", filter=permission)
+    @kb.add("y", filter=permission, eager=True)
+    @kb.add("Y", filter=permission, eager=True)
     def _(event): asyncio.create_task(ui.resolve_approval("once"))
 
     @kb.add("up", filter=permission)
@@ -553,34 +554,41 @@ def build_key_bindings(ui):
         action = PermissionCardComponent.ACTIONS[ui.approval_menu_index][0]
         asyncio.create_task(ui.resolve_approval(action))
 
-    @kb.add("a", filter=permission)
-    @kb.add("A", filter=permission)
+    @kb.add("a", filter=permission, eager=True)
+    @kb.add("A", filter=permission, eager=True)
     def _(event): asyncio.create_task(ui.resolve_approval("always_workspace"))
 
-    @kb.add("s", filter=permission)
+    @kb.add("s", filter=permission, eager=True)
+    @kb.add("S", filter=permission, eager=True)
     def _(event): asyncio.create_task(ui.resolve_approval("always_session"))
 
-    @kb.add("n", filter=permission)
+    @kb.add("n", filter=permission, eager=True)
     def _(event): asyncio.create_task(ui.resolve_approval("deny"))
 
-    @kb.add("N", filter=permission)
+    @kb.add("N", filter=permission, eager=True)
     def _(event): asyncio.create_task(ui.resolve_approval("deny_all"))
 
     autonomy_cond = Condition(lambda: ui.state.active_overlay == "autonomy_control")
 
-    @kb.add("1", filter=autonomy_cond)
+    @kb.add("a", filter=autonomy_cond, eager=True)
+    @kb.add("A", filter=autonomy_cond, eager=True)
+    @kb.add("1", filter=autonomy_cond, eager=True)
     def _(event):
         asyncio.create_task(ui._set_autonomy_profile("autonomous"))
 
-    @kb.add("2", filter=autonomy_cond)
+    @kb.add("s", filter=autonomy_cond, eager=True)
+    @kb.add("S", filter=autonomy_cond, eager=True)
+    @kb.add("2", filter=autonomy_cond, eager=True)
     def _(event):
         asyncio.create_task(ui._set_autonomy_profile("supervised"))
 
-    @kb.add("3", filter=autonomy_cond)
+    @kb.add("d", filter=autonomy_cond, eager=True)
+    @kb.add("D", filter=autonomy_cond, eager=True)
+    @kb.add("3", filter=autonomy_cond, eager=True)
     def _(event):
         asyncio.create_task(ui._set_autonomy_profile("read_only"))
 
-    @kb.add("r", filter=autonomy_cond)
+    @kb.add("r", filter=autonomy_cond, eager=True)
     def _(event):
         asyncio.create_task(ui._clear_remembered_approvals("all"))
 

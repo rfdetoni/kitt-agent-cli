@@ -36,6 +36,9 @@ def retain_tool_output(
     )
     preview = (
         f"[Large tool output saved to Artifact ID {artifact.id} "
-        f"({len(text)} chars). Use artifact_read to inspect.]"
+        f"({len(text)} chars).]\n"
+        f"{text[:min(1400, max(200, int(threshold_chars) // 2))]}\n"
+        "[Preview only; use artifacts.hydrate with artifact_id and offset "
+        "for bounded pages. Do not re-read an entire large artifact.]"
     )
     return RetainedOutput(preview, artifact.id, len(text), True)
