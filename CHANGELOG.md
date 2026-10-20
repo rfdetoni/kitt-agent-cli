@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.30 — durable-Goal recovery, context and routing hardening
+
+Completes another tranche of the prioritized reliability backlog on the existing KITT architecture. Long-running work now uses a resumable budget checkpoint without false completion; read batches support bounded capability-scoped searches. All explicit saved ASK/DENY autonomy choices remain authoritative, while partial new policy dictionaries match autonomous workspace defaults. Preserve polyglot AGENTS.md guidance, enforce the instruction body budget and revalidate retained child-model egress and credential references on the worker. Categorize strong-sandbox provisioning failures as environment blockers and protect against duplicate WebChat replays on ambiguous submission timeouts. Add a strictly optional localhost-only System One Choice/Score/Noul shadow evaluator with accuracy, calibration and latency metrics. The decision evaluator never controls approvals, tool execution or completion status. Strict host sandbox requirements remain unchanged. Targeted regressions and release-critical CI verify the amended Python surfaces.
+
+
 ## 0.88.29 — consistent workspace autonomy and polyglot instructions
 
 Partial autonomy settings now default to the same autonomous level as newly created workspaces. An explicitly persisted supervised or read-only choice still wins; the host policy and sandbox remain authoritative. ContextResolver no longer silently discards legitimate AGENTS.md content from Python/Node/Bun/TypeScript polyglot repositories based on a filename heuristic. Both behaviors have focused regressions.
