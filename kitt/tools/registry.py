@@ -77,7 +77,12 @@ class ToolRegistry(_core.ToolRegistry):
                 sandbox_note = (
                     " Host process sandbox UNAVAILABLE (requires functional bubblewrap>=0.12); "
                     "do not retry process.run unchanged or bypass host isolation; "
-                    "workspace file tools remain independently available."
+                    "workspace file tools remain independently available. "
+                    + (
+                        sandbox.bubblewrap_diagnostic()
+                        if sandbox is not None and hasattr(sandbox, "bubblewrap_diagnostic")
+                        else ""
+                    )
                     if not strong_available else ""
                 )
                 tool["description"] = (

@@ -308,6 +308,11 @@ class SafeRuntime(_core.SafeRuntime):
                 "workspace_process_sandbox": {
                     "available": strong_sandbox,
                     "required": "functional bubblewrap>=0.12",
+                    "diagnostic": (
+                        sandbox.bubblewrap_diagnostic()
+                        if sandbox is not None and hasattr(sandbox, "bubblewrap_diagnostic")
+                        else "sandbox not attached"
+                    ),
                     "fallback": "repo mutations or an already authorized guest executor; never unsandboxed process.run",
                 },
                 "format": AGENT_WIRE_FORMAT,

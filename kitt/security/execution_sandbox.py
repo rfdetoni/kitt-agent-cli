@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Literal, Sequence
 
 
@@ -103,6 +104,8 @@ class ExecutionSandbox:
         self._landlock_abi_override = landlock_abi
         self._auto_detect = bool(auto_detect)
         self._bwrap_cache: tuple[str, tuple[int, int, int]] | None | bool = False
+        self._bwrap_cache_until = 0.0
+        self._bwrap_failures: list[str] = []
         self._landlock_cache: int | None = None
 
     def _probe_landlock(self) -> int:
@@ -126,100 +129,123 @@ class ExecutionSandbox:
             int(match.group(3) or 0),
         )
 
-    def _candidate_bwrap(self) -> Path | None:
+    def _bwrap_candidates(self) -> list[Path]:
+        """Find independent installations, deduplicating symlinks and excluding the workspace."""
         if self._bwrap_path_override:
-            candidate = Path(self._bwrap_path_override).expanduser()
-            return candidate.resolve() if candidate.exists() else None
-        if not self._auto_detect or sys.platform != "linux":
-            return None
-        candidates = [Path("/usr/bin/bwrap"), Path("/bin/bwrap")]
-        discovered = shutil.which("bwrap")
-        if discovered:
-            candidates.append(Path(discovered))
-        for candidate in candidates:
+            paths = [Path(self._bwrap_path_override).expanduser()]
+        elif not self._auto_detect or sys.platform != "linux":
+            return []
+        else:
+            paths = [Path("/usr/local/bin/bwrap"), Path("/usr/bin/bwrap"), Path("/bin/bwrap")]
+            paths.extend(Path(directory) / "bwrap" for directory in os.get_exec_path() if directory)
+
+        candidates: list[Path] = []
+        seen: set[Path] = set()
+        for path in paths:
             try:
-                resolved = candidate.resolve(strict=True)
-            except (OSError, FileNotFoundError):
-                continue
-            try:
+                resolved = path.resolve(strict=True)
+                if resolved in seen or not resolved.is_file() or not os.access(resolved, os.X_OK):
+                    continue
                 resolved.relative_to(self.root)
             except ValueError:
-                return resolved
-        return None
+                seen.add(resolved)
+                candidates.append(resolved)
+            except OSError:
+                continue
+        return candidates
 
     @staticmethod
-    def _bwrap_runtime_works(candidate: Path) -> bool:
+    def _bwrap_runtime_probe(candidate: Path) -> tuple[bool, str]:
         true_path = next(
             (path for path in (Path("/usr/bin/true"), Path("/bin/true")) if path.exists()),
             None,
         )
         if true_path is None:
-            return False
+            return False, "system /usr/bin/true not found"
         try:
             probe = subprocess.run(
                 [
                     str(candidate),
-                    "--die-with-parent",
-                    "--new-session",
-                    "--unshare-user",
-                    "--unshare-pid",
-                    "--unshare-ipc",
-                    "--unshare-uts",
-                    "--ro-bind",
-                    "/",
-                    "/",
-                    "--proc",
-                    "/proc",
-                    "--dev",
-                    "/dev",
-                    "--",
-                    str(true_path),
+                    "--die-with-parent", "--new-session",
+                    "--unshare-user", "--unshare-pid",
+                    "--unshare-ipc", "--unshare-uts",
+                    "--ro-bind", "/", "/", "--proc", "/proc",
+                    "--dev", "/dev", "--", str(true_path),
                 ],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="replace",
                 timeout=3,
                 check=False,
                 env={"PATH": os.environ.get("PATH", "")},
             )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        return probe.returncode == 0
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, f"namespace probe failed: {type(exc).__name__}"
+        if probe.returncode == 0:
+            return True, ""
+        detail = (probe.stderr or "").strip().replace("\n", " ")[:240]
+        hint = (
+            " Check the AppArmor userns profile for this exact executable path."
+            if "uid map" in detail.casefold() or "permission denied" in detail.casefold()
+            else ""
+        )
+        return False, f"namespace probe exit {probe.returncode}: {detail or 'no stderr'}.{hint}"
 
     def _probe_bwrap(self) -> tuple[str, tuple[int, int, int]] | None:
-        if self._bwrap_cache is not False:
+        if self._bwrap_cache is not False and time.monotonic() < self._bwrap_cache_until:
             return self._bwrap_cache
-        candidate = self._candidate_bwrap()
-        if candidate is None:
-            self._bwrap_cache = None
-            return None
-        version = self._bwrap_version_override
-        if version is None:
-            try:
-                probe = subprocess.run(
-                    [str(candidate), "--version"],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=2,
-                    check=False,
-                    env={"PATH": os.environ.get("PATH", "")},
+        self._bwrap_failures = []
+        self._bwrap_cache = None
+        for candidate in self._bwrap_candidates():
+            version = self._bwrap_version_override
+            if version is None:
+                try:
+                    result = subprocess.run(
+                        [str(candidate), "--version"],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        errors="replace",
+                        timeout=2,
+                        check=False,
+                        env={"PATH": os.environ.get("PATH", "")},
+                    )
+                    version = self._parse_version(result.stdout or "") if result.returncode == 0 else None
+                except (OSError, subprocess.SubprocessError):
+                    version = None
+            if version is None:
+                self._bwrap_failures.append(f"{candidate}: cannot determine version")
+                continue
+            if tuple(version) < _MIN_BWRAP_VERSION:
+                self._bwrap_failures.append(
+                    f"{candidate}: {'.'.join(map(str, version))} is below 0.12.0"
                 )
-                version = self._parse_version(probe.stdout or "")
-            except (OSError, subprocess.SubprocessError):
-                version = None
-        if version is None or tuple(version) < _MIN_BWRAP_VERSION:
-            self._bwrap_cache = None
-            return None
-        # A version string is insufficient: user namespaces may be disabled by
-        # the host/container. Explicit test overrides intentionally skip this
-        # runtime probe to keep unit tests hermetic.
-        if self._bwrap_version_override is None and not self._bwrap_runtime_works(candidate):
-            self._bwrap_cache = None
-            return None
-        self._bwrap_cache = (str(candidate), tuple(version))
+                continue
+            # Explicit version overrides are reserved for hermetic tests.
+            if self._bwrap_version_override is None:
+                works, reason = self._bwrap_runtime_probe(candidate)
+                if not works:
+                    self._bwrap_failures.append(f"{candidate}: {reason}")
+                    continue
+            self._bwrap_cache = (str(candidate), tuple(version))
+            break
+        if not self._bwrap_failures and self._bwrap_cache is None:
+            self._bwrap_failures.append(
+                "no executable bwrap installation found outside the workspace"
+            )
+        # Recheck periodically: an updated binary or AppArmor profile can fix a failed probe.
+        self._bwrap_cache_until = time.monotonic() + 60
         return self._bwrap_cache
+
+    def bubblewrap_diagnostic(self) -> str:
+        """Bounded explanation of the actual selected candidates, without weakening isolation."""
+        selected = self._probe_bwrap()
+        if selected is not None:
+            return f"functional bubblewrap {'.'.join(map(str, selected[1]))} at {selected[0]}"
+        return "; ".join(self._bwrap_failures[:4])[:900]
 
     def backend_for(self, profile: SandboxProfile) -> str | None:
         if profile == "full-access":
@@ -473,7 +499,8 @@ class ExecutionSandbox:
 
         if require_strong:
             raise SandboxUnavailable(
-                f"Strong sandbox profile '{target}' requires functional bubblewrap >= 0.12"
+                f"Strong sandbox profile '{target}' requires functional bubblewrap >= 0.12. "
+                f"{self.bubblewrap_diagnostic()}"
             )
 
         if (
