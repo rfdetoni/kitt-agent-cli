@@ -15,7 +15,6 @@ from kitt.llm.domain import (
     ProviderConnectionError,
     ProviderProtocolError,
     ProviderRecoverableError,
-    ProviderTimeoutError,
 )
 from kitt.llm.http_security import read_error_body, secure_urlopen
 from kitt.llm.providers.base import LLMRequest, handle_http_error
