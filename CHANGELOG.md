@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.36 — fix Bubblewrap resolver symlink mount on Ubuntu
+
+When creating the process sandbox, the host mounts `/run` on a private tmpfs. Rebinding `/etc/resolv.conf` to its original path fails on systemd-resolved hosts where it is a symlink into `/run`. The command planner now skips resolver rebinds for network-isolated `workspace-write` and for regular `/etc` files already visible from the read-only root; network-enabled profiles restore only the canonical resolver target file and its minimal directory chain under the private `/run`, never mounting over a symlink destination. Two focused regressions cover canonical target selection and isolated/network-enabled behavior. No relaxation of AppArmor, sandbox policy, tool authority or network restrictions.
+
+
 ## 0.88.35 — probe all Bubblewrap candidates and explain userns failures
 
 The host execution sandbox now enumerates /usr/local/bin/bwrap, /usr/bin/bwrap, /bin/bwrap and all PATH candidates, rejects binaries inside the workspace, deduplicates symlinks and skips versions below 0.12.0. Every suitable candidate must actually pass the namespace isolation probe; a failing older, broken or AppArmor-restricted binary no longer masks another functional installation. Failure diagnostics include the attempted path and bounded stderr (with an AppArmor userns/uid_map hint when relevant) in strong-sandbox errors and runtime capabilities. Positive and negative detection results are refreshed after 60 seconds for installation and policy changes. Focused regressions cover fallback selection, uid_map denial, workspace isolation, and negative-cache refresh. The strong sandbox requirement and host authorization remain unchanged.
