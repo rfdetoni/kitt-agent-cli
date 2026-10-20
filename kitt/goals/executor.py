@@ -41,9 +41,17 @@ class GoalStepExecutor:
         if value.startswith("Unresolved prior execution receipt:"):
             return "ENVIRONMENT"
         lowered = value.casefold()
-        if "execution denied by policyengine" in lowered or "capability is not granted" in lowered:
+        if (
+            "execution denied by policyengine" in lowered
+            or "capability is not granted" in lowered
+            or "host policy already denied this exact tool action" in lowered
+        ):
             return "POLICY"
-        if "command sandbox unavailable" in lowered or "requires functional bubblewrap" in lowered:
+        if (
+            "command sandbox unavailable" in lowered
+            or "requires functional bubblewrap" in lowered
+            or "repeated host operation cannot run in the current sandbox" in lowered
+        ):
             return "ENVIRONMENT"
         return "UNSPECIFIED"
 

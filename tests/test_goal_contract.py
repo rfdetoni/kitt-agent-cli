@@ -380,6 +380,19 @@ class GoalContractTests(unittest.TestCase):
             "requires functional bubblewrap >= 0.12"
         ), "ENVIRONMENT")
 
+    def test_repeat_policy_or_environment_failure_never_enters_goal_retry(self):
+        self.assertEqual(
+            GoalStepExecutor._blocked_category(
+                "Repeated host operation cannot run in the current sandbox: "
+                "requires functional bubblewrap >= 0.12"
+            ), "ENVIRONMENT"
+        )
+        self.assertEqual(
+            GoalStepExecutor._blocked_category(
+                "Host policy already denied this exact tool action."
+            ), "POLICY"
+        )
+
     def test_budget_checkpoint_is_a_resumable_goal_block(self):
         self.assertEqual(
             GoalStepExecutor._blocked_category(
