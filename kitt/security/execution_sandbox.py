@@ -213,7 +213,11 @@ class ExecutionSandbox:
                         check=False,
                         env={"PATH": os.environ.get("PATH", "")},
                     )
-                    version = self._parse_version(result.stdout or "") if result.returncode == 0 else None
+                    version = (
+                        self._parse_version(result.stdout or "")
+                        if result.returncode == 0
+                        else None
+                    )
                 except (OSError, subprocess.SubprocessError):
                     version = None
             if version is None:
