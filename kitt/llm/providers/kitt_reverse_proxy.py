@@ -399,8 +399,11 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                             if len(state["name"]) > 64 or len(state["arguments"].encode("utf-8")) > MAX_TOOL_ARGUMENT_BYTES:
                                 raise ProviderProtocolError("KITT reverse proxy tool call exceeds protocol limits")
         except socket.timeout as exc:
-            raise ProviderTimeoutError(
-                f"KITT reverse proxy timed out after {request.timeout_seconds}s"
+            # The browser may already have submitted the request. Retrying this
+            # logical WebChat turn can duplicate model actions.
+            raise ProviderProtocolError(
+                "KITT reverse proxy stream timed out with unknown submission state; "
+                "do not automatically replay the logical request."
             ) from exc
         except urllib.error.HTTPError as exc:
             body = read_error_body(exc)
@@ -473,11 +476,17 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
                 raise ProviderProtocolError(
                     f"KITT reverse proxy rejected the request: {matched}{suffix}"
                 ) from exc
+            if exc.code in (408, 504):
+                raise ProviderProtocolError(
+                    "KITT reverse proxy returned an ambiguous request timeout; "
+                    "do not automatically replay a possibly submitted WebChat turn."
+                ) from exc
             handle_http_error(exc, url, body=body)
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, socket.timeout):
-                raise ProviderTimeoutError(
-                    f"KITT reverse proxy timed out after {request.timeout_seconds}s"
+                raise ProviderProtocolError(
+                    "KITT reverse proxy connection timed out with unknown submission state; "
+                    "do not automatically replay the logical request."
                 ) from exc
             raise ProviderConnectionError(
                 f"Could not connect to KITT reverse proxy at {url}: {exc}"

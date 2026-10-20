@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.26 — do not replay ambiguous WebChat timeouts
+
+The KITT Reverse Proxy client now treats socket/URL read timeouts and HTTP 408/504 without explicit recoverable metadata as ambiguous WebChat submissions. It raises a non-retryable protocol error instead of allowing the generic LLM retry policy or model failover to resend an already accepted request. Explicitly recoverable structured proxy errors retain their existing handling. The native WebChat tool contract and browser session ownership remain unchanged. Focused compatibility regressions cover all three timeout paths.
+
+
 ## 0.88.25 — stop repeating unavailable host sandbox operations
 
 A failed host process action caused by missing Bubblewrap sandbox support remains visible as an execution failure. The agent is told that unchanged retries cannot succeed and the same action is blocked on its next attempt within the turn. Other authorized host tools and validation routes remain available. No sandbox policy, approval authority or reverse-proxy wire contract is weakened. A focused regression covers sandbox failures without classifying ordinary process test failures as environmental blockers.

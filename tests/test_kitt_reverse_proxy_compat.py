@@ -1,5 +1,6 @@
 import io
 import json
+import socket
 import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
@@ -88,6 +89,28 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                         system_prompt=prompt,
                     )))
 
+
+    def test_uncertain_webchat_timeouts_cannot_be_replayed(self):
+        # A socket timeout can happen after the browser submitted the prompt.
+        # Preserve this as a terminal protocol error, not a retryable timeout.
+        request = LLMRequest(
+            model="chatgpt-web", messages=[{"role": "user", "content": "inspect"}],
+        )
+        failures = (
+            socket.timeout("read timed out"),
+            urllib.error.URLError(socket.timeout("socket timed out")),
+            urllib.error.HTTPError(
+                "http://127.0.0.1:3000/v1/chat/completions", 504,
+                "Gateway Timeout", None, io.BytesIO(b""),
+            ),
+        )
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__), patch(
+                "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
+                side_effect=failure,
+            ):
+                with self.assertRaisesRegex(ProviderProtocolError, "do not automatically replay"):
+                    list(KittReverseProxyAdapter().stream(request))
 
     def test_ui_timeout_is_not_misreported_as_kap_parse_failure(self):
         error = {"error": {"code": "ui_timeout", "message": "assistant not captured"}}
