@@ -391,13 +391,18 @@ async def _resolve_approval_once(ui, mode: str | bool = "once") -> None:
             # Grant the pending action under its original authority snapshot;
             # only then elevate subsequent workspace actions. Reversing this
             # order invalidates the exact-action approval on resume.
-            if allow_all:
-                await _set_autonomy_profile(ui, "autonomous", notify=False)
-                ui.state.add_toast("Allow-all ativo neste workspace.")
             ui.state.pending_approvals[:] = [
                 item for item in ui.state.pending_approvals
                 if item.get("approval_id") != pending["approval_id"]
             ]
+            if allow_all:
+                try:
+                    await _set_autonomy_profile(ui, "autonomous", notify=False)
+                    ui.state.add_toast("Allow-all ativo neste workspace.")
+                except Exception as exc:
+                    # The exact-action approval has already been consumed.
+                    # Never reopen that request just because escalation failed.
+                    ui.state.add_toast(f"Ação aprovada; allow-all não ativado: {exc}", persistent=True)
             ui.state.status_text = "PROCESSING" if allow else "SYSTEM ONLINE"
             if acknowledgment.get("execution_status") == "failed":
                 ui.state.add_toast(
