@@ -6,7 +6,8 @@ class PermissionCardComponent:
     ACTIONS = (
         ("once", "Permitir uma vez", "y"),
         ("always_session", "Sempre nesta sessão", "s"),
-        ("always_workspace", "Sempre neste workspace", "A"),
+        ("allow_all", "Allow-all neste workspace (todas as ferramentas)", "A"),
+        ("always_workspace", "Sempre esta ferramenta no workspace", "w"),
         ("deny", "Negar", "n"),
         ("deny_all", "Negar todas", "N"),
     )

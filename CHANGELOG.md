@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.23 — workspace-wide allow-all from approval menu
+
+The approval modal now distinguishes [A] Allow-all (persist autonomous mode for the current workspace) from [w] remembering a single tool. The pending grant executes under its original authority snapshot; later actions use the persisted autonomous mode. A failed autonomy RPC cannot reopen an already granted request. The TUI rejects daemon autonomy errors rather than silently diverging from the daemon. Host path and sandbox capability boundaries remain enforced.
+
 ## 0.88.22 — autonomous workspace/VM default, restricted by host boundaries
 
 New workspaces default to autonomous/allow-all for ordinary workspace and authenticated guest operations; previous operator choices are preserved. Expand the automatic per-turn budget from 40/80 to 1000/10000 for long tasks. Require a strong OS sandbox for automatic *host* process execution so autonomy never silently becomes an unsandboxed host escape. ASK/DENY remain accessible in Autonomy; control-plane, network, secrets, out-of-workspace and VM identity gates are unchanged. [Notes](docs/RELEASE_0.88.22.md).
