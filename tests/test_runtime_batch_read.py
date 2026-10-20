@@ -37,6 +37,23 @@ class ReadBatchTests(unittest.TestCase):
         self.assertEqual(status.data['agent_contract_version'], 'v5')
         self.assertFalse(self.runtime.execute('runtime.capabilities', {'enable_unsafe': True}).success)
 
+    def test_missing_strong_sandbox_is_reported_before_host_process_call(self):
+        from kitt.tools.registry import ToolRegistry
+        from unittest.mock import patch
+
+        with ToolRegistry(root_dir=self.tmp.name) as registry:
+            with patch.object(registry.process_runner.sandbox, 'is_strong_available', return_value=False):
+                tools = registry.get_tool_definitions()
+                tool = next(x for x in tools if x['name'] == 'kitt_runtime')
+                self.assertIn('sandbox UNAVAILABLE', tool['description'])
+                runtime = SafeRuntime(Path(self.tmp.name), 'ws', 'conv', tool_registry=registry)
+                try:
+                    details = runtime.execute('runtime.capabilities', {})
+                    self.assertTrue(details.success)
+                    self.assertFalse(details.data['workspace_process_sandbox']['available'])
+                finally:
+                    runtime.close()
+
     def test_batch_is_available_in_host_and_model_operation_catalogs(self):
         from kitt.core.turn_processor import TurnProcessor
         from kitt.tools.registry import runtime_operation_names

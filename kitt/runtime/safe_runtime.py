@@ -300,7 +300,16 @@ class SafeRuntime(_core.SafeRuntime):
         if op == "runtime.capabilities":
             if args:
                 return SafeRuntimeResult(False, op, error="runtime.capabilities requires no arguments")
+            sandbox = getattr(getattr(self.registry, "process_runner", None), "sandbox", None)
+            strong_sandbox = bool(
+                sandbox is not None and sandbox.is_strong_available("workspace-write")
+            )
             return SafeRuntimeResult(True, op, data={
+                "workspace_process_sandbox": {
+                    "available": strong_sandbox,
+                    "required": "functional bubblewrap>=0.12",
+                    "fallback": "repo mutations or an already authorized guest executor; never unsandboxed process.run",
+                },
                 "format": AGENT_WIRE_FORMAT,
                 "host_tool": "kitt_runtime",
                 "features": ["repo.batch_read", "repo.ref.create", "repo.ref.read",

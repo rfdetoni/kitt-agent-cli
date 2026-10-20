@@ -70,6 +70,16 @@ class ToolRegistry(_core.ToolRegistry):
                 # Retain only the mutation guidance
                 # that prevents common misrouting (artifact storage vs workspace
                 # writes, or unified diff vs SEARCH/REPLACE patches).
+                sandbox = getattr(getattr(self, "process_runner", None), "sandbox", None)
+                strong_available = bool(
+                    sandbox is not None and sandbox.is_strong_available("workspace-write")
+                )
+                sandbox_note = (
+                    " Host process sandbox UNAVAILABLE (requires functional bubblewrap>=0.12); "
+                    "do not retry process.run unchanged or bypass host isolation; "
+                    "workspace file tools remain independently available."
+                    if not strong_available else ""
+                )
                 tool["description"] = (
                     "Safe runtime. process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}; "
                     "argv-only/no shell; for independent read/search/list calls use "
@@ -77,7 +87,7 @@ class ToolRegistry(_core.ToolRegistry):
                     "batch never permits writes; file edits use repo.write_file or patch.apply; "
                     "patch.apply accepts SEARCH/REPLACE or unified diff; "
                     "sandbox.python {code,inputs?,result_var?} runs AST-only compute, "
-                    "no imports/files/network/shell."
+                    "no imports/files/network/shell." + sandbox_note
                 )
                 tool["args"] = {
                     "operation": "runtime operation",
