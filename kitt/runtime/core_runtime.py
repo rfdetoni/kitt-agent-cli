@@ -20,6 +20,7 @@ from kitt.runtime.retrieval_guard import RetrievalGuard
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.control_plane import control_plane_paths
 from kitt.security.workspace_fs import DEFAULT_MAX_FILE_BYTES, WorkspaceFileSystem
+from kitt.security.risk_budget import is_automatic_origin
 from kitt.security.capabilities import (
     CAP_ARTIFACT_READ,
     CAP_ARTIFACT_WRITE,
@@ -898,7 +899,7 @@ class SafeRuntime:
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "process.start": lambda: self._op_process_start(
-                args, turn_id, security_context
+                args, turn_id, security_context, origin
             ),
             "process.read": lambda: self._op_process_read(
                 args, security_context
@@ -973,6 +974,7 @@ class SafeRuntime:
         args: dict,
         turn_id: str,
         security_context,
+        origin: str,
     ) -> SafeRuntimeResult:
         argv = args.get("argv")
         if not isinstance(argv, list):
@@ -994,7 +996,12 @@ class SafeRuntime:
             cwd=args.get("cwd"),
             env=args.get("env") if isinstance(args.get("env"), dict) else None,
             sandbox_profile=profile,
-            require_strong_sandbox=bool(args.get("require_strong_sandbox", False)),
+            # Managed long-lived processes have the same automatic host
+            # confinement requirement as synchronous process.run.
+            require_strong_sandbox=(
+                is_automatic_origin(origin)
+                or bool(args.get("require_strong_sandbox", False))
+            ),
         )
         return SafeRuntimeResult(True, "process.start", data=data)
 

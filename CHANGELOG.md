@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.22 — autonomous workspace/VM default, restricted by host boundaries
+
+New workspaces default to autonomous/allow-all for ordinary workspace and authenticated guest operations; previous operator choices are preserved. Expand the automatic per-turn budget from 40/80 to 1000/10000 for long tasks. Require a strong OS sandbox for automatic *host* process execution so autonomy never silently becomes an unsandboxed host escape. ASK/DENY remain accessible in Autonomy; control-plane, network, secrets, out-of-workspace and VM identity gates are unchanged. [Notes](docs/RELEASE_0.88.22.md).
+
+
 ## 0.88.21 — daemon-authoritative autonomy on startup
 
 The CLI now reads the daemon's effective autonomy on attach instead of overwriting it with the local TUI snapshot. Keeps local display synchronized without granting authority on reconnect, and preserves explicit user-initiated `/autonomy allow-all` updates. Requires Assistant Runtime with `runtime.get_autonomy` for synchronized status; older daemons are not silently escalated. [Notes](docs/RELEASE_0.88.21.md).

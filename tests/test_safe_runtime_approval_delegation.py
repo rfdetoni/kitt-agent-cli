@@ -129,7 +129,7 @@ class TestSafeRuntimeApprovalDelegation(unittest.TestCase):
                 "process.run",
                 {"argv": [sys.executable, "-c", "print('remembered-approval')"]},
                 turn_id=turn_id,
-                origin="MODEL",
+                origin="USER",  # this case verifies persisted approval, not auto sandboxing
                 security_context=context,
             )
         self.assertTrue(result.success, result.error)

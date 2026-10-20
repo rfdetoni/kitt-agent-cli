@@ -22,6 +22,9 @@ def waiting_action(tmp_path):
         str(tmp_path), RuntimeConfig(history_enabled=True, persistence_enabled=True)
     )
     try:
+        # This fixture exercises a deliberate ASK policy, not the new
+        # autonomous default for otherwise-unconfigured workspaces.
+        runtime.registry.policy.autonomy = runtime.autonomy_store.set_preset("supervised")
         conversation = runtime.history.new_conversation("approval resume")
         security = ExecutionSecurityContext(
             workspace_id=runtime.workspace_id,

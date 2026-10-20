@@ -82,7 +82,7 @@ def _autonomy_text(ui) -> str:
         f"│ Perfil Atual: [ {curr.level.upper()} ]  Comandos: [ {command_mode} ]\n" +
         "│\n" +
         "│ Política para comandos e alterações:\n" +
-        f"│ {hover_marker('autonomy.profile', 'autonomous')}[1/A] ALLOW ALL : Executar automaticamente dentro das regras críticas\n" +
+        f"│ {hover_marker('autonomy.profile', 'autonomous')}[1/A] ALLOW ALL (PADRÃO): Automático no workspace / VMs, com sandbox\n" +
         f"│ {hover_marker('autonomy.profile', 'supervised')}[2/S] ASK       : Pedir aprovação antes de comandos e alterações\n" +
         f"│ {hover_marker('autonomy.profile', 'read_only')}[3/D] DENY      : Bloquear comandos, alterações e subagentes\n" +
         "│\n" +

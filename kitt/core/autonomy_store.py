@@ -36,10 +36,12 @@ class AutonomyStore:
 
     def _load(self) -> AutonomyPolicy:
         if not self.persistence_enabled:
-            return AutonomyPolicy.preset("supervised")
+            return AutonomyPolicy.preset("autonomous")
         payload = secure_read_json(self.path, default=None, max_bytes=64 * 1024)
         if payload is None:
-            return AutonomyPolicy.preset("supervised")
+            # Only brand-new workspaces receive the autonomous default.
+            # Existing user choices (including ASK/DENY) remain authoritative.
+            return AutonomyPolicy.preset("autonomous")
         try:
             return AutonomyPolicy.from_dict(payload)
         except (ValueError, TypeError):
