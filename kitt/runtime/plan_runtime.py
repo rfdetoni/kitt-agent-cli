@@ -14,7 +14,16 @@ def execute_plan_action(self, operation, args, turn_id, origin, security_context
         raise RuntimeError("Durable task planning is unavailable")
     conv = self.conversation_id
     if operation == "plan.submit":
-        data = plans.submit(conv, turn_id, args.get("proposal"), security_context)
+        proposal = args.get("proposal")
+        if not isinstance(proposal, dict):
+            raise ValueError(
+                "plan.submit requires arguments.proposal as an object containing "
+                "schema_version=1, objective (non-empty string), and tasks. "
+                "Each task uses local_id, title, role, depends_on, paths and check_ids; "
+                "IMPLEMENT/VERIFY tasks need at least one concrete file path or registered check. "
+                "Do not pass tasks directly under arguments."
+            )
+        data = plans.submit(conv, turn_id, proposal, security_context)
     elif operation == "plan.inspect":
         data = plans.inspect(conv, turn_id)
     elif operation == "plan.patch":
