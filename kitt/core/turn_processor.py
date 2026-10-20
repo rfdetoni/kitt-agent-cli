@@ -45,6 +45,7 @@ from kitt.llm.client import LLMClient
 from kitt.llm.domain import ProviderRecoverableError
 from kitt.core.session_state import SessionState
 from kitt.core.turn_command import TurnCommand
+from kitt.core.execution_budget import ExecutionBudgetExceeded
 import uuid
 from urllib.parse import urlsplit
 from kitt.core.turn_events import (
@@ -1347,6 +1348,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     return
                 yield ev
 
+        except ExecutionBudgetExceeded as e:
+            yield TurnBlocked(reason=(
+                f"Execution budget checkpoint: {e}. "
+                "Host work already completed is preserved; continue the pending "
+                "contract item in a new authorized turn within the Goal budget."
+            ))
         except KittMemoryUnavailable as e:
             yield TurnFailed(error=f"Memory service unavailable: {e}", turn_id=cmd.turn_id,
                              conversation_id=cmd.conversation_id, recoverable=True, recovery_action="retry")

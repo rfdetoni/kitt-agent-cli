@@ -32,8 +32,10 @@ class GoalStepExecutor:
     def _blocked_category(reason: str) -> str:
         """Classify host-owned block reasons without asking the model to authorize stopping."""
         value = str(reason or "")
-        if value.startswith("No progress:") or value.startswith(
-            "Host evidence does not satisfy"
+        if (
+            value.startswith("No progress:")
+            or value.startswith("Host evidence does not satisfy")
+            or value.startswith("Execution budget checkpoint:")
         ):
             return "RESOLVABLE"
         if value.startswith("Unresolved prior execution receipt:"):

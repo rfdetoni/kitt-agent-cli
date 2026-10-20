@@ -455,7 +455,13 @@ class TurnToolLoopMixin:
                         tool_calls,
                         self.config.max_tool_calls_per_turn,
                     )
-                    yield TurnFailed(error="Host tool call limit exceeded for this turn."), None, None
+                    if effective_agent_route == "agent-loop":
+                        yield TurnBlocked(reason=(
+                            "Execution budget checkpoint: host tool call limit reached. "
+                            "Continue the pending contract item in the next budgeted turn."
+                        )), None, None
+                    else:
+                        yield TurnFailed(error="Host tool call limit exceeded for this turn."), None, None
                     return
             else:
                 # Safety ceiling to prevent runaway loop while allowing full chat-driven operations
@@ -893,6 +899,18 @@ class TurnToolLoopMixin:
                 tokens=tool_tokens,
                 metadata=dict(getattr(tool_result, "metadata", {}) or {}),
             ), None, None
+            if (
+                effective_agent_route == "agent-loop"
+                and not tool_result.success
+                and str(tool_result.error or "").startswith("Runtime error in ")
+                and "tool call budget exceeded" in str(tool_result.error or "")
+            ):
+                yield TurnBlocked(reason=(
+                    "Execution budget checkpoint: host tool wallet exhausted. "
+                    "The tool was rejected without executing its requested action. "
+                    "Continue the pending contract item in a new budgeted turn."
+                )), None, None
+                return
             execution_messages.append({"role": "assistant", "content": full_response})
 
             # Preserve both authoritative host status and diagnostic output.

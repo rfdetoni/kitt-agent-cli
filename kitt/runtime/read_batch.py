@@ -14,7 +14,7 @@ from typing import Any
 from kitt.runtime.core_runtime import SafeRuntimeResult
 
 _ALLOWED = frozenset({'repo.read', 'repo.list'})
-_ID = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,31}\Z')
+_ID = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')
 _MAX_CALLS = 8
 _MAX_RESULT_BYTES = 64 * 1024
 # Canonical host-owned positional schema, not an order supplied by the model.
@@ -52,7 +52,7 @@ def execute_read_batch(
             return SafeRuntimeResult(False, 'repo.batch_read', error='invalid batch entry')
         identifier, operation, child_args = raw['id'], raw['operation'], raw['arguments']
         if not isinstance(identifier, str) or not _ID.fullmatch(identifier) or identifier in ids:
-            return SafeRuntimeResult(False, 'repo.batch_read', error='invalid or duplicate call id')
+            return SafeRuntimeResult(False, 'repo.batch_read', error='invalid or duplicate call id (unique 1..64 chars, starts with a letter; letters/digits/_/- only)')
         if not isinstance(operation, str) or operation not in _ALLOWED:
             return SafeRuntimeResult(False, 'repo.batch_read', error='batch permits only repo.read/repo.list')
         if not isinstance(child_args, dict):
