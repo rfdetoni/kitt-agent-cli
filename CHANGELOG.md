@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.34 — include runtime-written source and reports in Goal verification
+
+Goal review snapshots now recognize `kitt_runtime.repo.write_file` as a source mutation and include the changed path among host-verifiable review targets. Previously this canonical API could write a file without contributing it to the outer Goal verification path set. Authored Markdown reports are now reviewable alongside source files. Adds focused regressions for Python and Markdown paths; no host authority or sandbox changes. Includes all bounded Goal host-evidence reuse from 0.88.33.
+
+
 ## 0.88.33 — durable host evidence for long-running goal retries
 
 A new bounded Goal evidence journal persists successful read/list/search receipts in the existing session-scoped RuntimeStateStore and rehydrates them into the next turn of the same contract item. The journal handles successful children of partially failed repo.batch_read calls, preserves previously captured text when an unchanged-read dedup placeholder is returned, and invalidates entries for successful file mutations or unscoped process actions. Host evidence is explicitly marked untrusted and never authorizes actions or satisfies acceptance gates. Two focused regressions cover cross-turn reuse, stale evidence invalidation and partial batch recovery. This addresses repeated repository inspection without relying on optional semantic memory recall.
