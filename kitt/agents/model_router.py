@@ -198,6 +198,8 @@ class AgentModelRouter:
             ],
             "reasoning": policy.reasoning,
             "mode": policy.mode,
+            "remote_egress": policy.remote_egress,
+            "require_tools": policy.require_tools,
         }
 
 
@@ -215,11 +217,23 @@ def apply_child_model_route(runtime, request: dict) -> None:
     allowed = set(ModelProfile.__dataclass_fields__)
     if set(primary) - allowed or primary.get("api_key"):
         raise ValueError("Child route cannot contain credentials")
+    credential = primary.get("credential_ref")
+    if credential is not None and (
+        not isinstance(credential, str)
+        or not credential.startswith(("auth:", "env:", "session:"))
+    ):
+        raise ValueError("Child route contains invalid credential reference")
     selected = ModelProfile(**primary)
     from kitt.llm.privacy import profile_processing_is_local
     privacy = str(runtime.config.privacy_mode)
-    if privacy in {"offline", "local_only"} and not profile_processing_is_local(selected):
+    remote_egress = route.get("remote_egress", "inherit")
+    if remote_egress not in {"inherit", "deny"}:
+        raise ValueError("Invalid child remote egress policy")
+    deny_remote = privacy in {"offline", "local_only"} or remote_egress == "deny"
+    if deny_remote and not profile_processing_is_local(selected):
         raise PermissionError("Remote child route forbidden by privacy policy")
+    if route.get("require_tools") and not selected.supports_tools:
+        raise PermissionError("Child route requires tool-capable provider")
     fallbacks = []
     for item in route.get("fallbacks", []):
         if not isinstance(item, dict) or not isinstance(item.get("profile"), dict):
@@ -227,9 +241,17 @@ def apply_child_model_route(runtime, request: dict) -> None:
         values = item["profile"]
         if set(values) - allowed or values.get("api_key"):
             raise ValueError("Child fallback cannot contain credentials")
+        reference = values.get("credential_ref")
+        if reference is not None and (
+            not isinstance(reference, str)
+            or not reference.startswith(("auth:", "env:", "session:"))
+        ):
+            raise ValueError("Child fallback contains invalid credential reference")
         alternate = ModelProfile(**values)
-        if privacy in {"offline", "local_only"} and not profile_processing_is_local(alternate):
+        if deny_remote and not profile_processing_is_local(alternate):
             raise PermissionError("Remote child fallback forbidden")
+        if route.get("require_tools") and not alternate.supports_tools:
+            raise PermissionError("Child fallback lacks required tools")
         fallbacks.append(alternate)
     runtime.processor._specialist_execution = (name, selected)
     levels = {"low": 25, "medium": 50, "high": 90}

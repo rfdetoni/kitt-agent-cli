@@ -142,3 +142,24 @@ def test_child_snapshot_privacy_revalidated_on_worker():
                                                      provider_park_seconds=5))
     with pytest.raises(PermissionError):
         apply_child_model_route(runtime, {"lineage": {"model_route": choice}})
+
+def test_child_worker_revalidates_persisted_egress_and_credential_refs():
+    decision = _route().resolve(
+        "REVIEW", AgentLLMPolicy.parse({
+            "mode": "fixed", "primary": "execute", "remote_egress": "deny",
+            "require_tools": True,
+        }), privacy_mode="hybrid_redacted",
+    )
+    assert decision["remote_egress"] == "deny"
+    runtime = SimpleNamespace(
+        processor=SimpleNamespace(),
+        config=SimpleNamespace(privacy_mode="hybrid_redacted", provider_park_seconds=5),
+    )
+    unsafe = {**decision, "profile": {**decision["profile"], "base_url": "https://remote.example",
+                                      "backend": "openai"}}
+    with pytest.raises(PermissionError, match="Remote child route"):
+        apply_child_model_route(runtime, {"lineage": {"model_route": unsafe}})
+    unsafe = {**decision, "profile": {**decision["profile"],
+                                      "credential_ref": "plain-text-secret"}}
+    with pytest.raises(ValueError, match="invalid credential reference"):
+        apply_child_model_route(runtime, {"lineage": {"model_route": unsafe}})
