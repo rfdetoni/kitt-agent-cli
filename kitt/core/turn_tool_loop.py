@@ -52,6 +52,7 @@ from kitt.core.turn_tool_helpers import (
     _runtime_operation_name,
     _is_environment_discovery,
     _nonretryable_host_environment_failure,
+    _tool_stall_fingerprint,
     _stuck_sequence,
     _completion_recovery_exhausted,
     _goal_contract_uses_outer_verification,
@@ -163,8 +164,7 @@ class TurnToolLoopMixin:
 
         completion_recoveries = 0
         goal_tool_recoveries = 0
-        failed_evidence: list[str] = []
-        no_progress_actions: list[str] = []
+        recent_action_outcomes: list[str] = []
         while True:
             if cmd.turn_id in self.cancelled_turns:
                 self.cancelled_turns.discard(cmd.turn_id)
@@ -730,41 +730,20 @@ class TurnToolLoopMixin:
                 metadata=browser_trace_result if browser_trace_result is not None else tool_result.metadata,
             )
             if effective_agent_route == "agent-loop" and not tool_result.requires_approval:
-                if tool_result.success:
-                    failed_evidence.clear()
-                    fingerprint = _observational_fingerprint(
-                        tool_name,
-                        tool_args,
-                        tool_result.output,
-                    )
-                    if fingerprint is None:
-                        no_progress_actions.clear()
-                    else:
-                        no_progress_actions.append(fingerprint)
-                        no_progress_actions = no_progress_actions[-4:]
-                        if _stuck_sequence(no_progress_actions):
-                            yield TurnBlocked(
-                                reason=(
-                                    "No progress: repeated unchanged observations; "
-                                    "mutate, validate, or reconcile evidence before rereading"
-                                )
-                            ), None, None
-                            return
+                fingerprint = _tool_stall_fingerprint(
+                    tool_name, tool_args, success=bool(tool_result.success),
+                    output=tool_result.output, error=tool_result.error,
+                )
+                if fingerprint is None:
+                    recent_action_outcomes.clear()
                 else:
-                    no_progress_actions.clear()
-                    fingerprint = hashlib.sha256(
-                        (
-                            _canonical_tool_args(tool_args)
-                            + str(tool_result.error)
-                        ).encode()
-                    ).hexdigest()
-                    failed_evidence.append(fingerprint)
-                    failed_evidence = failed_evidence[-4:]
-                    if _stuck_sequence(failed_evidence):
+                    recent_action_outcomes.append(fingerprint)
+                    recent_action_outcomes = recent_action_outcomes[-4:]
+                    if _stuck_sequence(recent_action_outcomes):
                         yield TurnBlocked(
                             reason=(
-                                "No progress: repeated host failures; "
-                                "reconcile evidence before retrying"
+                                "No progress: repeated unchanged host outcomes; "
+                                "change the approach, validate new evidence or report the blocker"
                             )
                         ), None, None
                         return

@@ -154,6 +154,28 @@ def _nonretryable_host_environment_failure(tool_name: str, tool_args: object, er
     return "command sandbox unavailable" in detail and "bubblewrap" in detail
 
 
+def _tool_stall_fingerprint(
+    tool_name: str, tool_args: object, *, success: bool, output: object, error: object
+) -> str | None:
+    """Track both unchanged reads and failed host operations in one sequence.
+
+    Successful non-observational actions reset the streak because they may have
+    changed the workspace. Failed operations never count as forward progress.
+    """
+    if success:
+        return _observational_fingerprint(tool_name, tool_args, output)
+    raw = (
+        _runtime_operation_name(tool_name, tool_args)
+        + "\0"
+        + _canonical_tool_args(tool_args)
+        + "\0"
+        + str(error or "")
+        + "\0"
+        + str(output or "")
+    )
+    return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()
+
+
 def _stuck_sequence(fingerprints: list[str]) -> bool:
     recent = fingerprints[-4:]
     return (

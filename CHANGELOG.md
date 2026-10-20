@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.27 — detect alternating no-progress host outcomes
+
+The agent-loop now detects unchanged two-step failure/observation cycles such as a failing build followed by repeatedly reading the same file. The same bounded detector handles identical failed operations and identical read results; a successful non-observational host action resets the streak. This closes a progress-monitoring gap without adding model calls, overriding host authorization, or changing the Reverse Proxy protocol. Adds a targeted regression for the alternating case.
+
+
 ## 0.88.26 — do not replay ambiguous WebChat timeouts
 
 The KITT Reverse Proxy client now treats socket/URL read timeouts and HTTP 408/504 without explicit recoverable metadata as ambiguous WebChat submissions. It raises a non-retryable protocol error instead of allowing the generic LLM retry policy or model failover to resend an already accepted request. Explicitly recoverable structured proxy errors retain their existing handling. The native WebChat tool contract and browser session ownership remain unchanged. Focused compatibility regressions cover all three timeout paths.
