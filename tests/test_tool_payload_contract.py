@@ -67,6 +67,27 @@ class ToolPayloadContractTests(unittest.TestCase):
             with self.subTest(frame=frame), self.assertRaises(ValueError):
                 parse_tool_call(frame)
 
+    def test_agent_loop_executes_only_explicit_complete_host_actions(self):
+        compact = '<tool_call>{"name":"kitt_runtime","arguments":{"operation":"repo.read","arguments":{"path":"README.md"}}}</tool_call>'
+        native = '<kitt-tool>{"id":"call_1","name":"kitt_runtime","arguments":{"operation":"repo.read","arguments":{"path":"README.md"}}}</kitt-tool>'
+        expected = ("kitt_runtime", {"operation": "repo.read", "arguments": {"path": "README.md"}})
+        self.assertEqual(parse_tool_call(compact, explicit_only=True), expected)
+        self.assertEqual(parse_tool_call(native, explicit_only=True), expected)
+        for candidate in (
+            "Here is an example:\n" + compact,
+            compact + "\n" + compact,
+            compact[:-12],
+            'run_command("echo hello")',
+            '```python\nread_file("secret.txt")\n```',
+            '<tool_call>{"name":"kitt_runtime","arguments":{"operation":"repo.read","operation":"process.run"}}</tool_call>',
+        ):
+            with self.subTest(candidate=candidate):
+                try:
+                    parsed = parse_tool_call(candidate, explicit_only=True)
+                except ValueError:
+                    continue
+                self.assertIsNone(parsed, "prose and malformed frames are not tool authority")
+
     def test_textual_tool_contract_is_fail_closed(self):
         with self.assertRaises(ProviderProtocolError):
             _reject_legacy_tool_contract(

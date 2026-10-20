@@ -156,7 +156,7 @@ def extract_tool_reasoning_summary(text: str) -> str:
     return " ".join(summary.split())[:400]
 
 
-def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+def parse_tool_call(text: str, *, explicit_only: bool = False) -> Optional[Tuple[str, Dict[str, Any]]]:
     if not text:
         return None
 
@@ -182,6 +182,30 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
             if len(json.dumps(arguments, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_TOOL_ARGUMENT_BYTES:
                 raise ValueError("JSON host tool arguments exceed 64 KiB")
             return CANONICAL_TOOLS.get(name.lower(), name), arguments
+    if explicit_only:
+        # Agent-loop is an execution boundary: model prose and quoted code
+        # never grant host tool authority.
+        for opening, closing in (
+            (TOOL_CALL_OPEN, TOOL_CALL_CLOSE),
+            ("<tool_call>", "</tool_call>"),
+        ):
+            if not canonical.startswith(opening):
+                continue
+            if not canonical.endswith(closing):
+                raise ValueError("Incomplete explicit host tool envelope")
+            frame = decode_json_object(canonical[len(opening):-len(closing)].strip())
+            if set(frame) - {"id", "name", "arguments", "reasoning_summary"}:
+                raise ValueError("Unexpected explicit host tool fields")
+            name, arguments = frame.get("name"), frame.get("arguments")
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", name):
+                raise ValueError("Invalid explicit host tool name")
+            if not isinstance(arguments, dict):
+                raise ValueError("Explicit host tool arguments must be an object")
+            if len(json.dumps(arguments, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_TOOL_ARGUMENT_BYTES:
+                raise ValueError("Explicit host tool arguments exceed 64 KiB")
+            return CANONICAL_TOOLS.get(name.lower(), name), arguments
+        return None
+
     if canonical.startswith(TOOL_CALL_OPEN):
         if not canonical.endswith(TOOL_CALL_CLOSE):
             raise ValueError("Incomplete kitt-tool envelope")
