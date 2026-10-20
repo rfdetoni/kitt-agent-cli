@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import inspect
 import json
 import logging
@@ -58,7 +57,6 @@ from kitt.core.turn_tool_helpers import (
     _goal_contract_uses_outer_verification,
     _goal_needs_first_host_action,
     _task_plan_context,
-    _observational_fingerprint,
     _browser_trace_call,
     _browser_trace_result,
     _tool_feedback_suffix,
