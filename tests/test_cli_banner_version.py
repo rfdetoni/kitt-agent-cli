@@ -1,5 +1,6 @@
 import contextlib
 import io
+import tomllib
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,18 @@ class _Runtime:
 
 
 class CliBannerVersionTests(unittest.TestCase):
+    def test_source_tree_fallback_matches_package_metadata(self):
+        root = Path(__file__).resolve().parents[1]
+        with (root / "pyproject.toml").open("rb") as handle:
+            expected = tomllib.load(handle)["project"]["version"]
+        init_source = (root / "kitt" / "__init__.py").read_text(encoding="utf-8")
+        fallback_line = next(
+            line.strip() for line in init_source.splitlines()
+            if line.strip().startswith('__version__ = "')
+        )
+        self.assertEqual(fallback_line, '__version__ = "' + expected + '"')
+
+
     def test_cli_version_flag_reports_installed_agent_version(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as exit_context:
