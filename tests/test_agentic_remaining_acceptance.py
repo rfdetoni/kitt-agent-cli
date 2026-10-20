@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 from kitt.compaction.service import CompactionService
+from kitt.core.turn_tool_helpers import _observational_fingerprint
 from kitt.core.turn_tool_loop import (
     _completion_recovery_exhausted,
-    _observational_fingerprint,
     _stuck_sequence,
 )
 from kitt.history.database import HistoryDatabase
