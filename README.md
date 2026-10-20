@@ -30,6 +30,7 @@ Versão **0.88.13**. Documentação de instalação, arquitetura, configuração
 ## Quick links
 
 - **Complete ecosystem installer:** https://github.com/rfdetoni/kitt
+- **Linux sandbox / AppArmor tips:** [Diagnosing Bubblewrap `uid_map` errors](docs/BUBBLEWRAP_APPARMOR.md)
 - **GHCR packages:** https://github.com/rfdetoni?tab=packages
 - **Reverse proxy:** https://github.com/rfdetoni/kitt-reverse-proxy
 - **Native engine:** https://github.com/rfdetoni/kitt-toolbox

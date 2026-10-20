@@ -11,6 +11,11 @@ This guide gets a new user from zero to a validated coding session without requi
 
 For the complete ecosystem, prefer the installer in `rfdetoni/kitt`.
 
+On Ubuntu/Linux, unattended `process.run` requires a **functional Bubblewrap >= 0.12.0**.
+If you see `setting up uid map: Permission denied` or a `Strong sandbox profile ...`
+error, follow the [Bubblewrap/AppArmor troubleshooting tips](docs/BUBBLEWRAP_APPARMOR.md).
+Do not globally disable AppArmor user-namespace restrictions to make the check pass.
+
 ## 2. Install
 
 Linux/macOS:
