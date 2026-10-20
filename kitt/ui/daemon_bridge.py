@@ -306,6 +306,9 @@ class DaemonUIBridge:
     async def set_reasoning(self, value: int) -> dict:
         return await self.request("runtime.set_reasoning", {"value": max(0, min(100, int(value)))})
 
+    async def get_autonomy(self) -> dict:
+        return await self.request("runtime.get_autonomy")
+
     async def set_autonomy(self, preset: str) -> dict:
         return await self.request("runtime.set_autonomy", {"preset": str(preset)})
 

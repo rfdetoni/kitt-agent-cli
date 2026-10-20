@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.21 — daemon-authoritative autonomy on startup
+
+The CLI now reads the daemon's effective autonomy on attach instead of overwriting it with the local TUI snapshot. Keeps local display synchronized without granting authority on reconnect, and preserves explicit user-initiated `/autonomy allow-all` updates. Requires Assistant Runtime with `runtime.get_autonomy` for synchronized status; older daemons are not silently escalated. [Notes](docs/RELEASE_0.88.21.md).
+
+
 ## 0.88.20 — approval hotkeys and tool-loop recovery
 
 Make permission and autonomy shortcuts eager and add A/S/D shortcuts to the autonomy modal; clarify displayed controls. Prevent artifact reads from generating further artifacts, retain a bounded preview in oversized host feedback, and refuse repeating an identical policy-denied action within one turn. Record model-round count in tool-loop telemetry. [Notes](docs/RELEASE_0.88.20.md).
