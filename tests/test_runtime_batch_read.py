@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kitt.runtime.safe_runtime import SafeRuntime, SafeRuntimeResult
-from kitt.security.capabilities import CAP_REPO_READ
+from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_SEARCH
 
 
 class ReadBatchTests(unittest.TestCase):
@@ -61,6 +61,21 @@ class ReadBatchTests(unittest.TestCase):
             result = self._run([self._read(identifier, 'README.md')])
         self.assertTrue(result.success, result.error)
         self.assertEqual(result.data['calls'][0]['id'], identifier)
+
+    def test_search_batch_enforces_search_capability_and_query_bounds(self):
+        calls = [{'id': 'find', 'operation': 'repo.search',
+                  'arguments': {'query': 'needle', 'max_results': 5}}]
+        denied = self._run(calls, caps={CAP_REPO_READ})
+        self.assertFalse(denied.success)
+        with patch.object(self.runtime, '_op_repo_search',
+                          return_value=SafeRuntimeResult(True, 'repo.search', data={'hits': []})):
+            allowed = self._run(calls, caps={CAP_REPO_READ, CAP_REPO_SEARCH})
+        self.assertTrue(allowed.success, allowed.error)
+        self.assertEqual(allowed.data['calls'][0]['id'], 'find')
+        bad = self._run([{'id': 'find', 'operation': 'repo.search',
+                          'arguments': {'query': 'needle', 'max_results': 500}}],
+                        caps={CAP_REPO_READ, CAP_REPO_SEARCH})
+        self.assertFalse(bad.success)
 
     def test_invalid_batch_fails_before_first_execution(self):
         bad = [

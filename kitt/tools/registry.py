@@ -72,7 +72,7 @@ class ToolRegistry(_core.ToolRegistry):
                 # writes, or unified diff vs SEARCH/REPLACE patches).
                 tool["description"] = (
                     "Safe runtime. process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}; "
-                    "argv-only/no shell; for independent read/list calls use "
+                    "argv-only/no shell; for independent read/search/list calls use "
                     "repo.batch_read {calls:[{id,operation,arguments:{path}}]} (max 8); "
                     "batch never permits writes; file edits use repo.write_file or patch.apply; "
                     "patch.apply accepts SEARCH/REPLACE or unified diff; "

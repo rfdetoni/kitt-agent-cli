@@ -13,7 +13,7 @@ from typing import Any
 
 from kitt.runtime.core_runtime import SafeRuntimeResult
 
-_ALLOWED = frozenset({'repo.read', 'repo.list'})
+_ALLOWED = frozenset({'repo.read', 'repo.list', 'repo.search'})
 _ID = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')
 _MAX_CALLS = 8
 _MAX_RESULT_BYTES = 64 * 1024
@@ -54,7 +54,7 @@ def execute_read_batch(
         if not isinstance(identifier, str) or not _ID.fullmatch(identifier) or identifier in ids:
             return SafeRuntimeResult(False, 'repo.batch_read', error='invalid or duplicate call id (unique 1..64 chars, starts with a letter; letters/digits/_/- only)')
         if not isinstance(operation, str) or operation not in _ALLOWED:
-            return SafeRuntimeResult(False, 'repo.batch_read', error='batch permits only repo.read/repo.list')
+            return SafeRuntimeResult(False, 'repo.batch_read', error='batch permits only repo.read/repo.list/repo.search')
         if not isinstance(child_args, dict):
             return SafeRuntimeResult(False, 'repo.batch_read', error='call arguments must be objects')
         # Strict per-call token/window bounds also bound memory and response size.
@@ -69,6 +69,17 @@ def execute_read_batch(
                 return SafeRuntimeResult(False, 'repo.batch_read', error='invalid read bounds')
             if not 1 <= max_tokens <= 1200 or start_line < 1 or end_line < start_line or end_line - start_line > 199:
                 return SafeRuntimeResult(False, 'repo.batch_read', error='read limits exceeded')
+        if operation == 'repo.search':
+            query = child_args.get('query', child_args.get('pattern'))
+            if not isinstance(query, str) or not 1 <= len(query.strip()) <= 256:
+                return SafeRuntimeResult(False, 'repo.batch_read', error='repo.search requires a 1..256-character query')
+            try:
+                max_tokens = int(child_args.get('max_tokens', 600))
+                max_results = int(child_args.get('max_results', child_args.get('limit', 20)))
+            except (ValueError, TypeError):
+                return SafeRuntimeResult(False, 'repo.batch_read', error='invalid repo.search bounds')
+            if not (1 <= max_tokens <= 1200 and 1 <= max_results <= 20):
+                return SafeRuntimeResult(False, 'repo.batch_read', error='repo.search limits exceeded')
         ids.add(identifier)
         prepared.append((identifier, operation, dict(child_args)))
 
