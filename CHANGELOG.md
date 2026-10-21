@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.42 — bounded automatic continuation of budgeted Goals
+
+A host-owned `Execution budget checkpoint:` now returns a dedicated contract outcome instead of consuming a failed-item attempt. The scheduler requeues the pending item with its prior evidence, while preserving the global Goal limits for turns, elapsed time, tokens and cost. An invalid CHECKPOINT reason is rejected at the contract-store boundary. Regression tests cover a contract item with one available attempt continuing across the tool-budget boundary and prove that global turns are still charged. Project metadata, source fallback version and `uv.lock` are synchronized.
+
 ## 0.88.41 — safer patch targets and actionable batch diagnostics
 
 SEARCH/REPLACE patches keep their explicit target across consecutive blocks, and numeric version strings such as `11.20` are not guessed as workspace files. Failed `repo.batch_read` calls now report bounded per-ID errors and preserve successful sibling results; the tool catalog explains context handles and retry scope. The default bounded per-turn host-tool budget increases from 24 to 64 while model/time/sandbox authorization limits stay intact. Regression checks cover patch target isolation and partial batch failures. Project metadata and `uv.lock` are synchronized at 0.88.41.
