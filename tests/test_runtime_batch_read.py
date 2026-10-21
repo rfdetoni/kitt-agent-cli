@@ -164,6 +164,45 @@ class ReadBatchTests(unittest.TestCase):
         finally:
             guard._prune = original_prune
 
+    def test_partial_batch_reports_failed_ids_without_losing_successes(self):
+        def fake_read(args, *_):
+            if args["path"] == "missing":
+                return SafeRuntimeResult(
+                    False, "repo.read", error="file not found: missing"
+                )
+            return SafeRuntimeResult(True, "repo.read", data={"ok": args["path"]})
+
+        with patch.object(self.runtime, "_op_repo_read", side_effect=fake_read):
+            result = self._run([
+                self._read("good-report", "reports/a.md"),
+                self._read("bad-path", "missing"),
+                self._read("other-report", "reports/b.md"),
+            ])
+        self.assertFalse(result.success)
+        self.assertEqual(result.metadata["failed_ids"], ["bad-path"])
+        self.assertEqual(result.metadata["succeeded"], 2)
+        self.assertIn("bad-path: file not found: missing", result.error)
+        self.assertIn("retry only failed IDs", result.error)
+        self.assertEqual(
+            [row["success"] for row in result.data["calls"]],
+            [True, False, True],
+        )
+
+    def test_missing_read_and_limit_diagnostics_remain_distinct(self):
+        with patch.object(self.runtime, "_op_repo_read", side_effect=[
+            SafeRuntimeResult(False, "repo.read", error="missing directory"),
+            SafeRuntimeResult(False, "repo.read", error="tool call budget exceeded"),
+        ]):
+            result = self._run([
+                self._read("missing-dir", "wine-staging/dlls/win32u"),
+                self._read("budget-exhausted", "reports/"),
+            ])
+        self.assertEqual(
+            result.metadata["failed_ids"], ["missing-dir", "budget-exhausted"]
+        )
+        self.assertIn("missing-dir: missing directory", result.error)
+        self.assertIn("budget-exhausted: tool call budget exceeded", result.error)
+
     def test_missing_capability_and_per_call_error_fail_closed(self):
         denied = self._run([self._read('a', 'a')], caps=set())
         self.assertFalse(denied.success)
