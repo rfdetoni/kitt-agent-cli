@@ -643,12 +643,20 @@ class TurnContextMixin:
         )
         memory_context = ""
         if plan.enabled_tools and not cmd.no_history:
+            from kitt.context.query_plan import task_retrieval_text
+
+            # Recall uses the original task, not the potentially large durable
+            # Goal receipt/contract appended to cmd.prompt in later turns.
+            # The contextual evidence remains available through its own
+            # bounded host journal; injecting it into semantic search dilutes
+            # the query and can repeatedly return no memory.
+            memory_query = task_retrieval_text(cmd.prompt)[:2048]
             memory_started = time.perf_counter()
             memory_status = "ok"
             try:
                 try:
                     memory_context = self.memory.get_memory_context(
-                        cmd.prompt,
+                        memory_query,
                         max_tokens=600,
                         turn_id=cmd.turn_id,
                     )
@@ -656,7 +664,7 @@ class TurnContextMixin:
                     # Preserve compatibility with injected test/facade memory providers
                     # that implement the historical two-argument contract.
                     memory_context = self.memory.get_memory_context(
-                        cmd.prompt,
+                        memory_query,
                         max_tokens=600,
                     )
                 if not str(memory_context or "").strip():
