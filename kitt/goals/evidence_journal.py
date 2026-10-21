@@ -64,6 +64,7 @@ class GoalEvidenceJournal:
             if operation not in {
                 "repo.search", "repo.context_map", "repo.inspect_symbol",
                 "repo.read_symbol", "repo.references", "flow.execute",
+                "program.execute",
             }:
                 return None
             path = "*"
@@ -114,7 +115,7 @@ class GoalEvidenceJournal:
             entry = self._entry(operation, arguments, output)
             if entry:
                 reads.append(entry)
-        elif operation == "flow.execute" and success:
+        elif operation in {"flow.execute", "program.execute"} and success:
             entry = self._entry(operation, arguments, output)
             if entry:
                 reads.append(entry)
