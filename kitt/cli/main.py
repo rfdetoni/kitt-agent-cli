@@ -200,6 +200,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
+    memory_parser = subparsers.add_parser(
+        "memory", parents=[common], help="Inspect the native KITT memory service",
+    )
+    memory_parser.add_argument(
+        "memory_action", choices=["doctor"], help="Check memoryd readiness",
+    )
+
     setup_parser = subparsers.add_parser(
         "setup", parents=[common], help="Read-only recommendations for this workspace",
     )
@@ -985,6 +992,17 @@ def main(argv=None) -> int:
     _configure_debug_log(args)
     _log_runtime_identity()
     notify_if_update_available(component="agent-cli")
+
+    if args.subcommand == "memory":
+        from kitt.memory.shared_client import KittMemoryClient, KittMemoryUnavailable
+
+        try:
+            KittMemoryClient().ping()
+        except (KittMemoryUnavailable, OSError) as exc:
+            print(f"KITT memoryd unavailable: {exc}", file=sys.stderr)
+            return 2
+        print('{"available": true, "authority": "kitt-memoryd"}')
+        return 0
 
     if args.subcommand == "setup":
         import json as _json
