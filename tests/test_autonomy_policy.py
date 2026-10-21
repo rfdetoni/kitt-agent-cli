@@ -64,6 +64,42 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("ask")).evaluate_tool("run_command", command), "ASK")
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("deny")).evaluate_tool("run_command", command), "DENY")
 
+    def test_read_only_git_dash_c_is_allowed_only_inside_workspace(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "mbs-wine").mkdir()
+            engine = PolicyEngine(root_dir=temp, autonomy=AutonomyPolicy.preset("autonomous"))
+            safe = ["git", "-C", "mbs-wine", "status", "--short", "--branch"]
+            self.assertEqual(engine.evaluate_argv(safe), "ALLOW")
+            self.assertEqual(engine.evaluate_tool("run_command", {"argv": safe}), "ALLOW")
+            for command in (
+                ["git", "-C", "mbs-wine", "log", "--oneline"],
+                ["git", "-C", "mbs-wine", "diff", "--stat"],
+                ["git", "-C", "mbs-wine", "branch", "--show-current"],
+            ):
+                self.assertEqual(engine.evaluate_argv(command), "ALLOW")
+            for command in (
+                ["git", "-C", "../outside", "status", "--short"],
+                ["git", "-C", "/tmp", "status", "--short"],
+                ["git", "-C", "missing", "status", "--short"],
+                ["git", "-C", ".git", "status"],
+                ["git", "-C", "mbs-wine", "reset", "--hard"],
+                ["git", "-C", "mbs-wine", "push"],
+                ["git", "-C", "mbs-wine", "status", "--git-dir=/tmp"],
+            ):
+                with self.subTest(command=command):
+                    self.assertEqual(engine.evaluate_tool("run_command", {"argv": command}), "DENY")
+            (root / "link-outside").symlink_to(root.parent, target_is_directory=True)
+            self.assertEqual(
+                engine.evaluate_argv(["git", "-C", "link-outside", "status"]), "DENY",
+            )
+            # Read-only classification cannot bypass a user's explicit ASK policy.
+            engine.autonomy = AutonomyPolicy.preset("supervised")
+            self.assertEqual(engine.evaluate_tool("run_command", {"argv": safe}), "ASK")
+
     def test_allow_all_executes_direct_argv_without_asking(self):
         """A safe direct argv command must run under autonomous policy."""
         import tempfile

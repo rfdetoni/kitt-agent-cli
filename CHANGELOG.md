@@ -1,5 +1,11 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.48 — read-only Git inspection with workspace-relative -C
+
+A Wine MBS autonomous contract stalled on 21 October after issuing `git -C mbs-wine status --short --branch`. The PolicyEngine hard-denied the `-C` flag before it could inspect the existing Git repository, causing repeated edits to README and BLOCKED_ENV even though no approval was requested. Git inspection now accepts an existing, workspace-contained, relative `-C` directory **only** for read-only `status`, `diff`, `log` and read-only `branch` commands. All original per-subcommand flag checks remain in force; path traversal, symlinks out of workspace, internal .git directory access and mutations (push/reset/clean) remain DENY, supervised policy remains ASK. The fix does not grant network access or change Git clone timeout. Regression reproduces the exact Wine MBS command and blocked variants.
+
+The same run also showed `session_limit_exceeded` for a child under Reverse Proxy resource pressure (about 1.10 GB measured versus a 768 MB configured threshold), and unnecessary repeated README rewrites. Those are separate limitations, not resolved by the Git policy adjustment.
+
 ## 0.88.47 — autonomous Wine Git checkout without recurring approval
 
 Fixes a 2026-10-21 KITT run where workspace autonomy was already `autonomous`, but `process.run` with `network=true` for a public Git submodule download still demanded manual approval. A narrowly scoped delegation now permits unscoped root-user model turns to fetch public HTTPS Git repositories from GitHub or Wine's GitLab into workspace-relative directories, only with a strong network-enabled sandbox. Both SafeRuntime and nested ToolRegistry use the same rule.
