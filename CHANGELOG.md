@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.40 — persistent read-graph evidence and scoped Goal recall
+
+Durable Goals now preserve bounded search and read-only `flow.execute`/`program.execute` receipts between attempts; repository-wide observations are invalidated by any successful mutation, avoiding stale context after patches. The memory recall query uses the original task objective instead of Goal/verification scaffolding, improving retrieval relevance without treating model-generated summaries as authority. Python project metadata, source-tree version fallback and `uv.lock` are synchronized at 0.88.40; runtime and CI contracts remain compatible with Agent Contract v5 and Reverse Proxy 5.4.17. Source/regression checks and ecosystem pinned integration must pass before calling this release validated.
+
+
 ## 0.88.39 — actionable unavailable native-build diagnostics
 
 When no configured Makefile or native verification executor is available, the existing VerificationReport now includes the bounded host `command_output` in `failure_message` rather than returning the unhelpful generic `verification failed`. The durable Goal verifier surfaces the actual `UNAVAILABLE` reason, so missing Wine/C build configuration is not confused with successful compilation. Regressions assert the user-visible failure reason. Includes all 0.88.38 host-flow, memory/context, parallel planning and safe WebChat continuation improvements.
