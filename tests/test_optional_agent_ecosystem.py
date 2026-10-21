@@ -115,6 +115,20 @@ class FreeLLMAPIIntegrationTests(unittest.TestCase):
 
 
 class CLISurfaceTests(unittest.TestCase):
+    def test_setup_cli_does_not_check_for_updates(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from kitt.cli.main import main as cli_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("kitt.cli.main.notify_if_update_available") as checker:
+                with redirect_stdout(StringIO()) as captured:
+                    self.assertEqual(
+                        cli_main(["setup", "recommend", "--root", tmp, "--json"]), 0
+                    )
+                checker.assert_not_called()
+                self.assertTrue(json.loads(captured.getvalue())["read_only"])
+
     def test_new_commands_parse(self):
         from kitt.cli.main import build_parser
 
