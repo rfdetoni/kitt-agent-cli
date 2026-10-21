@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.43 — safe Begin Patch Update File compatibility
+
+`patch.apply` now accepts content-anchored `*** Begin Patch` / `*** Update File` / `@@` / `*** End Patch` changes without rerouting them to SEARCH/REPLACE. The parser converts updates into the existing guarded EditBlock mutation path (workspace limits, ambiguous-match rejection, approvals and rollback); Add/Delete/Move directives and unanchored insertions remain unsupported and fail closed. Regression covers the exact Wine-MBS win32u reconciliation patch from 21 October 2026, multi-file updates and path-policy enforcement. Error guidance documents the supported dialect. Python metadata, uv lock and source fallback are synchronized at 0.88.43. The distinct `ui_capture_unverified` provider problem still requires explicit safe continuation and was not changed here.
+
 ## 0.88.42 — bounded automatic continuation of budgeted Goals
 
 A host-owned `Execution budget checkpoint:` now returns a dedicated contract outcome instead of consuming a failed-item attempt. The scheduler requeues the pending item with its prior evidence, while preserving the global Goal limits for turns, elapsed time, tokens and cost. An invalid CHECKPOINT reason is rejected at the contract-store boundary. Regression tests cover a contract item with one available attempt continuing across the tool-budget boundary and prove that global turns are still charged. Project metadata, source fallback version and `uv.lock` are synchronized.
