@@ -23,7 +23,17 @@ MCP features remain the executors.
 FreeLLMAPI already implements provider health, quota tracking, model ranking
 and failover. Do **not** duplicate those functions in KITT's proxy. Deploy
 FreeLLMAPI separately, for example through the upstream Docker Compose setup
-at https://github.com/tashfeenahmed/freellmapi. Obtain its unified token from
+at https://github.com/tashfeenahmed/freellmapi. For reproducibility, the
+version reviewed on 2026-10-21 was **v0.16.7**, commit
+`ecdc9cbe27aa3db5e3d8935be13a5a17b9a513b1`:
+
+```bash
+git clone https://github.com/tashfeenahmed/freellmapi.git
+git -C freellmapi checkout --detach ecdc9cbe27aa3db5e3d8935be13a5a17b9a513b1
+# Follow that checkout's official Docker deployment instructions.
+```
+
+Obtain its unified token from
 its local dashboard. This is experimental/free-tier infrastructure, not a
 promise of guaranteed capacity or a replacement for KITT's authorized WebChat
 bridge.
@@ -57,10 +67,16 @@ https://github.com/usestrix/strix#quick-start. Example using an isolated
 Python application installer:
 
 ```bash
-uv tool install strix-agent
+uv tool install 'strix-agent==1.7.0'
 kitt security strix status
 kitt security strix scan --target . --authorized --root /path/to/disposable-worktree
 ```
+
+The selected Strix package is pinned to **1.7.0** (upstream release tag
+`v1.7.0`, commit `55bc07991aacb1c26a81b43e7ca53148730d2019`).
+It is an **optional independent executable**, not a dependency in KITT's
+`uv.lock`. Its own Docker image and transitive dependencies must be locked
+separately for strict end-to-end reproducibility.
 
 `--authorized` confirms explicit authorization for this **specific** target.
 No scan starts in `status` or `setup recommend`. Filesystem targets must be
@@ -95,6 +111,15 @@ kitt setup recommend --root .
 kitt security strix status
 kitt integrations doctor
 ```
+
+## Dependency locks and pins
+
+The KITT Agent CLI uses its checked-in `uv.lock` and commit-pinned
+`kitt-protocol` dependency (`ac9baf8b4b8f03e839471c7bbb7d5e52e970a9ec`).
+KITT 0.88.44 does **not** add the Strix, FreeLLMAPI or Claude-Mem
+runtime to its default package lock. Optional tools can change independently
+and must be installed by an operator using versioned references. No upstream
+`main` branch or moving `latest` release is required for these examples.
 
 The `integrations doctor` command probes only localhost `127.0.0.1:3001`
 for the FreeLLMAPI-compatible models endpoint and checks whether the Strix CLI
