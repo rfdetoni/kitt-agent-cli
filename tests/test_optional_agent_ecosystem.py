@@ -69,5 +69,69 @@ class StrixTests(unittest.TestCase):
                     )
 
 
+
+class FreeLLMAPIIntegrationTests(unittest.TestCase):
+    def test_registration_reuses_native_adapter_and_preserves_routing(self):
+        from kitt.optional_providers import register_freellmapi
+        from kitt.router.router import TaskRouter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "kitt.optional_providers.ProviderEndpointTrustStore.trust"
+            ) as trust:
+                result = register_freellmapi(tmp, model="auto")
+                self.assertEqual(result["active_for_code"], False)
+                trust.assert_called_once_with("freellmapi", "http://127.0.0.1:3001")
+            cfg = json.loads((Path(tmp) / ".kitt-router.json").read_text())
+            profile = cfg["profiles"]["freellmapi"]
+            self.assertEqual(profile["protocol"], "openai-compatible")
+            self.assertEqual(profile["credential_ref"], "env:FREELLMAPI_API_KEY")
+            self.assertNotIn("SECRET", json.dumps(cfg))
+            self.assertEqual(TaskRouter(tmp).config.routing["code-edit"], "execute")
+
+    def test_remote_requires_explicit_opt_in_and_https(self):
+        from kitt.optional_providers import register_freellmapi
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(PermissionError):
+                register_freellmapi(tmp, base_url="https://gateway.example")
+            with self.assertRaises(ValueError):
+                register_freellmapi(
+                    tmp, base_url="http://gateway.example", allow_remote=True
+                )
+            self.assertFalse((Path(tmp) / ".kitt-router.json").exists())
+
+    def test_activation_changes_only_code_routes(self):
+        from kitt.optional_providers import register_freellmapi
+        from kitt.router.router import TaskRouter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("kitt.optional_providers.ProviderEndpointTrustStore.trust"):
+                register_freellmapi(tmp, activate=True)
+            routes = TaskRouter(tmp).config.routing
+            self.assertEqual(routes["code-edit"], "freellmapi")
+            self.assertEqual(routes["code-generation"], "freellmapi")
+            self.assertEqual(routes["summarize"], "context")
+
+
+class CLISurfaceTests(unittest.TestCase):
+    def test_new_commands_parse(self):
+        from kitt.cli.main import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args(["setup", "recommend", "--json"])
+        self.assertEqual((args.subcommand, args.setup_action), ("setup", "recommend"))
+        self.assertTrue(args.json_output)
+        args = parser.parse_args([
+            "security", "strix", "scan", "--target", ".", "--authorized"
+        ])
+        self.assertEqual(args.strix_action, "scan")
+        self.assertTrue(args.authorized)
+        args = parser.parse_args([
+            "integrations", "configure-freellmapi", "--activate"
+        ])
+        self.assertTrue(args.activate)
+
+
 if __name__ == "__main__":
     unittest.main()
