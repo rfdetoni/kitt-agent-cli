@@ -29,6 +29,9 @@ Versão **0.88.13**. Documentação de instalação, arquitetura, configuração
 
 ## Quick links
 
+- **Optional ecosystem integrations (FreeLLMAPI, Strix, native memory, project advisor):** [guide](docs/OPTIONAL_AGENT_ECOSYSTEM.md)
+
+
 - **Complete ecosystem installer:** https://github.com/rfdetoni/kitt
 - **Linux sandbox / AppArmor tips:** [Diagnosing Bubblewrap `uid_map` errors](docs/BUBBLEWRAP_APPARMOR.md)
 - **GHCR packages:** https://github.com/rfdetoni?tab=packages
