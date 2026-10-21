@@ -107,10 +107,28 @@ def execute_read_batch(
         return SafeRuntimeResult(False, 'repo.batch_read', error='batch result not serializable')
     if result_size > _MAX_RESULT_BYTES:
         return SafeRuntimeResult(False, 'repo.batch_read', error='batch response exceeds 64 KiB')
+    failed = [row for row in rows if not row['success']]
+    # Preserve successful siblings without masking failures. Return exact IDs
+    # and bounded reasons so the agent can change only the failed operations.
+    error = None
+    if failed:
+        details = '; '.join(
+            f"{row['id']}: {str(row['error'] or 'read failed')[:180]}"
+            for row in failed[:4]
+        )
+        error = (
+            f"{len(failed)}/{len(rows)} independent reads failed ({details}). "
+            "Reuse successful results; retry only failed IDs with corrected paths, "
+            "ranges or context handles."
+        )
     return SafeRuntimeResult(
-        all(row['success'] for row in rows),
+        not failed,
         'repo.batch_read',
         data={'calls': rows},
-        error=None if all(row['success'] for row in rows) else 'one or more independent reads failed',
-        metadata={'calls': len(rows), 'parallel': min(4, len(rows))},
+        error=error,
+        metadata={
+            'calls': len(rows), 'parallel': min(4, len(rows)),
+            'succeeded': len(rows) - len(failed),
+            'failed_ids': [row['id'] for row in failed],
+        },
     )
