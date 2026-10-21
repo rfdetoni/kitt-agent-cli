@@ -991,7 +991,9 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     _configure_debug_log(args)
     _log_runtime_identity()
-    notify_if_update_available(component="agent-cli")
+    # Workspace recommendations must not trigger network update checks.
+    if args.subcommand != "setup":
+        notify_if_update_available(component="agent-cli")
 
     if args.subcommand == "memory":
         from kitt.memory.shared_client import KittMemoryClient, KittMemoryUnavailable
