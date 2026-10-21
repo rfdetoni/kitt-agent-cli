@@ -95,7 +95,7 @@ class ToolRegistry(_core.ToolRegistry):
                     "Prefer repo.context_map/inspect_symbol/read_symbol/references when native "
                     "code indexing is available; use handles.resolve for existing context handles, "
                     "memory.query for stored project findings before rereading unchanged files. "
-                    "File edits use repo.write_file or patch.apply; "
+                    "file edits use repo.write_file or patch.apply; "
                     "patch.apply accepts SEARCH/REPLACE or unified diff; "
                     "sandbox.python {code,inputs?,result_var?} runs AST-only compute, "
                     "no imports/files/network/shell." + sandbox_note

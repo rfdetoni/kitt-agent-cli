@@ -91,7 +91,7 @@ def test_c_code_requires_real_build_not_only_structural_pass():
         report = orchestrator.verify(["dlls/win32u/source.c"])
         assert not report.ok
         assert report.status == "UNAVAILABLE"
-        assert "configured Makefile" in report.failure_message()
+        assert "configured Makefile" in report.command_output
 
         (root / "Makefile").write_text("all:\n\t@true\n")
         calls = []
