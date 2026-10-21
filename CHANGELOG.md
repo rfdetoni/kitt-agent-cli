@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.44 — optional agent integrations without duplicated runtimes
+
+Add a read-only workspace advisor for stack-specific hooks, skills and existing MCP plugins; an explicitly authorized, workspace-bounded Strix CLI adapter; a FreeLLMAPI profile using KITT's existing OpenAI-compatible protocol, endpoint trust and environment-only credential references; and a native memoryd doctor. Default models and memory authority remain unchanged unless the user explicitly opts in. Regression tests cover target authorization, provider registration, privacy and CLI contracts. No third-party implementation was copied or bundled. Python metadata, source fallback and uv lock are synchronized at 0.88.44.
+
+
 ## 0.88.43 — safe Begin Patch Update File compatibility
 
 `patch.apply` now accepts content-anchored `*** Begin Patch` / `*** Update File` / `@@` / `*** End Patch` changes without rerouting them to SEARCH/REPLACE. The parser converts updates into the existing guarded EditBlock mutation path (workspace limits, ambiguous-match rejection, approvals and rollback); Add/Delete/Move directives and unanchored insertions remain unsupported and fail closed. Regression covers the exact Wine-MBS win32u reconciliation patch from 21 October 2026, multi-file updates and path-policy enforcement. Error guidance documents the supported dialect. Python metadata, uv lock and source fallback are synchronized at 0.88.43. The distinct `ui_capture_unverified` provider problem still requires explicit safe continuation and was not changed here.

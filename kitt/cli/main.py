@@ -200,6 +200,64 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
+    memory_parser = subparsers.add_parser(
+        "memory", parents=[common], help="Inspect the native KITT memory service",
+    )
+    memory_parser.add_argument(
+        "memory_action", choices=["doctor"], help="Check memoryd readiness",
+    )
+
+    setup_parser = subparsers.add_parser(
+        "setup", parents=[common], help="Read-only recommendations for this workspace",
+    )
+    setup_actions = setup_parser.add_subparsers(dest="setup_action", required=True)
+    setup_recommend = setup_actions.add_parser(
+        "recommend", parents=[common], help="Suggest useful existing tools, hooks and agents",
+    )
+    setup_recommend.add_argument("--json", action="store_true", dest="json_output")
+
+    security_parser = subparsers.add_parser(
+        "security", parents=[common], help="Optional external security tooling",
+    )
+    security_actions = security_parser.add_subparsers(dest="security_tool", required=True)
+    strix_parser = security_actions.add_parser(
+        "strix", parents=[common], help="Use separately installed Strix scanner",
+    )
+    strix_actions = strix_parser.add_subparsers(dest="strix_action", required=True)
+    strix_actions.add_parser("status", parents=[common], help="Check whether Strix is installed")
+    strix_scan = strix_actions.add_parser(
+        "scan", parents=[common], help="Scan an explicitly authorized target",
+    )
+    strix_scan.add_argument("--target", required=True, help="Workspace path or authorized http(s) URL")
+    strix_scan.add_argument(
+        "--authorized", action="store_true",
+        help="Confirm authorization to test this target (mandatory)",
+    )
+    strix_scan.add_argument("--timeout", type=int, default=1800)
+
+    integrations_parser = subparsers.add_parser(
+        "integrations", parents=[common], help="Inspect optional external integrations",
+    )
+    integrations_parser.add_argument(
+        "integration_action", choices=["doctor", "configure-freellmapi"],
+        help="Integration diagnostics or local gateway registration",
+    )
+    integrations_parser.add_argument(
+        "--model", default="auto", help="FreeLLMAPI model or routing alias",
+    )
+    integrations_parser.add_argument(
+        "--base-url", default="http://127.0.0.1:3001",
+        help="FreeLLMAPI gateway root URL",
+    )
+    integrations_parser.add_argument(
+        "--activate", action="store_true",
+        help="Use the new profile for code generation/edit tasks",
+    )
+    integrations_parser.add_argument(
+        "--allow-remote", action="store_true",
+        help="Allow an explicitly configured remote HTTPS gateway",
+    )
+
     models_parser = subparsers.add_parser(
         "models",
         parents=[common],
@@ -933,7 +991,80 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     _configure_debug_log(args)
     _log_runtime_identity()
-    notify_if_update_available(component="agent-cli")
+    # Workspace recommendations must not trigger network update checks.
+    if args.subcommand != "setup":
+        notify_if_update_available(component="agent-cli")
+
+    if args.subcommand == "memory":
+        from kitt.memory.shared_client import KittMemoryClient, KittMemoryUnavailable
+
+        try:
+            KittMemoryClient().ping()
+        except (KittMemoryUnavailable, OSError) as exc:
+            print(f"KITT memoryd unavailable: {exc}", file=sys.stderr)
+            return 2
+        print('{"available": true, "authority": "kitt-memoryd"}')
+        return 0
+
+    if args.subcommand == "setup":
+        import json as _json
+        from kitt.setup_advisor import recommend
+
+        try:
+            report = recommend(args.root)
+        except (OSError, ValueError) as exc:
+            print(f"Setup advisor: {exc}", file=sys.stderr)
+            return 2
+        if args.json_output:
+            print(_json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print("Detected:", ", ".join(report["signals"]) or "no known manifests")
+            for suggestion in report["recommendations"]:
+                print(f"[{suggestion['category']}] {suggestion['name']}: {suggestion['action']}")
+        return 0
+
+    if args.subcommand == "security":
+        from kitt.strix_integration import scan_strix, strix_status
+        if args.strix_action == "status":
+            import json as _json
+            status = strix_status()
+            print(_json.dumps(status))
+            return 0 if status["installed"] else 2
+        try:
+            return scan_strix(
+                workspace=args.root, target=args.target,
+                authorized=args.authorized, timeout=args.timeout,
+            )
+        except (OSError, ValueError, PermissionError, TimeoutError) as exc:
+            print(f"Strix: {exc}", file=sys.stderr)
+            return 2
+
+    if args.subcommand == "integrations":
+        import json as _json
+        if args.integration_action == "configure-freellmapi":
+            from kitt.optional_providers import register_freellmapi
+            try:
+                result = register_freellmapi(
+                    args.root, model=args.model, base_url=args.base_url,
+                    activate=args.activate, allow_remote=args.allow_remote,
+                )
+            except (OSError, ValueError, PermissionError) as exc:
+                print(f"FreeLLMAPI: {exc}", file=sys.stderr)
+                return 2
+            print(_json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        from kitt.llm.health import ProviderHealthChecker
+        from kitt.strix_integration import strix_status
+
+        reachable, detail = ProviderHealthChecker.check_openai_compatible(
+            "http://127.0.0.1:3001",
+        )
+        print(_json.dumps({
+            "freellmapi": {"reachable": reachable, "detail": detail},
+            "strix": strix_status(),
+            "memory": "Use KITT memoryd; no second memory daemon required",
+        }, ensure_ascii=False, indent=2))
+        return 0
 
     if args.subcommand == "models":
         from kitt.cli.commands import handle_models_command
