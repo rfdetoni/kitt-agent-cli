@@ -532,10 +532,29 @@ class SafeRuntime:
             requested_control_paths
             and CAP_CONTROL_PLANE_WRITE not in capabilities
         )
+        # A root autonomous turn can fetch a public source repository via
+        # a narrow, strongly sandboxed Git command. This is not a general
+        # network capability and never applies to path-scoped child principals.
+        trusted_git_fetch = False
+        if op == "process.run" and CAP_NETWORK_ACCESS not in capabilities:
+            from kitt.security.autonomous_git_fetch import may_fetch_public_git_source
+
+            trusted_git_fetch = bool(
+                self.registry is not None
+                and security_context is not None
+                and may_fetch_public_git_source(
+                    args,
+                    policy=getattr(self.registry, "policy", None),
+                    security_context=security_context,
+                    process_runner=getattr(self.registry, "process_runner", None),
+                    origin=origin,
+                )
+            )
         network_elevation = bool(
             op in {"process.run", "process.start"}
             and args.get("network", False) is True
             and CAP_NETWORK_ACCESS not in capabilities
+            and not trusted_git_fetch
         )
         automatic_budget_reservation = None
         automatic_budget_reserved = False
