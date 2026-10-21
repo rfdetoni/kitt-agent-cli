@@ -5,6 +5,7 @@ uses the existing session-scoped RuntimeStateStore rather than semantic memory.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -53,15 +54,33 @@ class GoalEvidenceJournal:
 
     @staticmethod
     def _entry(operation: str, args: dict, output: Any) -> dict[str, str] | None:
-        path = args.get("path")
-        if not isinstance(path, str) or not path.strip():
-            return None
         if GoalEvidenceJournal._is_placeholder(output):
             return None
-        # Preserve exact evidence excerpts with provenance. Do not claim that a
-        # bounded excerpt covers an entire source file.
-        source = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False, default=str)
-        window = ":".join(str(args[k]) for k in ("start_line", "end_line") if k in args)
+        path = args.get("path")
+        if not isinstance(path, str) or not path.strip():
+            # A repository search, symbol lookup or graph result may have no
+            # specific path. Mark it as repository-wide so *any* future
+            # mutation invalidates the observation.
+            if operation not in {
+                "repo.search", "repo.context_map", "repo.inspect_symbol",
+                "repo.read_symbol", "repo.references", "flow.execute",
+            }:
+                return None
+            path = "*"
+        # Non-read operations need the arguments in their identity: two
+        # searches of the same path with different queries are not equivalent.
+        if operation == "repo.read":
+            window = ":".join(
+                str(args[k]) for k in ("start_line", "end_line") if k in args
+            )
+        else:
+            canonical = json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)
+            window = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+        # Only persist bounded source evidence, never a claim of completion.
+        source = (
+            output if isinstance(output, str)
+            else json.dumps(output, ensure_ascii=False, default=str)
+        )
         return {
             "op": operation,
             "path": path,
@@ -83,13 +102,19 @@ class GoalEvidenceJournal:
                 entries = []
             else:
                 entries = [
-                    e for e in entries if not any(
-                        e.get("path") == p or e.get("path", "").startswith(p.rstrip("/") + "/")
+                    e for e in entries
+                    if e.get("path") == "*" or any(
+                        e.get("path") == p
+                        or str(e.get("path", "")).startswith(p.rstrip("/") + "/")
                         for p in changed
-                    )
+                    ) is False
                 ]
         reads: list[dict[str, str]] = []
         if operation in _READS and success:
+            entry = self._entry(operation, arguments, output)
+            if entry:
+                reads.append(entry)
+        elif operation == "flow.execute" and success:
             entry = self._entry(operation, arguments, output)
             if entry:
                 reads.append(entry)

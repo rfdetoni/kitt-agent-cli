@@ -658,6 +658,48 @@ class GoalContractTests(unittest.TestCase):
         self.assertIn("A evidence", context)
         self.assertNotIn("reports/b.py", context)
 
+    def test_search_and_context_map_receipts_survive_goal_retry(self):
+        state = RuntimeStateStore(self.db, "ws", "conv")
+        journal = GoalEvidenceJournal(state, "goal_search", "T01")
+        for query, text in (("NtUserFoo", "first location"), ("NtUserBar", "second location")):
+            journal.observe(
+                "kitt_runtime",
+                {"operation": "repo.search", "arguments": {"query": query}},
+                success=True, output=text,
+            )
+        journal.observe(
+            "kitt_runtime",
+            {"operation": "repo.context_map", "arguments": {"query": "win32u"}},
+            success=True, output="native module hierarchy",
+        )
+        resumed = GoalEvidenceJournal(state, "goal_search", "T01").context()
+        self.assertIn("first location", resumed)
+        self.assertIn("second location", resumed)
+        self.assertIn("native module hierarchy", resumed)
+        journal.observe(
+            "kitt_runtime",
+            {"operation": "repo.write_file", "arguments": {"path": "dlls/win32u/foo.c"}},
+            success=True, output="updated", changed_paths=["dlls/win32u/foo.c"],
+        )
+        self.assertNotIn("first location", journal.context())
+        self.assertNotIn("native module hierarchy", journal.context())
+
+    def test_readonly_flow_receipt_survives_new_turn_but_invalidates_on_edit(self):
+        state = RuntimeStateStore(self.db, "ws", "conv")
+        journal = GoalEvidenceJournal(state, "goal_flow", "T01")
+        args = {"operation": "flow.execute", "arguments": {
+            "steps": [{"id": "a", "operation": "repo.search",
+                       "arguments": {"query": "win32u"}}], "max_tokens": 200,
+        }}
+        journal.observe("kitt_runtime", args, success=True,
+                        output='{"result":"resolved target symbol","tool_calls":1}')
+        self.assertIn("resolved target symbol",
+                      GoalEvidenceJournal(state, "goal_flow", "T01").context())
+        journal.observe("kitt_runtime", {
+            "operation": "patch.apply", "arguments": {"patch": "change"}
+        }, success=True, output="patched", changed_paths=["dlls/win32u/foo.c"])
+        self.assertNotIn("resolved target symbol", journal.context())
+
     def test_readonly_flow_preserves_prior_goal_file_evidence(self):
         state = RuntimeStateStore(self.db, "ws", "conv")
         journal = GoalEvidenceJournal(state, "goal_2", "T03")
