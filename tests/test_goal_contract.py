@@ -650,6 +650,18 @@ class GoalContractTests(unittest.TestCase):
         self.assertIn("A evidence", context)
         self.assertNotIn("reports/b.py", context)
 
+    def test_readonly_flow_preserves_prior_goal_file_evidence(self):
+        state = RuntimeStateStore(self.db, "ws", "conv")
+        journal = GoalEvidenceJournal(state, "goal_2", "T03")
+        journal.observe("kitt_runtime",
+                        {"operation": "repo.read", "arguments": {"path": "src/win32u.c"}},
+                        success=True, output="existing exported signature")
+        for operation in ("flow.execute", "program.execute"):
+            journal.observe("kitt_runtime",
+                            {"operation": operation, "arguments": {"steps": []}},
+                            success=True, output='{"result":[]}', changed_paths=[])
+            self.assertIn("existing exported signature", journal.context())
+
     def test_contract_step_prompt_rejects_nested_task_plan_verification(self):
         item = SimpleNamespace(local_id="T01", status="RUNNING")
         runtime = SimpleNamespace(

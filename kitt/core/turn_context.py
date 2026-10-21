@@ -659,6 +659,8 @@ class TurnContextMixin:
                         cmd.prompt,
                         max_tokens=600,
                     )
+                if not str(memory_context or "").strip():
+                    memory_status = "empty"
             except KittMemoryUnavailable:
                 # Recall enriches context but is never execution authority. A local
                 # memory outage must not block or fail the coding hot path.

@@ -54,6 +54,13 @@ class HostEnvironmentBlockerTests(unittest.TestCase):
             success=True, output="written", error=None,
         ))
 
+    def test_repeated_discovery_suggests_existing_read_only_flow(self):
+        from kitt.core.turn_tool_helpers import _tool_feedback_suffix
+        instruction = _tool_feedback_suffix(4, 6, "repo.search")
+        self.assertIn("flow.execute", instruction)
+        self.assertIn("repo.batch_read", instruction)
+        self.assertIn("handles.resolve", instruction)
+
     def test_other_failures_can_be_replanned_or_retried(self):
         self.assertFalse(_nonretryable_host_environment_failure(
             "kitt_runtime", {"operation": "process.run"}, "pytest returned exit code 1",

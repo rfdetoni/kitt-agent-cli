@@ -351,8 +351,11 @@ def _browser_trace_result(
 def _tool_feedback_suffix(discovery_streak: int, tool_calls: int, operation: str) -> str:
     """Avoid replaying generic completion instructions after every tool call."""
     if discovery_streak >= 4:
-        return ("\n[KITT DISCOVERY CHECKPOINT] Reuse the previous host receipts. "
-                "Execute a permitted next step or report the actual blocker; "
+        return ("\n[KITT DISCOVERY CHECKPOINT] Reuse previous host receipts. "
+                "If several independent lookups remain, use the existing read-only "
+                "flow.execute graph with bounded projected output; otherwise use "
+                "repo.batch_read, structured symbol tools or handles.resolve. "
+                "Execute a permitted next step or report the blocker; "
                 "do not repeat discovery commands.")
     if tool_calls == 1 and operation in _OBSERVATIONAL_ACTIONS:
         return ("\nA read-only receipt is not evidence of a requested write. "

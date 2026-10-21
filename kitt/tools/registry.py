@@ -89,8 +89,14 @@ class ToolRegistry(_core.ToolRegistry):
                     "Safe runtime. process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}; "
                     "argv-only/no shell; for independent read/search/list calls use "
                     "repo.batch_read {calls:[{id,operation,arguments:{path}}]} (max 8); "
-                    "batch never permits writes; file edits use repo.write_file or patch.apply; "
-                    "patch.apply accepts SEARCH/REPLACE or unified diff; "
+                    "batch never permits writes; for independent read-only multi-step searches "
+                    "use flow.execute {steps:[{id,operation,arguments}],parallel:true,max_tokens:1200}, "
+                    "or program.execute for bounded read-only repetition; never use these for writes. "
+                    "Prefer repo.context_map/inspect_symbol/read_symbol/references when native "
+                    "code indexing is available; use handles.resolve for existing context handles, "
+                    "memory.query for stored project findings before rereading unchanged files. "
+                    "File edits use repo.write_file or patch.apply; "
+                    "patch.apply accepts SEARCH/REPLACE or unified diff; 
                     "sandbox.python {code,inputs?,result_var?} runs AST-only compute, "
                     "no imports/files/network/shell." + sandbox_note
                 )

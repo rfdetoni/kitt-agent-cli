@@ -8,10 +8,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-_READS = frozenset({"repo.read", "repo.list", "repo.search"})
+_READS = frozenset({
+    "repo.read", "repo.list", "repo.search", "repo.context_map",
+    "repo.inspect_symbol", "repo.read_symbol", "repo.references",
+})
 _MUTATIONS = frozenset({
     "repo.write_file", "repo.edit_symbol", "repo.create_directory",
-    "patch.apply", "process.run", "program.execute", "flow.execute",
+    "patch.apply", "process.run",
 })
 _MAX_RECORDS = 12
 _MAX_SNIPPET = 800
