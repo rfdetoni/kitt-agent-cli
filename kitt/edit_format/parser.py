@@ -29,7 +29,7 @@ class SearchReplaceParser:
     """Parser for SEARCH/REPLACE blocks with an explicit, stable file target."""
 
     BLOCK_REGEX = re.compile(
-        r'(?:([a-zA-Z0-9_\-./]+\.[a-zA-Z][a-zA-Z0-9]*)\s*\n)?<<<<<<< SEARCH\r?\n([\s\S]*?)(?:\r?\n)?=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE',
+        r'(?:^([a-zA-Z0-9_\-./]+\.[a-zA-Z][a-zA-Z0-9]*)\r?\n)?^<<<<<<< SEARCH\r?\n([\s\S]*?)(?:\r?\n)?=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE',
         re.MULTILINE,
     )
     FILENAME_EXTRACTOR = re.compile(r'[a-zA-Z0-9_\-./]+\.[a-zA-Z][a-zA-Z0-9]*')
