@@ -47,6 +47,7 @@ class BeginPatchUpdateTests(unittest.TestCase):
                 "    for path in sorted(ROOT.glob('*.c')):\n"
                 "        text = path.read_text(encoding='utf-8', errors='replace')\n"
                 "        for match in definition_re.finditer(text):\n"
+                "            pass\n"
             )
             result = DiffApplier().apply(blocks, root_dir=tmp)
             self.assertTrue(result.success, result.errors)
