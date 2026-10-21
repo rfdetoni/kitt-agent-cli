@@ -49,11 +49,15 @@ def may_fetch_public_git_source(
 
     if not isinstance(url, str) or not isinstance(target, str):
         return False
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+        hostname, port = parsed.hostname, parsed.port
+    except ValueError:
+        return False
     if (
         parsed.scheme != "https"
-        or parsed.hostname not in _PUBLIC_GIT_HOSTS
-        or parsed.username or parsed.password or parsed.port
+        or hostname not in _PUBLIC_GIT_HOSTS
+        or parsed.username or parsed.password or port
         or parsed.query or parsed.fragment
         or not _REPOSITORY_PATH.fullmatch(parsed.path)
     ):
