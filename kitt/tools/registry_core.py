@@ -1080,7 +1080,19 @@ class ToolRegistry:
                 security_context is not None
                 and security_context.has_capability(CAP_NETWORK_ACCESS)
             )
-            if not has_network_capability and permission != "DENY":
+            from kitt.security.autonomous_git_fetch import may_fetch_public_git_source
+
+            trusted_git_fetch = (
+                security_context is not None
+                and may_fetch_public_git_source(
+                    args,
+                    policy=self.policy,
+                    security_context=security_context,
+                    process_runner=self.process_runner,
+                    origin=origin,
+                )
+            )
+            if not has_network_capability and not trusted_git_fetch and permission != "DENY":
                 permission = "ASK"
                 network_gate = {
                     "requested": True,
