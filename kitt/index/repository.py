@@ -10,6 +10,7 @@ import re
 import threading
 import json
 import weakref
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -20,6 +21,8 @@ from kitt.index.parser_registry import ParserRegistry
 from kitt.security.workspace_fs import WorkspaceFileData, WorkspaceFileSystem
 
 INDEX_SCHEMA_VERSION = "3"
+INDEX_OPEN_BUSY_TIMEOUT_SECONDS = 2.0
+logger = logging.getLogger(__name__)
 
 
 class RepositoryIndex:
@@ -50,7 +53,10 @@ class RepositoryIndex:
             index_dir = self.root_path / ".kitt" / "index"
             index_dir.mkdir(parents=True, exist_ok=True)
             self.db_path = index_dir / "index.db"
-            self._conn = sqlite3.connect(str(self.db_path), timeout=10.0, check_same_thread=False)
+            self._conn = sqlite3.connect(
+                str(self.db_path), timeout=INDEX_OPEN_BUSY_TIMEOUT_SECONDS,
+                check_same_thread=False,
+            )
             self._conn.row_factory = sqlite3.Row
 
         self.has_fts5 = False
@@ -63,7 +69,62 @@ class RepositoryIndex:
         self._lifecycle_lock = threading.Lock()
         self._closed = False
         self._finalizer = weakref.finalize(self, self._finalize_conn, self._conn, self._lock)
-        self._init_db()
+        self.storage_mode = "memory" if self.in_memory else "persistent"
+        self.index_fallback_reason = ""
+        try:
+            self._init_db()
+        except sqlite3.OperationalError as exc:
+            # SQLite WAL supports readers alongside a writer, but startup
+            # schema/metadata initialization writes to the index. A second
+            # KITT instance must not crash because the daemon is indexing.
+            if self.in_memory or not self._is_database_busy(exc):
+                self._finalizer.detach()
+                self._close_failed_initialization(self._conn)
+                raise
+            disk_path = self.db_path
+            self._finalizer.detach()
+            self._close_failed_initialization(self._conn)
+            self._conn = sqlite3.connect(":memory:", check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self._finalizer = weakref.finalize(
+                self, self._finalize_conn, self._conn, self._lock,
+            )
+            self.in_memory = True
+            self.db_path = ":memory:"
+            self.storage_mode = "memory_fallback"
+            self.index_fallback_reason = "persistent index locked by another process"
+            self.graph = RepositoryGraph()
+            self.has_fts5 = False
+            try:
+                self._init_db()
+            except BaseException:
+                self._finalizer.detach()
+                self._close_failed_initialization(self._conn)
+                raise
+            logger.warning(
+                "Repository index %s is busy; using a process-local, "
+                "non-persistent index. Check other KITT instances for this workspace.",
+                disk_path,
+            )
+
+    @staticmethod
+    def _is_database_busy(exc: sqlite3.OperationalError) -> bool:
+        code = getattr(exc, "sqlite_errorcode", None)
+        if isinstance(code, int) and (code & 0xFF) in (
+            sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED,
+        ):
+            return True
+        return "locked" in str(exc).lower() or "database is busy" in str(exc).lower()
+
+    @staticmethod
+    def _close_failed_initialization(conn: sqlite3.Connection) -> None:
+        # Never checkpoint/truncate the disk WAL while another process owns
+        # the writer lock; only dispose of our own incomplete connection.
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        conn.close()
 
     @staticmethod
     def _finalize_conn(conn: sqlite3.Connection, lock: threading.RLock) -> None:
@@ -122,7 +183,11 @@ class RepositoryIndex:
     def metadata(self) -> Dict[str, str]:
         with self._lock:
             rows = self._conn.execute("SELECT key, value FROM index_meta").fetchall()
-            return {row["key"]: row["value"] for row in rows}
+            return {
+                **{row["key"]: row["value"] for row in rows},
+                "index_storage": self.storage_mode,
+                "index_fallback_reason": self.index_fallback_reason,
+            }
 
     def index_generation(self) -> int:
         with self._lock:
