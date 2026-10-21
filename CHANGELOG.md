@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.38 — safe Goal handoff for unattributed WebChat capture
+
+Aligns the durable GoalScheduler with the Reverse Proxy 5.4.17's `ui_capture_unverified` contract. An already-submitted WebChat turn that ended without provable current-turn response is terminal BLOCKED/ENVIRONMENT for that attempt, requiring explicit continuation; it is never automatically reissued as a normal retry. Includes all Agent CLI 0.88.37 read-only graph guidance, context, independent planning and C/Wine verification enhancements. Focused regression covers the new typed recovery result without treating unrelated provider errors as capture ambiguity.
+
+
 ## 0.88.37 — efficient tool flow, native-source verification and Goal handoff
 
 Expose existing read-only `flow.execute`, `program.execute`, structured symbol navigation, context handles and memory retrieval in the Agent's model-facing operation guidance; recurrent discovery checkpoints recommend combining independent host reads without granting write access through the read-only graph. Keep durable Goal evidence intact after successful read-only flow/program operations, and trace empty memory recall distinctly from unavailable memory. Contract planning now favors independent nonoverlapping paths and actual host checks rather than artificial dependency chains. Native C/C++ edits require a configured Makefile-driven `c.build` step before the host treats the change as verified; missing builds are UNAVAILABLE rather than falsely passing structural checks. Added targeted regressions and synchronized tool contracts.
