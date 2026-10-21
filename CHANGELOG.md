@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.39 — actionable unavailable native-build diagnostics
+
+When no configured Makefile or native verification executor is available, the existing VerificationReport now includes the bounded host `command_output` in `failure_message` rather than returning the unhelpful generic `verification failed`. The durable Goal verifier surfaces the actual `UNAVAILABLE` reason, so missing Wine/C build configuration is not confused with successful compilation. Regressions assert the user-visible failure reason. Includes all 0.88.38 host-flow, memory/context, parallel planning and safe WebChat continuation improvements.
+
+
 ## 0.88.38 — safe Goal handoff for unattributed WebChat capture
 
 Aligns the durable GoalScheduler with the Reverse Proxy 5.4.17's `ui_capture_unverified` contract. An already-submitted WebChat turn that ended without provable current-turn response is terminal BLOCKED/ENVIRONMENT for that attempt, requiring explicit continuation; it is never automatically reissued as a normal retry. Includes all Agent CLI 0.88.37 read-only graph guidance, context, independent planning and C/Wine verification enhancements. Focused regression covers the new typed recovery result without treating unrelated provider errors as capture ambiguity.
