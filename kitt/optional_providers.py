@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from kitt.domain.entities import ModelProfile
+from kitt.llm.endpoint_security import ProviderEndpointTrustStore
 from kitt.router.router import TaskRouter
 
 
@@ -40,10 +41,11 @@ def register_freellmapi(
         raise ValueError("workspace is not a directory")
     router = TaskRouter(str(root))
     router.config.profiles["freellmapi"] = ModelProfile(
-        backend="openai-compatible",
+        backend="freellmapi",
         model=model.strip(),
         base_url=base_url.rstrip("/"),
         credential_ref="env:FREELLMAPI_API_KEY",
+        protocol="openai-compatible",
         context_window=8192,
         supports_tools=True,
         supports_json=True,
@@ -53,6 +55,8 @@ def register_freellmapi(
             "code-generation": "freellmapi",
             "code-edit": "freellmapi",
         })
+    # Explicit configuration authorizes this exact origin only. Trust never comes from a repo file.
+    ProviderEndpointTrustStore().trust("freellmapi", base_url)
     router.save_config(str(root))
     return {
         "profile": "freellmapi",
