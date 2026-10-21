@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.44 — context-only navigation sections in Begin Patch
+
+Fixes the `mbs-wine/bootstrap.py` regression in the 21 October logs: a model-generated `*** Begin Patch` can use a standalone unchanged `@@` context section (such as `def main()`) before changed hunks. The parser now skips no-op navigation sections without writing files, but still requires at least one changed and content-anchored hunk per target. Every actual modification uses the existing atomic DiffApplier, including unique-match verification, workspace path policy, rollback and language quality gates. Regression validates multiple changes in the real patch shape and rejects a patch containing only context sections. This does not override `process.run` policy or replay unauthenticated WebChat responses. Python package metadata, source fallback and uv.lock updated.
+
 ## 0.88.43 — safe Begin Patch Update File compatibility
 
 `patch.apply` now accepts content-anchored `*** Begin Patch` / `*** Update File` / `@@` / `*** End Patch` changes without rerouting them to SEARCH/REPLACE. The parser converts updates into the existing guarded EditBlock mutation path (workspace limits, ambiguous-match rejection, approvals and rollback); Add/Delete/Move directives and unanchored insertions remain unsupported and fail closed. Regression covers the exact Wine-MBS win32u reconciliation patch from 21 October 2026, multi-file updates and path-policy enforcement. Error guidance documents the supported dialect. Python metadata, uv lock and source fallback are synchronized at 0.88.43. The distinct `ui_capture_unverified` provider problem still requires explicit safe continuation and was not changed here.
