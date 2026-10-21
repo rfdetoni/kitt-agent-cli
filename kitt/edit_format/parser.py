@@ -333,10 +333,13 @@ class BeginPatchUpdateParser:
                     changes |= prefix in "-+"
                     index += 1
 
-                # No pure insertion at an unanchored position, and no no-op
-                # hunks. EditApplier will reject ambiguous/missing context.
-                if not original or not changes:
+                # A context-only @@ block is a navigation section without a
+                # mutation. The next changed hunk must still provide a unique
+                # SEARCH anchor checked by the guarded applier.
+                if not original:
                     return []
+                if not changes:
+                    continue
                 blocks.append(EditBlock(
                     file_path=path,
                     search_content="\n".join(original),

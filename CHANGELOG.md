@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.45 — support non-mutating Begin Patch navigation hunks
+
+Fixes a concrete 21 October Wine-MBS regression: `patch.apply` rejected `*** Begin Patch` edits containing a standalone context-only `@@` section (for example `def main():`) before changed hunks. The parser now skips navigation-only sections but still rejects entire no-op patches, unsupported Add/Delete/Move and unanchored insertions. Actual modifications retain unique SEARCH matching, protected workspace policy, transactional rollback and generated-content validation. Regression checks a realistic three-change `mbs-wine/bootstrap.py` patch applied through the existing DiffApplier. This release does not override command permissions or replay unattributed ChatGPT Web responses. Package metadata, source fallback and uv.lock updated.
+
 ## 0.88.44 — optional agent integrations without duplicated runtimes
 
 Add a read-only workspace advisor for stack-specific hooks, skills and existing MCP plugins; an explicitly authorized, workspace-bounded Strix CLI adapter; a FreeLLMAPI profile using KITT's existing OpenAI-compatible protocol, endpoint trust and environment-only credential references; and a native memoryd doctor. Default models and memory authority remain unchanged unless the user explicitly opts in. Regression tests cover target authorization, provider registration, privacy and CLI contracts. No third-party implementation was copied or bundled. Python metadata, source fallback and uv lock are synchronized at 0.88.44.
