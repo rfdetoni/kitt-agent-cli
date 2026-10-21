@@ -194,7 +194,7 @@ class ContractStore:
         next_run: float | None = None,
     ) -> dict[str, Any]:
         outcome = str(outcome or "").upper()
-        if outcome not in {"DONE", "RETRY", "BLOCKED", "WAITING_APPROVAL"}:
+        if outcome not in {"DONE", "RETRY", "CHECKPOINT", "BLOCKED", "WAITING_APPROVAL"}:
             raise ValueError(f"Unsupported contract outcome: {outcome}")
 
         now = time.time()
@@ -246,6 +246,19 @@ class ContractStore:
                     next_run = None
                     error = None
                     completed_at = now
+            elif outcome == "CHECKPOINT":
+                # A host-owned per-turn budget checkpoint is not a failed item
+                # attempt. Global Goal turn/wall/cost budgets still apply.
+                if not feedback.startswith("Execution budget checkpoint:"):
+                    raise ValueError("CHECKPOINT requires a host budget checkpoint reason")
+                item_status = "PENDING"
+                conn.execute(
+                    """UPDATE goal_contract_items
+                       SET status='PENDING',attempts=MAX(0, attempts-1),
+                           last_feedback=?,evidence_json=?,updated_at=?
+                       WHERE id=?""",
+                    (feedback, serialized_evidence, now, item.id),
+                )
             elif outcome == "WAITING_APPROVAL":
                 item_status = "PENDING"
                 goal_state = "WAITING_APPROVAL"

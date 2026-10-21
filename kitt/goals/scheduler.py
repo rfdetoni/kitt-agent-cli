@@ -425,7 +425,17 @@ class GoalScheduler:
                         outcome = "WAITING_APPROVAL"
                         next_run = None
                     elif status == "INCOMPLETE":
-                        outcome = "RETRY"
+                        # Per-turn host budget checkpoints continue the item
+                        # without exhausting its retry allowance. The parent
+                        # Goal still charges the turn and enforces its budgets.
+                        checkpoint = (
+                            isinstance(result, dict)
+                            and result.get("block_reason") == "RESOLVABLE"
+                            and str(result.get("error") or "").startswith(
+                                "Execution budget checkpoint:"
+                            )
+                        )
+                        outcome = "CHECKPOINT" if checkpoint else "RETRY"
                         next_run = time.time() + retry_in
                     elif status in {
                         "BLOCKED", "ITEM_EXHAUSTED", "REVIEW_EXHAUSTED", "STAGNATION_EXHAUSTED"
@@ -463,7 +473,7 @@ class GoalScheduler:
                                 "goal_state": committed["goal_state"],
                             },
                         )
-                    elif outcome == "RETRY":
+                    elif outcome in {"RETRY", "CHECKPOINT"}:
                         if committed["goal_state"] == "FAILED":
                             effective_status = "ITEM_EXHAUSTED"
                             self._on_event(
@@ -476,7 +486,8 @@ class GoalScheduler:
                             )
                         else:
                             self._on_event(
-                                "GoalSchedulerVerificationRetry",
+                                "GoalSchedulerBudgetCheckpoint" if outcome == "CHECKPOINT"
+                                else "GoalSchedulerVerificationRetry",
                                 {
                                     "goal_id": goal.id,
                                     "local_id": contract_item.local_id,
