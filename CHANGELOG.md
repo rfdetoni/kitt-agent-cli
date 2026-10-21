@@ -1,5 +1,11 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.47 — autonomous Wine Git checkout without recurring approval
+
+Fixes a 2026-10-21 KITT run where workspace autonomy was already `autonomous`, but `process.run` with `network=true` for a public Git submodule download still demanded manual approval. A narrowly scoped delegation now permits unscoped root-user model turns to fetch public HTTPS Git repositories from GitHub or Wine's GitLab into workspace-relative directories, only with a strong network-enabled sandbox. Both SafeRuntime and nested ToolRegistry use the same rule.
+
+Other network commands, private hosts, unsafe destinations, child principals, supervised mode and unavailable strong sandboxes retain their existing explicit approval or denial. This is not a general network capability. The Git fetch can still time out independently; the logs also report two missing Ollama model profiles, which this release does not install. Adds regression coverage and updates Python package metadata, lock and release version.
+
 ## 0.88.46 — prevent repository-index SQLite writer contention from crashing startup
 
 When another KITT daemon/process holds a persistent SQLite writer transaction, the new CLI no longer fails during the index schema/metadata initialization with `sqlite3.OperationalError: database is locked`. A bounded connection busy timeout (2s) now controls index initialization; the schema script no longer silently overrides it. On SQLite BUSY/LOCKED **only**, the contending process closes its incomplete disk connection (without forcing WAL checkpoint/truncate), starts a process-local in-memory index, and continues normal indexing/search. This avoids deleting or modifying the daemon-owned index and exposes `index_storage=memory_fallback` / `index_fallback_reason` through metadata. Permanent SQLite errors are still surfaced; the next KITT process will use the disk index normally once contention disappears. Regression locks the disk index with a separate SQLite writer and verifies fallback isolation, search, writer transaction continuity and later persistent reopen. This does not force-stop another KITT process or override system isolation.
