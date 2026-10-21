@@ -99,7 +99,7 @@ class ToolRegistry(_core.ToolRegistry):
                     "handles.resolve requires arguments:{handle:\"ctx:file:path:1-50\"}; "
                     "do not repeat unchanged repo.read results; use supplied context handles. "
                     "file edits use repo.write_file or patch.apply; "
-                    "patch.apply accepts SEARCH/REPLACE or unified diff; "
+                    "patch.apply accepts SEARCH/REPLACE, unified diff, or *** Begin Patch (Update File only); "
                     "sandbox.python {code,inputs?,result_var?} runs AST-only compute, "
                     "no imports/files/network/shell." + sandbox_note
                 )
