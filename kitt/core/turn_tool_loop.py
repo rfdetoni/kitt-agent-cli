@@ -540,8 +540,8 @@ class TurnToolLoopMixin:
                 malformed_calls += 1
                 patch_format = self.diff_parser.format(patch_text)
                 failure_strategy = (
-                    patch_format
-                    if patch_format in {"search_replace", "unified_diff"}
+                    ("unified_diff" if patch_format == "begin_patch" else patch_format)
+                    if patch_format in {"search_replace", "unified_diff", "begin_patch"}
                     else str(getattr(self.session_state, "edit_strategy", "search_replace"))
                 )
                 if failure_strategy not in {"search_replace", "unified_diff"}:
@@ -568,12 +568,19 @@ class TurnToolLoopMixin:
                     yield TurnFailed(error="Invalid apply_patch request: no valid SEARCH/REPLACE or unified-diff blocks."), None, None
                     return
                 retry_hint = (
-                    "apply_patch was rejected before approval: arguments.patch must be a valid unified diff "
-                    "with ---/+++ file headers and @@ hunks. Existing-file hunks need at least one context "
-                    "or deleted line so they remain content-anchored; prefer repo.write_file for new files."
-                    if patch_format == "unified_diff"
-                    else "apply_patch was rejected before approval: arguments.patch needs a filename plus "
-                    "<<<<<<< SEARCH, =======, and >>>>>>> REPLACE. For a new file leave SEARCH empty."
+                    "apply_patch rejected before approval: *** Begin Patch supports only "
+                    "*** Update File: path, @@ hunks with prefixed context/deletion/addition "
+                    "lines, and *** End Patch. A hunk must have an existing-line anchor; "
+                    "use repo.write_file for new files."
+                    if patch_format == "begin_patch"
+                    else (
+                        "apply_patch was rejected before approval: arguments.patch must be a valid unified diff "
+                        "with ---/+++ file headers and @@ hunks. Existing-file hunks need at least one context "
+                        "or deleted line so they remain content-anchored; prefer repo.write_file for new files."
+                        if patch_format == "unified_diff"
+                        else "apply_patch was rejected before approval: arguments.patch needs a filename plus "
+                        "<<<<<<< SEARCH, =======, and >>>>>>> REPLACE. For a new file leave SEARCH empty."
+                    )
                 )
                 execution_messages.extend([
                     {"role": "assistant", "content": full_response},

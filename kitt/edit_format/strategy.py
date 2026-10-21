@@ -265,7 +265,7 @@ def strategy_for_tool_call(tool_name: str, args: Any) -> EditStrategy | None:
         return "structured_symbol"
     if operation in {"patch.apply", "apply_patch"}:
         patch = str(payload.get("patch", "") or "") if isinstance(payload, dict) else ""
-        return "unified_diff" if detect_patch_format(patch) == "unified_diff" else "search_replace"
+        return "unified_diff" if detect_patch_format(patch) in {"unified_diff", "begin_patch"} else "search_replace"
     if operation in {"repo.write_file", "write_file"}:
         return "whole_file"
     return None

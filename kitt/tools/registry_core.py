@@ -421,7 +421,7 @@ class ToolRegistry:
             },
             {"name": "create_directory", "description": "Create a directory inside the workspace without invoking a shell"},
             {"name": "write_file", "description": "Create or overwrite content to a file"},
-            {"name": "apply_patch", "description": "Apply SEARCH/REPLACE blocks or unified diff hunks through the same atomic edit engine"},
+            {"name": "apply_patch", "description": "Apply SEARCH/REPLACE, unified diff, or bounded Begin Patch updates via one atomic edit engine"},
             {"name": "run_command", "description": "Run an executable directly without a shell; prefer dedicated filesystem tools for mutations"},
             {"name": "git_status", "description": "Show uncommitted git status"},
             {"name": "git_diff", "description": "Show git diff"},
@@ -481,7 +481,7 @@ class ToolRegistry:
                 "content": "full file text",
                 "expected_content_hash": "optional sha256",
             },
-            "apply_patch": {"patch": "SEARCH/REPLACE blocks or standard unified diff"},
+            "apply_patch": {"patch": "SEARCH/REPLACE, standard unified diff, or *** Begin Patch Update File hunks"},
             "run_command": {
                 "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
                 "cwd": "optional workspace-relative directory",

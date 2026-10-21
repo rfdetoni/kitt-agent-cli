@@ -14,7 +14,7 @@ try:
     __version__ = version("kitt-agent-cli")
 except PackageNotFoundError:
     # Source-tree fallback for direct execution before installation.
-    __version__ = "0.88.42"
+    __version__ = "0.88.43"
 
 KITT_VERSION = __version__
 STATE_SCHEMA_VERSION = 12
