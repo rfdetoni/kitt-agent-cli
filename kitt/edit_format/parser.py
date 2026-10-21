@@ -14,7 +14,7 @@ def detect_patch_format(text: str) -> PatchFormat:
     value = str(text or "")
     if "<<<<<<< SEARCH" in value and ">>>>>>> REPLACE" in value:
         return "search_replace"
-    if re.search(r"(?m)^\\*\\*\\* Begin Patch\\r?$", value):
+    if re.search(r"(?m)^\*\*\* Begin Patch\r?$", value):
         return "begin_patch"
     if re.search(r"(?m)^diff --git ", value):
         return "unified_diff"
@@ -308,7 +308,7 @@ class BeginPatchUpdateParser:
                 # Add/Delete/Move are intentionally unsupported here.
                 return []
             path = directive[len(self.HEADER):].strip()
-            if not path or path != directive[len(self.HEADER):].strip():
+            if not path:
                 return []
             index += 1
             file_hunks = 0
@@ -351,7 +351,7 @@ class BeginPatchUpdateParser:
 
 
 class PatchParser:
-    """Accept SEARCH/REPLACE or unified diff while sharing one mutation engine."""
+    """Accept explicitly supported patch dialects through one mutation engine."""
 
     def __init__(self):
         self.search_replace = SearchReplaceParser()
