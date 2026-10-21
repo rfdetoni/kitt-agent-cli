@@ -32,7 +32,11 @@ def scan_strix(
         raise ValueError("target must be nonempty")
     target = target.strip()
     parsed = urlsplit(target)
-    if parsed.scheme:
+    windows_drive_path = (
+        len(target) > 2 and target[0].isalpha()
+        and target[1] == ":" and target[2] in ("/", "\\")
+    )
+    if parsed.scheme and not windows_drive_path:
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise ValueError("Only explicit http(s) target URLs are accepted")
         if parsed.username or parsed.password:
