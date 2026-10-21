@@ -6,6 +6,7 @@ from pathlib import Path
 
 from kitt.edit_format.parser import PatchParser
 from kitt.edit_format.applier import DiffApplier
+from kitt.edit_format.strategy import strategy_for_tool_call
 
 
 class BeginPatchUpdateTests(unittest.TestCase):
@@ -24,6 +25,11 @@ class BeginPatchUpdateTests(unittest.TestCase):
 *** End Patch"""
         parser = PatchParser()
         self.assertEqual(parser.format(patch), "begin_patch")
+        self.assertEqual(
+            strategy_for_tool_call("kitt_runtime", {
+                "operation": "patch.apply", "arguments": {"patch": patch},
+            }), "unified_diff",
+        )
         blocks = parser.parse(patch)
         self.assertEqual(len(blocks), 1)
         self.assertEqual(blocks[0].file_path, "reports/t01-win32u-reconcile.py")
