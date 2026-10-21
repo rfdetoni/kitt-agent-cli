@@ -540,8 +540,8 @@ class TurnToolLoopMixin:
                 malformed_calls += 1
                 patch_format = self.diff_parser.format(patch_text)
                 failure_strategy = (
-                    patch_format
-                    if patch_format in {"search_replace", "unified_diff"}
+                    ("unified_diff" if patch_format == "begin_patch" else patch_format)
+                    if patch_format in {"search_replace", "unified_diff", "begin_patch"}
                     else str(getattr(self.session_state, "edit_strategy", "search_replace"))
                 )
                 if failure_strategy not in {"search_replace", "unified_diff"}:
