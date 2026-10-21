@@ -867,6 +867,60 @@ class GoalContractTests(unittest.TestCase):
         self.assertEqual(calls, ["T01", "FINAL"])
         self.assertTrue(self.goals.contract_complete(goal.id))
 
+    def test_host_budget_checkpoint_requeues_without_exhausting_item_attempts(self):
+        goal = self._contract(max_attempts=1)
+        calls = []
+
+        def executor(_goal, **_kwargs):
+            calls.append("run")
+            if len(calls) == 1:
+                return {
+                    "status": "INCOMPLETE",
+                    "error": "Execution budget checkpoint: host tool call limit reached.",
+                    "block_reason": "RESOLVABLE",
+                    "tokens": 1,
+                    "cost": 0.0,
+                }
+            return _done_result(["kitt/a.py"])
+
+        scheduler = GoalScheduler(
+            self.db, self.goals, runtime_step_executor=executor,
+            poll_interval_seconds=0.01,
+        )
+        scheduler.schedule_goal(goal.id, heartbeat_enabled=True)
+        first = scheduler.check_and_execute_due()[0]
+        self.assertEqual(first["status"], "INCOMPLETE")
+        self.assertEqual(self.goals.get(goal.id).state, "ACTIVE")
+        self.assertEqual(self.goals.contract_items(goal.id)[0].attempts, 0)
+        self.assertEqual(self.goals.get(goal.id).turns_used, 1)
+
+        time.sleep(0.12)
+        second = scheduler.check_and_execute_due()[0]
+        self.assertEqual(second["status"], "ITEM_DONE")
+        self.assertEqual(self.goals.contract_items(goal.id)[0].status, "DONE")
+        self.assertEqual(self.goals.contract_items(goal.id)[0].attempts, 1)
+        # Continuation still charges the global turn budget.
+        self.assertEqual(self.goals.get(goal.id).turns_used, 2)
+        self.assertEqual(calls, ["run", "run"])
+
+    def test_budget_checkpoint_requires_host_reason(self):
+        goal = self._contract()
+        scheduler = GoalScheduler(
+            self.db, self.goals, runtime_step_executor=lambda *_a, **_k: {},
+        )
+        scheduler.schedule_goal(goal.id, heartbeat_enabled=True)
+        lease = scheduler._claim(goal.id)
+        self.assertIsNotNone(lease)
+        item = self.goals.begin_contract_attempt(
+            goal.id, lease_id=lease, lease_owner_id=scheduler.worker_id,
+        )
+        with self.assertRaisesRegex(ValueError, "host budget checkpoint"):
+            self.goals.commit_contract_outcome(
+                goal.id, item.id, lease_id=lease,
+                lease_owner_id=scheduler.worker_id, outcome="CHECKPOINT",
+                feedback="ordinary verification failure",
+            )
+
     def test_retry_exhaustion_blocks_item_and_resume_preserves_done_items(self):
         goal = self._contract(max_attempts=1)
 
