@@ -76,3 +76,32 @@ def test_node_check_alias_and_duplicate_build_are_not_silently_omitted():
         root = Path(tmp)
         (root / "package.json").write_text(json.dumps({"scripts": {"check": "tsc --noEmit", "build": "tsc --noEmit"}}))
         assert [step.name for step in BuildDetector(tmp).plan_verification(["a.ts"], full=True)] == ["node.check"]
+
+def test_c_code_requires_real_build_not_only_structural_pass():
+    from types import SimpleNamespace
+    from kitt.validation.orchestrator import VerificationOrchestrator
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "dlls" / "win32u").mkdir(parents=True)
+        (root / "dlls" / "win32u" / "source.c").write_text("int answer(void) { return 42; }\n")
+        runner = SimpleNamespace(run=lambda argv, **kwargs: SimpleNamespace(
+            returncode=0, stdout="built", stderr="", timed_out=False, cancelled=False,
+        ))
+        orchestrator = VerificationOrchestrator(root, runner)
+        report = orchestrator.verify(["dlls/win32u/source.c"])
+        assert not report.ok
+        assert report.status == "UNAVAILABLE"
+        assert "configured Makefile" in report.failure_message()
+
+        (root / "Makefile").write_text("all:\n\t@true\n")
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return SimpleNamespace(
+                returncode=0, stdout="compiled", stderr="", timed_out=False, cancelled=False,
+            )
+        orchestrator = VerificationOrchestrator(root, SimpleNamespace(run=run))
+        report = orchestrator.verify(["dlls/win32u/source.c"])
+        assert report.ok, report.failure_message()
+        assert [s.name for s in report.steps] == ["c.build"]
+        assert calls == [["make", "-C", ".", "-j2"]]

@@ -25,6 +25,7 @@ GLOBAL_BASELINES_DISPLAY_PATH = "~/.kitt/verification/baselines.json"
 _MAX_PROJECT_BYTES = 128 * 1024
 
 _BUILTIN_STEPS: dict[str, dict[str, Any]] = {
+    "c.build": {"enabled": True, "timeout_seconds": 240},
     "python.targeted-tests": {"enabled": True, "timeout_seconds": 120},
     "python.lint": {"enabled": True, "timeout_seconds": 90},
     "python.tests": {"enabled": True, "timeout_seconds": 180},

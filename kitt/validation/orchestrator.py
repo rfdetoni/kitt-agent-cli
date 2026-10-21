@@ -131,7 +131,10 @@ class VerificationOrchestrator:
     ) -> VerificationReport:
         unique = list(dict.fromkeys(str(path) for path in paths if path))[:64]
         required = set(check_ids or ())
-        full = bool(force_full) or self._full_enabled() or bool(required)
+        native_source = any(Path(path).suffix.casefold() in {
+            ".c", ".cc", ".cpp", ".cxx",
+        } for path in unique)
+        full = bool(force_full) or self._full_enabled() or bool(required) or native_source
         syntax = self.validator.validate_paths(unique)
         diagnostics = list(syntax.diagnostics)
         if not syntax.ok:
@@ -142,6 +145,20 @@ class VerificationOrchestrator:
             )
 
         plan = self._plan(unique, full)
+        if native_source and not any(step.name == "c.build" for step in plan):
+            return VerificationReport(
+                False,
+                diagnostics=diagnostics,
+                full_verification=True,
+                checked_paths=unique,
+                status="UNAVAILABLE",
+                command_output=(
+                    "C/C++ source verification requires a configured Makefile "
+                    "under the authorized workspace; structural checks alone "
+                    "cannot prove Wine/native builds. Configure the build tree "
+                    "and retry; do not mark this contract item DONE."
+                ),
+            )
         if required:
             plan = [step for step in plan if step.name in required]
             missing = required - {step.name for step in plan}

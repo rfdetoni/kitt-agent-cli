@@ -89,6 +89,25 @@ class BuildDetector:
             argv = [manager, "run", script]
         return VerificationStep(f"node.{script}", argv, timeout, kind)
 
+    def _c_build_step(self, target_files: List[str]) -> VerificationStep | None:
+        """Compile C changes only from a configured, trusted-path Makefile."""
+        for relative in target_files:
+            if Path(relative).suffix.casefold() not in {".c", ".cc", ".cpp", ".cxx"}:
+                continue
+            source = (self.root_path / relative).resolve()
+            if not source.is_relative_to(self.root_path):
+                continue
+            for directory in (source.parent, *source.parents):
+                if not directory.is_relative_to(self.root_path):
+                    break
+                makefile = directory / "Makefile"
+                if makefile.is_file() and not makefile.is_symlink():
+                    cwd = str(directory.relative_to(self.root_path))
+                    return VerificationStep(
+                        "c.build", ["make", "-C", cwd, "-j2"], 240, "compile"
+                    )
+        return None
+
     def plan_verification(
         self,
         target_files: List[str] | None = None,
@@ -103,6 +122,9 @@ class BuildDetector:
             return self._python_targeted(target_files)
 
         steps: list[VerificationStep] = []
+        c_build = self._c_build_step(target_files)
+        if c_build is not None:
+            steps.append(c_build)
 
         if self._relevant(
             target_files,
