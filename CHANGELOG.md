@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.37 — efficient tool flow, native-source verification and Goal handoff
+
+Expose existing read-only `flow.execute`, `program.execute`, structured symbol navigation, context handles and memory retrieval in the Agent's model-facing operation guidance; recurrent discovery checkpoints recommend combining independent host reads without granting write access through the read-only graph. Keep durable Goal evidence intact after successful read-only flow/program operations, and trace empty memory recall distinctly from unavailable memory. Contract planning now favors independent nonoverlapping paths and actual host checks rather than artificial dependency chains. Native C/C++ edits require a configured Makefile-driven `c.build` step before the host treats the change as verified; missing builds are UNAVAILABLE rather than falsely passing structural checks. Added targeted regressions and synchronized tool contracts.
+
+
 ## 0.88.36 — fix Bubblewrap resolver symlink mount on Ubuntu
 
 When creating the process sandbox, the host mounts `/run` on a private tmpfs. Rebinding `/etc/resolv.conf` to its original path fails on systemd-resolved hosts where it is a symlink into `/run`. The command planner now skips resolver rebinds for network-isolated `workspace-write` and for regular `/etc` files already visible from the read-only root; network-enabled profiles restore only the canonical resolver target file and its minimal directory chain under the private `/run`, never mounting over a symlink destination. Two focused regressions cover canonical target selection and isolated/network-enabled behavior. No relaxation of AppArmor, sandbox policy, tool authority or network restrictions.
