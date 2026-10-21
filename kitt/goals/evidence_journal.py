@@ -103,11 +103,11 @@ class GoalEvidenceJournal:
             else:
                 entries = [
                     e for e in entries
-                    if e.get("path") == "*" or any(
+                    if e.get("path") != "*" and not any(
                         e.get("path") == p
                         or str(e.get("path", "")).startswith(p.rstrip("/") + "/")
                         for p in changed
-                    ) is False
+                    )
                 ]
         reads: list[dict[str, str]] = []
         if operation in _READS and success:
