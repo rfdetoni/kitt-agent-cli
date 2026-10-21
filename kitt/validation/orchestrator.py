@@ -88,6 +88,8 @@ class VerificationReport:
                 parts.append(
                     f"{step.name} failed ({step.returncode}): {step.output[:2400]}"
                 )
+        if not parts and not self.ok and self.command_output.strip():
+            parts.append(f"{self.status}: {self.command_output.strip()[:2400]}")
         return "\n".join(parts) or "verification failed"
 
 
