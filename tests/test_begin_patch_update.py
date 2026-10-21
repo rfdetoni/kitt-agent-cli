@@ -37,6 +37,7 @@ class BeginPatchUpdateTests(unittest.TestCase):
             target.parent.mkdir()
             target.write_text(
                 "import re\n"
+                "def scan():\n"
                 "    for path in sorted(ROOT.glob('*.c')):\n"
                 "        text = path.read_text(encoding='utf-8', errors='replace')\n"
                 "        for match in definition_re.finditer(text):\n"
