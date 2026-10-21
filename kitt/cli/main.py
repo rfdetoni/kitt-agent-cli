@@ -232,7 +232,23 @@ def build_parser() -> argparse.ArgumentParser:
         "integrations", parents=[common], help="Inspect optional external integrations",
     )
     integrations_parser.add_argument(
-        "integration_action", choices=["doctor"], help="Integration diagnostics",
+        "integration_action", choices=["doctor", "configure-freellmapi"],
+        help="Integration diagnostics or local gateway registration",
+    )
+    integrations_parser.add_argument(
+        "--model", default="auto", help="FreeLLMAPI model or routing alias",
+    )
+    integrations_parser.add_argument(
+        "--base-url", default="http://127.0.0.1:3001",
+        help="FreeLLMAPI gateway root URL",
+    )
+    integrations_parser.add_argument(
+        "--activate", action="store_true",
+        help="Use the new profile for code generation/edit tasks",
+    )
+    integrations_parser.add_argument(
+        "--allow-remote", action="store_true",
+        help="Allow an explicitly configured remote HTTPS gateway",
     )
 
     models_parser = subparsers.add_parser(
@@ -1005,6 +1021,18 @@ def main(argv=None) -> int:
 
     if args.subcommand == "integrations":
         import json as _json
+        if args.integration_action == "configure-freellmapi":
+            from kitt.optional_providers import register_freellmapi
+            try:
+                result = register_freellmapi(
+                    args.root, model=args.model, base_url=args.base_url,
+                    activate=args.activate, allow_remote=args.allow_remote,
+                )
+            except (OSError, ValueError, PermissionError) as exc:
+                print(f"FreeLLMAPI: {exc}", file=sys.stderr)
+                return 2
+            print(_json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         from kitt.llm.health import ProviderHealthChecker
         from kitt.strix_integration import strix_status
 
