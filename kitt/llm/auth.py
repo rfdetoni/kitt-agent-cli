@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 PROVIDER_DEFAULT_ENV_VARS: Dict[str, str] = {
     "openai": "OPENAI_API_KEY",
+    "freellmapi": "FREELLMAPI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "google": "GEMINI_API_KEY",
