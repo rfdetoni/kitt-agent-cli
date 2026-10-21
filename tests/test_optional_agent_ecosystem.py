@@ -51,6 +51,19 @@ class StrixTests(unittest.TestCase):
                 self.assertEqual(runner.call_args.args[0][:2], ["/usr/bin/strix", "--target"])
                 self.assertIs(runner.call_args.kwargs["shell"], False)
 
+    def test_absolute_workspace_path_is_accepted_cross_platform(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("shutil.which", return_value="strix"), patch(
+                "subprocess.run", return_value=Mock(returncode=0)
+            ):
+                self.assertEqual(
+                    scan_strix(
+                        workspace=tmp, target=str(Path(tmp).resolve()),
+                        authorized=True,
+                    ),
+                    0,
+                )
+
     def test_escaping_workspace_is_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
