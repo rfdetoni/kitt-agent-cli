@@ -5,6 +5,61 @@ from kitt.index.repository import RepositoryIndex
 from kitt.index.schema import INDEX_SCHEMA_SQL
 
 
+def test_index_startup_uses_memory_when_disk_writer_is_busy(tmp_path, monkeypatch):
+    """Another KITT daemon's write transaction cannot crash a new CLI."""
+    import kitt.index.repository as repository
+
+    monkeypatch.setattr(repository, "INDEX_OPEN_BUSY_TIMEOUT_SECONDS", 0.05)
+    (tmp_path / "one.py").write_text(
+        "def one():\n    return 'persistent_only_token'\n", encoding="utf-8",
+    )
+    with RepositoryIndex(tmp_path) as first:
+        first.update_paths(["one.py"])
+        assert first.metadata()["index_storage"] == "persistent"
+        db_path = first.db_path
+
+    holder = sqlite3.connect(str(db_path), isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        holder.execute(
+            "UPDATE index_meta SET value=value WHERE key='schema_version'"
+        )
+        (tmp_path / "two.py").write_text(
+            "def two():\n    return 'ephemeral_only_token'\n", encoding="utf-8",
+        )
+        with RepositoryIndex(tmp_path) as second:
+            assert second.in_memory
+            assert second.db_path == ":memory:"
+            meta = second.metadata()
+            assert meta["index_storage"] == "memory_fallback"
+            assert "locked" in meta["index_fallback_reason"]
+            second.update_paths(["one.py", "two.py"])
+            assert second.search_text("ephemeral_only_token")
+            assert second.search_text("persistent_only_token")
+        # The disk writer is still active and its transaction was untouched.
+        assert holder.in_transaction
+    finally:
+        holder.rollback()
+        holder.close()
+
+    with RepositoryIndex(tmp_path) as recovered:
+        assert recovered.metadata()["index_storage"] == "persistent"
+        assert recovered.search_text("persistent_only_token")
+        assert not recovered.search_text("ephemeral_only_token")
+
+
+def test_index_fallback_is_only_for_database_lock_errors():
+    assert RepositoryIndex._is_database_busy(
+        sqlite3.OperationalError("database is locked")
+    )
+    assert RepositoryIndex._is_database_busy(
+        sqlite3.OperationalError("database table is locked")
+    )
+    assert not RepositoryIndex._is_database_busy(
+        sqlite3.OperationalError("no such table: index_meta")
+    )
+
+
 def test_qualified_symbol_and_chunk_indexes():
     conn = sqlite3.connect(":memory:")
     try:
