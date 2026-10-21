@@ -61,7 +61,8 @@ class GoalStepExecutor:
         """A submitted browser turn may have completed; do not resend it."""
         value = str(error or "").casefold()
         return "kitt reverse proxy" in value and (
-            ("ui_timeout" in value and "no model action was received or executed" in value)
+            "ui_capture_unverified" in value
+            or ("ui_timeout" in value and "no model action was received or executed" in value)
             or ("do not automatically replay" in value and (
                 "unknown submission state" in value
                 or "possibly submitted webchat turn" in value

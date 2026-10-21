@@ -409,6 +409,14 @@ class GoalContractTests(unittest.TestCase):
             "POLICY",
         )
 
+    def test_finished_uncorrelated_webchat_is_not_automatically_replayed(self):
+        error = ("KITT reverse proxy returned a recoverable model response error: "
+                 "ui_capture_unverified: Browser response cannot be attributed")
+        self.assertTrue(GoalStepExecutor._ambiguous_webchat_capture(error))
+        self.assertFalse(GoalStepExecutor._ambiguous_webchat_capture(
+            "KITT reverse proxy returned ui_rate_limit"
+        ))
+
     def test_capture_timeout_requires_explicit_resume_and_consumes_no_global_retries(self):
         error = (
             "KITT reverse proxy: ui_timeout: ChatGPT finished, but no fresh "
