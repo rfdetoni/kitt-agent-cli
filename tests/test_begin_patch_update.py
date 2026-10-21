@@ -97,6 +97,7 @@ class BeginPatchUpdateTests(unittest.TestCase):
                 "    for name, expected, alternatives in SOURCES:\n"
                 '        target = ROOT / "upstream" / name\n'
                 "        target.mkdir(exist_ok=True)\n"
+                "        if True:\n"
                 "            existing = next((p for p in alternatives if p.is_dir() and checkout_info(p, expected)), None)\n"
                 "            if existing:\n"
                 '                ok, detail = git("clone", "--no-hardlinks", str(existing), str(target), timeout=1200)\n'
