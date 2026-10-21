@@ -7,13 +7,15 @@ from typing import List, Literal
 from kitt.domain.entities import EditBlock
 
 
-PatchFormat = Literal["search_replace", "unified_diff", "unknown"]
+PatchFormat = Literal["search_replace", "unified_diff", "begin_patch", "unknown"]
 
 
 def detect_patch_format(text: str) -> PatchFormat:
     value = str(text or "")
     if "<<<<<<< SEARCH" in value and ">>>>>>> REPLACE" in value:
         return "search_replace"
+    if re.search(r"(?m)^\\*\\*\\* Begin Patch\\r?$", value):
+        return "begin_patch"
     if re.search(r"(?m)^diff --git ", value):
         return "unified_diff"
     if (
@@ -282,12 +284,79 @@ class UnifiedDiffParser:
         return blocks
 
 
+class BeginPatchUpdateParser:
+    """Parse a bounded *** Begin Patch / *** Update File change set.
+
+    Supports existing-file updates only. Convert each content-anchored hunk to
+    EditBlock so path policy, ambiguity detection, approvals and rollback all
+    stay in the existing mutation engine. Never guess a target or position.
+    """
+
+    HEADER = "*** Update File: "
+
+    def parse(self, text: str) -> List[EditBlock]:
+        source = UnifiedDiffParser._strip_fence(text)
+        lines = source.splitlines()
+        if len(lines) < 4 or lines[0] != "*** Begin Patch" or lines[-1] != "*** End Patch":
+            return []
+
+        blocks: List[EditBlock] = []
+        index = 1
+        while index < len(lines) - 1:
+            directive = lines[index]
+            if not directive.startswith(self.HEADER):
+                # Add/Delete/Move are intentionally unsupported here.
+                return []
+            path = directive[len(self.HEADER):].strip()
+            if not path or path != directive[len(self.HEADER):].strip():
+                return []
+            index += 1
+            file_hunks = 0
+            while index < len(lines) - 1 and (
+                lines[index] == "@@" or lines[index].startswith("@@ ")
+            ):
+                index += 1
+                original: list[str] = []
+                replacement: list[str] = []
+                changes = False
+                while index < len(lines) - 1:
+                    line = lines[index]
+                    if line == "@@" or line.startswith("@@ ") or line.startswith("*** "):
+                        break
+                    if not line or line[0] not in " +-":
+                        return []
+                    prefix, value = line[0], line[1:]
+                    if prefix in " -":
+                        original.append(value)
+                    if prefix in " +":
+                        replacement.append(value)
+                    changes |= prefix in "-+"
+                    index += 1
+
+                # No pure insertion at an unanchored position, and no no-op
+                # hunks. EditApplier will reject ambiguous/missing context.
+                if not original or not changes:
+                    return []
+                blocks.append(EditBlock(
+                    file_path=path,
+                    search_content="\n".join(original),
+                    replace_content="\n".join(replacement),
+                    is_new_file=False,
+                    is_deletion=False,
+                ))
+                file_hunks += 1
+            if not file_hunks:
+                return []
+        return blocks
+
+
 class PatchParser:
     """Accept SEARCH/REPLACE or unified diff while sharing one mutation engine."""
 
     def __init__(self):
         self.search_replace = SearchReplaceParser()
         self.unified_diff = UnifiedDiffParser()
+        self.begin_patch = BeginPatchUpdateParser()
 
     def format(self, text: str) -> PatchFormat:
         return detect_patch_format(text)
@@ -296,6 +365,8 @@ class PatchParser:
         patch_format = self.format(text)
         if patch_format == "unified_diff":
             return self.unified_diff.parse(text)
+        if patch_format == "begin_patch":
+            return self.begin_patch.parse(text)
         blocks = self.search_replace.parse(text)
         if blocks:
             return blocks
