@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.41 — safer patch targets and actionable batch diagnostics
+
+SEARCH/REPLACE patches keep their explicit target across consecutive blocks, and numeric version strings such as `11.20` are not guessed as workspace files. Failed `repo.batch_read` calls now report bounded per-ID errors and preserve successful sibling results; the tool catalog explains context handles and retry scope. The default bounded per-turn host-tool budget increases from 24 to 64 while model/time/sandbox authorization limits stay intact. Regression checks cover patch target isolation and partial batch failures. Project metadata and `uv.lock` are synchronized at 0.88.41.
+
 ## 0.88.40 — persistent read-graph evidence and scoped Goal recall
 
 Durable Goals now preserve bounded search and read-only `flow.execute`/`program.execute` receipts between attempts; repository-wide observations are invalidated by any successful mutation, avoiding stale context after patches. The memory recall query uses the original task objective instead of Goal/verification scaffolding, improving retrieval relevance without treating model-generated summaries as authority. Python project metadata, source-tree version fallback and `uv.lock` are synchronized at 0.88.40; runtime and CI contracts remain compatible with Agent Contract v5 and Reverse Proxy 5.4.17. Source/regression checks and ecosystem pinned integration must pass before calling this release validated.
