@@ -490,6 +490,33 @@ class PolicyEngine:
             return "DENY"
 
         if executable == "git":
+            # Git's -C selects a working directory. A relative, existing
+            # directory inside this workspace may be used for demonstrably
+            # read-only inspection. Never relax other global Git flags or
+            # treat -C as an arbitrary command-mode bypass.
+            if len(argv) >= 5 and argv[1] == "-C":
+                target = Path(argv[2])
+                if (
+                    target.is_absolute()
+                    or not argv[2].strip()
+                    or argv[2].startswith("-")
+                    or ".." in target.parts
+                    or "\\x00" in argv[2]
+                ):
+                    return "DENY"
+                allowed, resolved, _ = self.path_policy.validate_path(argv[2])
+                if not allowed or resolved is None or not resolved.is_dir():
+                    return "DENY"
+                if argv[3] not in {"status", "diff", "log", "branch"}:
+                    return "DENY"
+                # Keeping the original path check above and applying the
+                # existing Git flag checks to the stripped argv means --git-dir,
+                # --work-tree, exec hooks and mutating subcommands stay denied.
+                return (
+                    "ALLOW"
+                    if self._git_readonly(["git", *argv[3:]]) == "ALLOW"
+                    else "DENY"
+                )
             return self._git_readonly(argv)
         if executable in {"pwd"} and len(argv) == 1:
             return "ALLOW"
