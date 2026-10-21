@@ -142,6 +142,23 @@ class CLISurfaceTests(unittest.TestCase):
                 checker.assert_not_called()
                 self.assertTrue(json.loads(captured.getvalue())["read_only"])
 
+    def test_cli_registration_writes_only_referenced_key(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from kitt.cli.main import main as cli_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("kitt.cli.main.notify_if_update_available"):
+                with patch("kitt.optional_providers.ProviderEndpointTrustStore.trust"):
+                    with redirect_stdout(StringIO()):
+                        status = cli_main([
+                            "integrations", "configure-freellmapi", "--root", tmp
+                        ])
+            self.assertEqual(status, 0)
+            config = (Path(tmp) / ".kitt-router.json").read_text()
+            self.assertIn("env:FREELLMAPI_API_KEY", config)
+            self.assertNotIn("FREELLAPI_SECRET", config)
+
     def test_new_commands_parse(self):
         from kitt.cli.main import build_parser
 
