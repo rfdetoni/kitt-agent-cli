@@ -185,6 +185,33 @@ class GoalContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             planner.validate(path_overflow)
 
+    def test_planner_revises_protected_git_scope_without_bypassing_policy(self):
+        planner = ContractPlanner(SimpleNamespace(canonical_root=Path(self.tmp.name)))
+        original = {
+            "items": [
+                _item("T01", paths=["mbs-wine/.git"]),
+                _item("FINAL", kind="final", depends_on=["T01"]),
+            ]
+        }
+        with self.assertRaisesRegex(ValueError, r"Protected workspace path component: \\.git"):
+            planner.validate(original)
+        with self.assertRaises(PermissionError):
+            planner.fs.relative("mbs-wine/.git/config")
+
+        corrected = {
+            "items": [
+                _item("T01", paths=["mbs-wine/README.md"]),
+                _item("FINAL", kind="final", depends_on=["T01"]),
+            ]
+        }
+        with patch.object(planner, "_run_plan_turn", side_effect=[
+            json.dumps(original), json.dumps(corrected),
+        ]) as run:
+            accepted = planner.plan("conv", "Prepare mbs-wine and commit the changes")
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(accepted[0]["paths"], ["mbs-wine/README.md"])
+        self.assertIn("Protected workspace path component", run.call_args_list[1].args[1])
+
     def test_final_preserves_authored_scope_when_optional_tasks_exist(self):
         planner = ContractPlanner(
             SimpleNamespace(canonical_root=Path(self.tmp.name))
