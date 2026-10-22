@@ -144,7 +144,14 @@ class ContractPlanner:
             )
             safe_paths: list[str] = []
             for path in paths:
-                relative = self.fs.relative(path)
+                try:
+                    relative = self.fs.relative(path)
+                except (PermissionError, OSError) as exc:
+                    # Model-authored validation scopes are not filesystem authority.
+                    # Let the bounded planner revision fix a forbidden Git metadata path.
+                    raise ValueError(
+                        f"Item {local_id} has an unsafe validation path {path!r}: {exc}"
+                    ) from exc
                 if relative == ".":
                     raise ValueError(f"Item {local_id} paths must name concrete workspace paths")
                 safe_paths.append(relative)
@@ -200,6 +207,9 @@ class ContractPlanner:
             "success_criteria, check_ids, paths, depends_on. Every item needs a criterion or check; "
             "depends_on can only reference earlier ids; do not invent dependencies among independent tasks. "
             "Prefer disjoint, concrete file scopes for independent task items. Paths must be relative, with no traversal. "
+            "Never list .git, .env or other protected metadata as validation paths; "
+            "for Git init/status/commit tasks scope real worktree files or use paths=[] "
+            "when only Git metadata changes. "
             "Independent implementation slices with nonoverlapping paths must not be chained "
             "through arbitrary depends_on links; leave them ready for bounded parallel children. "
             "Dependencies represent actual inputs or integration barriers, not item order. "
