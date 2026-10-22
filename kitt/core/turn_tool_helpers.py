@@ -57,7 +57,7 @@ def _format_host_tool_result(
         "retryable": retryable,
         "suggested_next": next_step,
     }
-    detail = f"ERROR: {error_text}\nKITT_TOOL_FAILURE: {json.dumps(failure, ensure_ascii=False)}"
+    detail = f"KITT_TOOL_FAILURE: {json.dumps(failure, ensure_ascii=False)}\nERROR: {error_text}"
     if output_text:
         detail += "\n" + output_text
     return status, detail
