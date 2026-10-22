@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.60 — Category-aware legacy goal retries
+
+Stop replaying legacy goal failures denied by the host policy engine, using the existing GoalStepExecutor classification. Keep policy failures paused for operator decision; space environment retries and add bounded jitter to retry scheduling. Preserve retry/failure accounting and goal lease fencing. One integration regression test; dependency pins unchanged.
+
+
 ## 0.88.59 — Preserve structured error evidence in compact test logs
 
 Keep first compiler/test failure context and terminal build/exit summaries when reducing long logs. Give failures advisory typed diagnostics derived solely from host error strings, without granting privileges or changing retry behavior. Bound output deterministically by the line budget, reuse the existing artifact retention for full diagnostics, and add two focused regression tests. No dependency changes; retain existing pins.

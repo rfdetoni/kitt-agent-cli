@@ -1022,6 +1022,25 @@ class GoalContractTests(unittest.TestCase):
         self.assertEqual(after_resume[1].attempts, 0)
         self.assertEqual(self.goals.get(goal.id).state, "ACTIVE")
 
+    def test_legacy_goal_policy_denial_pauses_without_replaying(self):
+        goal = self.goals.create("conv", "policy failure")
+        invoked = []
+
+        def executor(_goal, **_kwargs):
+            invoked.append(1)
+            raise RuntimeError("Execution denied by PolicyEngine")
+
+        scheduler = GoalScheduler(
+            self.db, self.goals, runtime_step_executor=executor,
+            poll_interval_seconds=0.01,
+        )
+        scheduler.schedule_goal(goal.id, heartbeat_enabled=True)
+        first = scheduler.check_and_execute_due()
+        self.assertEqual(first[0]["status"], "PAUSED_POLICY")
+        self.assertEqual(self.goals.get(goal.id).state, "PAUSED")
+        self.assertEqual(scheduler.check_and_execute_due(), [])
+        self.assertEqual(invoked, [1])
+
     def test_scheduler_without_executor_does_not_consume_contract_attempt(self):
         goal = self._contract()
         scheduler = GoalScheduler(

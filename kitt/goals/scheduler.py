@@ -307,7 +307,24 @@ class GoalScheduler:
                 "failures": failures,
             }
 
-        backoff = min(300.0, 5.0 * (2 ** min(retries, 5)))
+        # Use the existing host-owned classification, not a model instruction.
+        from kitt.goals.executor import GoalStepExecutor
+        import random
+
+        category = GoalStepExecutor._blocked_category(error)
+        if category == "POLICY":
+            return {
+                "status": "PAUSED_POLICY",
+                "error": error,
+                "retries": retries,
+                "failures": failures,
+            }
+        base_delay = min(300.0, 5.0 * (2 ** min(retries, 5)))
+        if category == "ENVIRONMENT":
+            base_delay = max(90.0, base_delay)
+        elif category == "RESOLVABLE":
+            base_delay = min(base_delay, 10.0)
+        backoff = min(300.0, base_delay * random.uniform(0.85, 1.15))
         return {
             "status": "RETRY_WAIT",
             "error": error,
@@ -608,7 +625,26 @@ class GoalScheduler:
                     )
                     continue
                 retry = self._record_retry_failure(goal.id, str(exc))
-                if retry["status"] == "PAUSED_BUDGET_EXCEEDED":
+                if retry["status"] == "PAUSED_POLICY":
+                    self._release(
+                        goal.id,
+                        lease_id,
+                        state="PAUSED",
+                        next_run=None,
+                        error=str(exc),
+                    )
+                    self._on_event(
+                        "GoalSchedulerGovernanceStopped",
+                        {"goal_id": goal.id, "reason": "POLICY"},
+                    )
+                    results.append(
+                        {
+                            "goal_id": goal.id,
+                            "status": "PAUSED_POLICY",
+                            "error": str(exc),
+                        }
+                    )
+                elif retry["status"] == "PAUSED_BUDGET_EXCEEDED":
                     self._release(
                         goal.id,
                         lease_id,
