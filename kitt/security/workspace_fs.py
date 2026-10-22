@@ -52,6 +52,13 @@ class WorkspaceFileSystem:
         if any(part == ".." for part in parts):
             raise PermissionError("Parent traversal is forbidden")
         for part in parts:
+            if part == ".git":
+                raise PermissionError(
+                    "Protected workspace path component: .git. "
+                    "Direct .git file access is unavailable; use a policy-controlled "
+                    "process.run Git command with argv (for example ['git', 'status'] "
+                    "or ['git', 'rev-parse', '--git-dir']) and cwd set to the repository."
+                )
             if part in FORBIDDEN_PARTS or part.startswith(".env"):
                 raise PermissionError(f"Protected workspace path component: {part}")
         return parts

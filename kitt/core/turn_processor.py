@@ -751,6 +751,10 @@ class TurnProcessor(
                 "create directories separately with repo.create_directory and "
                 "initialize Git with direct argv ['git','init']. Never bundle "
                 "Git setup or clones into bash -c, sh -c or &&. "
+                "Do not read or list .git with repo.read, repo.list or read_file; "
+                "when process.run is available, inspect Git using direct argv "
+                "['git','status'] or ['git','rev-parse','--git-dir'] with cwd "
+                "set to the actual repository directory. "
                 "Host policy alone decides network access and approvals. "
                 "Repo file operations always use workspace-root-relative paths: "
                 "a file listed under mbs-wine must be read as "
@@ -834,7 +838,8 @@ Prefer patch.apply with SEARCH/REPLACE blocks for existing-file changes because 
 {"name":"kitt_runtime","arguments":{"operation":"patch.apply","arguments":{"patch":"path/to/file.ext\\n<<<<<<< SEARCH\\nexact original text\\n=======\\nreplacement content\\n>>>>>>> REPLACE"}}}
 </kitt-tool>""")
             if "process.run" in operations:
-                examples.append("""To run a build/test/validation command, process.run is argv-only and never invokes a shell:
+                examples.append("""To inspect Git metadata, do not use repo.read/repo.list/read_file on .git; it is protected. Run Git itself using process.run with argv ['git','status'] or ['git','rev-parse','--git-dir'] and cwd at the repository directory.
+To run a build/test/validation command, process.run is argv-only and never invokes a shell:
 <kitt-tool>
 {"name":"kitt_runtime","arguments":{"operation":"process.run","arguments":{"argv":["npm","run","build"],"cwd":"frontend","timeout_seconds":120}}}
 </kitt-tool>
@@ -876,6 +881,7 @@ RULES:
 2. Exact Path Adherence: When the user references a file (e.g. `@apresentacao.html` or `apresentacao.html`) or when files are provided in context, you MUST use the EXACT relative file path specified. NEVER invent new directory structures (such as `src/`, `src/html/`, `html/`, `app/`) and NEVER duplicate the file under a new directory.
 3. Reason internally. Never emit chain-of-thought or <think>/<thought> blocks.
 4. Once the requested task is fulfilled, STOP calling tools and answer directly with a concise summary.
+4a. The .git directory is protected from read_file/list_files; use git_status, git_diff or policy-controlled Git commands to inspect repository state. Do not retry direct .git reads.
 5. ACTION MANDATE: If the user asks to edit, update, modify, fix, or create a file, you MUST emit a tool call (`write_file` or `apply_patch`). NEVER output the updated file content as plain chat text or markdown without a tool call; call the tool directly so K.I.T.T. writes the changes to disk.
 """
         if "write_file" in enabled_tools:
@@ -1387,8 +1393,12 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                 logger, "turn.failure", turn_id=cmd.turn_id,
                 conversation_id=cmd.conversation_id, error_type=type(e).__name__,
             )
+            logger.exception(
+                "Uncaught turn failure turn=%s conversation=%s",
+                cmd.turn_id, cmd.conversation_id,
+            )
             yield TurnFailed(
-                error=str(e),
+                error=str(e) or f"{type(e).__name__} (see agent log for traceback)",
                 turn_id=cmd.turn_id,
                 conversation_id=cmd.conversation_id,
             )
