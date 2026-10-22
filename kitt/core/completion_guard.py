@@ -18,6 +18,7 @@ from typing import Any, Iterator
 
 from kitt.context_filter.fallback import is_workspace_creation_request
 from kitt.core.turn_events import ToolCompleted, ToolStarted, TurnFailed
+from kitt.core.turn_tool_helpers import _goal_contract_uses_outer_verification
 
 
 _MUTATION_TOOLS = frozenset({
@@ -750,11 +751,16 @@ def run_completion_guard(
     if legacy_route and not getattr(current_request, "agent_route", None):
         current_request = replace(current_request, agent_route=legacy_route)
 
-    if getattr(current_request, "agent_route", None) == "agent-loop":
+    goal_owns_completion = _goal_contract_uses_outer_verification(
+        getattr(processor, "task_plans", None), security_context,
+        getattr(cmd, "conversation_id", ""), getattr(cmd, "turn_id", ""),
+    )
+    if getattr(current_request, "agent_route", None) == "agent-loop" or goal_owns_completion:
         # agent-contract v3 delegates natural-language scope/completion
         # decisions to WebChat. The host still enforces tool policy,
         # approvals, execution status and proxy validation gates, so the
         # legacy lexical completion guard must not reinterpret the prompt.
+        # GoalStepVerifier also owns acceptance for native API contract turns.
         yield from original_loop(
             cmd,
             current_request,

@@ -160,6 +160,22 @@ def _request():
 
 
 class RequiredWorkspaceMutationGuardTests(unittest.TestCase):
+    def test_goal_outer_verifier_does_not_require_a_duplicate_mutation(self):
+        for nested_plan in (None, {"tasks": []}):
+            with self.subTest(nested_plan=nested_plan), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                processor = _Processor(["Existing project verified; no changes needed."], root)
+                processor.task_plans = SimpleNamespace(inspect=lambda *_args: nested_plan)
+                install_completion_guard(processor, _Registry(root))
+                cmd = SimpleNamespace(prompt=PROJECT_PROMPT, mode="auto", conversation_id="conv", turn_id="turn")
+                security = SimpleNamespace(principal_type="GOAL")
+                events = list(processor._execute_tool_loop(cmd, _request(), None, None, "local", security))
+                failed = any(isinstance(event, TurnFailed) for event, _, _ in events)
+                self.assertEqual(failed, nested_plan is not None)
+                if nested_plan is None:
+                    self.assertEqual(len(processor.calls), 1)
+                self.assertEqual(list(root.iterdir()), [])
+
     def test_runtime_installs_completion_guard(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             with KittRuntime.build(root_dir=tmp_dir) as runtime:
