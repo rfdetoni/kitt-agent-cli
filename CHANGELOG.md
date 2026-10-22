@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.60 — preserve actionable host-tool diagnostics
+
+Preserve first build/test failure context and terminal status in bounded log summaries. Add advisory structured host-error categories without changing existing policies, capabilities, or retry behavior. Three focused regression checks; no dependency pin changes.
+
+
 ## 0.88.59 — align adversarial review category prompt and validator
 
 The adversarial reviewer now receives the exact ten required production review category identifiers and a valid schema-complete APPROVED example. Canonical labels with explicit descriptive suffixes (e.g., "Correctness: ...") normalize to their verified category identifiers without inferring unchecked coverage. A partial review still fails closed; deterministic host checks, evidence anchors, independent validation and review gates are unchanged. Regression covers compliant review, annotated categories and the actual four-category mismatch in the 2026-10-22 logs. CI runs the focused regression before long suites. Update uv.lock, preserve dependency pins.
