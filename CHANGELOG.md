@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.59 — align adversarial review category prompt and validator
+
+The adversarial reviewer now receives the exact ten required production review category identifiers and a valid schema-complete APPROVED example. Canonical labels with explicit descriptive suffixes (e.g., "Correctness: ...") normalize to their verified category identifiers without inferring unchecked coverage. A partial review still fails closed; deterministic host checks, evidence anchors, independent validation and review gates are unchanged. Regression covers compliant review, annotated categories and the actual four-category mismatch in the 2026-10-22 logs. CI runs the focused regression before long suites. Update uv.lock, preserve dependency pins.
+
+
 ## 0.88.58 — FreeLLMAPI rate-limit cooldown and safe retry
 
 Honor FreeLLMAPI HTTP 429 reset hints from Retry-After, JSON retryAtMs or routing exhaustion ETA; retry one time after cooldown, with cancellation support and a daemon-process-wide provider+credential gate shared by concurrent agent clients. Never automatically retry mixed HTTP 502 upstream failures or requests with already emitted output. Add contract tests for quota hints, bounded retries, mixed 502 and cancellation. Keep version lock synchronized and all dependency pins unchanged.

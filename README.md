@@ -1,6 +1,6 @@
 # K.I.T.T. Agent CLI
 
-Versão **0.88.58**. Documentação de instalação, arquitetura, configuração e uso. Consulte o [CHANGELOG.md](CHANGELOG.md) para o histórico de versões e [integrações opcionais](docs/OPTIONAL_AGENT_ECOSYSTEM.md) para ferramentas externas.
+Versão **0.88.59**. Documentação de instalação, arquitetura, configuração e uso. Consulte o [CHANGELOG.md](CHANGELOG.md) para o histórico de versões e [integrações opcionais](docs/OPTIONAL_AGENT_ECOSYSTEM.md) para ferramentas externas.
 
 ## What’s included
 
