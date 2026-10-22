@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.62 — bounded configurable tool-loop recovery
+
+Expose guarded 0..8 environment-configurable recovery thresholds for malformed calls, policy denials, output-limit errors, completion claims and Python calls. Defaults preserve previous behavior and hard execution budgets still apply. Reject invalid environment values rather than silently degrading. One targeted regression module, no new dependencies or privilege changes.
+
+
 ## 0.88.61 — category-aware goal retry scheduling
 
 Honor the existing host-owned policy/environment classification in legacy scheduled goals: stop repeating policy-denied actions, back off environment failures, and use bounded jitter for retryable failures. Preserve lease fencing and retry accounting. One focused goal integration regression; no changes to dependency pins.

@@ -224,11 +224,9 @@ def _stuck_sequence(fingerprints: list[str]) -> bool:
     )
 
 
-_MAX_COMPLETION_RECOVERIES = 2
-
-
-def _completion_recovery_exhausted(attempts: int) -> bool:
-    return int(attempts) > _MAX_COMPLETION_RECOVERIES
+def _completion_recovery_exhausted(attempts: int, limit: int = 2) -> bool:
+    """Host-owned completion guard; default retains the historical threshold."""
+    return int(attempts) > max(0, int(limit))
 
 
 def _goal_contract_uses_outer_verification(
