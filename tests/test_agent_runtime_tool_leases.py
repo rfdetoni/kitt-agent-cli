@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import time
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from kitt.core.agent_runtime import execute_tool_with_engineering
+from kitt.core.run_coordinator import RunCoordinator
+from kitt.core.workspace_snapshot import WorkspaceSnapshotService
+from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt.tools.registry_core import ToolResult
 
 
@@ -52,6 +57,64 @@ class _ResourceCoordinator:
 
 
 class AgentRuntimeToolLeaseTests(unittest.TestCase):
+    def test_directory_creation_on_existing_git_checkout_skips_snapshot(self):
+        with tempfile.TemporaryDirectory() as root_dir:
+            root = Path(root_dir)
+            git_dir = root / "mbs-wine" / ".git"
+            git_dir.mkdir(parents=True)
+            (git_dir / "HEAD").write_text("ref: refs/heads/main\\n")
+            fs = WorkspaceFileSystem(root)
+            snapshots = WorkspaceSnapshotService(
+                root, workspace_id="test-workspace", artifact_store=object()
+            )
+            processor = SimpleNamespace(
+                run_coordinator=SimpleNamespace(
+                    mutation_paths=RunCoordinator.mutation_paths
+                ),
+                workspace_snapshot_service=snapshots,
+                execution_budgets={},
+                task_plans=None,
+                turn_journal=None,
+            )
+            registry = SimpleNamespace(
+                root_path=root,
+                _agent_verifier=SimpleNamespace(
+                    verify=lambda *args, **kwargs: SimpleNamespace(
+                        ok=True, as_dict=lambda: {"ok": True}
+                    )
+                ),
+            )
+
+            def create_dir(_name, args, *_pos, **_kwargs):
+                relative = args["arguments"]["path"]
+                fs.create_directory(relative, parents=True, exist_ok=True)
+                return ToolResult(True, f"Created directory {relative}.")
+
+            with patch.object(snapshots, "capture", wraps=snapshots.capture) as capture:
+                result = execute_tool_with_engineering(
+                    processor, registry, create_dir,
+                    "kitt_runtime",
+                    {"operation": "repo.create_directory", "arguments": {"path": "mbs-wine"}},
+                    conversation_id="conversation", turn_id="turn",
+                )
+                self.assertTrue(result.success)
+                capture.assert_not_called()
+                self.assertEqual((git_dir / "HEAD").read_text(), "ref: refs/heads/main\\n")
+
+                created = execute_tool_with_engineering(
+                    processor, registry, create_dir,
+                    "kitt_runtime",
+                    {"operation": "repo.create_directory", "arguments": {"path": "new-directory"}},
+                    conversation_id="conversation", turn_id="turn",
+                )
+                self.assertTrue(created.success)
+                capture.assert_called_once()
+                self.assertEqual(
+                    created.metadata.get("workspace_snapshot_id"),
+                    snapshots._last_by_turn.get("turn"),
+                )
+                self.assertTrue((root / "new-directory").is_dir())
+
     def test_long_mutation_renews_parent_and_resource_leases(self):
         run_coordinator = _RunCoordinator()
         resource_coordinator = _ResourceCoordinator()

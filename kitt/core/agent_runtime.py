@@ -1063,11 +1063,24 @@ def execute_tool_with_engineering(
                 and "." not in planned_paths
                 and all(path for path in planned_paths)
             ):
-                snapshot = snapshot_service.capture(
-                    conversation_id=conv,
-                    turn_id=turn,
-                    paths=planned_paths,
+                operation = (
+                    str(arguments.get("operation") or "")
+                    if name == "kitt_runtime" else name
                 )
+                # mkdir(exist_ok=True) cannot modify a directory that already
+                # exists. Snapshotting its children would traverse protected
+                # .git metadata and abort an otherwise harmless operation.
+                existing_directory = (
+                    operation in {"repo.create_directory", "create_directory"}
+                    and len(planned_paths) == 1
+                    and snapshot_service.fs.is_safe_directory(planned_paths[0])
+                )
+                if not existing_directory:
+                    snapshot = snapshot_service.capture(
+                        conversation_id=conv,
+                        turn_id=turn,
+                        paths=planned_paths,
+                    )
 
         plans = getattr(processor, "task_plans", None)
         check_binding = (
