@@ -888,6 +888,13 @@ class ToolRegistry:
         automatic_budget_reserved: bool = False,
     ) -> ToolResult:
         args = args or {}
+        if tool_name == "run_command":
+            from kitt.tools.git_cwd_normalization import normalize_git_cwd_args
+
+            try:
+                args = normalize_git_cwd_args(args, self.process_runner)
+            except (ValueError, PermissionError, FileNotFoundError, NotADirectoryError, OSError) as exc:
+                return ToolResult(False, "", f"Command preflight failed: {exc}")
         if workspace_id == "default_ws" and self.workspace_id:
             workspace_id = self.workspace_id
 
