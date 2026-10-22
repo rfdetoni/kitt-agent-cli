@@ -273,6 +273,7 @@ async def _open_model_setup_overlay(ui, base_url: str | None = None, provider: s
 
 def _provider_defaults(provider: str) -> tuple[str, str]:
     defaults = {
+        "freellmapi": ("http://127.0.0.1:3001", os.environ.get("FREELLMAPI_API_KEY", "")),
         "ollama": (os.environ.get("OLLAMA_HOST", "http://localhost:11434"), ""),
         "lmstudio": (os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"), ""),
         "openai": ("https://api.openai.com", os.environ.get("OPENAI_API_KEY", "")),

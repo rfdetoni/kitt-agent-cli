@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.53 — FreeLLMAPI model discovery
+
+Register FreeLLMAPI in the shared provider catalog and model picker. Authenticate gateway model discovery, retain provider identity, and use the configured workspace endpoint in `kitt models freellmapi --root PATH`. Alternate endpoints still require explicit user-local trust.
+
 ## 0.88.52 — FreeLLMAPI autonomous planning and native tools
 
 Plain and headless CLI frontends now display host-owned planning/checking/revision progress while waiting for the provider, including through the daemon, instead of appearing idle until the full plan arrives.

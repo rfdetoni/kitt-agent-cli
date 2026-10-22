@@ -14,6 +14,7 @@ def handle_models_command(
     refresh: bool = False,
     verbose: bool = False,
     registry: Optional[ProviderRegistry] = None,
+    root_dir: Optional[str] = None,
 ) -> int:
     reg = registry or ProviderRegistry()
     if refresh:
@@ -31,10 +32,15 @@ def handle_models_command(
             print(f"\033[31mError: Unknown provider '{provider}'. Run 'kitt models' to list all.\033[0m")
             return 1
 
-        models = reg.effective_models(pid)
+        base_url = None
+        if root_dir:
+            from kitt.router.router import TaskRouter
+            profiles = TaskRouter(root_dir).config.profiles.values()
+            base_url = next((p.base_url for p in profiles if p.backend == pid and p.base_url), None)
+        models = reg.effective_models(pid, base_url=base_url)
         if not models:
             # Try runtime discovery
-            res = reg.discover_runtime_models(pid, timeout=4.0)
+            res = reg.discover_runtime_models(pid, base_url=base_url, timeout=4.0)
             models = res.models
 
         if not models:

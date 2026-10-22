@@ -29,7 +29,7 @@ class ProviderCatalogBehavior:
     """Provider ordering, favorites and custom-provider CRUD."""
 
     default_providers = (
-        "kitt-reverse-proxy", "ollama", "lmstudio", "openai", "anthropic", "gemini",
+        "kitt-reverse-proxy", "freellmapi", "ollama", "lmstudio", "openai", "anthropic", "gemini",
         "deepseek", "groq", "together", "mistral", "openrouter", "xai", "fireworks",
         "cohere", "azure", "antigravity",
     )

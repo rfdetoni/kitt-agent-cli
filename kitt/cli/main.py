@@ -1073,6 +1073,7 @@ def main(argv=None) -> int:
             provider=args.provider,
             refresh=args.refresh,
             verbose=args.verbose,
+            root_dir=args.root,
         )
 
     if args.subcommand == "auth":

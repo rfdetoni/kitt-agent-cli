@@ -20,6 +20,17 @@ DEFAULT_CACHE_TTL_SECONDS = 86400 * 7  # 7 days
 
 BUILTIN_PROVIDERS: List[ProviderDescriptor] = [
     ProviderDescriptor(
+        id="freellmapi",
+        name="FreeLLMAPI",
+        protocol="openai-compatible",
+        base_url="http://127.0.0.1:3001",
+        env_vars=("FREELLMAPI_API_KEY",),
+        auth_methods=("api_key",),
+        supports_model_discovery=True,
+        supports_custom_base_url=True,
+        source="builtin",
+    ),
+    ProviderDescriptor(
         id="ollama",
         name="Ollama",
         protocol="ollama-chat",

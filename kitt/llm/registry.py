@@ -1,6 +1,7 @@
 """Provider registry unifying catalog, authentication and protocol adapters."""
 from __future__ import annotations
 
+from dataclasses import replace
 import ipaddress
 import urllib.parse
 from typing import Dict, List, Optional, Set
@@ -171,7 +172,7 @@ class ProviderRegistry:
             )
 
         api_key = None
-        if not self._is_local_discovery_endpoint(
+        if provider.id == "freellmapi" or not self._is_local_discovery_endpoint(
             provider.id,
             target_base,
             local=bool(getattr(provider, "local", False)),
@@ -202,7 +203,7 @@ class ProviderRegistry:
                     continue
                 if whitelist is not None and model.id not in whitelist:
                     continue
-                filtered.append(model)
+                filtered.append(replace(model, provider_id=provider.id))
             result.models = filtered
             if not filtered:
                 result.status = ProviderDiscoveryStatus.NO_MODELS
@@ -234,13 +235,13 @@ class ProviderRegistry:
             return False
         return bool(ip.is_loopback or ip.is_private)
 
-    def effective_models(self, provider_id: str) -> List[ModelDescriptor]:
+    def effective_models(self, provider_id: str, base_url: Optional[str] = None) -> List[ModelDescriptor]:
         provider = self.get_provider(provider_id)
         if not provider:
             return []
         if provider.id in self._custom_models:
             return self._custom_models[provider.id]
-        result = self.discover_runtime_models(provider.id, timeout=2.0)
+        result = self.discover_runtime_models(provider.id, base_url=base_url, timeout=2.0)
         if result.status == ProviderDiscoveryStatus.SUCCESS and result.models:
             return result.models
         return self.catalog.models(provider.id)
