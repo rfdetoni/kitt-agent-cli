@@ -89,8 +89,14 @@ class _CancellableHTTPConnection(http.client.HTTPConnection):
     def connect(self):
         token = _ACTIVE_CANCELLATION.get()
         if token: token.check()
-        super().connect()
+        response_timeout = self.timeout
+        self.timeout = min(response_timeout, 10.0)
+        try:
+            super().connect()
+        finally:
+            self.timeout = response_timeout
         if token:
+            self.sock.settimeout(response_timeout)
             try: token.track(self.sock)
             except TransportCancelled:
                 self.close()
@@ -100,8 +106,14 @@ class _CancellableHTTPSConnection(http.client.HTTPSConnection):
     def connect(self):
         token = _ACTIVE_CANCELLATION.get()
         if token: token.check()
-        super().connect()
+        response_timeout = self.timeout
+        self.timeout = min(response_timeout, 10.0)
+        try:
+            super().connect()
+        finally:
+            self.timeout = response_timeout
         if token:
+            self.sock.settimeout(response_timeout)
             try: token.track(self.sock)
             except TransportCancelled:
                 self.close()
@@ -208,7 +220,7 @@ def secure_urlopen(
         (_LOCAL_CANCELLABLE_OPENER if token else _LOCAL_OPENER)
         if local_only else (_CANCELLABLE_OPENER if token else _OPENER)
     )
-    response = opener.open(request, timeout=min(timeout, 10.0) if token else timeout)
+    response = opener.open(request, timeout=timeout)
     sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
     if token and sock:
         try:

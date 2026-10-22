@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from kitt.domain.entities import ModelProfile
+from kitt.llm.auth import ProviderAuthService
 from kitt.llm.endpoint_security import ProviderEndpointTrustStore
 from kitt.router.router import TaskRouter
 
@@ -40,15 +41,17 @@ def register_freellmapi(
     if not root.is_dir():
         raise ValueError("workspace is not a directory")
     router = TaskRouter(str(root))
+    auth = ProviderAuthService().state("freellmapi")
+    credential_ref = auth.credential_ref if auth.is_valid else "env:FREELLMAPI_API_KEY"
     router.config.profiles["freellmapi"] = ModelProfile(
         backend="freellmapi",
         model=model.strip(),
         base_url=base_url.rstrip("/"),
-        credential_ref="env:FREELLMAPI_API_KEY",
+        credential_ref=credential_ref,
         protocol="openai-compatible",
         context_window=8192,
         supports_tools=True,
-        supports_json=True,
+        supports_json=False,
     )
     if activate:
         router.config.routing.update({
@@ -63,5 +66,5 @@ def register_freellmapi(
         "model": model.strip(),
         "gateway": base_url.rstrip("/"),
         "active_for_code": activate,
-        "credential": "env:FREELLMAPI_API_KEY",
+        "credential": credential_ref,
     }

@@ -84,6 +84,28 @@ class StrixTests(unittest.TestCase):
 
 
 class FreeLLMAPIIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        auth = self.enterContext(patch("kitt.optional_providers.ProviderAuthService"))
+        auth.return_value.state.return_value.is_valid = False
+
+    def test_registration_reuses_saved_login_without_exporting_secret(self):
+        from kitt.llm.auth import CredentialStore, ProviderAuthService
+        from kitt.optional_providers import register_freellmapi
+
+        with tempfile.TemporaryDirectory() as tmp:
+            auth = ProviderAuthService(CredentialStore(str(Path(tmp) / "auth" / "auth.json")))
+            auth.login("freellmapi", "test-gateway-secret")
+            with patch("kitt.optional_providers.ProviderAuthService", return_value=auth):
+                with patch("kitt.optional_providers.ProviderEndpointTrustStore.trust"):
+                    result = register_freellmapi(tmp)
+            config = (Path(tmp) / ".kitt-router.json").read_text()
+            self.assertEqual(result["credential"], "auth:freellmapi")
+            self.assertEqual(
+                json.loads(config)["profiles"]["freellmapi"]["credential_ref"],
+                "auth:freellmapi",
+            )
+            self.assertNotIn("test-gateway-secret", config)
+
     def test_registration_reuses_native_adapter_and_preserves_routing(self):
         from kitt.optional_providers import register_freellmapi
         from kitt.router.router import TaskRouter
@@ -98,6 +120,7 @@ class FreeLLMAPIIntegrationTests(unittest.TestCase):
             cfg = json.loads((Path(tmp) / ".kitt-router.json").read_text())
             profile = cfg["profiles"]["freellmapi"]
             self.assertEqual(profile["protocol"], "openai-compatible")
+            self.assertFalse(profile["supports_json"])
             self.assertEqual(profile["credential_ref"], "env:FREELLMAPI_API_KEY")
             self.assertNotIn("SECRET", json.dumps(cfg))
             self.assertEqual(TaskRouter(tmp).config.routing["code-edit"], "execute")
@@ -147,6 +170,8 @@ class CLISurfaceTests(unittest.TestCase):
         from io import StringIO
         from kitt.cli.main import main as cli_main
 
+        auth = self.enterContext(patch("kitt.optional_providers.ProviderAuthService"))
+        auth.return_value.state.return_value.is_valid = False
         with tempfile.TemporaryDirectory() as tmp:
             with patch("kitt.cli.main.notify_if_update_available"):
                 with patch("kitt.optional_providers.ProviderEndpointTrustStore.trust"):

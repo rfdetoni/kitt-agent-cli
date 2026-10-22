@@ -20,6 +20,28 @@ from kitt.llm.providers.openai_chat import OpenAIChatAdapter
 
 class TestProviderRuntimeContract(unittest.TestCase):
 
+    def test_client_only_requests_json_mode_when_profile_supports_it(self):
+        from kitt.domain.entities import ModelProfile
+        from kitt.llm.client import LLMClient
+
+        for supports_json in (False, True):
+            with self.subTest(supports_json=supports_json):
+                registry = MagicMock()
+                adapter = registry.get_adapter_for_protocol.return_value
+                adapter.stream.return_value = iter(["{}"])
+                profile = ModelProfile(
+                    backend="freellmapi", model="auto", protocol="openai-compatible",
+                    supports_json=supports_json,
+                )
+                with patch("kitt.llm.client.resolve_endpoint_credential", return_value=None):
+                    with LLMClient(profile, registry=registry) as client:
+                        self.assertEqual("".join(client.chat_stream(
+                            [{"role": "user", "content": "Return JSON"}],
+                            response_format="json",
+                        )), "{}")
+                request = adapter.stream.call_args.args[0]
+                self.assertEqual(request.response_format, "json" if supports_json else None)
+
     def test_handle_http_error_mappings(self):
         # 401 Unauthorized -> ProviderAuthError
         err_401 = urllib.error.HTTPError("http://test", 401, "Unauthorized", {}, io.BytesIO(b'{"error":"invalid_key"}'))

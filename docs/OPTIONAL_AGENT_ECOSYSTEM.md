@@ -47,13 +47,30 @@ kitt integrations configure-freellmapi --model auto --activate --root /path/to/p
 The command registers a new profile via KITT's existing
 `openai-compatible` protocol. It trusts **only** the explicitly configured
 gateway origin in KITT's user-owned endpoint trust store, then writes a
-workspace model profile containing only `env:FREELLMAPI_API_KEY`, **never the
-key itself**. Only `code-generation` and `code-edit` routes change with
-`--activate`; summary/context routes keep their existing models.
+workspace model profile containing only a credential reference, **never the
+key itself**. An existing `kitt auth login freellmapi` login is reused;
+otherwise the profile references `env:FREELLMAPI_API_KEY`. Only
+`code-generation` and `code-edit` routes change with `--activate`;
+summary/context routes keep their existing models.
+The profile leaves native JSON mode disabled because not every routed free
+provider accepts `response_format`. KITT still requests and validates JSON
+through its normal prompts and parsers.
 
 Default address: `http://127.0.0.1:3001`. A remote origin requires both
 `--allow-remote` and HTTPS. The external provider may change its model
 catalog independently; choose an alias/model supported by your deployment.
+
+The unified gateway token authenticates KITT to FreeLLMAPI. You must also
+enable at least one upstream provider in the FreeLLMAPI dashboard. For
+keyless free access, enable Kilo or OVH without entering an upstream key;
+other providers require their own API keys. Free availability and rate limits
+vary. Kilo's Auto Free may route to services that log prompts and outputs;
+do not send personal or confidential data through those routes.
+An HTTP 200 from `/v1/models`, or an `auto` entry in that catalog, does not
+prove inference is available. HTTP 503 with `no_providers_configured` means
+the gateway has no usable upstream provider credential, including anonymous
+provider registrations. `integrations doctor` checks
+reachability only; it does not send an inference request.
 
 **Important:** this is an alternative inference backend; do not put it in
 front of a browser-backed KITT proxy and assume that web subscriptions behave

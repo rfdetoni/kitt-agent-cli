@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import pytest
 from kitt.llm.privacy import profile_processing_is_local
 from kitt.llm.http_security import TransportCancellation, TransportCancelled, cancellation_scope, secure_urlopen
@@ -11,6 +11,30 @@ from kitt.memory.shared_client import KittMemoryClient, KittMemoryUnavailable
 from kitt.tools.registry import ToolRegistry
 from kitt.core.execution_budget import ExecutionBudgetLedger, ExecutionBudgetExceeded
 from kitt_protocol import ExecutionBudget
+
+
+@pytest.mark.parametrize('scheme', ['HTTP', 'HTTPS'])
+def test_cancellable_connection_preserves_response_timeout_before_headers(scheme):
+    import http.client
+    from kitt.llm import http_security
+
+    parent = getattr(http.client, scheme + 'Connection')
+    connection_type = getattr(http_security, '_Cancellable' + scheme + 'Connection')
+    connection = connection_type('127.0.0.1', timeout=30)
+    sock = Mock()
+    def connect(instance):
+        assert instance.timeout == 10
+        instance.sock = sock
+    token = TransportCancellation()
+    with patch.object(parent, 'connect', connect), cancellation_scope(token):
+        connection.connect()
+        sock.settimeout.assert_called_once_with(30)
+        assert connection.timeout == 30
+        with patch.object(http_security._CANCELLABLE_OPENER, 'open', return_value=Mock(headers={}, fp=None)) as opener:
+            secure_urlopen('http://127.0.0.1', timeout=30).close()
+            assert opener.call_args.kwargs['timeout'] == 30
+    token.cancel()
+    sock.shutdown.assert_called_once()
 
 
 def test_gateway_bind_address_never_implies_local_processing():

@@ -375,6 +375,8 @@ class LLMClient:
         cancellation = transport_cancellation or TransportCancellation()
         cancellation.check()
         system_prompt = normalize_execution_system_prompt(system_prompt)
+        if not self.profile.supports_json:
+            response_format = None
 
         backend = (self.profile.backend or "").strip().lower()
         base_url = (self.profile.base_url or "").strip()
