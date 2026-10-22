@@ -434,9 +434,17 @@ class ExecutionSandbox:
         else:
             self._append_sequence(wrapped, "--ro-bind", str(self.root), str(self.root))
 
-        # Commands may modify source files, but repository control-plane state
-        # stays owned by KITT. This also prevents autonomous git metadata edits.
+        # Direct, policy-checked Git commands need to update their own index,
+        # refs and object database. Keep metadata read-only for every other
+        # executable; .kitt always belongs to the host control plane.
+        git_writable = (
+            profile in {"workspace-write", "workspace-write+network"}
+            and bool(argv)
+            and Path(argv[0]).name.casefold() in {"git", "git.exe"}
+        )
         for protected_name in (".git", ".kitt"):
+            if protected_name == ".git" and git_writable:
+                continue
             protected = self.root / protected_name
             if protected.exists():
                 self._append_sequence(

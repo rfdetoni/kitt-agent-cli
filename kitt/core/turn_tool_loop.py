@@ -4,6 +4,7 @@ import inspect
 import json
 import logging
 import re
+import sqlite3
 import time
 from typing import Iterator, Optional
 
@@ -622,15 +623,32 @@ class TurnToolLoopMixin:
             execution_state = None
             ledger = getattr(self, "event_ledger", None)
             if ledger is not None:
-                execution_state = ledger.reserve_tool_execution(
-                    cmd.conversation_id,
-                    cmd.turn_id,
-                    execution_id=execution_id,
-                    tool_call_id=call_id,
-                    tool_name=tool_name,
-                    arguments_digest=arguments_digest,
-                    side_effecting=side_effecting,
-                )
+                try:
+                    execution_state = ledger.reserve_tool_execution(
+                        cmd.conversation_id,
+                        cmd.turn_id,
+                        execution_id=execution_id,
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                        arguments_digest=arguments_digest,
+                        side_effecting=side_effecting,
+                    )
+                except (OSError, sqlite3.OperationalError) as exc:
+                    # Do not execute an unjournaled mutation or restart the
+                    # same action without an authoritative execution receipt.
+                    logger.exception(
+                        "tool execution journal unavailable turn=%s tool=%s",
+                        cmd.turn_id, tool_name,
+                    )
+                    yield TurnBlocked(
+                        reason=(
+                            "Host execution journal is unavailable "
+                            f"({type(exc).__name__}: {exc}). No tool action ran. "
+                            "Check ownership, free space and SQLite locks under "
+                            "the workspace .kitt state before retrying."
+                        )
+                    ), None, None
+                    return
             yield ToolStarted(tool_name=tool_name, args=tool_args, call_id=call_id), None, None
             tool_started_at = time.perf_counter()
             attempt_id = (

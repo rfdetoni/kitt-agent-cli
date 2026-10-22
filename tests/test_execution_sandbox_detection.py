@@ -143,6 +143,38 @@ def test_symlinked_resolv_conf_is_bound_at_canonical_run_target(tmp_path):
     assert str(original_file) not in args
 
 
+def test_git_metadata_is_writable_only_for_direct_git_processes(tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    git_dir = root / ".git"
+    kitt_dir = root / ".kitt"
+    git_dir.mkdir()
+    kitt_dir.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    sandbox = ExecutionSandbox(root)
+
+    def read_only_mounts(plan):
+        return {
+            plan.argv[index + 1]
+            for index, value in enumerate(plan.argv[:-2])
+            if value == "--ro-bind"
+        }
+
+    with patch.object(sandbox, "_scratch", return_value=scratch), (
+        patch.object(sandbox, "_sensitive_host_paths", return_value=())
+    ), patch.object(sandbox, "_append_resolver_mounts"):
+        git_plan = sandbox._bwrap_plan("bwrap", "workspace-write", ["git", "commit", "-m", "ok"], root)
+        python_plan = sandbox._bwrap_plan("bwrap", "workspace-write", ["python3", "script.py"], root)
+        readonly_git_plan = sandbox._bwrap_plan("bwrap", "read-only", ["git", "status"], root)
+
+    assert str(git_dir) not in read_only_mounts(git_plan)
+    assert str(kitt_dir) in read_only_mounts(git_plan)
+    assert str(git_dir) in read_only_mounts(python_plan)
+    assert str(kitt_dir) in read_only_mounts(python_plan)
+    assert str(git_dir) in read_only_mounts(readonly_git_plan)
+
+
 def test_workspace_write_does_not_reintroduce_host_dns_after_run_mask(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
