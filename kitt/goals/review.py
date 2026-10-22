@@ -160,6 +160,7 @@ class AdversarialCodeReviewer:
                     _bounded(previous_feedback, 8000),
                 ]
             )
+        required_areas = sorted(_ALLOWED_CATEGORIES)
         blocks.extend(
             [
                 "",
@@ -172,12 +173,25 @@ class AdversarialCodeReviewer:
                 "3. Prefer minimal fixes. Do not demand churn, style-only rewrites, or unrelated refactors.",
                 "4. Check tests themselves for weak assertions, mock-only validation, happy-path bias, and missing regressions.",
                 "5. If no required issue remains, APPROVE and explain the risks you checked in approval_evidence.",
-                "6. " + structured_result_instruction() + " Required result fields: "
+                "6. For APPROVED, reviewed_areas MUST contain every exact category ID from this list: "
+                + json.dumps(required_areas) + ". Do not substitute natural-language headings, translated labels, or category descriptions. "
+                "Check each area against the snapshot and evidence; for an inapplicable area, explain why in approval_evidence. "
+                "Never claim to have checked an area without examining its applicability.",
+                "7. " + structured_result_instruction() + " Required result fields: "
                 "status (APPROVED or CHANGES_REQUIRED), summary, reviewed_areas, findings, approval_evidence. "
                 "reviewed_areas is an array of strings and findings is an array of objects. "
                 "Every finding must include severity, category, title, location, problem, impact, "
                 "required_change, evidence, confidence (finite decimal), and required (boolean). Example:",
-                '{"status":"APPROVED","summary":"No required defects","reviewed_areas":["Tests"],"findings":[],"approval_evidence":"Source and validation checked"}',
+                json.dumps(
+                    {
+                        "status": "APPROVED",
+                        "summary": "No required defects",
+                        "reviewed_areas": required_areas,
+                        "findings": [],
+                        "approval_evidence": "Checked all applicable categories; explain inapplicable categories here.",
+                    },
+                    separators=(",", ":"),
+                ),
                 "No fences or additional prose."
 
             ]
@@ -359,7 +373,13 @@ class AdversarialCodeReviewer:
 
         required_findings = [item for item in findings if item.required]
         reviewed_areas = [
-            str(item).strip().lower()[:80]
+            # Permit an unambiguous 'Correctness: ...' annotation, but do not
+            # infer coverage from arbitrary natural-language review headings.
+            (
+                str(item).split(":", 1)[0].strip().lower()
+                if str(item).split(":", 1)[0].strip().lower() in _ALLOWED_CATEGORIES
+                else str(item).strip().lower()[:80]
+            )
             for item in (payload.get("reviewed_areas") or [])
             if isinstance(item, str) and item.strip()
         ][:20]
