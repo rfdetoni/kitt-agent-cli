@@ -3,6 +3,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 from types import SimpleNamespace
+from pathlib import Path
+from unittest.mock import patch
 
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_processor import TurnProcessor
@@ -11,9 +13,81 @@ from kitt.core.turn_finalization import TurnFinalizationMixin
 from kitt.core.turn_context import TurnContextMixin
 from kitt.core.turn_model import TurnModelMixin
 from kitt.tools.registry import ToolRegistry
+from kitt.core.turn_command import TurnCommand
+from kitt.core.turn_events import TurnCompleted, TurnFailed, ToolCompleted
+from kitt.domain.entities import ModelProfile
 
 
 class TurnProcessorDecompositionTests(unittest.TestCase):
+    def test_native_call_repair_keeps_prior_host_receipts(self):
+        from kitt.llm.domain import ProviderRecoverableError
+
+        class Client:
+            profile = ModelProfile(backend="freellmapi", protocol="openai-compatible", model="auto", context_window=32768)
+            calls = 0
+
+            def chat_stream(self, messages, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    yield '<kitt-tool>{"id":"read_1","name":"kitt_runtime","arguments":{"operation":"repo.read","arguments":{"path":"report.md"}}}</kitt-tool>'
+                elif self.calls == 2:
+                    raise ProviderRecoverableError("Return exactly one tool call", code="native_tool_call_invalid")
+                else:
+                    assert any("HOST_STATUS: success" in str(m.get("content")) and "READ_OK" in str(m.get("content")) for m in messages), [m.get("content") for m in messages if m.get("role") == "user"][-2:]
+                    yield "READ_OK"
+
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "report.md").write_text("READ_OK")
+            client = Client()
+            processor = TurnProcessor(root_dir=root, execution_client=client,
+                config=RuntimeConfig(history_enabled=False, persistence_enabled=False))
+            try:
+                events = list(processor.run_turn(TurnCommand("conv", "Read report.md and return its contents.", no_history=True)))
+                self.assertIsInstance(events[-1], TurnCompleted)
+                self.assertEqual(events[-1].response, "READ_OK")
+                self.assertEqual(sum(isinstance(e, ToolCompleted) for e in events), 1)
+                self.assertEqual(client.calls, 3)
+                with patch.object(client, "chat_stream", side_effect=ProviderRecoverableError(
+                    "Return exactly one tool call", code="native_tool_call_invalid",
+                )) as stream:
+                    failed = list(processor.run_turn(TurnCommand("conv", "Read report.md.", no_history=True)))
+                    self.assertIsInstance(failed[-1], TurnFailed)
+                    self.assertEqual(stream.call_count, 3)
+                    self.assertFalse(any(isinstance(e, ToolCompleted) for e in failed))
+            finally:
+                processor.close()
+                processor.registry.close()
+
+    def test_read_only_structured_response_never_becomes_a_file_edit(self):
+        response = '{"items":[{"prompt":"Keep <pending> status in report.md"}]}'
+
+        class Client:
+            profile = ModelProfile(backend="freellmapi", protocol="openai-compatible", model="auto", context_window=32768)
+
+            def chat_stream(self, messages, **kwargs):
+                yield response
+
+        for mode in ("plan", "ask"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as root:
+                path = Path(root) / "report.md"
+                path.write_text("unchanged")
+                processor = TurnProcessor(
+                    root_dir=root, execution_client=Client(),
+                    config=RuntimeConfig(history_enabled=False, persistence_enabled=False),
+                )
+                try:
+                    events = list(processor.run_turn(TurnCommand(
+                        "conv", "Explain the proposed change to report.md without editing it.",
+                        mode=mode, explicit_files={"report.md"}, no_history=True,
+                    )))
+                    self.assertIsInstance(events[-1], TurnCompleted)
+                    self.assertEqual(events[-1].response, response)
+                    self.assertIsNone(events[-1].edit_result)
+                    self.assertEqual(path.read_text(), "unchanged")
+                finally:
+                    processor.close()
+                    processor.registry.close()
+
     def test_tool_loop_is_owned_by_dedicated_phase_mixin(self):
         self.assertTrue(issubclass(TurnProcessor, TurnToolLoopMixin))
         self.assertNotIn("_execute_tool_loop", TurnProcessor.__dict__)

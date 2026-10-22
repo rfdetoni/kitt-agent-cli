@@ -49,7 +49,8 @@ def register_freellmapi(
         base_url=base_url.rstrip("/"),
         credential_ref=credential_ref,
         protocol="openai-compatible",
-        context_window=8192,
+        context_window=32768,
+        max_output_tokens=8192,
         supports_tools=True,
         supports_json=False,
     )

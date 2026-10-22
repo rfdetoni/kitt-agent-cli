@@ -32,7 +32,7 @@ from kitt.edit_format.strategy import (
 )
 from kitt.llm.attachments import AttachmentError
 from kitt.llm.client import LLMClient
-from kitt.llm.domain import ProviderOutputLimitError
+from kitt.llm.domain import ProviderOutputLimitError, ProviderRecoverableError
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.protocol import extract_tool_reasoning_summary, parse_tool_call
 from kitt.tools.registry import ToolResult
@@ -288,6 +288,19 @@ class TurnToolLoopMixin:
                 full_response = ""
                 thinking_started_at = time.time()
                 thinking_completed = False
+                continue
+            except ProviderRecoverableError as exc:
+                if exc.code != "native_tool_call_invalid":
+                    raise
+                malformed_calls += 1
+                if malformed_calls > 2:
+                    yield TurnFailed(error=str(exc)), None, None
+                    return
+                execution_messages.append({
+                    "role": "user",
+                    "content": "The host tool call is invalid (" + str(exc) + "). Continue from the existing host receipts without repeating completed actions.",
+                })
+                full_response = ""
                 continue
             except Exception as exc:
                 logger.exception(

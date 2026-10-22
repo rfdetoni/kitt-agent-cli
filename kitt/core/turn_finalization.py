@@ -35,8 +35,9 @@ class TurnFinalizationMixin:
                        allocated: dict, base_sys: str, context_map_str: str, explicit_str: str,
                        workspace_id: str, turn_started_at: float,
                        security_context: ExecutionSecurityContext) -> Iterator:
-        blocks = self.diff_parser.parse(full_response)
-        if not blocks:
+        read_only = cmd.mode in {"plan", "ask"}
+        blocks = [] if read_only else self.diff_parser.parse(full_response)
+        if not blocks and not read_only:
             clean_resp = self._without_thinking(full_response).strip()
             target_candidates = list(cmd.explicit_files or ())
             last_task = getattr(self.session_state, "last_task", None)

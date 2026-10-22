@@ -121,6 +121,8 @@ class FreeLLMAPIIntegrationTests(unittest.TestCase):
             profile = cfg["profiles"]["freellmapi"]
             self.assertEqual(profile["protocol"], "openai-compatible")
             self.assertFalse(profile["supports_json"])
+            self.assertEqual(profile["max_output_tokens"], 8192)
+            self.assertEqual(profile["context_window"], 32768)
             self.assertEqual(profile["credential_ref"], "env:FREELLMAPI_API_KEY")
             self.assertNotIn("SECRET", json.dumps(cfg))
             self.assertEqual(TaskRouter(tmp).config.routing["code-edit"], "execute")

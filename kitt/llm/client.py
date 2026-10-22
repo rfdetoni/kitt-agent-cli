@@ -124,7 +124,7 @@ class LLMClient:
         else:
             backend = (profile.backend or "").strip().lower()
             protocol = (profile.protocol or "").strip().lower()
-            if backend in {"kitt-reverse-proxy", "kitt-proxy"} or protocol == "kitt-reverse-proxy":
+            if backend in {"kitt-reverse-proxy", "kitt-proxy", "freellmapi"} or protocol == "kitt-reverse-proxy":
                 self.retry_policy = RetryPolicy(RetryConfig(
                     max_retries=2,
                     base_delay_ms=200,

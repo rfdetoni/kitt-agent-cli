@@ -55,6 +55,10 @@ summary/context routes keep their existing models.
 The profile leaves native JSON mode disabled because not every routed free
 provider accepts `response_format`. KITT still requests and validates JSON
 through its normal prompts and parsers.
+New profiles use a 32768-token context window and an 8192-token output limit
+to leave room for structured plans and reasoning. Adjust the profile for
+smaller deployed models. The gateway owns provider failover; KITT bounds its
+outer retries and does not automatically replay timed-out gateway requests.
 
 Default address: `http://127.0.0.1:3001`. A remote origin requires both
 `--allow-remote` and HTTPS. The external provider may change its model
