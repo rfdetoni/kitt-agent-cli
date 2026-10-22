@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.49 — recover protected Git metadata planning scopes
+
+Automatic contract planning no longer aborts immediately when a model includes `.git` as a proposed validation path: the planner turns the filesystem policy rejection into a bounded, actionable structural validation error and requests a corrected plan. Git metadata remains inaccessible through workspace file tools; the model must scope real worktree files or use an empty path list for Git-only operations. A regression covers an invalid first plan followed by a valid revision, and confirms that direct `.git` reads remain denied. No command permissions or network privileges were changed. Python metadata and uv lock stay synchronized.
+
 ## 0.88.48 — read-only Git inspection with workspace-relative -C
 
 A Wine MBS autonomous contract stalled on 21 October after issuing `git -C mbs-wine status --short --branch`. The PolicyEngine hard-denied the `-C` flag before it could inspect the existing Git repository, causing repeated edits to README and BLOCKED_ENV even though no approval was requested. Git inspection now accepts an existing, workspace-contained, relative `-C` directory **only** for read-only `status`, `diff`, `log` and read-only `branch` commands. All original per-subcommand flag checks remain in force; path traversal, symlinks out of workspace, internal .git directory access and mutations (push/reset/clean) remain DENY, supervised policy remains ASK. The fix does not grant network access or change Git clone timeout. Regression reproduces the exact Wine MBS command and blocked variants.
