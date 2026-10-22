@@ -457,6 +457,18 @@ def _file_mutation(name: str, args: dict[str, Any]) -> bool:
 
 def _affected_paths(processor, name: str, args: dict[str, Any], result: Any) -> list[str]:
     from kitt.core.run_coordinator import RunCoordinator
+    # The directory handler knows whether mkdir created anything. Do not
+    # post-verify or record a deliverable for an idempotent no-op: traversing
+    # a pre-existing checkout would include protected .git internals.
+    operation = str(args.get("operation") or "") if name == "kitt_runtime" else name
+    metadata = getattr(result, "metadata", None)
+    if (
+        operation in {"repo.create_directory", "create_directory"}
+        and getattr(result, "success", False)
+        and isinstance(metadata, dict)
+        and metadata.get("created") is False
+    ):
+        return []
     mutation_paths = RunCoordinator.mutation_paths(name, args)
     if mutation_paths and "." not in mutation_paths:
         return mutation_paths
