@@ -26,8 +26,23 @@ class TestProviderRuntimeContract(unittest.TestCase):
         from kitt.domain.entities import ModelProfile
         from kitt.llm.client import LLMClient
         with LLMClient(ModelProfile(backend="freellmapi", model="auto")) as client:
-            self.assertEqual(client.retry_policy.config.max_retries, 2)
+            self.assertEqual(client.retry_policy.config.max_retries, 0)
             self.assertFalse(client.retry_policy.config.retry_timeouts)
+
+    def test_freellmapi_exhaustion_does_not_sleep_on_gateway_retry_after(self):
+        from kitt.domain.entities import ModelProfile
+        from kitt.llm.client import LLMClient
+        registry = MagicMock()
+        adapter = registry.get_adapter_for_protocol.return_value
+        adapter.stream.side_effect = ProviderRateLimitError("All gateway models exhausted", retry_after=3600)
+        profile = ModelProfile(backend="freellmapi", model="auto", protocol="openai-compatible")
+        with patch("kitt.llm.client.resolve_endpoint_credential", return_value=None), patch(
+            "kitt.llm.http_security.TransportCancellation.wait", side_effect=AssertionError("Must not sleep on gateway exhaustion"),
+        ):
+            with LLMClient(profile, registry=registry) as client:
+                with self.assertRaises(ProviderRateLimitError):
+                    list(client.chat_stream([{"role": "user", "content": "Run the task"}]))
+        self.assertEqual(adapter.stream.call_count, 1)
 
     def test_native_tool_stream_and_host_result_round_trip(self):
         sent = []
