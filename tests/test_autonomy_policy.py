@@ -99,6 +99,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                 ["git", "-C", "mbs-wine", "reset", "--hard"],
                 ["git", "-C", "mbs-wine", "push"],
                 ["git", "-C", "mbs-wine", "status", "--git-dir=/tmp"],
+                ["git", "-c", "core.hooksPath=.", "status"],
             ):
                 with self.subTest(command=command):
                     self.assertEqual(engine.evaluate_tool("run_command", {"argv": command}), "DENY")

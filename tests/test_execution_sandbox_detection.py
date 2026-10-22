@@ -166,11 +166,13 @@ def test_git_metadata_is_writable_only_for_direct_git_processes(tmp_path):
     ), patch.object(sandbox, "_append_resolver_mounts"):
         git_plan = sandbox._bwrap_plan("bwrap", "workspace-write", ["git", "commit", "-m", "ok"], root)
         python_plan = sandbox._bwrap_plan("bwrap", "workspace-write", ["python3", "script.py"], root)
+        untrusted_git_plan = sandbox._bwrap_plan("bwrap", "workspace-write", ["./bin/git", "commit"], root)
         readonly_git_plan = sandbox._bwrap_plan("bwrap", "read-only", ["git", "status"], root)
 
     assert str(git_dir) not in read_only_mounts(git_plan)
     assert str(kitt_dir) in read_only_mounts(git_plan)
     assert str(git_dir) in read_only_mounts(python_plan)
+    assert str(git_dir) in read_only_mounts(untrusted_git_plan)
     assert str(kitt_dir) in read_only_mounts(python_plan)
     assert str(git_dir) in read_only_mounts(readonly_git_plan)
 

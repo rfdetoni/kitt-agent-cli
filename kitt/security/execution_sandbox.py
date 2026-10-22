@@ -440,7 +440,7 @@ class ExecutionSandbox:
         git_writable = (
             profile in {"workspace-write", "workspace-write+network"}
             and bool(argv)
-            and Path(argv[0]).name.casefold() in {"git", "git.exe"}
+            and argv[0] in {"git", "git.exe"}
         )
         for protected_name in (".git", ".kitt"):
             if protected_name == ".git" and git_writable:

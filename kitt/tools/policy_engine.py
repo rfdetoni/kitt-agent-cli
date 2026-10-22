@@ -43,7 +43,7 @@ class PolicyEngine:
         "node.exe": frozenset({"-e", "--eval", "-p", "--print"}),
     }
     DENIED_GIT_FLAGS = {
-        "--no-index", "-C", "--git-dir", "--work-tree", "--exec-path",
+        "--no-index", "-C", "-c", "--git-dir", "--work-tree", "--exec-path",
         "--config-env",
     }
     _SAFE_GIT_STATUS_FLAGS = {

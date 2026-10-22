@@ -2,7 +2,7 @@
 
 ## 0.88.54 — restore Git metadata writes and fail-closed journal diagnostics
 
-Direct Git operations running through the policy-controlled `process.run` may update the workspace root `.git` when the execution sandbox has a writable workspace profile. Other executables and read-only profiles retain the `.git` read-only mount, and `.kitt` remains protected. A workspace-contained `git -C DIR` now handles four-argument reads and policy-gated mutations without bypassing the existing hard denials for push/reset/clean or network authority.
+Direct Git operations invoked with the literal `git` executable through policy-controlled `process.run` may update the workspace root `.git` when the execution sandbox has a writable workspace profile. Other executables and read-only profiles retain the `.git` read-only mount, and `.kitt` remains protected. A workspace-contained `git -C DIR` now handles four-argument reads and policy-gated mutations without bypassing the existing hard denials for push/reset/clean or network authority.
 
 If the durable tool execution ledger cannot reserve an execution receipt because of filesystem permissions or SQLite locking, the turn now emits a bounded BLOCKED result with the underlying error and does **not** execute the tool. This replaces the unhandled `PermissionError` and prevents unjournaled mutation. Regressions cover Git sandbox mount policy, `-C` command classification and unwritable journal handling. No dependency pins change; Python metadata and `uv.lock` are synchronized.
 
