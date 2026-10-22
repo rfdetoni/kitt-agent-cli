@@ -62,6 +62,32 @@ class TestAutonomousGitFetch(unittest.TestCase):
                 self.assertFalse(result.requires_approval)
                 handler.assert_called_once()
 
+    def test_compound_git_shell_returns_actionable_error_without_approval_loop(self):
+        # Reproduces the 22 October Wine-MBS tool call; never authorize a shell.
+        argv = [
+            "bash", "-c",
+            "mkdir -p mbs-wine && cd mbs-wine && git init && "
+            "git clone https://gitlab.winehq.org/wine/wine.git wine && "
+            "git clone https://github.com/wine-staging/wine-staging.git wine-staging",
+        ]
+        result, handler = self.execute(argv)
+        self.assertFalse(result.success)
+        self.assertFalse(result.requires_approval)
+        self.assertIn("argv=['git','clone',HTTPS_URL,DEST]", result.error)
+        handler.assert_not_called()
+        direct, handler = self.execute([
+            "git", "clone", "https://gitlab.winehq.org/wine/wine.git", "wine",
+        ])
+        self.assertTrue(direct.success, direct.error)
+        self.assertFalse(direct.requires_approval)
+        handler.assert_called_once()
+
+    def test_unrelated_network_shell_still_requires_approval(self):
+        result, handler = self.execute(["bash", "-c", "curl https://example.com"])
+        self.assertFalse(result.success)
+        self.assertTrue(result.requires_approval)
+        handler.assert_not_called()
+
     def test_network_elevation_still_requires_approval_outside_narrow_git_rule(self):
         commands = (
             ["python3", "-c", "print('not an approved network fetch')"],
