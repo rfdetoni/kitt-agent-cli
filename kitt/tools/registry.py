@@ -87,7 +87,11 @@ class ToolRegistry(_core.ToolRegistry):
                 )
                 tool["description"] = (
                     "Safe runtime. process.run {argv:[...],cwd?,timeout_seconds?,network?:bool=false}; "
-                    "argv-only/no shell; for independent read/search/list calls use "
+                    "argv-only/no shell; for autonomous public Git checkout use "
+                    "repo.create_directory then direct argv ['git','init'] and one "
+                    "argv ['git','clone',HTTPS_URL,DEST] per call (network:true,cwd:project); "
+                    "never use bash -c or chained Git commands; "
+                    "for independent read/search/list calls use "
                     "repo.batch_read {calls:[{id,operation,arguments:{path}}]} (max 8); "
                     "batch can partially fail; reuse successful entries and retry only failed IDs. "
                     "batch never permits writes; for independent read-only multi-step searches "

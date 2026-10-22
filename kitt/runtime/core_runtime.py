@@ -589,6 +589,38 @@ class SafeRuntime:
                 ),
             )
 
+        # Avoid an unnecessary approval modal when the model wraps an otherwise
+        # eligible public Git checkout in a network-enabled shell pipeline.
+        # This is NOT a shell parser or an authorization: reject the compound
+        # command and have the model issue separate host-governed operations.
+        argv = args.get("argv")
+        if (
+            network_elevation
+            and approval_grant is None
+            and isinstance(argv, list)
+            and len(argv) >= 3
+            and argv[0] in {"sh", "bash", "dash", "zsh"}
+            and argv[1] in {"-c", "-lc"}
+            and isinstance(argv[2], str)
+            and ("git clone " in argv[2] or "git submodule add " in argv[2])
+        ):
+            return self._result(
+                start,
+                SafeRuntimeResult(
+                    False,
+                    op,
+                    error=(
+                        "Network-enabled Git checkout embedded in a shell is not eligible "
+                        "for autonomous Git delegation. Split the operation into separate "
+                        "kitt_runtime calls: repo.create_directory for workspace folders, "
+                        "process.run argv=['git','init'] with cwd, then one direct "
+                        "process.run argv=['git','clone',HTTPS_URL,DEST] with cwd and "
+                        "network=true per public repository. Check existing checkout "
+                        "before cloning. Do not repeat the shell command."
+                    ),
+                ),
+            )
+
         if network_elevation and approval_grant is None:
             return self._result(
                 start,

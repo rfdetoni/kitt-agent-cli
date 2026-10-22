@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.50 — avoid approval loops for shell-wrapped Git checkout
+
+On 22 October the model bundled Wine checkout setup into a network-enabled `bash -c` command. The narrow autonomous public Git delegation only accepts exact argv-only `git clone` calls, so the agent asked for generic network approval and waited 84 seconds. The SafeRuntime now returns an actionable tool error for shell-wrapped Git clone/submodule requests lacking network authority; the agent should create directories and initialize Git separately, and issue one direct public Git checkout per call. Unlike automatic shell execution, this preserves the original network approval boundary. Arbitrary network shell commands still need authorization, and sandbox protection remains mandatory. Tool schema instructions and regression tests cover both paths. Python metadata, source version fallback and `uv.lock` are synchronized.
+
 ## 0.88.49 — recover protected Git metadata planning scopes
 
 Automatic contract planning no longer aborts immediately when a model includes `.git` as a proposed validation path: the planner turns the filesystem policy rejection into a bounded, actionable structural validation error and requests a corrected plan. Git metadata remains inaccessible through workspace file tools; the model must scope real worktree files or use an empty path list for Git-only operations. A regression covers an invalid first plan followed by a valid revision, and confirms that direct `.git` reads remain denied. No command permissions or network privileges were changed. Python metadata and uv lock stay synchronized.
