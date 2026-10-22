@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 from kitt.llm.client import LLMClient
+from kitt.llm.domain import ProviderRecoverableError
 from kitt.llm.retry import RetryPolicy
 
 
@@ -56,6 +57,11 @@ class ProviderCircuitPool:
             state.last_error = f"{type(exc).__name__}: {exc}"
 
     def retryable(self, exc: Exception) -> bool:
+        # The proxy explicitly confirmed that an empty model action did not
+        # execute a host tool. An already configured, trusted *other* profile
+        # can be tried safely, but never replay partial output or one profile.
+        if isinstance(exc, ProviderRecoverableError):
+            return exc.code == "agent_contract_empty_action"
         return self._retry.is_retryable(exc)
 
     def candidates(self, primary, alternatives):

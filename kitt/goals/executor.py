@@ -69,6 +69,16 @@ class GoalStepExecutor:
             ))
         )
 
+    @staticmethod
+    def _provider_no_action(error: str) -> bool:
+        """No host tool ran, but repeating the same broken browser reply is unproductive."""
+        value = str(error or "").casefold()
+        return (
+            "kitt reverse proxy" in value
+            and "agent_contract_empty_action" in value
+            and "no host tool was executed" in value
+        )
+
     def __init__(self, runtime_getter, reviewer_factory=None):
         self.runtime_getter = runtime_getter
         self.reviewer_factory = reviewer_factory
@@ -225,14 +235,23 @@ class GoalStepExecutor:
                             contract_item is not None
                             and self._ambiguous_webchat_capture(event.error)
                         )
+                        empty_model_action = (
+                            contract_item is not None
+                            and self._provider_no_action(event.error)
+                        )
+                        # An alternate trusted profile is handled in the model
+                        # failover layer first. If none succeeds, do not spend
+                        # contract retries resubmitting the identical task to
+                        # the same stalled WebChat session.
+                        provider_blocked = capture_ambiguous or empty_model_action
                         result.update(
                             status=(
-                                "BLOCKED" if capture_ambiguous
+                                "BLOCKED" if provider_blocked
                                 else "INCOMPLETE" if event.recoverable else "FAILED"
                             ),
                             error=event.error,
                             block_reason=(
-                                "ENVIRONMENT" if capture_ambiguous or event.recoverable else ""
+                                "ENVIRONMENT" if provider_blocked or event.recoverable else ""
                             ),
                         )
         finally:

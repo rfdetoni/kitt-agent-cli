@@ -444,6 +444,43 @@ class GoalContractTests(unittest.TestCase):
             "KITT reverse proxy returned ui_rate_limit"
         ))
 
+    def test_empty_model_action_requires_explicit_resume_after_failover(self):
+        error = (
+            "KITT reverse proxy: agent_contract_empty_action: "
+            "Provider returned an empty action with no decision to repair; "
+            "no host tool was executed."
+        )
+        self.assertTrue(GoalStepExecutor._provider_no_action(error))
+        self.assertFalse(GoalStepExecutor._provider_no_action(
+            "A README mentioned agent_contract_empty_action but did not run."
+        ))
+        self.assertFalse(GoalStepExecutor._provider_no_action(
+            "KITT reverse proxy: ui_capture_unverified: unmatched response"
+        ))
+        goal = self._contract()
+        calls = []
+
+        def executor(_goal, **_kwargs):
+            calls.append("provider")
+            return {
+                "status": "BLOCKED" if GoalStepExecutor._provider_no_action(error) else "FAILED",
+                "tokens": 0,
+                "cost": 0.0,
+                "error": error,
+                "block_reason": "ENVIRONMENT",
+            }
+
+        scheduler = GoalScheduler(
+            self.db, self.goals, runtime_step_executor=executor,
+            poll_interval_seconds=0.01,
+        )
+        scheduler.schedule_goal(goal.id, heartbeat_enabled=True)
+        self.assertEqual(scheduler.check_and_execute_due()[0]["status"], "BLOCKED")
+        self.assertEqual(scheduler.check_and_execute_due(), [])
+        self.assertEqual(calls, ["provider"])
+        self.assertEqual(self.goals.get(goal.id).retries_used, 0)
+        self.assertEqual(self.goals.contract_items(goal.id)[0].status, "BLOCKED")
+
     def test_capture_timeout_requires_explicit_resume_and_consumes_no_global_retries(self):
         error = (
             "KITT reverse proxy: ui_timeout: ChatGPT finished, but no fresh "
