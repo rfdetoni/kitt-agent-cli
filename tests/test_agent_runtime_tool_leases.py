@@ -11,6 +11,8 @@ from kitt.core.agent_runtime import execute_tool_with_engineering
 from kitt.core.run_coordinator import RunCoordinator
 from kitt.core.workspace_snapshot import WorkspaceSnapshotService
 from kitt.security.workspace_fs import WorkspaceFileSystem
+from kitt.tools.handlers import ToolContext
+from kitt.tools.handlers.files import CreateDirectoryHandler
 from kitt.tools.registry_core import ToolResult
 
 
@@ -76,21 +78,29 @@ class AgentRuntimeToolLeaseTests(unittest.TestCase):
                 task_plans=None,
                 turn_journal=None,
             )
-            registry = SimpleNamespace(
-                root_path=root,
-                _agent_verifier=SimpleNamespace(
-                    verify=lambda *args, **kwargs: SimpleNamespace(
-                        ok=True, as_dict=lambda: {"ok": True}
-                    )
-                ),
+            verifier = SimpleNamespace(
+                verify=lambda *args, **kwargs: SimpleNamespace(
+                    ok=True, as_dict=lambda: {"ok": True}
+                )
             )
+            registry = SimpleNamespace(root_path=root, _agent_verifier=verifier)
 
             def create_dir(_name, args, *_pos, **_kwargs):
-                relative = args["arguments"]["path"]
-                fs.create_directory(relative, parents=True, exist_ok=True)
-                return ToolResult(True, f"Created directory {relative}.")
+                return CreateDirectoryHandler().execute(
+                    args["arguments"],
+                    ToolContext(
+                        registry=registry,
+                        turn_id="turn",
+                        conversation_id="conversation",
+                        workspace_id="test-workspace",
+                        origin="MODEL",
+                    ),
+                )
 
-            with patch.object(snapshots, "capture", wraps=snapshots.capture) as capture:
+            with (
+                patch.object(snapshots, "capture", wraps=snapshots.capture) as capture,
+                patch.object(verifier, "verify", wraps=verifier.verify) as verify,
+            ):
                 result = execute_tool_with_engineering(
                     processor, registry, create_dir,
                     "kitt_runtime",
@@ -98,7 +108,11 @@ class AgentRuntimeToolLeaseTests(unittest.TestCase):
                     conversation_id="conversation", turn_id="turn",
                 )
                 self.assertTrue(result.success)
+                self.assertFalse(result.metadata["created"])
+                self.assertEqual(result.metadata["changed_paths"], [])
+                self.assertIn("no changes made", result.output)
                 capture.assert_not_called()
+                verify.assert_not_called()
                 self.assertEqual((git_dir / "HEAD").read_text(), "ref: refs/heads/main\\n")
 
                 created = execute_tool_with_engineering(
@@ -108,7 +122,10 @@ class AgentRuntimeToolLeaseTests(unittest.TestCase):
                     conversation_id="conversation", turn_id="turn",
                 )
                 self.assertTrue(created.success)
+                self.assertTrue(created.metadata["created"])
+                self.assertEqual(created.metadata["changed_paths"], ["new-directory"])
                 capture.assert_called_once()
+                verify.assert_called_once()
                 self.assertEqual(
                     created.metadata.get("workspace_snapshot_id"),
                     snapshots._last_by_turn.get("turn"),

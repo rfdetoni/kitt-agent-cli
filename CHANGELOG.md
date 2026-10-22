@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.57 — honor no-op directory creation in post-edit verification
+
+The create_directory handler now reports whether the target already existed. Idempotent mkdir returns a successful no-change receipt and does not mark pre-existing files as changed, trigger post-edit verification, invalidate code memory, or record a deliverable. This fixes the repeated false "Directory validation refuses unsafe links" failure for existing mbs-wine/.git checkouts without loosening protected metadata or directory-verification security. Fresh directory creation continues to take a recovery snapshot and run verification. Regression exercises the real handler and engineering wrapper. Lock version updated, dependency pins unchanged.
+
+
 ## 0.88.56 — skip no-op directory snapshots in existing Git checkouts
 
 When repo.create_directory targets an existing real directory, the operation is idempotent and cannot change its contents. The Agent no longer recursively snapshots that directory before running mkdir. This avoids traversing protected .git metadata (seen in the 2026-10-22 traceback) while keeping all file mutations, directory creation at missing paths, Git safety controls and recovery snapshots intact. An integration regression covers both existing .git checkout and fresh directory creation; dependency pins are unchanged.

@@ -234,13 +234,21 @@ class CreateDirectoryHandler:
         try:
             fs = _fs(ctx)
             relative = _scope(ctx, fs.relative(requested))
-            created = fs.create_directory(relative, parents=True, exist_ok=True)
+            existed = fs.is_safe_directory(relative)
+            directory = fs.create_directory(relative, parents=True, exist_ok=True)
         except (OSError, PermissionError, ValueError) as exc:
             return ToolResult(False, "", f"Workspace directory creation refused: {exc}")
         return ToolResult(
             True,
-            f"Created directory {created}.",
-            metadata={"path": created, "changed_paths": [created]},
+            (
+                f"Directory {directory} already exists; no changes made."
+                if existed else f"Created directory {directory}."
+            ),
+            metadata={
+                "path": directory,
+                "created": not existed,
+                "changed_paths": [] if existed else [directory],
+            },
         )
 
 
