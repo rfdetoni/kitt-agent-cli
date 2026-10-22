@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -12,6 +14,40 @@ from kitt.goals.contract import ContractPlanner
 from kitt.ui.daemon_bridge import map_daemon_event_to_turn_event
 from kitt.ui.reducer import reduce_ui_event
 from kitt.ui.state import UIState
+
+
+@pytest.mark.parametrize("daemon", [False, True])
+def test_headless_cli_prints_planning_progress_before_execution(daemon):
+    from kitt.core.turn_events import TurnCompleted
+    from kitt.ui.fallback import HeadlessUI
+
+    events = [ContractProgress(phase="generating", attempt=1, max_attempts=2),
+              ContractProgress(phase="checking", attempt=1, max_attempts=2),
+              TurnCompleted(response="PLAN_OK")]
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(daemon_enabled=daemon, history_enabled=True, persistence_enabled=True),
+        history=SimpleNamespace(get_or_create_active=lambda: {"id": "conv"}),
+    )
+    class Bridge:
+        def __init__(self, runtime, callback, refresh):
+            self.callback = callback
+        async def ensure_daemon(self, conversation_id):
+            return True
+        async def start(self, *args, **kwargs):
+            for event in events:
+                self.callback(event)
+        async def shutdown(self):
+            pass
+    output = StringIO()
+    with patch("kitt.ui.event_bridge.TurnEventBridge", Bridge), patch(
+        "kitt.goals.auto_contract.iter_automatic_contract", return_value=iter(events),
+    ):
+        assert asyncio.run(HeadlessUI(runtime, "Create the project", output).run_async()) == 0
+    rendered = output.getvalue()
+    assert "[contract] planning 1/2" in rendered
+    assert "[contract] checking plan 1/2" in rendered
+    assert rendered.index("planning") < rendered.index("PLAN_OK")
+    assert "[Tool:" not in rendered
 
 
 def _proposal():

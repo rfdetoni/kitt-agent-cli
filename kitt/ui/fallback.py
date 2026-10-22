@@ -9,6 +9,7 @@ from kitt import __version__
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import (
     ApprovalRequired,
+    ContractProgress,
     TextDelta,
     ToolStarted,
     TurnBlocked,
@@ -64,6 +65,12 @@ def _daemon_authoritative(runtime) -> bool:
     )
 
 
+def _contract_progress_text(event: ContractProgress) -> str:
+    phases = {"generating": "planning", "checking": "checking plan", "revising": "revising plan", "rejected": "plan rejected"}
+    phase = phases.get(event.phase)
+    return f"\n[contract] {phase} {event.attempt}/{event.max_attempts}\n" if phase else ""
+
+
 async def _run_daemon_turn(runtime, prompt: str, write, *, readline=None) -> bool:
     """Run one turn through the daemon and return True when it failed/blocked."""
     from kitt.ui.event_bridge import TurnEventBridge
@@ -90,7 +97,9 @@ async def _run_daemon_turn(runtime, prompt: str, write, *, readline=None) -> boo
         )
         while True:
             event = await event_queue.get()
-            if isinstance(event, TextDelta):
+            if isinstance(event, ContractProgress):
+                write(_contract_progress_text(event))
+            elif isinstance(event, TextDelta):
                 write(event.delta)
                 full_response += event.delta
             elif isinstance(event, ToolStarted):
@@ -326,7 +335,9 @@ class PlainLineUI:
             iterator = self.runtime.processor.run_turn(command)
         full_response = ""
         async for event in _stream_iterator(iterator):
-            if isinstance(event, TextDelta):
+            if isinstance(event, ContractProgress):
+                self._write(_contract_progress_text(event))
+            elif isinstance(event, TextDelta):
                 self._write(event.delta)
                 full_response += event.delta
             elif isinstance(event, ToolStarted):
@@ -402,7 +413,11 @@ class HeadlessUI:
         else:
             iterator = self.runtime.processor.run_turn(command)
         async for event in _stream_iterator(iterator):
-            if isinstance(event, TextDelta):
+            if isinstance(event, ContractProgress):
+                write(_contract_progress_text(event))
+            elif isinstance(event, ToolStarted):
+                write(f"\n[Tool: {event.tool_name}]\n")
+            elif isinstance(event, TextDelta):
                 write(event.delta)
                 full_response += event.delta
             elif isinstance(event, TurnCompleted):
