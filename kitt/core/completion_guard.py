@@ -19,6 +19,7 @@ from typing import Any, Iterator
 from kitt.context_filter.fallback import is_workspace_creation_request
 from kitt.core.turn_events import ToolCompleted, ToolStarted, TurnFailed
 from kitt.core.turn_tool_helpers import _goal_contract_uses_outer_verification
+from kitt.core.progress_tracker import normalize_progress_arguments, normalize_failure_diagnostic
 
 
 _MUTATION_TOOLS = frozenset({
@@ -242,7 +243,7 @@ def _canonical_exploration(tool_name: str, args: Any) -> tuple[str, dict[str, An
 
     for key in ("force_refresh", "max_tokens", "token_budget"):
         arguments.pop(key, None)
-    return operation, arguments
+    return operation, normalize_progress_arguments(operation, arguments)
 
 
 def _exploration_signature(tool_name: str, args: Any) -> str | None:
@@ -264,8 +265,10 @@ def _result_fingerprint(event: ToolCompleted) -> str:
     payload = json.dumps(
         {
             "success": bool(event.success),
-            "output": str(event.output or "").strip(),
-            "error": str(event.error or "").strip(),
+            "output": (str(event.output or "").strip() if event.success
+                       else normalize_failure_diagnostic(event.output)),
+            "error": (str(event.error or "").strip() if event.success
+                      else normalize_failure_diagnostic(event.error)),
         },
         ensure_ascii=False,
         sort_keys=True,

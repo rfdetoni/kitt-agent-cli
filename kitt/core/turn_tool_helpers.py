@@ -7,6 +7,7 @@ import json
 from urllib.parse import urlsplit
 
 from kitt.security.context import ExecutionSecurityContext
+from kitt.core.progress_tracker import normalize_progress_arguments, normalize_failure_diagnostic
 
 
 def _classify_tool_failure(error: object) -> tuple[str, bool | None, str]:
@@ -200,14 +201,19 @@ def _tool_stall_fingerprint(
     """
     if success:
         return _observational_fingerprint(tool_name, tool_args, output)
+    operation = _runtime_operation_name(tool_name, tool_args)
+    source_args = (
+        tool_args.get("arguments", {}) if tool_name == "kitt_runtime" and isinstance(tool_args, dict)
+        else tool_args
+    )
     raw = (
-        _runtime_operation_name(tool_name, tool_args)
+        operation
         + "\0"
-        + _canonical_tool_args(tool_args)
+        + _canonical_tool_args(normalize_progress_arguments(operation, source_args))
         + "\0"
-        + str(error or "")
+        + normalize_failure_diagnostic(error)
         + "\0"
-        + str(output or "")
+        + normalize_failure_diagnostic(output)
     )
     return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()
 
@@ -297,10 +303,14 @@ def _observational_fingerprint(
     operation = _runtime_operation_name(tool_name, tool_args)
     if operation not in _OBSERVATIONAL_ACTIONS:
         return None
+    source_args = (
+        tool_args.get("arguments", {}) if tool_name == "kitt_runtime" and isinstance(tool_args, dict)
+        else tool_args
+    )
     raw = (
         operation
         + "\0"
-        + _canonical_tool_args(tool_args)
+        + _canonical_tool_args(normalize_progress_arguments(operation, source_args))
         + "\0"
         + str(output or "")
     )

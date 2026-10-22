@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.63 — normalize equivalent progress observations
+
+Share small, deterministic progress-only argument normalization across the tool loop and completion guard. Equivalent simple search-term order and redundant local path prefixes no longer evade repeat detection; failed observations normalize transient timestamps. Preserve exact tool execution identities, permissions, and successful output fingerprints, and avoid reordering phrase/boolean queries. Targeted regression tests, no dependency changes.
+
+
 ## 0.88.62 — bounded configurable tool-loop recovery
 
 Expose guarded 0..8 environment-configurable recovery thresholds for malformed calls, policy denials, output-limit errors, completion claims and Python calls. Defaults preserve previous behavior and hard execution budgets still apply. Reject invalid environment values rather than silently degrading. One targeted regression module, no new dependencies or privilege changes.
