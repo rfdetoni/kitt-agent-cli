@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import random
 import time
+import threading
 from dataclasses import dataclass
 from typing import Callable, Generator, Tuple, TypeVar
 
@@ -35,6 +36,8 @@ class RetryConfig:
     retryable_status: Tuple[int, ...] = (429, 500, 502, 503, 529)
     retry_timeouts: bool = True
     jitter_ratio: float = 0.25
+    only_rate_limits: bool = False
+    max_retry_after_seconds: float | None = None
 
 
 class RetryPolicy:
@@ -42,6 +45,16 @@ class RetryPolicy:
         self.config = config or RetryConfig()
 
     def is_retryable(self, exc: Exception) -> bool:
+        if self.config.only_rate_limits:
+            if not isinstance(exc, ProviderRateLimitError):
+                return False
+            threshold = self.config.max_retry_after_seconds
+            # A very long quota reset must be surfaced to the user instead
+            # of occupying a worker for hours or replaying early.
+            return (
+                threshold is None or exc.retry_after is None
+                or (math.isfinite(float(exc.retry_after)) and exc.retry_after <= threshold)
+            )
         if isinstance(exc, ProviderRateLimitError):
             return True
         if isinstance(exc, ProviderTimeoutError):
@@ -117,3 +130,35 @@ class RetryPolicy:
                 if emitted or attempt >= self.config.max_retries or not self.is_retryable(exc):
                     raise
                 (wait_fn or time.sleep)(self.delay_seconds(exc, attempt))
+
+
+class ProviderCooldowns:
+    """Share provider-advised cooldowns across clients within a daemon process."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._until: dict[str, float] = {}
+
+    def record(self, key: str, seconds: float) -> None:
+        try:
+            duration = float(seconds)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(duration) or duration <= 0:
+            return
+        # Do not retain an unbounded or malicious reset period.
+        until = time.monotonic() + min(duration, 300.0)
+        with self._lock:
+            self._until[key] = max(until, self._until.get(key, 0.0))
+            if len(self._until) > 256:
+                now = time.monotonic()
+                self._until = {k: v for k, v in self._until.items() if v > now}
+
+    def wait(self, key: str, cancellation) -> None:
+        while True:
+            cancellation.check()
+            with self._lock:
+                remaining = self._until.get(key, 0.0) - time.monotonic()
+            if remaining <= 0:
+                return
+            cancellation.wait(remaining)

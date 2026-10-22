@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import urllib.error
+import json
+import math
+import re
+import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
@@ -82,6 +86,32 @@ def _retry_after_seconds(headers) -> Optional[float]:
         return None
 
 
+def _body_retry_after_seconds(body: str) -> Optional[float]:
+    """Parse FreeLLMAPI reset hints without assuming a Retry-After header."""
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        payload = None
+    details = payload.get("error", payload) if isinstance(payload, dict) else None
+    if isinstance(details, dict):
+        reset_ms = details.get("retryAtMs")
+        if isinstance(reset_ms, (int, float)) and not isinstance(reset_ms, bool):
+            seconds = (reset_ms / 1000.0) - time.time()
+            if math.isfinite(seconds) and seconds >= 0:
+                return seconds
+        for name in ("retryAfter", "retry_after", "retry_after_seconds"):
+            value = details.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if math.isfinite(value) and value >= 0:
+                    return float(value)
+    # FreeLLMAPI also reports human-readable reset ETAs on routing exhaustion.
+    message = str(details.get("message") or "") if isinstance(details, dict) else ""
+    match = re.search(r"soonest reset\s*~\s*(\d+)\s*([smh])\b", message, re.I)
+    if match:
+        return float(match.group(1)) * {"s": 1, "m": 60, "h": 3600}[match.group(2).lower()]
+    return None
+
+
 def handle_http_error(e: urllib.error.HTTPError, url: str, body: Optional[str] = None) -> None:
     """Translate bounded, redacted HTTP failures into typed provider errors."""
     if body is None:
@@ -93,7 +123,12 @@ def handle_http_error(e: urllib.error.HTTPError, url: str, body: Optional[str] =
     if e.code == 404:
         raise ProviderModelNotFoundError(f"Model or endpoint not found ({msg})")
     if e.code == 429:
-        retry_after = _retry_after_seconds(e.headers)
+        header_delay = _retry_after_seconds(e.headers)
+        body_delay = _body_retry_after_seconds(body)
+        retry_after = max(
+            (value for value in (header_delay, body_delay) if value is not None),
+            default=None,
+        )
         raise ProviderRateLimitError(
             f"Rate limited by provider ({msg})",
             retry_after=retry_after,

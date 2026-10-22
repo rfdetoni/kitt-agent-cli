@@ -26,23 +26,98 @@ class TestProviderRuntimeContract(unittest.TestCase):
         from kitt.domain.entities import ModelProfile
         from kitt.llm.client import LLMClient
         with LLMClient(ModelProfile(backend="freellmapi", model="auto")) as client:
-            self.assertEqual(client.retry_policy.config.max_retries, 0)
+            self.assertEqual(client.retry_policy.config.max_retries, 1)
+            self.assertTrue(client.retry_policy.config.only_rate_limits)
             self.assertFalse(client.retry_policy.config.retry_timeouts)
 
-    def test_freellmapi_exhaustion_does_not_sleep_on_gateway_retry_after(self):
+    def test_freellmapi_waits_for_retry_after_once_and_succeeds(self):
         from kitt.domain.entities import ModelProfile
         from kitt.llm.client import LLMClient
         registry = MagicMock()
         adapter = registry.get_adapter_for_protocol.return_value
-        adapter.stream.side_effect = ProviderRateLimitError("All gateway models exhausted", retry_after=3600)
+
+        def upstream(_request):
+            if adapter.stream.call_count == 1:
+                raise ProviderRateLimitError("Gateway cooling down", retry_after=2)
+            return iter(["ok"])
+
+        adapter.stream.side_effect = upstream
+        profile = ModelProfile(backend="freellmapi", model="auto", protocol="openai-compatible")
+        with patch("kitt.llm.client.resolve_endpoint_credential", return_value="fixture-key"), patch(
+            "kitt.llm.client._FREE_LLM_API_COOLDOWNS"
+        ) as cooldown, patch(
+            "kitt.llm.http_security.TransportCancellation.wait"
+        ) as wait:
+            with LLMClient(profile, registry=registry) as client:
+                self.assertEqual(
+                    list(client.chat_stream([{"role": "user", "content": "Run"}])),
+                    ["ok"],
+                )
+        self.assertEqual(adapter.stream.call_count, 2)
+        cooldown.record.assert_called_once()
+        self.assertEqual(wait.call_args.args[0], 2.0)
+
+    def test_freellmapi_long_quota_429_returns_without_waiting(self):
+        from kitt.domain.entities import ModelProfile
+        from kitt.llm.client import LLMClient
+        registry = MagicMock()
+        adapter = registry.get_adapter_for_protocol.return_value
+        adapter.stream.side_effect = ProviderRateLimitError(
+            "Daily quota exhausted", retry_after=3600
+        )
         profile = ModelProfile(backend="freellmapi", model="auto", protocol="openai-compatible")
         with patch("kitt.llm.client.resolve_endpoint_credential", return_value=None), patch(
-            "kitt.llm.http_security.TransportCancellation.wait", side_effect=AssertionError("Must not sleep on gateway exhaustion"),
-        ):
+            "kitt.llm.client._FREE_LLM_API_COOLDOWNS"
+        ), patch("kitt.llm.http_security.TransportCancellation.wait") as wait:
             with LLMClient(profile, registry=registry) as client:
                 with self.assertRaises(ProviderRateLimitError):
-                    list(client.chat_stream([{"role": "user", "content": "Run the task"}]))
+                    list(client.chat_stream([{"role": "user", "content": "Run"}]))
         self.assertEqual(adapter.stream.call_count, 1)
+        wait.assert_not_called()
+
+    def test_freellmapi_never_retries_mixed_gateway_502(self):
+        from kitt.domain.entities import ModelProfile
+        from kitt.llm.client import LLMClient
+        registry = MagicMock()
+        adapter = registry.get_adapter_for_protocol.return_value
+        adapter.stream.side_effect = ProviderConnectionError(
+            "HTTP 502: upstream_failed (rate_limited and provider_bad_request)"
+        )
+        profile = ModelProfile(backend="freellmapi", model="auto", protocol="openai-compatible")
+        with patch("kitt.llm.client.resolve_endpoint_credential", return_value=None), patch(
+            "kitt.llm.client._FREE_LLM_API_COOLDOWNS"
+        ), patch("kitt.llm.http_security.TransportCancellation.wait") as wait:
+            with LLMClient(profile, registry=registry) as client:
+                with self.assertRaises(ProviderConnectionError):
+                    list(client.chat_stream([{"role": "user", "content": "Run"}]))
+        self.assertEqual(adapter.stream.call_count, 1)
+        wait.assert_not_called()
+
+    def test_freellmapi_parses_absolute_retry_timestamp(self):
+        import time
+        retry_at = int((time.time() + 80) * 1000)
+        body = json.dumps({"error": {"code": "rate_limit_exceeded", "retryAtMs": retry_at}})
+        error = urllib.error.HTTPError(
+            "http://localhost:3001/v1/chat/completions", 429,
+            "Too Many Requests", {}, io.BytesIO(body.encode())
+        )
+        with self.assertRaises(ProviderRateLimitError) as caught:
+            handle_http_error(error, error.url)
+        self.assertGreater(caught.exception.retry_after, 78)
+        self.assertLessEqual(caught.exception.retry_after, 81)
+
+    def test_freellmapi_parses_routing_exhaustion_eta(self):
+        body = json.dumps({"error": {
+            "code": "routing_exhausted",
+            "message": "All models exhausted. Soonest reset ~69s."
+        }})
+        error = urllib.error.HTTPError(
+            "http://localhost:3001/v1/chat/completions", 429,
+            "Too Many Requests", {}, io.BytesIO(body.encode())
+        )
+        with self.assertRaises(ProviderRateLimitError) as caught:
+            handle_http_error(error, error.url)
+        self.assertEqual(caught.exception.retry_after, 69)
 
     def test_native_tool_stream_and_host_result_round_trip(self):
         sent = []
