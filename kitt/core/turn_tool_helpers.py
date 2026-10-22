@@ -15,9 +15,9 @@ def _classify_tool_failure(error: object) -> tuple[str, bool | None, str]:
     This does not grant permissions, trigger retries, or override the policy engine.
     """
     message = str(error or "").casefold()
-    if any(part in message for part in ("policy denied", "approval denied", "permission denied by policy")):
+    if any(part in message for part in ("policy denied", "approval denied", "permission denied by policy", "execution denied by policyengine", "host policy already denied")):
         return "policy_denied", False, "Do not repeat this denied action; obtain a host-granted approval."
-    if any(part in message for part in ("capability missing", "capability not granted", "missing capability")):
+    if any(part in message for part in ("capability missing", "capability not granted", "missing capability", "capability is not granted")):
         return "capability_missing", False, "Inspect runtime.capabilities; do not retry the same operation."
     if any(part in message for part in ("command sandbox unavailable", "bubblewrap", "environment unavailable")):
         return "environment", False, "Check the host environment; identical retries will not repair it."
