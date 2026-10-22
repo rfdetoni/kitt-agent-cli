@@ -46,6 +46,8 @@ jobs:
           uv lock --check
       - name: Compile runtime
         run: python -m compileall -q kitt assistant-source/packages/kitt-assistant-runtime/kitt
+      - name: FreeLLMAPI rate-limit regression tests
+        run: python -m pytest -q tests/test_provider_runtime_contract.py tests/test_retry_budget_accounting.py
       - name: Run release-critical regression contracts
         run: python scripts/run_release_critical.py
       - name: Complete project regression suite
