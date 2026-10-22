@@ -2,7 +2,7 @@
 
 ## 0.88.59 — Preserve structured error evidence in compact test logs
 
-Keep first compiler/test failure context and terminal build/exit summaries when reducing long logs. Bound output deterministically by the line budget, reuse the existing artifact retention for full diagnostics, and add two focused regression tests. No dependency changes; retain existing pins.
+Keep first compiler/test failure context and terminal build/exit summaries when reducing long logs. Give failures advisory typed diagnostics derived solely from host error strings, without granting privileges or changing retry behavior. Bound output deterministically by the line budget, reuse the existing artifact retention for full diagnostics, and add two focused regression tests. No dependency changes; retain existing pins.
 
 
 ## 0.88.58 — FreeLLMAPI rate-limit cooldown and safe retry

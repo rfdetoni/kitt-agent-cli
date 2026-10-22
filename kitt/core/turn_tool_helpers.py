@@ -9,20 +9,55 @@ from urllib.parse import urlsplit
 from kitt.security.context import ExecutionSecurityContext
 
 
+def _classify_tool_failure(error: object) -> tuple[str, bool | None, str]:
+    """Advisory classification from the host error only, never untrusted stdout.
+
+    This does not grant permissions, trigger retries, or override the policy engine.
+    """
+    message = str(error or "").casefold()
+    if any(part in message for part in ("policy denied", "approval denied", "permission denied by policy")):
+        return "policy_denied", False, "Do not repeat this denied action; obtain a host-granted approval."
+    if any(part in message for part in ("capability missing", "capability not granted", "missing capability")):
+        return "capability_missing", False, "Inspect runtime.capabilities; do not retry the same operation."
+    if any(part in message for part in ("command sandbox unavailable", "bubblewrap", "environment unavailable")):
+        return "environment", False, "Check the host environment; identical retries will not repair it."
+    if any(part in message for part in ("lease lost", "claim conflict", "claim already held")):
+        return "conflict_claim", True, "Refresh ownership/claims before attempting a new action."
+    if any(part in message for part in ("timed out", "timeout", "deadline exceeded")):
+        return "timeout", True, "Inspect the timeout and progress before a bounded retry."
+    if any(part in message for part in ("patch context mismatch", "context does not match")):
+        return "patch_context_mismatch", True, "Read the current file and regenerate a minimal patch."
+    if any(part in message for part in ("invalid arguments", "invalid args", "schema validation")):
+        return "invalid_args", False, "Correct the tool arguments using its declared schema."
+    if any(part in message for part in ("not found", "no such file", "enoent")):
+        return "not_found", False, "Verify the path or identifier before another call."
+    if any(part in message for part in ("test failed", "tests failed", "assertionerror")):
+        return "test_failure", False, "Inspect failing test evidence and change the implementation."
+    if any(part in message for part in ("build failed", "compilation failed", "compilation error")):
+        return "build_failure", False, "Inspect the first compiler error before rebuilding."
+    return "unknown", None, "Inspect the diagnostic before deciding whether to retry."
+
+
 def _format_host_tool_result(
     *,
     success: bool,
     output: object,
     error: object,
 ) -> tuple[str, str]:
-    """Return trusted host status plus the evidence payload shown to the model."""
+    """Return host status plus safely delimited, actionable failure evidence."""
     status = "success" if success else "error"
     output_text = str(output or "")
     if success:
         return status, output_text
 
     error_text = str(error or "Host tool failed.").strip()
-    detail = f"ERROR: {error_text}"
+    kind, retryable, next_step = _classify_tool_failure(error)
+    failure = {
+        "kind": kind,
+        "retryable": retryable,
+        "suggested_next": next_step,
+    }
+    detail = f"ERROR: {error_text}\nKITT_TOOL_FAILURE: {json.dumps(failure, ensure_ascii=False)}"
     if output_text:
         detail += "\n" + output_text
     return status, detail
