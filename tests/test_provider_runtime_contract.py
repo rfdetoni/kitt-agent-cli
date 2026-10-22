@@ -57,6 +57,24 @@ class TestProviderRuntimeContract(unittest.TestCase):
         cooldown.record.assert_called_once()
         self.assertEqual(wait.call_args.args[0], 2.0)
 
+    def test_freellmapi_long_quota_429_returns_without_waiting(self):
+        from kitt.domain.entities import ModelProfile
+        from kitt.llm.client import LLMClient
+        registry = MagicMock()
+        adapter = registry.get_adapter_for_protocol.return_value
+        adapter.stream.side_effect = ProviderRateLimitError(
+            "Daily quota exhausted", retry_after=3600
+        )
+        profile = ModelProfile(backend="freellmapi", model="auto", protocol="openai-compatible")
+        with patch("kitt.llm.client.resolve_endpoint_credential", return_value=None), patch(
+            "kitt.llm.client._FREE_LLM_API_COOLDOWNS"
+        ), patch("kitt.llm.http_security.TransportCancellation.wait") as wait:
+            with LLMClient(profile, registry=registry) as client:
+                with self.assertRaises(ProviderRateLimitError):
+                    list(client.chat_stream([{"role": "user", "content": "Run"}]))
+        self.assertEqual(adapter.stream.call_count, 1)
+        wait.assert_not_called()
+
     def test_freellmapi_never_retries_mixed_gateway_502(self):
         from kitt.domain.entities import ModelProfile
         from kitt.llm.client import LLMClient

@@ -37,6 +37,7 @@ class RetryConfig:
     retry_timeouts: bool = True
     jitter_ratio: float = 0.25
     only_rate_limits: bool = False
+    max_retry_after_seconds: float | None = None
 
 
 class RetryPolicy:
@@ -45,7 +46,15 @@ class RetryPolicy:
 
     def is_retryable(self, exc: Exception) -> bool:
         if self.config.only_rate_limits:
-            return isinstance(exc, ProviderRateLimitError)
+            if not isinstance(exc, ProviderRateLimitError):
+                return False
+            threshold = self.config.max_retry_after_seconds
+            # A very long quota reset must be surfaced to the user instead
+            # of occupying a worker for hours or replaying early.
+            return (
+                threshold is None or exc.retry_after is None
+                or (math.isfinite(float(exc.retry_after)) and exc.retry_after <= threshold)
+            )
         if isinstance(exc, ProviderRateLimitError):
             return True
         if isinstance(exc, ProviderTimeoutError):

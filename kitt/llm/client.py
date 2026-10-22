@@ -137,6 +137,7 @@ class LLMClient:
                     max_delay_ms=120000,
                     retry_timeouts=False,
                     only_rate_limits=True,
+                    max_retry_after_seconds=120.0,
                 ))
             elif backend in {"kitt-reverse-proxy", "kitt-proxy"} or protocol == "kitt-reverse-proxy":
                 self.retry_policy = RetryPolicy(RetryConfig(
