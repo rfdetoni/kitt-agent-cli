@@ -1,5 +1,11 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.51 — avoid Gemini empty-action retry storms
+
+Logs from 22 October confirmed five `agent_contract_empty_action` errors after valid workspace inspection, with WebChat DOM fallback taking up to about 110 seconds for one answer. The reverse proxy correctly rejected empty `{}` without inventing a tool action, but the autonomous Goal scheduler rapidly resubmitted the unchanged task. After the current agent-loop receives a verified no-action error, a configured *trusted alternative provider* can be attempted once through the existing bounded FailoverLLMClient (never after partial output or with a provider outside the allowlist). If no provider succeeds, the contract item is marked BLOCKED_ENV for explicit continuation instead of consuming consecutive automatic retry turns. The browser session is not silently reset and no tool call is automatically replayed.
+
+The compact agent guidance now clarifies workspace-root-relative repository paths: after inspecting `mbs-wine/`, read `mbs-wine/.gitignore` rather than `.gitignore` from the parent root, and prefer structured `repo.list` for discovery. Adds regressions for one-shot alternate fallback, partial-output safety and blocked goal retries. Bumps package metadata, `uv.lock` and release version; no new privileges or dependency changes.
+
 ## 0.88.50 — avoid approval loops for shell-wrapped Git checkout
 
 On 22 October the model bundled Wine checkout setup into a network-enabled `bash -c` command. The narrow autonomous public Git delegation only accepts exact argv-only `git clone` calls, so the agent asked for generic network approval and waited 84 seconds. The SafeRuntime now returns an actionable tool error for shell-wrapped Git clone/submodule requests lacking network authority; the agent should create directories and initialize Git separately, and issue one direct public Git checkout per call. Unlike automatic shell execution, this preserves the original network approval boundary. Arbitrary network shell commands still need authorization, and sandbox protection remains mandatory. Tool schema instructions and regression tests cover both paths. Python metadata, source version fallback and `uv.lock` are synchronized.
