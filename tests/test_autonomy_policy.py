@@ -75,6 +75,16 @@ class TestAutonomyPolicy(unittest.TestCase):
             safe = ["git", "-C", "mbs-wine", "status", "--short", "--branch"]
             self.assertEqual(engine.evaluate_argv(safe), "ALLOW")
             self.assertEqual(engine.evaluate_tool("run_command", {"argv": safe}), "ALLOW")
+            # A three-argument -C form previously failed before reaching the
+            # read-only classifier; workspace-contained mutations need ASK.
+            self.assertEqual(engine.evaluate_argv(["git", "-C", "mbs-wine", "status"]), "ALLOW")
+            for command in (
+                ["git", "-C", "mbs-wine", "init"],
+                ["git", "-C", "mbs-wine", "add", "README.md"],
+                ["git", "-C", "mbs-wine", "commit", "-m", "setup"],
+            ):
+                self.assertEqual(engine.evaluate_argv(command), "ASK")
+                self.assertEqual(engine.evaluate_tool("run_command", {"argv": command}), "ALLOW")
             for command in (
                 ["git", "-C", "mbs-wine", "log", "--oneline"],
                 ["git", "-C", "mbs-wine", "diff", "--stat"],
@@ -89,6 +99,7 @@ class TestAutonomyPolicy(unittest.TestCase):
                 ["git", "-C", "mbs-wine", "reset", "--hard"],
                 ["git", "-C", "mbs-wine", "push"],
                 ["git", "-C", "mbs-wine", "status", "--git-dir=/tmp"],
+                ["git", "-c", "core.hooksPath=.", "status"],
             ):
                 with self.subTest(command=command):
                     self.assertEqual(engine.evaluate_tool("run_command", {"argv": command}), "DENY")

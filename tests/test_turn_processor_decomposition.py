@@ -14,11 +14,40 @@ from kitt.core.turn_context import TurnContextMixin
 from kitt.core.turn_model import TurnModelMixin
 from kitt.tools.registry import ToolRegistry
 from kitt.core.turn_command import TurnCommand
-from kitt.core.turn_events import TurnCompleted, TurnFailed, ToolCompleted
+from kitt.core.turn_events import TurnBlocked, TurnCompleted, TurnFailed, ToolCompleted
 from kitt.domain.entities import ModelProfile
 
 
 class TurnProcessorDecompositionTests(unittest.TestCase):
+    def test_unwritable_execution_journal_blocks_before_tool_execution(self):
+        class Client:
+            profile = ModelProfile(backend="freellmapi", protocol="openai-compatible",
+                                   model="auto", context_window=32768)
+
+            def chat_stream(self, messages, **kwargs):
+                yield '<kitt-tool>{"name":"kitt_runtime","arguments":{"operation":"repo.create_directory","arguments":{"path":"mbs-wine"}}}</kitt-tool>'
+
+        class UnwritableLedger:
+            def reserve_tool_execution(self, *args, **kwargs):
+                raise PermissionError("permission denied: .kitt/history.db")
+
+        with tempfile.TemporaryDirectory() as root:
+            processor = TurnProcessor(
+                root_dir=root, execution_client=Client(),
+                config=RuntimeConfig(history_enabled=False, persistence_enabled=False),
+            )
+            processor.event_ledger = UnwritableLedger()
+            try:
+                events = list(processor.run_turn(TurnCommand(
+                    "conv", "Create mbs-wine directory.", no_history=True,
+                )))
+                self.assertTrue(any(isinstance(e, TurnBlocked) and
+                                    "journal is unavailable" in e.reason for e in events))
+                self.assertFalse((Path(root) / "mbs-wine").exists())
+            finally:
+                processor.close()
+                processor.registry.close()
+
     def test_native_call_repair_keeps_prior_host_receipts(self):
         from kitt.llm.domain import ProviderRecoverableError
 
