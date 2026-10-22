@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.59 — Preserve structured error evidence in compact test logs
+
+Keep first compiler/test failure context and terminal build/exit summaries when reducing long logs. Bound output deterministically by the line budget, reuse the existing artifact retention for full diagnostics, and add two focused regression tests. No dependency changes; retain existing pins.
+
+
 ## 0.88.58 — FreeLLMAPI rate-limit cooldown and safe retry
 
 Honor FreeLLMAPI HTTP 429 reset hints from Retry-After, JSON retryAtMs or routing exhaustion ETA; retry one time after cooldown, with cancellation support and a daemon-process-wide provider+credential gate shared by concurrent agent clients. Never automatically retry mixed HTTP 502 upstream failures or requests with already emitted output. Add contract tests for quota hints, bounded retries, mixed 502 and cancellation. Keep version lock synchronized and all dependency pins unchanged.
