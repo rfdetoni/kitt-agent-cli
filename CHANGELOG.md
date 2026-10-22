@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.58 — FreeLLMAPI rate-limit cooldown and safe retry
+
+Honor FreeLLMAPI HTTP 429 reset hints from Retry-After, JSON retryAtMs or routing exhaustion ETA; retry one time after cooldown, with cancellation support and a daemon-process-wide provider+credential gate shared by concurrent agent clients. Never automatically retry mixed HTTP 502 upstream failures or requests with already emitted output. Add contract tests for quota hints, bounded retries, mixed 502 and cancellation. Keep version lock synchronized and all dependency pins unchanged.
+
+
 ## 0.88.57 — honor no-op directory creation in post-edit verification
 
 The create_directory handler now reports whether the target already existed. Idempotent mkdir returns a successful no-change receipt and does not mark pre-existing files as changed, trigger post-edit verification, invalidate code memory, or record a deliverable. This fixes the repeated false "Directory validation refuses unsafe links" failure for existing mbs-wine/.git checkouts without loosening protected metadata or directory-verification security. Fresh directory creation continues to take a recovery snapshot and run verification. Regression exercises the real handler and engineering wrapper. Lock version updated, dependency pins unchanged.

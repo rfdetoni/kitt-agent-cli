@@ -28,6 +28,7 @@ from kitt.llm.endpoint_security import (
 )
 from kitt.llm.domain import (
     ProviderConnectionError,
+    ProviderRateLimitError,
     ProviderError,
     ProviderProtocolError,
     ProviderTimeoutError,
@@ -38,12 +39,14 @@ from kitt.llm.kitt_proxy_capabilities import (
 )
 from kitt.llm.providers.base import LLMRequest
 from kitt.llm.registry import ProviderRegistry
-from kitt.llm.retry import RetryConfig, RetryPolicy
+from kitt.llm.retry import RetryConfig, RetryPolicy, ProviderCooldowns
 from kitt.prompts import normalize_execution_system_prompt
 from kitt.router.models import ModelCapabilities
 
 
 logger = logging.getLogger(__name__)
+
+_FREE_LLM_API_COOLDOWNS = ProviderCooldowns()
 
 _SHARED_LLM_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=4,
@@ -125,7 +128,16 @@ class LLMClient:
             backend = (profile.backend or "").strip().lower()
             protocol = (profile.protocol or "").strip().lower()
             if backend == "freellmapi":
-                self.retry_policy = RetryPolicy(RetryConfig(max_retries=0, retry_timeouts=False))
+                # The gateway already tries many upstream routes. Retry only
+                # an explicit 429, once the advertised cooldown has elapsed.
+                # Do not replay mixed 502/provider_bad_request failures.
+                self.retry_policy = RetryPolicy(RetryConfig(
+                    max_retries=1,
+                    base_delay_ms=3000,
+                    max_delay_ms=120000,
+                    retry_timeouts=False,
+                    only_rate_limits=True,
+                ))
             elif backend in {"kitt-reverse-proxy", "kitt-proxy"} or protocol == "kitt-reverse-proxy":
                 self.retry_policy = RetryPolicy(RetryConfig(
                     max_retries=2,
@@ -526,9 +538,24 @@ class LLMClient:
                 api_key=api_key,
             )
 
+        cooldown_key = hashlib.sha256(
+            (backend + "\\0" + base_url.rstrip("/") + "\\0" + (api_key or "")).encode()
+        ).hexdigest() if backend == "freellmapi" else ""
+
         def cancellable_stream():
             with cancellation_scope(cancellation):
-                yield from adapter.stream(request)
+                if backend == "freellmapi":
+                    _FREE_LLM_API_COOLDOWNS.wait(cooldown_key, cancellation)
+                try:
+                    yield from adapter.stream(request)
+                except ProviderRateLimitError as exc:
+                    if backend == "freellmapi":
+                        # Gate other turns and child agents sharing this
+                        # endpoint/credential while this turn retries.
+                        _FREE_LLM_API_COOLDOWNS.record(
+                            cooldown_key, self.retry_policy.delay_seconds(exc, 0)
+                        )
+                    raise
         try:
             for chunk in self.retry_policy.execute_with_retry(
                 cancellable_stream,
