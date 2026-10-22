@@ -6,6 +6,7 @@ from kitt.tools.spec import ToolSpec
 from kitt.security.egress import EgressPolicy
 from kitt.security.sensitive_data import SensitiveDataScanner
 from kitt.security.path_policy import PathPolicy
+from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt.security.network_policy import NetworkPolicy
 
 class TestSecurityAndPolicies(unittest.TestCase):
@@ -54,6 +55,16 @@ class TestSecurityAndPolicies(unittest.TestCase):
 
             ok_esc, _, err_esc = policy.validate_path("../../etc/passwd")
             self.assertFalse(ok_esc)
+
+    def test_git_metadata_is_protected_but_error_explains_git_command(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fs = WorkspaceFileSystem(tmpdir)
+            for target in ("mbs-wine/.git", "mbs-wine/.git/HEAD"):
+                with self.subTest(target=target), self.assertRaises(PermissionError) as caught:
+                    fs.relative(target)
+                self.assertIn("Protected workspace path component: .git", str(caught.exception))
+                self.assertIn("process.run", str(caught.exception))
+            self.assertEqual(fs.relative("mbs-wine/.gitignore"), "mbs-wine/.gitignore")
 
     def test_network_policy_ssrf(self):
         ok_loop, _ = NetworkPolicy.validate_url("http://127.0.0.1:11434/api/generate")

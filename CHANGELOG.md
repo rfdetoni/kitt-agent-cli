@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.55 — guide Git metadata inspection and diagnose failing turns
+
+Git initialization and status already work through argv-only process.run. Direct workspace file tools must still reject .git for safety; their denial now points to Git commands, and both model-facing agent formats steer Git inspection away from protected internals. Unexpected turn failures now preserve a traceback in the agent log, while the user receives a meaningful error even for empty exceptions. No dependency pins were changed; uv.lock is synchronized with the version bump.
+
 ## 0.88.54 — restore Git metadata writes and fail-closed journal diagnostics
 
 Direct Git operations invoked with the literal `git` executable through policy-controlled `process.run` may update the workspace root `.git` when the execution sandbox has a writable workspace profile. Other executables and read-only profiles retain the `.git` read-only mount, and `.kitt` remains protected. A workspace-contained `git -C DIR` now handles four-argument reads and policy-gated mutations without bypassing the existing hard denials for push/reset/clean or network authority.
