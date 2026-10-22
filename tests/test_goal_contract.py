@@ -193,7 +193,7 @@ class GoalContractTests(unittest.TestCase):
                 _item("FINAL", kind="final", depends_on=["T01"]),
             ]
         }
-        with self.assertRaisesRegex(ValueError, r"Protected workspace path component: \\.git"):
+        with self.assertRaisesRegex(ValueError, r"Protected workspace path component: \.git"):
             planner.validate(original)
         with self.assertRaises(PermissionError):
             planner.fs.relative("mbs-wine/.git/config")
