@@ -1,8 +1,8 @@
 # Changelog — K.I.T.T. Agent CLI
 
-## 0.88.59 — Preserve structured error evidence in compact test logs
+## 0.88.59 — align adversarial review category prompt and validator
 
-Keep first compiler/test failure context and terminal build/exit summaries when reducing long logs. Give failures advisory typed diagnostics derived solely from host error strings, without granting privileges or changing retry behavior. Bound output deterministically by the line budget, reuse the existing artifact retention for full diagnostics, and add two focused regression tests. No dependency changes; retain existing pins.
+The adversarial reviewer now receives the exact ten required production review category identifiers and a valid schema-complete APPROVED example. Canonical labels with explicit descriptive suffixes (e.g., "Correctness: ...") normalize to their verified category identifiers without inferring unchecked coverage. A partial review still fails closed; deterministic host checks, evidence anchors, independent validation and review gates are unchanged. Regression covers compliant review, annotated categories and the actual four-category mismatch in the 2026-10-22 logs. CI runs the focused regression before long suites. Update uv.lock, preserve dependency pins.
 
 
 ## 0.88.58 — FreeLLMAPI rate-limit cooldown and safe retry
