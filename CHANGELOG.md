@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.61 — category-aware goal retry scheduling
+
+Honor the existing host-owned policy/environment classification in legacy scheduled goals: stop repeating policy-denied actions, back off environment failures, and use bounded jitter for retryable failures. Preserve lease fencing and retry accounting. One focused goal integration regression; no changes to dependency pins.
+
+
 ## 0.88.60 — preserve actionable host-tool diagnostics
 
 Preserve first build/test failure context and terminal status in bounded log summaries. Add advisory structured host-error categories without changing existing policies, capabilities, or retry behavior. Three focused regression checks; no dependency pin changes.
