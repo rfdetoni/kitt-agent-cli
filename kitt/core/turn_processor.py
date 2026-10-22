@@ -752,6 +752,10 @@ class TurnProcessor(
                 "initialize Git with direct argv ['git','init']. Never bundle "
                 "Git setup or clones into bash -c, sh -c or &&. "
                 "Host policy alone decides network access and approvals. "
+                "Repo file operations always use workspace-root-relative paths: "
+                "a file listed under mbs-wine must be read as "
+                "mbs-wine/.gitignore, never as bare .gitignore. "
+                "Prefer repo.list for directory discovery over process.run ls. "
                 "Avoid repeated environment discovery; act on the snapshot "
                 "and use host receipts to validate actual work.\n"
                 + plan_hint
