@@ -503,6 +503,16 @@ class SafeRuntime:
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
 
+        if op == "process.run" and self.registry is not None:
+            from kitt.tools.git_cwd_normalization import normalize_git_cwd_args
+
+            try:
+                args = normalize_git_cwd_args(args, self.registry.process_runner)
+            except (ValueError, PermissionError, FileNotFoundError, NotADirectoryError, OSError) as exc:
+                return self._result(
+                    start, SafeRuntimeResult(False, op, error=f"Command preflight failed: {exc}")
+                )
+
         if op in {"process.run", "process.start"}:
             argv = args.get("argv")
             if (
