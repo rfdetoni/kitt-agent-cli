@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.64 — opt-in ruDevolution RE plan
+
+Adds a restricted, read-only MCP tool for SHA-pinned, bounded JavaScript decompilation plans. No auto-download or execution. Operator-authorized, strongly sandboxed process.run required for the upstream Rust example. Plugin bumped 0.3.0, focused security regression; no new dependencies or dependency pin changes.
+
+
 ## 0.88.63 — normalize equivalent progress observations
 
 Share small, deterministic progress-only argument normalization across the tool loop and completion guard. Equivalent simple search-term order and redundant local path prefixes no longer evade repeat detection; failed observations normalize transient timestamps. Preserve exact tool execution identities, permissions, and successful output fingerprints, and avoid reordering phrase/boolean queries. Targeted regression tests, no dependency changes.

@@ -1,8 +1,8 @@
 name = "kitt-reverse-engineering"
-version = "0.2.0"
+version = "0.3.0"
 api_version = "1"
 entrypoint = "__init__:setup"
-description = "Opt-in read-only PE/ELF and differential evidence MCP tools"
+description = "Opt-in PE/ELF, offline JavaScript analysis plans, and differential evidence MCP tools"
 author = "KITT"
 requires_kitt = ">=0.86.0"
 permissions = ["mcp.manage"]

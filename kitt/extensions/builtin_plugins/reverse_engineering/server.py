@@ -11,6 +11,7 @@ from .evidence import EvidenceError, compare
 from .probe_evidence import compare_probe_receipts
 from .evidence_store import query as query_evidence
 from .mission import MissionError, plan_mission
+from .rudevolution import plan as plan_rudevolution
 
 VERSION = "2024-11-05"
 def _unique_pairs(pairs):
@@ -26,6 +27,12 @@ TOOLS = [
     {"name": "binary_inspect", "description": "Read-only PE/ELF headers and SHA256, maximum 64 MiB, workspace relative.",
      "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}},
                      "required": ["path"], "additionalProperties": False}},
+    {"name": "rudevolution_plan", "description": "Read-only SHA-pinned plan for offline JavaScript bundle decompilation; caller must use host-approved process.run.",
+     "inputSchema": {"type": "object", "properties": {
+         "path": {"type": "string"}, "executable": {"type": "string"},
+         "binary_sha256": {"type": "string"}, "output_dir": {"type": "string"}},
+         "required": ["path", "executable", "binary_sha256", "output_dir"],
+         "additionalProperties": False}},
     {"name": "evidence_compare", "description": "Compare two JSON-compatible experiment observations deterministically.",
      "inputSchema": {"type": "object", "properties": {"reference": {}, "candidate": {}},
                      "required": ["reference", "candidate"], "additionalProperties": False}},
@@ -65,6 +72,8 @@ def respond(request: dict, workspace: Path) -> dict | None:
             name, values = params.get("name"), params["arguments"]
             if name == "binary_inspect" and set(values) == {"path"}:
                 result_data = inspect(workspace, values["path"])
+            elif name == "rudevolution_plan" and set(values) == {"path", "executable", "binary_sha256", "output_dir"}:
+                result_data = plan_rudevolution(workspace, **values)
             elif name == "evidence_compare" and set(values) == {"reference", "candidate"}:
                 result_data = compare(values["reference"], values["candidate"])
             elif name == "lab_mission_plan" and set(values) == {"mission"}:
