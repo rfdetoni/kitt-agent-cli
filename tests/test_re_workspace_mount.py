@@ -31,6 +31,8 @@ def _fake_ghidra(monkeypatch, *, lines=None, interrupt=False, oom=False, polls=0
         def wait(self, timeout=None):
             if interrupt and self.returncode is None:
                 raise KeyboardInterrupt()
+            if self.returncode is not None:
+                return self.returncode
             if self.polls:
                 self.polls -= 1
                 raise subprocess.TimeoutExpired(cmd="docker", timeout=timeout)
@@ -397,3 +399,52 @@ def test_heap_cannot_consume_all_container_memory(monkeypatch, tmp_path):
         re_workspace.analyze_workspace(
             workspace=tmp_path, path="2.1.308", memory_mib=1024, heap_mib=1000,
             dry_run=True)
+
+
+def test_stale_telemetry_does_not_falsely_report_stall(monkeypatch, tmp_path):
+    log = tmp_path / "quiet.log"
+    log.write_bytes(b"")
+    monitor = re_workspace._ProgressMonitor(
+        log, "kitt-re-job-" + "f" * 12, time.monotonic() - 900, 600)
+    monkeypatch.setattr(re_workspace, "_sample_stats",
+                        lambda name: {"CPUPerc": "14%", "MemUsage": "150MiB / 4GiB"})
+    monitor.report()
+    assert monitor.telemetry_available
+    monitor.last_signal = time.monotonic() - 900
+    monkeypatch.setattr(re_workspace, "_sample_stats", lambda name: None)
+    monitor.report()
+    assert monitor.state == "RUNNING_NO_RECENT_SIGNAL"
+    assert not monitor.telemetry_available
+
+
+def test_exit_zero_without_analysis_success_report_remains_partial(monkeypatch, tmp_path):
+    (tmp_path / "2.1.308").write_bytes(b"\x7fELF" + bytes(128))
+    monkeypatch.setattr(re_workspace, "_managed_image", lambda: "sha256:" + "a" * 64)
+    _fake_ghidra(monkeypatch, lines=b"INFO REPORT: Save succeeded for: /2.1.308\n")
+    result = re_workspace.analyze_workspace(workspace=tmp_path, path="2.1.308")
+    assert result["status"] == "PARTIAL"
+    assert result["save_reported"] is True
+    assert result["analysis_success_reported"] is False
+
+
+def test_optional_host_timeout_cancels_only_transient_job(monkeypatch, tmp_path):
+    (tmp_path / "2.1.308").write_bytes(b"\x7fELF" + bytes(128))
+    monkeypatch.setattr(re_workspace, "_managed_image", lambda: "sha256:" + "a" * 64)
+    calls, removed = _fake_ghidra(monkeypatch, polls=1000)
+    ticks = iter(range(0, 500, 2))
+    monkeypatch.setattr(re_workspace.time, "monotonic", lambda: next(ticks))
+    result = re_workspace.analyze_workspace(
+        workspace=tmp_path, path="2.1.308", host_timeout_seconds=5)
+    assert result["status"] == "PARTIAL"
+    assert result["host_timed_out"] and removed
+    assert len(calls) == 1
+
+
+def test_sigterm_handler_maps_to_cancellation_without_killing_guest():
+    import signal
+    old_handler = signal.getsignal(signal.SIGTERM)
+    with re_workspace._cancel_on_sigterm():
+        current = signal.getsignal(signal.SIGTERM)
+        with pytest.raises(KeyboardInterrupt):
+            current(signal.SIGTERM, None)
+    assert signal.getsignal(signal.SIGTERM) == old_handler
