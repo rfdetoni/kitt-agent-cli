@@ -144,7 +144,7 @@ class TurnToolLoopMixin:
             messages=summarize_trace_messages(execution_messages),
         )
         full_response = ""
-        max_python_calls = 2
+        max_python_calls = max(0, int(self.config.max_python_calls_per_turn))
         python_calls = 0
         tool_calls = 0
         malformed_calls = 0
@@ -274,7 +274,7 @@ class TurnToolLoopMixin:
                     partial_chars=len(full_response),
                     error=str(exc),
                 )
-                if output_limit_recoveries > 2:
+                if output_limit_recoveries > self.config.max_output_limit_recoveries:
                     yield TurnFailed(error="Provider output limit reached repeatedly."), None, None
                     return
                 execution_messages.append({
@@ -294,7 +294,7 @@ class TurnToolLoopMixin:
                 if exc.code != "native_tool_call_invalid":
                     raise
                 malformed_calls += 1
-                if malformed_calls > 2:
+                if malformed_calls > self.config.max_malformed_tool_recoveries:
                     yield TurnFailed(error=str(exc)), None, None
                     return
                 execution_messages.append({
@@ -339,7 +339,7 @@ class TurnToolLoopMixin:
                 python_args = parse_python_compute_call(full_response)
             except ValueError as exc:
                 malformed_calls += 1
-                if malformed_calls > 2:
+                if malformed_calls > self.config.max_malformed_tool_recoveries:
                     yield TurnFailed(error=f"Invalid python_compute request: {exc}"), None, None
                     return
                 execution_messages.extend([
@@ -354,7 +354,7 @@ class TurnToolLoopMixin:
                     general_call = parse_tool_call(full_response, explicit_only=effective_agent_route == "agent-loop")
                 except (ValueError, TypeError) as exc:
                     malformed_calls += 1
-                    if malformed_calls > 2:
+                    if malformed_calls > self.config.max_malformed_tool_recoveries:
                         yield TurnFailed(error=f"Invalid tool request: {exc}"), None, None
                         return
                     execution_messages.extend([
@@ -415,7 +415,7 @@ class TurnToolLoopMixin:
                             turn_id=cmd.turn_id, attempts=goal_tool_recoveries,
                             tool_calls=tool_calls,
                         )
-                        if _completion_recovery_exhausted(goal_tool_recoveries):
+                        if _completion_recovery_exhausted(goal_tool_recoveries, self.config.max_completion_recoveries):
                             yield TurnBlocked(
                                 reason="Durable goal step has no host tool evidence after bounded JSON tool requests."
                             ), None, None
@@ -449,7 +449,7 @@ class TurnToolLoopMixin:
                             host = plans.host_state(cmd.conversation_id, cmd.turn_id)
                             if not host["completion_ready"]:
                                 completion_recoveries += 1
-                                if _completion_recovery_exhausted(completion_recoveries):
+                                if _completion_recovery_exhausted(completion_recoveries, self.config.max_completion_recoveries):
                                     yield TurnBlocked(reason="Host evidence does not satisfy pending tasks or verification"), None, None
                                     return
                                 execution_messages.extend([
@@ -578,7 +578,7 @@ class TurnToolLoopMixin:
                         success=False,
                         failure_kind="parse_failure",
                     )
-                if malformed_calls > 2:
+                if malformed_calls > self.config.max_malformed_tool_recoveries:
                     yield TurnFailed(error="Invalid apply_patch request: no valid SEARCH/REPLACE or unified-diff blocks."), None, None
                     return
                 retry_hint = (
@@ -869,7 +869,7 @@ class TurnToolLoopMixin:
             if not tool_result.success and tool_result.error and "Execution denied by PolicyEngine" in tool_result.error:
                 denied_calls.add(denied_identity)
                 policy_denials += 1
-                if policy_denials > 2:
+                if policy_denials > self.config.max_policy_denial_recoveries:
                     yield TurnBlocked(reason=tool_result.error), None, None
                     return
                 operation = (

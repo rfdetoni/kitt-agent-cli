@@ -1,5 +1,40 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.66 — host-governed targeted test.run
+
+The test.run runtime operation selects an existing deterministic BuildDetector test recipe from workspace-contained source paths and delegates it through the regular capability-gated, approved and strongly sandboxed run_command path. Supports read-only dry_run preview, 16 input paths maximum, timeout <= 240 seconds, network off and no custom argv. Focused tests; unchanged dependency pins and uv.lock synchronized.
+
+
+## 0.88.65 — bounded host-governed MCP tool discovery
+
+Expose mcp.discover to inspect already registered, trusted MCP tools, filtering by query/server with bounded results and scope-aware visibility. The operation requires the existing CAP_MCP_CALL capability and never connects servers, imports schemas, or executes a tool. mcp.call remains separately policy-checked. Focused regression; uv.lock synchronized; dependency pins unchanged.
+
+
+## 0.88.64 — opt-in ruDevolution RE plan
+
+Adds a restricted, read-only MCP tool for SHA-pinned, bounded JavaScript decompilation plans. No auto-download or execution. Operator-authorized, strongly sandboxed process.run required for the upstream Rust example. Plugin bumped 0.3.0, focused security regression; no new dependencies or dependency pin changes.
+
+
+## 0.88.63 — normalize equivalent progress observations
+
+Share small, deterministic progress-only argument normalization across the tool loop and completion guard. Equivalent simple search-term order and redundant local path prefixes no longer evade repeat detection; failed observations normalize transient timestamps. Preserve exact tool execution identities, permissions, and successful output fingerprints, and avoid reordering phrase/boolean queries. Targeted regression tests, no dependency changes.
+
+
+## 0.88.62 — bounded configurable tool-loop recovery
+
+Expose guarded 0..8 environment-configurable recovery thresholds for malformed calls, policy denials, output-limit errors, completion claims and Python calls. Defaults preserve previous behavior and hard execution budgets still apply. Reject invalid environment values rather than silently degrading. One targeted regression module, no new dependencies or privilege changes.
+
+
+## 0.88.61 — category-aware goal retry scheduling
+
+Honor the existing host-owned policy/environment classification in legacy scheduled goals: stop repeating policy-denied actions, back off environment failures, and use bounded jitter for retryable failures. Preserve lease fencing and retry accounting. One focused goal integration regression; no changes to dependency pins.
+
+
+## 0.88.60 — preserve actionable host-tool diagnostics
+
+Preserve first build/test failure context and terminal status in bounded log summaries. Add advisory structured host-error categories without changing existing policies, capabilities, or retry behavior. Three focused regression checks; no dependency pin changes.
+
+
 ## 0.88.59 — align adversarial review category prompt and validator
 
 The adversarial reviewer now receives the exact ten required production review category identifiers and a valid schema-complete APPROVED example. Canonical labels with explicit descriptive suffixes (e.g., "Correctness: ...") normalize to their verified category identifiers without inferring unchecked coverage. A partial review still fails closed; deterministic host checks, evidence anchors, independent validation and review gates are unchanged. Regression covers compliant review, annotated categories and the actual four-category mismatch in the 2026-10-22 logs. CI runs the focused regression before long suites. Update uv.lock, preserve dependency pins.

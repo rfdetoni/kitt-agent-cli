@@ -16,6 +16,7 @@ from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
 from kitt.runtime.program_runtime import BoundedProgramRuntime
 from kitt.runtime.persistent_program import PersistentProgramSessions
 from kitt.runtime.progressive import apply_progressive_search_view
+from kitt.tools.build_detector import BuildDetector
 from kitt.runtime.retrieval_guard import RetrievalGuard
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.control_plane import control_plane_paths
@@ -179,6 +180,11 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         risk_cost=3,
         sandbox_profile="workspace-write",
     ),
+    "test.run": RuntimeOperationSpec(
+        "test.run", CAP_PROCESS_RUN, "run_command", sensitive=True,
+        resume_tool_name="run_command", risk_cost=3,
+        sandbox_profile="workspace-write",
+    ),
     "process.start": RuntimeOperationSpec(
         "process.start",
         CAP_PROCESS_RUN,
@@ -278,6 +284,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "mcp.call": RuntimeOperationSpec(
         "mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True
     ),
+    "mcp.discover": RuntimeOperationSpec("mcp.discover", CAP_MCP_CALL),
     "browser.open": RuntimeOperationSpec("browser.open", CAP_BROWSER_READ),
     "browser.inspect": RuntimeOperationSpec("browser.inspect", CAP_BROWSER_READ),
     "browser.screenshot": RuntimeOperationSpec("browser.screenshot", CAP_BROWSER_READ),
@@ -949,6 +956,10 @@ class SafeRuntime:
             "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
+            "test.run": lambda: self._op_test_run(
+                args, turn_id, origin, security_context, grant,
+                expected_approval_id, automatic_budget_reserved,
+            ),
             "process.start": lambda: self._op_process_start(
                 args, turn_id, security_context, origin
             ),
@@ -992,6 +1003,7 @@ class SafeRuntime:
             "mcp.call": lambda: self._op_mcp_call(
                 args, turn_id, security_context, automatic_budget_reserved
             ),
+            "mcp.discover": lambda: self._op_mcp_discover(args, security_context),
             "browser.open": lambda: self._op_browser_action("browser.open", args),
             "browser.inspect": lambda: self._op_browser_action("browser.inspect", args),
             "browser.screenshot": lambda: self._op_browser_action("browser.screenshot", args),
@@ -2538,6 +2550,100 @@ class SafeRuntime:
             data=getattr(result, "data", str(result)),
             error=getattr(result, "error", None),
         )
+
+    def _op_test_run(
+        self, args, turn_id, origin, security_context, grant=None,
+        expected_approval_id=None, automatic_budget_reserved: bool = False,
+    ):
+        """Select a host-detected test, delegating execution to approved process.run."""
+        if not isinstance(args, dict) or set(args) - {"paths", "dry_run"}:
+            return SafeRuntimeResult(False, "test.run", error="Unsupported test.run arguments")
+        paths = args.get("paths")
+        dry_run = args.get("dry_run", False)
+        if (
+            not isinstance(paths, list) or not 1 <= len(paths) <= 16
+            or type(dry_run) is not bool
+        ):
+            return SafeRuntimeResult(False, "test.run", error="Expected 1..16 paths and optional boolean dry_run")
+        checked = []
+        for value in paths:
+            if not isinstance(value, str) or not value or "\\x00" in value or "\\" in value:
+                return SafeRuntimeResult(False, "test.run", error="Invalid test target path")
+            candidate = Path(value)
+            if candidate.is_absolute() or ".." in candidate.parts:
+                return SafeRuntimeResult(False, "test.run", error="Test target must be workspace relative")
+            resolved = (self.root / candidate).resolve()
+            if not resolved.is_relative_to(self.root) or not resolved.is_file():
+                return SafeRuntimeResult(False, "test.run", error="Test target not found under workspace")
+            if security_context is not None:
+                security_context.assert_path_allowed(value)
+            checked.append(value)
+        detector = BuildDetector(str(self.root))
+        targeted = [step for step in detector.plan_verification(checked) if step.kind == "test"]
+        candidates = targeted or [
+            step for step in detector.plan_verification(checked, full=True)
+            if step.kind == "test"
+        ]
+        if not candidates:
+            return SafeRuntimeResult(False, "test.run", error="No host-detected test command for these files")
+        chosen = candidates[0]
+        plan = {
+            "step": chosen.name, "argv": list(chosen.argv),
+            "timeout_seconds": min(int(chosen.timeout_seconds), 240),
+            "cwd": ".", "network": False,
+        }
+        if dry_run:
+            return SafeRuntimeResult(True, "test.run", data={
+                "planned": True, "executed": False, **plan,
+            })
+        delegated = self._op_registry_tool(
+            "test.run", "run_command", {
+                "argv": plan["argv"], "timeout_seconds": plan["timeout_seconds"],
+                "cwd": ".", "network": False,
+            },
+            turn_id, origin, security_context, grant,
+            expected_approval_id, automatic_budget_reserved,
+        )
+        return delegated
+
+    def _op_mcp_discover(self, args, security_context):
+        """List already-registered MCP tools without connecting or granting access."""
+        if not isinstance(args, dict) or set(args) - {"query", "limit", "server_id"}:
+            return SafeRuntimeResult(False, "mcp.discover", error="Unexpected MCP discovery arguments")
+        query = args.get("query", "")
+        server_id = args.get("server_id", "")
+        limit = args.get("limit", 5)
+        if (
+            not isinstance(query, str) or len(query) > 128
+            or not isinstance(server_id, str) or len(server_id) > 128
+            or type(limit) is not int or not 1 <= limit <= 20
+        ):
+            return SafeRuntimeResult(False, "mcp.discover", error="Invalid discovery query, server_id, or limit (1..20)")
+        if not self.registry:
+            return SafeRuntimeResult(False, "mcp.discover", error="Tool registry not attached")
+        # Registered tools have passed the MCP manager's trust/allow/deny policy.
+        # Never start a server merely because the model requested discovery.
+        registered = getattr(self.registry, "_custom_tools", {})
+        scoped = bool(getattr(security_context, "is_path_scoped", False))
+        prefix = f"mcp.{server_id.strip().lower()}." if server_id.strip() else "mcp."
+        needle = query.strip().casefold()
+        found = []
+        for name, metadata in sorted(registered.items()):
+            if not name.startswith(prefix) or not isinstance(metadata, dict):
+                continue
+            if scoped and not bool(metadata.get("scope_aware")):
+                continue
+            description = str(metadata.get("description") or "")[:240]
+            if needle and needle not in name.casefold() and needle not in description.casefold():
+                continue
+            found.append({"name": name, "description": description})
+            if len(found) > limit:
+                break
+        return SafeRuntimeResult(True, "mcp.discover", data={
+            "tools": found[:limit], "truncated": len(found) > limit,
+            "source": "trusted_registered_tools_only", "descriptions_untrusted": True,
+            "invocation": "mcp.call (still subject to host capability, scope, and tool policy)",
+        })
 
     def _op_mcp_call(
         self, args, turn_id, security_context, automatic_budget_reserved: bool = False

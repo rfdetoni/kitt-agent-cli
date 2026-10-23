@@ -14,6 +14,19 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
+def _env_recovery_limit(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return int(default)
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer from 0 to 8") from exc
+    if not 0 <= value <= 8:
+        raise ValueError(f"{name} must be an integer from 0 to 8")
+    return value
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     history_enabled: bool = True
@@ -47,6 +60,11 @@ class RuntimeConfig:
     max_turn_duration_seconds: float = 1800.0
     max_subagents_per_turn: int = 4
     agent_loop_action_budget: int = 4
+    max_malformed_tool_recoveries: int = 2
+    max_policy_denial_recoveries: int = 2
+    max_output_limit_recoveries: int = 2
+    max_completion_recoveries: int = 2
+    max_python_calls_per_turn: int = 2
 
     compaction_keep_recent: int = 6
     compaction_min_tokens: int = 0
@@ -128,6 +146,16 @@ class RuntimeConfig:
             provider_failover_enabled=_env_bool("KITT_PROVIDER_FAILOVER", values.get("provider_failover_enabled", True)),
             verify_full_enabled=verification_full_enabled(bool(values.get("verify_full_enabled", False))),
         )
+        recovery_vars = {
+            "max_malformed_tool_recoveries": "KITT_MAX_MALFORMED_TOOL_RECOVERIES",
+            "max_policy_denial_recoveries": "KITT_MAX_POLICY_DENIAL_RECOVERIES",
+            "max_output_limit_recoveries": "KITT_MAX_OUTPUT_LIMIT_RECOVERIES",
+            "max_completion_recoveries": "KITT_MAX_COMPLETION_RECOVERIES",
+            "max_python_calls_per_turn": "KITT_MAX_PYTHON_CALLS_PER_TURN",
+        }
+        defaults = cls()
+        for field, env in recovery_vars.items():
+            values[field] = _env_recovery_limit(env, int(values.get(field, getattr(defaults, field))))
         mode = os.getenv("KITT_SEMANTIC_MODE", str(values.get("semantic_mode", "off"))).strip().lower()
         values["semantic_mode"] = mode if mode in {"off", "auto", "local"} else "off"
         return cls(**values)
