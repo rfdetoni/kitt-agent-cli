@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.69 — streaming inventory for large ELF binaries
+
+The opt-in KITT RE MCP plugin adds `elf_inspect_stream` for read-only ELF metadata and incremental SHA256 hashing up to 512 MiB in constant RAM. Symlink-safe workspace traversal, bounded regular-file check, and concurrent size/mtime change detection. Plugin version 0.4.0. This is inventory, not decompilation; Ghidra analysis remains separately governed. No new dependencies or pin changes.
+
+
 ## 0.88.68 — distinguish task IDs from persisted goal IDs
 
 Help autonomous RE workers avoid repeated invalid goal.inspect calls by redirecting missing local orchestrator task IDs (T01 etc.) to plan.inspect / plan.next without auto-converting IDs or granting capabilities. Targeted regression, synchronized uv.lock and unchanged dependency pins.

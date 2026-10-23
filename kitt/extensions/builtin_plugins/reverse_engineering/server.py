@@ -12,6 +12,7 @@ from .probe_evidence import compare_probe_receipts
 from .evidence_store import query as query_evidence
 from .mission import MissionError, plan_mission
 from .rudevolution import plan as plan_rudevolution
+from .large_elf import inspect_large_elf
 
 VERSION = "2024-11-05"
 def _unique_pairs(pairs):
@@ -33,6 +34,9 @@ TOOLS = [
          "binary_sha256": {"type": "string"}, "output_dir": {"type": "string"}},
          "required": ["path", "executable", "binary_sha256", "output_dir"],
          "additionalProperties": False}},
+    {"name": "elf_inspect_stream", "description": "Read-only bounded SHA256 + ELF metadata stream for binaries up to 512 MiB; no execution.",
+     "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}},
+                     "required": ["path"], "additionalProperties": False}},
     {"name": "evidence_compare", "description": "Compare two JSON-compatible experiment observations deterministically.",
      "inputSchema": {"type": "object", "properties": {"reference": {}, "candidate": {}},
                      "required": ["reference", "candidate"], "additionalProperties": False}},
@@ -72,6 +76,8 @@ def respond(request: dict, workspace: Path) -> dict | None:
             name, values = params.get("name"), params["arguments"]
             if name == "binary_inspect" and set(values) == {"path"}:
                 result_data = inspect(workspace, values["path"])
+            elif name == "elf_inspect_stream" and set(values) == {"path"}:
+                result_data = inspect_large_elf(workspace, values["path"])
             elif name == "rudevolution_plan" and set(values) == {"path", "executable", "binary_sha256", "output_dir"}:
                 result_data = plan_rudevolution(workspace, **values)
             elif name == "evidence_compare" and set(values) == {"reference", "candidate"}:
