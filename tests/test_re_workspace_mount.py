@@ -29,7 +29,7 @@ def _fake_ghidra(monkeypatch, *, lines=None, interrupt=False, oom=False, polls=0
             self.polls = polls
 
         def wait(self, timeout=None):
-            if interrupt:
+            if interrupt and self.returncode is None:
                 raise KeyboardInterrupt()
             if self.polls:
                 self.polls -= 1
@@ -210,8 +210,8 @@ def test_interrupt_cleans_up_only_its_own_analysis_container(
         re_workspace.re_docker_lab, "_docker",
         lambda argv, **kw: removed.append(argv) or SimpleNamespace(returncode=0),
     )
-    with pytest.raises(VMError, match="cancelada"):
-        re_workspace.analyze_workspace(workspace=tmp_path, path="2.1.308")
+    result = re_workspace.analyze_workspace(workspace=tmp_path, path="2.1.308")
+    assert result["status"] == "CANCELLED"
     assert len(removed) == 1
     assert removed[0][:2] == ["rm", "--force"]
     assert removed[0][2].startswith("kitt-re-job-")
