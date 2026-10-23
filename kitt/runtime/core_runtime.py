@@ -1231,6 +1231,37 @@ class SafeRuntime:
             automatic_budget_reserved=automatic_budget_reserved,
         )
         metadata = dict(getattr(tool_result, "metadata", {}) or {})
+        error = tool_result.error
+        # Bubblewrap deliberately remounts .git read-only for Python/shell
+        # wrappers. Only direct, host-policy-checked Git argv gets the scoped
+        # Git metadata write allowance. Make this failure actionable instead
+        # of inducing expensive repeated permission/path probes.
+        argv = args.get("argv")
+        if (
+            tool_name == "run_command"
+            and not tool_result.success
+            and isinstance(argv, list) and argv
+            and isinstance(argv[0], str)
+            and argv[0].rsplit("/", 1)[-1].lower() not in {"git", "git.exe"}
+        ):
+            output = str(getattr(tool_result, "output", "") or "")[:8192].casefold()
+            if (
+                ".git/index.lock" in output
+                and any(fragment in output for fragment in (
+                    "read-only file system", "somente para leitura",
+                    "readonly file system", "erofs",
+                ))
+            ):
+                metadata["failure_kind"] = "GIT_METADATA_READ_ONLY_WRAPPED_PROCESS"
+                metadata["retry_same_command"] = False
+                error = (
+                    "Git mutation blocked: .git is read-only for wrapped "
+                    "Python/shell commands in the strong process sandbox. "
+                    "Use kitt_runtime git.action with action=stage/commit "
+                    "(or direct process.run argv beginning with 'git'), "
+                    "subject to host policy and approval. Do not retry the "
+                    "same wrapper; if direct Git also fails, report BLOCKED_ENV."
+                )
         handles: list[str] = []
         if tool_name == "artifact_store" and metadata.get("artifact_id"):
             handles.append(f"artifact:{metadata['artifact_id']}")
@@ -1251,7 +1282,7 @@ class SafeRuntime:
             success=tool_result.success,
             operation=operation,
             data=tool_result.output,
-            error=tool_result.error,
+            error=error,
             context_handles=handles,
             requires_approval=requires_approval,
             approval_action=(
