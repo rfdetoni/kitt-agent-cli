@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import faulthandler
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,7 +68,14 @@ def main() -> int:
     missing = [path for path in RELEASE_CRITICAL_TESTS if not (ROOT / path).is_file()]
     if missing:
         raise SystemExit(f"release-critical test paths are missing: {missing}")
-    return int(pytest.main(["-q", *RELEASE_CRITICAL_TESTS]))
+    # A prior 15-minute CI timeout emitted no test name because -q and stdout
+    # buffering concealed the blocked case. Preserve ALL test contracts.
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(240, repeat=False, file=sys.stderr)
+    try:
+        return int(pytest.main(["-vv", "--maxfail=1", "--durations=10", *RELEASE_CRITICAL_TESTS]))
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 
 if __name__ == "__main__":
