@@ -278,6 +278,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "mcp.call": RuntimeOperationSpec(
         "mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True
     ),
+    "mcp.discover": RuntimeOperationSpec("mcp.discover", CAP_MCP_CALL),
     "browser.open": RuntimeOperationSpec("browser.open", CAP_BROWSER_READ),
     "browser.inspect": RuntimeOperationSpec("browser.inspect", CAP_BROWSER_READ),
     "browser.screenshot": RuntimeOperationSpec("browser.screenshot", CAP_BROWSER_READ),
@@ -992,6 +993,7 @@ class SafeRuntime:
             "mcp.call": lambda: self._op_mcp_call(
                 args, turn_id, security_context, automatic_budget_reserved
             ),
+            "mcp.discover": lambda: self._op_mcp_discover(args, security_context),
             "browser.open": lambda: self._op_browser_action("browser.open", args),
             "browser.inspect": lambda: self._op_browser_action("browser.inspect", args),
             "browser.screenshot": lambda: self._op_browser_action("browser.screenshot", args),
@@ -2538,6 +2540,45 @@ class SafeRuntime:
             data=getattr(result, "data", str(result)),
             error=getattr(result, "error", None),
         )
+
+    def _op_mcp_discover(self, args, security_context):
+        """List already-registered MCP tools without connecting or granting access."""
+        if not isinstance(args, dict) or set(args) - {"query", "limit", "server_id"}:
+            return SafeRuntimeResult(False, "mcp.discover", error="Unexpected MCP discovery arguments")
+        query = args.get("query", "")
+        server_id = args.get("server_id", "")
+        limit = args.get("limit", 5)
+        if (
+            not isinstance(query, str) or len(query) > 128
+            or not isinstance(server_id, str) or len(server_id) > 128
+            or type(limit) is not int or not 1 <= limit <= 20
+        ):
+            return SafeRuntimeResult(False, "mcp.discover", error="Invalid discovery query, server_id, or limit (1..20)")
+        if not self.registry:
+            return SafeRuntimeResult(False, "mcp.discover", error="Tool registry not attached")
+        # Registered tools have passed the MCP manager's trust/allow/deny policy.
+        # Never start a server merely because the model requested discovery.
+        registered = getattr(self.registry, "_custom_tools", {})
+        scoped = bool(getattr(security_context, "is_path_scoped", False))
+        prefix = f"mcp.{server_id.strip().lower()}." if server_id.strip() else "mcp."
+        needle = query.strip().casefold()
+        found = []
+        for name, metadata in sorted(registered.items()):
+            if not name.startswith(prefix) or not isinstance(metadata, dict):
+                continue
+            if scoped and not bool(metadata.get("scope_aware")):
+                continue
+            description = str(metadata.get("description") or "")[:240]
+            if needle and needle not in name.casefold() and needle not in description.casefold():
+                continue
+            found.append({"name": name, "description": description})
+            if len(found) > limit:
+                break
+        return SafeRuntimeResult(True, "mcp.discover", data={
+            "tools": found[:limit], "truncated": len(found) > limit,
+            "source": "trusted_registered_tools_only", "descriptions_untrusted": True,
+            "invocation": "mcp.call (still subject to host capability, scope, and tool policy)",
+        })
 
     def _op_mcp_call(
         self, args, turn_id, security_context, automatic_budget_reserved: bool = False

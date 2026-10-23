@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.65 — bounded host-governed MCP tool discovery
+
+Expose mcp.discover to inspect already registered, trusted MCP tools, filtering by query/server with bounded results and scope-aware visibility. The operation requires the existing CAP_MCP_CALL capability and never connects servers, imports schemas, or executes a tool. mcp.call remains separately policy-checked. Focused regression; uv.lock synchronized; dependency pins unchanged.
+
+
 ## 0.88.64 — opt-in ruDevolution RE plan
 
 Adds a restricted, read-only MCP tool for SHA-pinned, bounded JavaScript decompilation plans. No auto-download or execution. Operator-authorized, strongly sandboxed process.run required for the upstream Rust example. Plugin bumped 0.3.0, focused security regression; no new dependencies or dependency pin changes.
