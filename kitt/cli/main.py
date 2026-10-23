@@ -681,7 +681,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--approve", action="store_true",
                        help="Approve the fixed GitHub clone on the networked host")
     analyze = re_lab_actions.add_parser(
-        "analyze", help="Analyze a workspace file with Ghidra in an ephemeral, networkless RE toolbox")
+        "analyze", help="Analyze a workspace file with a dedicated, isolated Ghidra Docker executor")
     analyze.add_argument("--workspace", type=Path, default=None,
         help="Active project to share read-only with the RE analysis guest (default: current directory)")
     analyze.add_argument("--path", required=True,
@@ -754,11 +754,11 @@ def build_parser() -> argparse.ArgumentParser:
     container_commands = containers.add_subparsers(dest="container_action", required=True)
     container_build = container_commands.add_parser("build", help="Build QEMU runner or preinstalled Linux RE toolbox image")
     container_build.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
-    container_build.add_argument("--image", choices=["qemu", "toolbox"], required=True)
+    container_build.add_argument("--image", choices=["qemu", "toolbox", "ghidra", "frida"], required=True)
     container_build.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_pull = container_commands.add_parser("pull", help="Fetch published QEMU and Linux RE images")
     container_pull.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
-    container_pull.add_argument("--image", choices=["qemu", "toolbox"], required=True)
+    container_pull.add_argument("--image", choices=["qemu", "toolbox", "ghidra", "frida"], required=True)
     container_pull.add_argument("--profile", choices=["base", "wine", "full"], default="full")
     container_doctor = container_commands.add_parser("doctor", help="Check Docker/Podman and KVM")
     container_doctor.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
@@ -775,8 +775,10 @@ def build_parser() -> argparse.ArgumentParser:
     container_snapshot.add_argument("--yes", action="store_true", help="Explicit approval required for restore")
     container_toolbox = container_commands.add_parser("toolbox", help="Open RE tools shell (trusted files only)")
     container_toolbox.add_argument("--runtime", choices=["auto", "docker", "podman"], default="auto")
-    container_toolbox.add_argument("--profile", choices=["base", "wine", "full"], default="full")
+    container_toolbox.add_argument("--profile", choices=["base", "wine", "full", "ghidra", "frida"], default="full")
     container_toolbox.add_argument("--workspace", type=Path, required=True)
+    container_toolbox.add_argument("--allow-ptrace", action="store_true",
+        help="Explicitly permit SYS_PTRACE in isolated Frida container (not host PID namespace)")
 
     vm_lab = vm_commands.add_parser("lab", help="Host-controlled Windows/Linux differential probe broker")
     vm_lab_commands = vm_lab.add_subparsers(dest="lab_action", required=True)
@@ -1408,7 +1410,8 @@ def main(argv=None) -> int:
                     result = vm_container.doctor(args.runtime)
                 elif args.container_action == "toolbox":
                     return vm_container.toolbox(runtime=args.runtime, profile=args.profile,
-                                                workspace=args.workspace)
+                                                workspace=args.workspace,
+                                                allow_ptrace=args.allow_ptrace)
                 elif args.container_action == "credentials":
                     result = vm_container.credentials(args.profile)
                 elif args.container_action == "snapshot":

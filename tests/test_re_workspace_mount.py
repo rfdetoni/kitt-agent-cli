@@ -161,17 +161,21 @@ def test_existing_output_symlink_is_not_adopted(monkeypatch, tmp_path):
         re_workspace.analyze_workspace(workspace=tmp_path, path="test.elf")
 
 
-def test_only_existing_managed_running_image_may_be_reused(monkeypatch):
-    monkeypatch.setattr(re_workspace.re_docker_lab, "inspect", lambda role: None)
-    with pytest.raises(VMError, match="not running"):
-        re_workspace._managed_image()
-    monkeypatch.setattr(re_workspace.re_docker_lab, "inspect",
-                        lambda role: {"managed": True, "status": "running",
-                                      "container_id": "a" * 64})
-    monkeypatch.setattr(re_workspace.re_docker_lab, "_docker",
-                        lambda *args, **kwargs: SimpleNamespace(
-                            returncode=0, stdout=b"sha256:" + b"f" * 64))
+def test_ghidra_image_is_dedicated_pinned_and_independent_of_toolbox(monkeypatch):
+    from kitt import vm_container
+    monkeypatch.setattr(re_workspace.shutil, "which", lambda cmd: "/usr/bin/docker")
+    observed = []
+    def inspect(runtime, tag):
+        observed.append((runtime, tag))
+        return "sha256:" + "f" * 64
+    monkeypatch.setattr(vm_container, "_image_id", inspect)
     assert re_workspace._managed_image() == "sha256:" + "f" * 64
+    assert observed == [("/usr/bin/docker", vm_container.IMAGES["ghidra"])]
+    def missing(*_):
+        raise VMError("missing")
+    monkeypatch.setattr(vm_container, "_image_id", missing)
+    with pytest.raises(VMError, match="pull --image ghidra"):
+        re_workspace._managed_image()
 
 
 

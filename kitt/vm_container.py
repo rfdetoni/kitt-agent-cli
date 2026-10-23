@@ -30,11 +30,15 @@ from .vm_supervisor import VMError
 from .vm_windows import _path, _sha256
 
 VERSION = "0.86.11"
+RE_EXECUTOR_VERSION = "0.88.77"
+RE_TOOLBOX_VERSION = "0.88.77"
 IMAGES = {
     "qemu": f"kitt/qemu-vm:{VERSION}",
-    "base": f"kitt/linux-re:base-{VERSION}",
-    "wine": f"kitt/linux-re:wine-{VERSION}",
-    "full": f"kitt/linux-re:full-{VERSION}",
+    "base": f"kitt/linux-re:base-{RE_TOOLBOX_VERSION}",
+    "wine": f"kitt/linux-re:wine-{RE_TOOLBOX_VERSION}",
+    "full": f"kitt/linux-re:full-{RE_TOOLBOX_VERSION}",
+    "ghidra": f"kitt/re-ghidra:{RE_EXECUTOR_VERSION}",
+    "frida": f"kitt/re-frida:{RE_EXECUTOR_VERSION}",
 }
 RUNTIMES = ("docker", "podman")
 PROFILE_LIMIT = 8192
@@ -141,18 +145,20 @@ def _read_profile(path: Path) -> dict:
 
 
 def build_image(*, runtime: str, image: str, profile: str = "full") -> dict:
-    if image not in ("qemu", "toolbox"):
-        raise VMError("Choose image qemu or toolbox")
+    if image not in ("qemu", "toolbox", "ghidra", "frida"):
+        raise VMError("Choose image qemu, toolbox, ghidra or frida")
     if image == "toolbox" and profile not in ("base", "wine", "full"):
         raise VMError("Unknown Linux RE toolbox profile")
     executable = _runtime(runtime)
     dockerfile = ASSETS / ("Dockerfile.qemu" if image == "qemu" else "Dockerfile.re")
     if not dockerfile.is_file():
         raise VMError("VM container assets are missing from installation")
-    tag = IMAGES["qemu"] if image == "qemu" else IMAGES[profile]
+    tag = IMAGES[profile] if image == "toolbox" else IMAGES[image]
     argv = [executable, "build", "-f", str(dockerfile), "-t", tag]
     if image == "toolbox":
         argv.extend(["--target", profile])
+    elif image in ("ghidra", "frida"):
+        argv.extend(["--target", image])
     argv.append(str(ASSETS))
     result = subprocess.run(argv, check=False, timeout=2400)
     if result.returncode:
@@ -162,14 +168,16 @@ def build_image(*, runtime: str, image: str, profile: str = "full") -> dict:
 
 def pull_image(*, runtime: str, image: str, profile: str = "full") -> dict:
     """Explicitly fetch prebuilt GHCR image; never auto-pull during VM execution."""
-    if image not in ("qemu", "toolbox"):
-        raise VMError("Choose image qemu or toolbox")
+    if image not in ("qemu", "toolbox", "ghidra", "frida"):
+        raise VMError("Choose image qemu, toolbox, ghidra or frida")
     if image == "toolbox" and profile not in ("base", "wine", "full"):
         raise VMError("Unsupported RE image profile")
     executable = _runtime(runtime)
     published = ("ghcr.io/rfdetoni/kitt-qemu-vm:" + VERSION if image == "qemu"
-                 else "ghcr.io/rfdetoni/kitt-linux-re:" + profile + "-" + VERSION)
-    local = IMAGES["qemu"] if image == "qemu" else IMAGES[profile]
+                 else "ghcr.io/rfdetoni/kitt-linux-re:" + profile + "-" + RE_TOOLBOX_VERSION
+                 if image == "toolbox" else
+                 "ghcr.io/rfdetoni/kitt-re-" + image + ":" + RE_EXECUTOR_VERSION)
+    local = IMAGES[profile] if image == "toolbox" else IMAGES[image]
     for argv in ([executable, "pull", published], [executable, "tag", published, local]):
         result = subprocess.run(argv, check=False, timeout=1200)
         if result.returncode:
@@ -559,9 +567,12 @@ def doctor(runtime: str) -> dict:
             "guest_network_offline": True, "browser_requires_container_bridge": True}
 
 
-def toolbox(*, runtime: str, profile: str, workspace: Path) -> int:
-    if profile not in ("base", "wine", "full"):
+def toolbox(*, runtime: str, profile: str, workspace: Path,
+            allow_ptrace: bool = False) -> int:
+    if profile not in ("base", "wine", "full", "ghidra", "frida"):
         raise VMError("Invalid Linux RE profile")
+    if allow_ptrace and profile != "frida":
+        raise VMError("Ptrace can only be enabled for an isolated Frida executor")
     binary = _runtime(runtime)
     pinned_toolbox = _image_id(binary, IMAGES[profile])
     path = _path(workspace)
@@ -577,8 +588,12 @@ def toolbox(*, runtime: str, profile: str, workspace: Path) -> int:
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g,mode=1777",
             "--env", "HOME=/tmp", "--env", "XDG_CACHE_HOME=/tmp/.cache",
             "--env", "XDG_CONFIG_HOME=/tmp/.config",
-            "--mount", f"type=bind,src={path},dst=/workspace",
+            "--mount", f"type=bind,src={path},dst=/workspace" +
+                       (",readonly" if profile in ("ghidra", "frida") else ""),
             "--workdir", "/workspace", pinned_toolbox, "/bin/sh"]
+    if allow_ptrace:
+        # Operator opt-in; no host PID namespace, privileged flag, or host socket.
+        argv[2:2] = ["--cap-add=SYS_PTRACE"]
     if runtime == "podman":
         argv[2:2] = ["--userns=keep-id"]
     return subprocess.run(argv, check=False).returncode

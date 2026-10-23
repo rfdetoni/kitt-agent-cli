@@ -1,6 +1,6 @@
 """Operator-owned RE analysis with the active project bind-mounted, not copied.
 
-A fresh networkless container runs the managed Linux RE toolbox *image*.
+A fresh networkless container runs a dedicated, pinned Ghidra *image*.
 The active workspace is mounted read-only at /workspace; only a dedicated
 analysis output directory is writable. Running kitt-re-full and Windows
 oracle containers are never remounted or recreated.
@@ -27,7 +27,6 @@ from kitt.security.workspace_fs import WorkspaceFileSystem
 from kitt.vm_supervisor import VMError
 
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_CONTAINER = re.compile(r"[a-f0-9]{64}\Z")
 _PROGRESS_INTERVAL_SECONDS = 15
 _STALL_WARNING_SECONDS = 600
 _DEFAULT_MEMORY_MIB = 4096
@@ -64,18 +63,21 @@ def _source(root: Path, path: str) -> tuple[str, str, int]:
 
 
 def _managed_image() -> str:
-    guest = re_docker_lab.inspect("linux")
-    if not guest or guest.get("managed") is not True or guest.get("status") != "running":
-        raise VMError("Managed kitt-re-full is not running or not trusted")
-    cid = str(guest.get("container_id", ""))
-    if not _CONTAINER.fullmatch(cid):
-        raise VMError("Invalid managed Linux RE container ID")
-    result = re_docker_lab._docker(
-        ["container", "inspect", "--format", "{{.Image}}", cid], timeout=20
-    )
-    image = result.stdout.decode("ascii", "replace").strip() if result.returncode == 0 else ""
+    """Only use KITT's pinned dedicated Ghidra image, never the RE toolbox."""
+    from kitt import vm_container
+    docker = shutil.which("docker")
+    if not docker:
+        raise VMError("Docker is required for the Ghidra executor")
+    try:
+        image = vm_container._image_id(docker, vm_container.IMAGES["ghidra"])
+    except (OSError, subprocess.TimeoutExpired, VMError) as exc:
+        raise VMError(
+            "Dedicated Ghidra image unavailable: run "
+            "'kitt vm container pull --image ghidra' or "
+            "'kitt vm container build --image ghidra'"
+        ) from exc
     if not _IMAGE.fullmatch(image):
-        raise VMError("Cannot pin trusted Linux RE image SHA256")
+        raise VMError("Dedicated Ghidra image lacks an immutable image ID")
     return image
 
 
@@ -387,7 +389,7 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
             "source_size": size, "source_sha256": before_hash,
             "workspace_mount": "read_only", "output": str(output),
             "output_mount": "dedicated_write_only_to_result_dir",
-            "linux_toolbox_image": image, "windows_guest_unchanged": True,
+            "ghidra_image": image, "windows_guest_unchanged": True,
             "no_copy": True, "host_execute_requires_operator": True,
             "mode": "resume" if resume_job else "import",
             "analysis_timeout_seconds": analysis_timeout_seconds,
@@ -523,6 +525,7 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
         "exit_code": code, "source": source, "source_sha256": after_hash,
         "source_size": size, "input_unchanged": True,
         "workspace_shared_read_only": True, "source_copied": False,
+        "ghidra_image": image,
         "output": str(output), "log": str(logfile),
         "ghidra_log": str(output / ghidra_log),
         "project_name": "KittAnalysis", "windows_guest_unchanged": True,
