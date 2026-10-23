@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.76 — Ghidra activity supervisor without mandatory timeouts
+
+Replace mandatory Ghidra/host analysis timeouts with opt-in `--analysis-timeout-seconds` and `--host-timeout-seconds`. Use `Popen.wait` with bounded heartbeats, incremental 64 KiB log reads and optional Docker CPU/RAM/block I/O snapshots; silence is only a warning. Preserve operator-only sandbox, SHA256 verification, project resume, cancellation and exclusive project locking. Inspect actual Docker OOMKilled before explicitly removing the transient container. Require Ghidra analysis and save report in addition to process exit code for `GHIDRA_COMPLETED`; even this does not guarantee every analyzer succeeded. CPU/RAM/heap limits configurable without raising defaults; 2 GiB heap fits 4 GiB container. Add regression tests and document host verification requirement; synchronized Python and uv.lock versions, external pins unchanged.
+
 ## 0.88.75 — retomar projetos Ghidra salvos e identificar timeout parcial
 
 Novo `kitt re lab analyze --path ARQUIVO --resume-job job-<id>` valida o projeto Ghidra existente, confirma o recibo de importação do mesmo arquivo (ou o SHA-256 registrado pelas novas execuções), mantém arquivos e logs originais e retoma por `-process` em vez de importar outra vez. Análise retomada com teto de 1200 segundos por arquivo e 1380 segundos no host; 600/780 permanecem para novas importações. O resultado `ANALYSIS_TIMED_OUT` agora informa corretamente quando o Ghidra salva a importação após esgotar o tempo de análise, em vez de declarar sucesso pelo exit code 0. Testes de validação do projeto, seleção do modo, retenção de logs e tempo limite; versões e uv.lock sincronizados.
