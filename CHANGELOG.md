@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.74 — feedback durante análises Ghidra demoradas
+
+Em `kitt re lab analyze`, exibir imediatamente o binário, a pasta de saída e o caminho do log no stderr. Um heartbeat periódico (15s) informa duração e tamanho do log enquanto a saída JSON permanece reservada à conclusão. Ao pressionar Ctrl+C, interromper exclusivamente o contêiner temporário da análise e preservar logs; timeout continua limitado a 780s. Testes focados cobrem heartbeat e cancelamento. Dependências e pins externos inalterados; versão e uv.lock sincronizados.
+
+
 ## 0.88.73 — on-demand current project workspace sharing with KITT RE
 
 New operator-owned `kitt re lab analyze --path ...` uses the current project workspace by default and mounts it read-only into an ephemeral, networkless container from the SHA256-pinned managed RE toolbox image. A separate, private output bind mount writes Ghidra results directly into `reverse-engineering/decompiled/ghidra` of the current project. No file copying, persistent Linux container replacement, Docker socket/host credentials or automatic Windows guest mount. Strong limits, before/after streaming SHA256 and dry-run plan. Focused tests, uv.lock synchronized; external dependency pins unchanged.

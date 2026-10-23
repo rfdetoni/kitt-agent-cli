@@ -13,6 +13,9 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
+import threading
+import time
 
 from kitt import re_docker_lab
 from kitt.security.workspace_fs import WorkspaceFileSystem
@@ -21,6 +24,7 @@ from kitt.vm_supervisor import VMError
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _CONTAINER = re.compile(r"[a-f0-9]{64}\Z")
 _TIMEOUT = 780
+_PROGRESS_INTERVAL_SECONDS = 15
 
 
 def _project_dir(project: Path) -> Path:
@@ -110,6 +114,22 @@ def _docker_args(image: str, root: Path, source: str, output: Path,
     ]
 
 
+def _report_progress(stop: threading.Event, logfile: Path, started: float) -> None:
+    """Show a bounded heartbeat while Docker/Ghidra output goes to a log file."""
+    while not stop.wait(_PROGRESS_INTERVAL_SECONDS):
+        try:
+            bytes_logged = logfile.stat().st_size
+        except OSError:
+            bytes_logged = 0
+        elapsed = int(time.monotonic() - started)
+        print(
+            f"[KITT RE] Ghidra em execução há {elapsed}s; "
+            f"log Docker: {logfile} ({bytes_logged} bytes). "
+            "A análise pode demorar vários minutos.",
+            file=sys.stderr, flush=True,
+        )
+
+
 def analyze_workspace(*, workspace: Path | None = None, path: str,
                       dry_run: bool = False) -> dict:
     """Share the active workspace with an isolated managed RE image.
@@ -141,7 +161,25 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
     argv = _docker_args(image, root, source, output, job=job)
     logfile = output / "docker-analysis.log"
     code = -1
+    print(
+        f"[KITT RE] Iniciando Ghidra para {source} ({size} bytes). "
+        f"Projeto: {output}. Log: {logfile}",
+        file=sys.stderr, flush=True,
+    )
+    print(
+        f"[KITT RE] Execução síncrona; limite de {_TIMEOUT}s no host. "
+        f"Progresso exibido a cada {_PROGRESS_INTERVAL_SECONDS}s. "
+        "A saída JSON será emitida quando terminar.",
+        file=sys.stderr, flush=True,
+    )
     with logfile.open("wb") as log:
+        stopped = threading.Event()
+        progress = threading.Thread(
+            target=_report_progress,
+            args=(stopped, logfile, time.monotonic()),
+            daemon=True,
+        )
+        progress.start()
         try:
             proc = subprocess.run(
                 argv, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
@@ -151,10 +189,22 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
         except subprocess.TimeoutExpired as exc:
             # Kill only our uniquely named transient analysis container.
             re_docker_lab._docker(["rm", "--force", "kitt-re-job-" + job], timeout=30)
-            raise VMError("Ghidra analysis exceeded bounded host timeout") from exc
+            raise VMError(f"Ghidra excedeu o limite de {_TIMEOUT}s; log: {logfile}") from exc
+        except KeyboardInterrupt as exc:
+            # Interrupting Docker's CLI alone might leave its container running.
+            re_docker_lab._docker(["rm", "--force", "kitt-re-job-" + job], timeout=30)
+            raise VMError(f"Análise Ghidra cancelada; log preservado em {logfile}") from exc
         except OSError as exc:
-            raise VMError("Cannot run host-owned Docker analysis job") from exc
+            raise VMError(f"Falha ao iniciar contêiner Ghidra; log: {logfile}") from exc
+        finally:
+            stopped.set()
+            progress.join(timeout=1)
 
+    print(
+        f"[KITT RE] Ghidra finalizou com código {code}. "
+        f"Verifique {logfile}",
+        file=sys.stderr, flush=True,
+    )
     _, after_hash, after_size = _source(root, source)
     if before_hash != after_hash or size != after_size:
         raise VMError("Original binary changed during guest RE; results are unverified")
