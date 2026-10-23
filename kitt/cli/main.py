@@ -688,6 +688,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Relative file in workspace; not copied, verified before/after analysis")
     analyze.add_argument("--resume-job", default=None,
         help="Reuse the saved job-<id> Ghidra project; never re-import the ELF")
+    analyze.add_argument("--host-timeout-seconds", type=int, default=None,
+        help="Optional total time budget (disabled by default)")
+    analyze.add_argument("--analysis-timeout-seconds", type=int, default=None,
+        help="Optional Ghidra per-file timeout (disabled by default)")
+    analyze.add_argument("--stall-warning-seconds", type=int, default=600,
+        help="Warn on inactivity; never auto-kill (default: 600)")
+    analyze.add_argument("--memory-mib", type=int, default=4096,
+        help="Container RAM limit in MiB (default: 4096)")
+    analyze.add_argument("--heap-mib", type=int, default=2048,
+        help="Maximum Ghidra Java heap in MiB (default: 2048)")
+    analyze.add_argument("--cpus", type=int, default=2,
+        help="Docker and Ghidra CPU limit (default: 2)")
     analyze.add_argument("--dry-run", "--plan", action="store_true",
         help="Inspect image, workspace mounts and source SHA256 without starting Docker")
     upgrade = re_lab_actions.add_parser(
@@ -1291,6 +1303,11 @@ def main(argv=None) -> int:
                     result = analyze_workspace(
                         workspace=args.workspace, path=args.path,
                         dry_run=args.dry_run, resume_job=args.resume_job,
+                        host_timeout_seconds=args.host_timeout_seconds,
+                        analysis_timeout_seconds=args.analysis_timeout_seconds,
+                        stall_warning_seconds=args.stall_warning_seconds,
+                        memory_mib=args.memory_mib, heap_mib=args.heap_mib,
+                        cpus=args.cpus,
                     )
                 elif action == "stage-wine":
                     from kitt.re_source_stage import stage_wine

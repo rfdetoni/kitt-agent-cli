@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import json
 import os
+import contextlib
+import fcntl
+import stat
 from pathlib import Path, PureWindowsPath
 import re
 import secrets
 import shutil
+import signal
+import threading
 import subprocess
 import sys
-import threading
 import time
 
 from kitt import re_docker_lab
@@ -24,10 +28,11 @@ from kitt.vm_supervisor import VMError
 
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _CONTAINER = re.compile(r"[a-f0-9]{64}\Z")
-_TIMEOUT = 780
 _PROGRESS_INTERVAL_SECONDS = 15
-_RESUME_ANALYSIS_SECONDS = 1200
-_RESUME_HOST_TIMEOUT = 1380
+_STALL_WARNING_SECONDS = 600
+_DEFAULT_MEMORY_MIB = 4096
+_DEFAULT_HEAP_MIB = 2048
+_DEFAULT_CPUS = 2
 
 
 def _project_dir(project: Path) -> Path:
@@ -92,21 +97,32 @@ def _output_root(root: Path, *, create: bool) -> Path:
 
 def _docker_args(image: str, root: Path, source: str, output: Path,
                  *, job: str, resume: bool = False,
-                 ghidra_log: str = "ghidra-analysis.log") -> list[str]:
+                 ghidra_log: str = "ghidra-analysis.log",
+                 analysis_timeout_seconds: int | None = None,
+                 memory_mib: int = _DEFAULT_MEMORY_MIB,
+                 heap_mib: int = _DEFAULT_HEAP_MIB,
+                 cpus: int = _DEFAULT_CPUS) -> list[str]:
     if not _IMAGE.fullmatch(image) or not re.fullmatch(r"[a-f0-9]{12}", job):
         raise VMError("Untrusted image or analysis job identifier")
-    # Separate read-only project source from the one writable output location.
-    # Docker never sees the host socket, network, credentials or Windows disk.
+    if not 768 <= memory_mib <= 131072 or not 256 <= heap_mib <= memory_mib - 512:
+        raise VMError("Ghidra heap must leave >=512 MiB of container memory for native overhead")
+    if not 1 <= cpus <= 64:
+        raise VMError("Ghidra CPU limit must be between 1 and 64")
+    if analysis_timeout_seconds is not None and analysis_timeout_seconds <= 0:
+        raise VMError("Ghidra per-file timeout must be positive")
+    # No --rm: inspect the stopped container's OOMKilled flag before removing
+    # ONLY this transient job in finally. No network or Docker socket in guest.
     return [
         shutil.which("docker") or "docker",
-        "run", "--rm", "--pull", "never", "--name", "kitt-re-job-" + job,
+        "run", "--pull", "never", "--name", "kitt-re-job-" + job,
         "--network", "none", "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges", "--read-only",
-        "--pids-limit", "256", "--memory", "4g", "--cpus", "2",
+        "--pids-limit", "256", "--memory", f"{memory_mib}m", "--cpus", str(cpus),
         "--user", f"{os.getuid()}:{os.getgid()}",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g,mode=1777",
         "--env", "HOME=/tmp", "--env", "XDG_CACHE_HOME=/tmp/.cache",
         "--env", "XDG_CONFIG_HOME=/tmp/.config",
+        "--env", f"GHIDRA_HEADLESS_MAXMEM={heap_mib}M",
         "--label", "dev.kitt.re-job=ghidra",
         "--mount", f"type=bind,src={root},dst=/workspace,readonly",
         "--mount", f"type=bind,src={output},dst=/output",
@@ -114,11 +130,11 @@ def _docker_args(image: str, root: Path, source: str, output: Path,
         image, "/opt/ghidra/support/analyzeHeadless",
         "/output", "KittAnalysis",
         *(["-process", Path(source).name] if resume else ["-import", "/workspace/" + source]),
-        "-analysisTimeoutPerFile", str(_RESUME_ANALYSIS_SECONDS if resume else 600),
-        "-max-cpu", "2",
+        *([] if analysis_timeout_seconds is None
+          else ["-analysisTimeoutPerFile", str(analysis_timeout_seconds)]),
+        "-max-cpu", str(cpus),
         "-log", "/output/" + ghidra_log,
     ]
-
 
 def _resume_output(root: Path, source: str, checksum: str, job_name: str) -> Path:
     """Validate operator-selected saved project; never import over existing data."""
@@ -157,41 +173,212 @@ def _resume_output(root: Path, source: str, checksum: str, job_name: str) -> Pat
     return output
 
 
+def _log_evidence(logfile: Path) -> dict[str, bool]:
+    """Scan once in constant RAM. Exit 0 and import/save alone prove no analysis success."""
+    evidence = {"analysis_succeeded": False, "saved": False,
+                "timed_out": False, "incomplete": False, "imported": False}
+    with logfile.open("rb") as log:
+        for line in log:
+            low = line.lower()
+            if b"report: analysis succeeded" in low:
+                evidence["analysis_succeeded"] = True
+            if b"report: save succeeded" in low:
+                evidence["saved"] = True
+            if b"analysis timed out" in low:
+                evidence["timed_out"] = True
+            if b"processing not completed" in low:
+                evidence["incomplete"] = True
+            if b"report: import succeeded" in low:
+                evidence["imported"] = True
+    return evidence
+
+
 def _analysis_timed_out(logfile: Path) -> bool:
-    """Ghidra may return process success after its per-file analysis timed out."""
-    with logfile.open("rb") as source:
-        size = source.seek(0, 2)
-        source.seek(max(0, size - 512 * 1024))
-        tail = source.read().lower()
-    return b"analysis timed out" in tail and b"processing not completed" in tail
+    evidence = _log_evidence(logfile)
+    return evidence["timed_out"] and evidence["incomplete"]
 
 
-def _report_progress(stop: threading.Event, logfile: Path, started: float) -> None:
-    """Show a bounded heartbeat while Docker/Ghidra output goes to a log file."""
-    while not stop.wait(_PROGRESS_INTERVAL_SECONDS):
+def _sample_stats(container: str) -> dict | None:
+    """One bounded Docker snapshot per heartbeat; never a polling sidecar."""
+    try:
+        result = re_docker_lab._docker(
+            ["stats", "--no-stream", "--format", "{{json .}}", container], timeout=6)
+        if result.returncode != 0:
+            return None
+        rows = result.stdout.decode("utf-8", "replace").splitlines()
+        data = json.loads(rows[-1]) if rows else None
+        return data if isinstance(data, dict) else None
+    except (VMError, OSError, ValueError, AttributeError, IndexError):
+        return None
+
+
+def _inspect_oom(container: str) -> bool:
+    try:
+        result = re_docker_lab._docker(
+            ["container", "inspect", "--format", "{{json .State}}", container], timeout=10)
+        state = json.loads(result.stdout) if result.returncode == 0 else {}
+        return state.get("OOMKilled") is True if isinstance(state, dict) else False
+    except (VMError, OSError, ValueError, AttributeError):
+        return False
+
+
+def _remove_job(container: str) -> bool:
+    try:
+        result = re_docker_lab._docker(["rm", "--force", container], timeout=20)
+        return result.returncode == 0
+    except (VMError, OSError, AttributeError):
+        return False
+
+
+@contextlib.contextmanager
+def _cancel_on_sigterm():
+    """Treat operator SIGTERM like Ctrl+C so the transient Docker job is cleaned."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def cancel(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, cancel)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+@contextlib.contextmanager
+def _project_lock(output: Path):
+    """Do not let two resumptions write concurrently to the same Ghidra DB."""
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        fd = os.open(output / ".kitt-re-analysis.lock", flags, 0o600)
+    except OSError as exc:
+        raise VMError("Cannot securely lock Ghidra project") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+            raise VMError("Untrusted Ghidra project lock")
         try:
-            bytes_logged = logfile.stat().st_size
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise VMError("Ghidra project is already being analyzed by another job") from exc
+        yield
+    finally:
+        os.close(fd)
+
+
+class _ProgressMonitor:
+    """Best-effort *activity* indicators, never fabricated completion percentages."""
+
+    def __init__(self, logfile: Path, container: str, started: float,
+                 stall_warning_seconds: int = _STALL_WARNING_SECONDS):
+        self.logfile = logfile
+        self.container = container
+        self.started = started
+        self.last_signal = started
+        self.stall_warning_seconds = stall_warning_seconds
+        self.last_size = 0
+        self.phase = "STARTING"
+        self.last_io = None
+        self.telemetry_available = False
+        self.state = "STARTING"
+
+    def report(self) -> None:
+        now = time.monotonic()
+        try:
+            size = self.logfile.stat().st_size
+            if size < self.last_size:
+                self.last_size = 0
+            with self.logfile.open("rb") as log:
+                log.seek(max(self.last_size, size - 65536))
+                chunk = log.read(65536).decode("utf-8", "replace")
+            delta = max(0, size - self.last_size)
+            self.last_size = size
         except OSError:
-            bytes_logged = 0
-        elapsed = int(time.monotonic() - started)
+            delta, chunk = 0, ""
+        if delta:
+            self.last_signal = now
+        for line in chunk.splitlines():
+            if "IMPORTING:" in line:
+                self.phase = "IMPORTING"
+            elif "ANALYZING" in line or "Analysis Task" in line:
+                self.phase = "ANALYZING"
+            elif "Save succeeded" in line or "SAVING" in line:
+                self.phase = "SAVING"
+        stats = _sample_stats(self.container)
+        cpu = memory = io_display = "unavailable"
+        self.telemetry_available = stats is not None
+        if stats is not None:
+            cpu = str(stats.get("CPUPerc", "unavailable"))
+            memory = str(stats.get("MemUsage", "unavailable"))
+            io_display = str(stats.get("BlockIO", "unavailable"))
+            try:
+                cpu_active = float(cpu.strip().rstrip("%")) > 0.5
+            except ValueError:
+                cpu_active = False
+            io = stats.get("BlockIO")
+            io_active = bool(io and self.last_io is not None and io != self.last_io)
+            if io:
+                self.last_io = io
+            if cpu_active or io_active:
+                self.last_signal = now
+        silent = now - self.last_signal
+        self.state = ("POSSIBLY_STALLED"
+                      if silent >= self.stall_warning_seconds and self.telemetry_available
+                      else "RUNNING_NO_RECENT_SIGNAL" if silent >= self.stall_warning_seconds
+                      else self.phase)
         print(
-            f"[KITT RE] Ghidra em execução há {elapsed}s; "
-            f"log Docker: {logfile} ({bytes_logged} bytes). "
-            "A análise pode demorar vários minutos.",
-            file=sys.stderr, flush=True,
+            f"[KITT RE] {self.container} | {self.state} | {int(now-self.started)}s | "
+            f"CPU {cpu} | RAM {memory} | I/O {io_display} | log +{delta} bytes | "
+            f"telemetry {'available' if self.telemetry_available else 'unavailable'} | "
+            f"{self.logfile}", file=sys.stderr, flush=True,
         )
 
 
-def analyze_workspace(*, workspace: Path | None = None, path: str,
-                      dry_run: bool = False, resume_job: str | None = None) -> dict:
-    """Share the active workspace with an isolated managed RE image.
+def _report_progress(stop, logfile: Path, started: float) -> None:
+    """Legacy heartbeat helper retained for callers; production uses _ProgressMonitor."""
+    while not stop.wait(_PROGRESS_INTERVAL_SECONDS):
+        try:
+            size = logfile.stat().st_size
+        except OSError:
+            size = 0
+        print(f"[KITT RE] Ghidra em execução há {int(time.monotonic()-started)}s; "
+              f"log Docker: {logfile} ({size} bytes).",
+              file=sys.stderr, flush=True)
 
-    This operator CLI is intentionally not exposed as an unguarded MCP tool.
-    A future model-facing operation must go through the host approval gate.
+
+def _positive_optional(name: str, value: int | None) -> None:
+    if value is not None and (not isinstance(value, int) or value <= 0):
+        raise VMError(f"{name} must be a positive number of seconds")
+
+
+def analyze_workspace(*, workspace: Path | None = None, path: str,
+                      dry_run: bool = False, resume_job: str | None = None,
+                      host_timeout_seconds: int | None = None,
+                      analysis_timeout_seconds: int | None = None,
+                      stall_warning_seconds: int = _STALL_WARNING_SECONDS,
+                      memory_mib: int = _DEFAULT_MEMORY_MIB,
+                      heap_mib: int = _DEFAULT_HEAP_MIB,
+                      cpus: int = _DEFAULT_CPUS) -> dict:
+    """Run one isolated Ghidra job. Time limits are opt-in, never implicit.
+
+    Operator-only CLI. Model-facing execution must still pass host authorization.
     """
+    _positive_optional("host timeout", host_timeout_seconds)
+    _positive_optional("analysis timeout", analysis_timeout_seconds)
+    _positive_optional("stall warning", stall_warning_seconds)
+    if not isinstance(memory_mib, int) or not isinstance(heap_mib, int) or not isinstance(cpus, int):
+        raise VMError("Resource limits must be integers")
+    if not 768 <= memory_mib <= 131072 or not 256 <= heap_mib <= memory_mib - 512:
+        raise VMError("Ghidra heap requires >=512 MiB of non-heap headroom")
+    if not 1 <= cpus <= 64:
+        raise VMError("Ghidra CPUs must be between 1 and 64")
     root = _project_dir(workspace if workspace is not None else Path.cwd())
     source, before_hash, size = _source(root, path)
     image = _managed_image()
+    resources = {"memory_mib": memory_mib, "heap_mib": heap_mib, "cpus": cpus}
     if dry_run:
         output = (_resume_output(root, source, before_hash, resume_job)
                   if resume_job else _output_root(root, create=False) / "<new-run>")
@@ -203,17 +390,20 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
             "linux_toolbox_image": image, "windows_guest_unchanged": True,
             "no_copy": True, "host_execute_requires_operator": True,
             "mode": "resume" if resume_job else "import",
-            "analysis_timeout_seconds": _RESUME_ANALYSIS_SECONDS if resume_job else 600,
+            "analysis_timeout_seconds": analysis_timeout_seconds,
+            "host_timeout_seconds": host_timeout_seconds,
+            "stall_warning_seconds": stall_warning_seconds, "resource_limits": resources,
         }
 
     parent = _output_root(root, create=True)
     job = secrets.token_hex(6)
+    container = "kitt-re-job-" + job
     if resume_job:
         output = _resume_output(root, source, before_hash, resume_job)
-        # Keep original logs and the persisted Ghidra project intact.
-        run_suffix = "resume-" + job
-        ghidra_log = run_suffix + "-ghidra-analysis.log"
-        logfile = output / (run_suffix + "-docker-analysis.log")
+        # New logs for every resume; do not replace the existing project or evidence.
+        suffix = "resume-" + job
+        ghidra_log = suffix + "-ghidra-analysis.log"
+        logfile = output / (suffix + "-docker-analysis.log")
     else:
         output = parent / ("job-" + job)
         try:
@@ -226,69 +416,110 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
             raise VMError("Cannot allocate private RE output directory") from exc
         ghidra_log = "ghidra-analysis.log"
         logfile = output / "docker-analysis.log"
+
     argv = _docker_args(
         image, root, source, output, job=job,
         resume=bool(resume_job), ghidra_log=ghidra_log,
+        analysis_timeout_seconds=analysis_timeout_seconds,
+        memory_mib=memory_mib, heap_mib=heap_mib, cpus=cpus,
     )
-    host_timeout = _RESUME_HOST_TIMEOUT if resume_job else _TIMEOUT
-    code = -1
     print(
         f"[KITT RE] {'Retomando projeto salvo' if resume_job else 'Iniciando Ghidra'} "
-        f"para {source} ({size} bytes). "
-        f"Projeto: {output}. Log: {logfile}",
+        f"para {source} ({size} bytes). Projeto: {output}. Log: {logfile}",
         file=sys.stderr, flush=True,
     )
     print(
-        f"[KITT RE] Execução síncrona; limite de {host_timeout}s no host. "
-        f"Progresso exibido a cada {_PROGRESS_INTERVAL_SECONDS}s. "
-        "A saída JSON será emitida quando terminar.",
+        f"[KITT RE] Timeout total: {host_timeout_seconds or 'desativado'}; "
+        f"timeout Ghidra: {analysis_timeout_seconds or 'desativado'}. "
+        f"Heartbeat: {_PROGRESS_INTERVAL_SECONDS}s. Ctrl+C cancela apenas {container}.",
         file=sys.stderr, flush=True,
     )
-    with logfile.open("wb") as log:
-        stopped = threading.Event()
-        progress = threading.Thread(
-            target=_report_progress,
-            args=(stopped, logfile, time.monotonic()),
-            daemon=True,
-        )
-        progress.start()
-        try:
-            proc = subprocess.run(
-                argv, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                check=False, timeout=host_timeout,
-            )
-            code = proc.returncode
-        except subprocess.TimeoutExpired as exc:
-            # Kill only our uniquely named transient analysis container.
-            re_docker_lab._docker(["rm", "--force", "kitt-re-job-" + job], timeout=30)
-            raise VMError(f"Ghidra excedeu o limite de {host_timeout}s; log: {logfile}") from exc
-        except KeyboardInterrupt as exc:
-            # Interrupting Docker's CLI alone might leave its container running.
-            re_docker_lab._docker(["rm", "--force", "kitt-re-job-" + job], timeout=30)
-            raise VMError(f"Análise Ghidra cancelada; log preservado em {logfile}") from exc
-        except OSError as exc:
-            raise VMError(f"Falha ao iniciar contêiner Ghidra; log: {logfile}") from exc
-        finally:
-            stopped.set()
-            progress.join(timeout=1)
 
-    print(
-        f"[KITT RE] Ghidra finalizou com código {code}. "
-        f"Verifique {logfile}",
-        file=sys.stderr, flush=True,
-    )
+    started = time.monotonic()
+    monitor = _ProgressMonitor(logfile, container, started, stall_warning_seconds)
+    proc = None
+    code = -1
+    cancelled = False
+    host_timed_out = False
+    oom = False
+    cleanup_ok = True
+    # fcntl lock is operator-owned and safe across independent CLI processes.
+    with _project_lock(output), _cancel_on_sigterm():
+        with logfile.open("wb") as log:
+            try:
+                proc = subprocess.Popen(
+                    argv, stdin=subprocess.DEVNULL,
+                    stdout=log, stderr=subprocess.STDOUT,
+                )
+                while True:
+                    remaining = (None if host_timeout_seconds is None else
+                                 host_timeout_seconds - (time.monotonic() - started))
+                    if remaining is not None and remaining <= 0:
+                        host_timed_out = True
+                        break
+                    interval = (_PROGRESS_INTERVAL_SECONDS if remaining is None else
+                                min(_PROGRESS_INTERVAL_SECONDS, remaining))
+                    try:
+                        code = proc.wait(timeout=interval)
+                        break
+                    except subprocess.TimeoutExpired:
+                        monitor.report()
+            except KeyboardInterrupt:
+                cancelled = True
+            except OSError as exc:
+                raise VMError(f"Cannot start/monitor Ghidra Docker job; log: {logfile}") from exc
+            finally:
+                # Docker --rm is intentionally absent; inspect OOM before removal.
+                if proc is not None and proc.poll() is not None:
+                    oom = _inspect_oom(container)
+                cleanup_ok = _remove_job(container)
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
+
+    if not cleanup_ok:
+        raise VMError(f"Could not remove transient Ghidra container {container}; inspect Docker")
     _, after_hash, after_size = _source(root, source)
     if before_hash != after_hash or size != after_size:
         raise VMError("Original binary changed during guest RE; results are unverified")
-    analysis_timed_out = _analysis_timed_out(logfile)
-    status = ("ANALYSIS_TIMED_OUT" if analysis_timed_out else
-              "GHIDRA_COMPLETED" if code == 0 else "BLOCKED_ENV")
+    evidence = _log_evidence(logfile)
+    timed_out = evidence["timed_out"] and evidence["incomplete"]
+    if cancelled:
+        status = "CANCELLED"
+    elif host_timed_out:
+        status = "PARTIAL"
+    elif oom:
+        status = "OOM"
+    elif code != 0:
+        status = "FAILED"
+    elif timed_out:
+        status = "ANALYSIS_TIMED_OUT"
+    elif evidence["analysis_succeeded"] and evidence["saved"]:
+        status = "GHIDRA_COMPLETED"
+    else:
+        status = "PARTIAL"
+    print(
+        f"[KITT RE] {container} finalizado: {status}; exit_code={code}; "
+        f"log: {logfile}", file=sys.stderr, flush=True,
+    )
     return {
-        "status": status,
-        "analysis_timed_out": analysis_timed_out,
+        "status": status, "analysis_timed_out": timed_out,
+        "analysis_success_reported": evidence["analysis_succeeded"],
+        "save_reported": evidence["saved"],
+        "completion_scope": ("ghidra_report_only" if status == "GHIDRA_COMPLETED" else None),
+        "cancelled": cancelled, "host_timed_out": host_timed_out, "oom_killed": oom,
         "mode": "resume" if resume_job else "import",
         "resume_job": resume_job or output.name,
-        "analysis_timeout_seconds": _RESUME_ANALYSIS_SECONDS if resume_job else 600,
+        "analysis_timeout_seconds": analysis_timeout_seconds,
+        "host_timeout_seconds": host_timeout_seconds,
+        "stall_warning_seconds": stall_warning_seconds,
+        "resource_limits": resources,
+        "last_monitor_state": monitor.state,
+        "telemetry_available": monitor.telemetry_available,
         "exit_code": code, "source": source, "source_sha256": after_hash,
         "source_size": size, "input_unchanged": True,
         "workspace_shared_read_only": True, "source_copied": False,

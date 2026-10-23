@@ -59,45 +59,60 @@ current project without transferring copies. Output files and logs are visible
 to the operator without further synchronization.
 
 Isolation: network disabled, no privileged Docker/host socket, caps dropped,
-read-only container root, bounded CPU/RAM/PIDs and execution timeout. **The
-full project source tree, including any sensitive files in the project, is
-readable inside this operator-invoked container.** Use this only for a trusted
-workspace; move credentials outside the project first if necessary.
-`--dry-run` performs validation without creating folders or running a guest.
-This operation is **not** an unreviewed model-facing MCP tool; any automated
-agent invocation requires a separate host-approval capability. The Windows
-Oracle remains unchanged and does not receive broad mounts of project data:
-Windows still exchanges controlled, pinned probe files only.
+read-only container root, bounded CPU/RAM/PIDs and a controlled Java heap.
+**The full project source tree, including any sensitive files in the project, is
+readable inside this operator-invoked container.** Only use trusted workspaces;
+move credentials outside the project. `--dry-run` performs validation without
+creating folders or running a guest. No automatic MCP authorization is added.
+The Windows Oracle remains unchanged.
 
-The command runs synchronously: stderr immediately shows the project and log paths,
-and a 15-second heartbeat reports elapsed time and log size while Ghidra is
-working. JSON stdout is reserved for the final structured result. To inspect
-the detailed analysis log in another terminal, use
-`tail -f reverse-engineering/decompiled/ghidra/job-*/docker-analysis.log`.
-Ctrl+C cancels only the transient job container; it does not stop the
-persistent Linux toolbox or Windows Oracle. Host execution is bounded to 780s
-and the Ghidra per-file analysis budget remains 600s.
+Ghidra and host total execution limits are **disabled by default**, so slower
+machines can keep processing for hours. A 15-second stderr heartbeat reports
+elapsed duration, bounded incremental log growth and, if available, Docker
+CPU percentage, resident memory versus container limit, and block I/O changes.
+These are **activity indicators, not progress percentages or ETAs**. Lack of
+log activity alone does not stop the job; a 600-second inactivity warning
+never kills it. Missing Docker stats mean unavailable telemetry, not a hang.
+Stdout contains only one structured JSON result at the end.
 
-If Ghidra reports `Analysis timed out` but `Save succeeded`, the
-imported Ghidra program is persisted and the KITT result is correctly marked
-`ANALYSIS_TIMED_OUT` even if Docker exits with code 0. To continue an
-operator-selected existing project without importing the 292 MB ELF again:
+Optional operator controls (memory and CPU limits do not increase by default):
 
 ```bash
+kitt re lab analyze --path 2.1.308 --resume-job job-27ee75656097
+kitt re lab analyze --path 2.1.308 --resume-job job-27ee75656097 --stall-warning-seconds 1200
+kitt re lab analyze --path 2.1.308 --resume-job job-27ee75656097 --host-timeout-seconds 14400 --analysis-timeout-seconds 13800
+kitt re lab analyze --path 2.1.308 --resume-job job-27ee75656097 --memory-mib 3072 --heap-mib 1536 --cpus 1
+```
+
+The default 4096 MiB container memory and 2048 MiB headless Java heap
+follow the Ghidra launcher `GHIDRA_HEADLESS_MAXMEM` convention. At least
+512 MiB must remain outside the Java heap. The supervisor uses one bounded
+Docker stats query per 15-second heartbeat, not a sidecar or a full log rescan.
+Each job uses an exclusive file lock for its persisted Ghidra project, preventing
+concurrent resumption. `Ctrl+C` cancels only the unique transient container.
+The stopped container is inspected before removal for its real `OOMKilled`
+flag; evidence and logs are preserved.
+
+`ANALYSIS_TIMED_OUT` still detects a saved partial analysis even with process
+exit 0. `GHIDRA_COMPLETED` requires a logged Ghidra analysis success and save
+plus exit 0; it means *reported* completion, not verified individual-analyzer
+correctness. `PARTIAL` covers absent completion evidence, cancellation returns
+`CANCELLED`, and genuine OOM returns `OOM`.
+
+To continue the previously saved ELF project without re-importing:
+
+```bash
+cd ~/projects/claude
 kitt re lab analyze --path 2.1.308 --resume-job job-27ee75656097 --dry-run
 kitt re lab analyze --path 2.1.308 --resume-job job-27ee75656097
 ```
 
-This uses Ghidra's documented `-process 2.1.308` mode. Resume jobs retain
-the existing `KittAnalysis.gpr` and `KittAnalysis.rep` data and write
-separate, uniquely named logs. Resume timeout limits are 1200s (Ghidra) and
-1380s (host); new imports retain the smaller 600s/780s budget. A new job
-records input source and SHA256 to validate subsequent resumes. Legacy jobs
-created before 0.88.75 require an explicit job ID and matching import/save
-receipt from the original Docker log; legacy projects have no cryptographic
-input manifest, which is reported as a limitation. Source SHA256 is checked
-before and after every run. Ghidra may retry previously incomplete analyzers;
-`-process` does not guarantee immediate completion or exported pseudocode.
+Resume calls Ghidra's documented `-process`, preserving the original
+`KittAnalysis.gpr`/`KittAnalysis.rep` and creating distinct per-run logs.
+New jobs have SHA256 input manifests. Jobs before 0.88.75 still use
+an operator-selected import/save receipt instead of historic cryptographic
+identity proof. The original binary is verified before and after execution.
+The source recovery / JavaScriptCore extraction stage is a separate task.
 
 The Ghidra project is the native analysis result. This command does not
 automatically reconstruct original source code, export pseudocode for every
