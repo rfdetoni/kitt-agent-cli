@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.75 — retomar projetos Ghidra salvos e identificar timeout parcial
+
+Novo `kitt re lab analyze --path ARQUIVO --resume-job job-<id>` valida o projeto Ghidra existente, confirma o recibo de importação do mesmo arquivo (ou o SHA-256 registrado pelas novas execuções), mantém arquivos e logs originais e retoma por `-process` em vez de importar outra vez. Análise retomada com teto de 1200 segundos por arquivo e 1380 segundos no host; 600/780 permanecem para novas importações. O resultado `ANALYSIS_TIMED_OUT` agora informa corretamente quando o Ghidra salva a importação após esgotar o tempo de análise, em vez de declarar sucesso pelo exit code 0. Testes de validação do projeto, seleção do modo, retenção de logs e tempo limite; versões e uv.lock sincronizados.
+
+
 ## 0.88.74 — feedback durante análises Ghidra demoradas
 
 Em `kitt re lab analyze`, exibir imediatamente o binário, a pasta de saída e o caminho do log no stderr. Um heartbeat periódico (15s) informa duração e tamanho do log enquanto a saída JSON permanece reservada à conclusão. Ao pressionar Ctrl+C, interromper exclusivamente o contêiner temporário da análise e preservar logs; timeout continua limitado a 780s. Testes focados cobrem heartbeat e cancelamento. Dependências e pins externos inalterados; versão e uv.lock sincronizados.
