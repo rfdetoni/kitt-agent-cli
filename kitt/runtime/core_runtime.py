@@ -2023,14 +2023,23 @@ class SafeRuntime:
         )
 
     def _op_goal_inspect(self, args):
-        goal_id = str(args.get("goal_id", ""))
+        goal_id = str(args.get("goal_id", "")).strip()
         if not goal_id:
-            return SafeRuntimeResult(False, "goal.inspect", error="goal_id required")
+            return SafeRuntimeResult(False, "goal.inspect", error=(
+                "goal_id required: goal.inspect accepts persisted GoalService IDs; "
+                "orchestrator task IDs are inspected using plan.inspect"
+            ))
         if not self.goals:
             return SafeRuntimeResult(False, "goal.inspect", error="Goal service not attached")
         goal = self.goals.get_scoped(goal_id, self.conversation_id)
         if not goal:
-            return SafeRuntimeResult(False, "goal.inspect", error=f"Goal {goal_id} not found")
+            hint = (
+                " Task-plan identifiers such as T01 are not persisted goal IDs; "
+                "inspect them with plan.inspect / plan.next."
+                if goal_id.startswith("T") and goal_id[1:].isdigit()
+                else " Check the persisted GoalService goal_id or use plan.inspect for task-plan state."
+            )
+            return SafeRuntimeResult(False, "goal.inspect", error=f"Goal {goal_id} not found.{hint}")
         return SafeRuntimeResult(
             True,
             "goal.inspect",
