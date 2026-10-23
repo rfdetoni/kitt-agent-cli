@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.67 — bounded Git operations through host policy
+
+Adds git.action for status, diff, stage and commit with strictly shaped arguments, bounded workspace paths and reject-on-path-scoped commit. Only direct argv through existing process policy, approval and strong sandbox; dry_run only previews commands. No network or shell. Focused security tests. uv.lock/version aligned, dependency pins unchanged.
+
+
 ## 0.88.66 — host-governed targeted test.run
 
 The test.run runtime operation selects an existing deterministic BuildDetector test recipe from workspace-contained source paths and delegates it through the regular capability-gated, approved and strongly sandboxed run_command path. Supports read-only dry_run preview, 16 input paths maximum, timeout <= 240 seconds, network off and no custom argv. Focused tests; unchanged dependency pins and uv.lock synchronized.

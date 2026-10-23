@@ -65,6 +65,7 @@ jobs:
           tests/test_re_rudevolution_plan.py
           tests/test_mcp_runtime_discovery.py
           tests/test_runtime_test_run.py
+          tests/test_git_action.py
       - name: Run release-critical regression contracts
         run: python -u scripts/run_release_critical.py
       - name: Complete project regression suite
