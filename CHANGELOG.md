@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.72 — explicit Git subprocess sandbox diagnostics
+
+Distinguish real host Git policy failures from attempts to commit via python3 -c/subprocess. The strong sandbox keeps .git read-only for wrappers; preserve that boundary, return a typed non-retriable GIT_METADATA_READ_ONLY_WRAPPED_PROCESS result and guide agents to governed git.action or direct Git argv, avoiding repeated ineffective probes. Focused tests; version + uv.lock updated, external pins unchanged.
+
 ## 0.88.71 — independent streaming verification of large workspace binaries
 
 Fix host `workspace-read` validation errors for large non-source artifacts such as the 292 MB `2.1.308` ELF. Add a file-descriptor-safe workspace SHA256 streaming API (1 MiB blocks, hard cap 512 MiB, stable inode/size/mtime/ctime, strict symlink restrictions), and route oversized non-source artifacts to this independent read rather than the 8 MiB in-memory syntax parser. Keep all source syntax checks and normal workspace-read/write limits unchanged; return SHA256/size as verifiable evidence, not a claim of comparison with an external pinned manifest or of decompilation. Focused boundary tests and synchronized uv.lock. Existing dependency pins unchanged.
