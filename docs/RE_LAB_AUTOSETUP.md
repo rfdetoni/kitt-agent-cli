@@ -69,6 +69,15 @@ agent invocation requires a separate host-approval capability. The Windows
 Oracle remains unchanged and does not receive broad mounts of project data:
 Windows still exchanges controlled, pinned probe files only.
 
+The command runs synchronously: stderr immediately shows the project and log paths,
+and a 15-second heartbeat reports elapsed time and log size while Ghidra is
+working. JSON stdout is reserved for the final structured result. To inspect
+the detailed analysis log in another terminal, use
+`tail -f reverse-engineering/decompiled/ghidra/job-*/docker-analysis.log`.
+Ctrl+C cancels only the transient job container; it does not stop the
+persistent Linux toolbox or Windows Oracle. Host execution is bounded to 780s
+and the Ghidra per-file analysis budget remains 600s.
+
 The Ghidra project is the native analysis result. This command does not
 automatically reconstruct original source code, export pseudocode for every
 function, or complete Bun/JavaScriptCore extraction. Operator guest

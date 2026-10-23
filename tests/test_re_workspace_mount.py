@@ -117,3 +117,53 @@ def test_only_existing_managed_running_image_may_be_reused(monkeypatch):
                         lambda *args, **kwargs: SimpleNamespace(
                             returncode=0, stdout=b"sha256:" + b"f" * 64))
     assert re_workspace._managed_image() == "sha256:" + "f" * 64
+
+
+
+def test_progress_heartbeat_reports_live_log_without_claiming_ghidra_done(
+    monkeypatch, tmp_path, capsys
+):
+    import time
+
+    path = tmp_path / "docker-analysis.log"
+    path.write_bytes(b"INFO Ghidra running\n")
+
+    class StopAfterOne:
+        count = 0
+
+        def wait(self, seconds):
+            self.count += 1
+            assert seconds == re_workspace._PROGRESS_INTERVAL_SECONDS
+            return self.count > 1
+
+    re_workspace._report_progress(
+        StopAfterOne(), path, time.monotonic() - 20,
+    )
+    captured = capsys.readouterr()
+    assert captured.out == "", "JSON stdout must remain machine-readable"
+    assert "Ghidra em execução" in captured.err
+    assert str(path) in captured.err
+    assert "bytes" in captured.err
+
+
+def test_interrupt_cleans_up_only_its_own_analysis_container(
+    monkeypatch, tmp_path, capsys
+):
+    (tmp_path / "2.1.308").write_bytes(b"\x7fELF\x02\x01" + bytes(122))
+    monkeypatch.setattr(re_workspace, "_managed_image", lambda: "sha256:" + "a" * 64)
+    monkeypatch.setattr(
+        re_workspace.subprocess, "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    removed = []
+    monkeypatch.setattr(
+        re_workspace.re_docker_lab, "_docker",
+        lambda argv, **kw: removed.append(argv) or SimpleNamespace(returncode=0),
+    )
+    with pytest.raises(VMError, match="cancelada"):
+        re_workspace.analyze_workspace(workspace=tmp_path, path="2.1.308")
+    assert len(removed) == 1
+    assert removed[0][:2] == ["rm", "--force"]
+    assert removed[0][2].startswith("kitt-re-job-")
+    assert "kitt-re-full" not in " ".join(removed[0])
+    assert "Iniciando Ghidra" in capsys.readouterr().err
