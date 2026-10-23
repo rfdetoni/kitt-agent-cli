@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.68 — distinguish task IDs from persisted goal IDs
+
+Help autonomous RE workers avoid repeated invalid goal.inspect calls by redirecting missing local orchestrator task IDs (T01 etc.) to plan.inspect / plan.next without auto-converting IDs or granting capabilities. Targeted regression, synchronized uv.lock and unchanged dependency pins.
+
+
 ## 0.88.67 — bounded Git operations through host policy
 
 Adds git.action for status, diff, stage and commit with strictly shaped arguments, bounded workspace paths and reject-on-path-scoped commit. Only direct argv through existing process policy, approval and strong sandbox; dry_run only previews commands. No network or shell. Focused security tests. uv.lock/version aligned, dependency pins unchanged.
