@@ -50,6 +50,15 @@ jobs:
         run: python -m pytest -q tests/test_provider_runtime_contract.py tests/test_retry_budget_accounting.py
       - name: Review schema regression
         run: python -m pytest -q tests/test_adversarial_review_contract.py
+      - name: Focused new tool and RE regressions
+        run: >-
+          python -m pytest -q
+          tests/test_log_reducer_regression.py
+          tests/test_tool_result_evidence.py
+          tests/test_tool_recovery_limits.py
+          tests/test_progress_normalization.py
+          tests/test_re_rudevolution_plan.py
+          tests/test_mcp_runtime_discovery.py
       - name: Run release-critical regression contracts
         run: python scripts/run_release_critical.py
       - name: Complete project regression suite
