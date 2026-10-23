@@ -59,7 +59,12 @@ def reconcile_context_envelope(
     provider_profile: Any,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Reconcile a typed envelope against the last durable envelope snapshot."""
-    ledger = getattr(processor, "event_ledger", None)
+    # Ephemeral sessions never read/append durable context snapshots.
+    # Mandatory tool-execution journaling remains unaffected.
+    config = getattr(processor, "config", None)
+    durable = bool(getattr(config, "history_enabled", True)
+                   and getattr(config, "persistence_enabled", True))
+    ledger = getattr(processor, "event_ledger", None) if durable else None
     previous = _previous_snapshot(ledger, conversation_id) or {}
     previous_segments = [
         dict(item)

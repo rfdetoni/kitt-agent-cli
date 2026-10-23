@@ -34,7 +34,7 @@ class TurnProcessorDecompositionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             processor = TurnProcessor(
                 root_dir=root, execution_client=Client(),
-                config=RuntimeConfig(history_enabled=False, persistence_enabled=False),
+                config=RuntimeConfig(history_enabled=False, persistence_enabled=False, semantic_mode="local"),
             )
             processor.event_ledger = UnwritableLedger()
             try:
@@ -69,7 +69,7 @@ class TurnProcessorDecompositionTests(unittest.TestCase):
             (Path(root) / "report.md").write_text("READ_OK")
             client = Client()
             processor = TurnProcessor(root_dir=root, execution_client=client,
-                config=RuntimeConfig(history_enabled=False, persistence_enabled=False))
+                config=RuntimeConfig(history_enabled=False, persistence_enabled=False, semantic_mode="local"))
             try:
                 events = list(processor.run_turn(TurnCommand("conv", "Read report.md and return its contents.", no_history=True)))
                 self.assertIsInstance(events[-1], TurnCompleted)
@@ -102,7 +102,7 @@ class TurnProcessorDecompositionTests(unittest.TestCase):
                 path.write_text("unchanged")
                 processor = TurnProcessor(
                     root_dir=root, execution_client=Client(),
-                    config=RuntimeConfig(history_enabled=False, persistence_enabled=False),
+                    config=RuntimeConfig(history_enabled=False, persistence_enabled=False, semantic_mode="local"),
                 )
                 try:
                     events = list(processor.run_turn(TurnCommand(
