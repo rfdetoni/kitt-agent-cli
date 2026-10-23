@@ -78,6 +78,27 @@ Ctrl+C cancels only the transient job container; it does not stop the
 persistent Linux toolbox or Windows Oracle. Host execution is bounded to 780s
 and the Ghidra per-file analysis budget remains 600s.
 
+If Ghidra reports `Analysis timed out` but `Save succeeded`, the
+imported Ghidra program is persisted and the KITT result is correctly marked
+`ANALYSIS_TIMED_OUT` even if Docker exits with code 0. To continue an
+operator-selected existing project without importing the 292 MB ELF again:
+
+```bash
+kitt re lab analyze --path 2.1.308 --resume-job job-27ee75656097 --dry-run
+kitt re lab analyze --path 2.1.308 --resume-job job-27ee75656097
+```
+
+This uses Ghidra's documented `-process 2.1.308` mode. Resume jobs retain
+the existing `KittAnalysis.gpr` and `KittAnalysis.rep` data and write
+separate, uniquely named logs. Resume timeout limits are 1200s (Ghidra) and
+1380s (host); new imports retain the smaller 600s/780s budget. A new job
+records input source and SHA256 to validate subsequent resumes. Legacy jobs
+created before 0.88.75 require an explicit job ID and matching import/save
+receipt from the original Docker log; legacy projects have no cryptographic
+input manifest, which is reported as a limitation. Source SHA256 is checked
+before and after every run. Ghidra may retry previously incomplete analyzers;
+`-process` does not guarantee immediate completion or exported pseudocode.
+
 The Ghidra project is the native analysis result. This command does not
 automatically reconstruct original source code, export pseudocode for every
 function, or complete Bun/JavaScriptCore extraction. Operator guest

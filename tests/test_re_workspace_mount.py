@@ -167,3 +167,94 @@ def test_interrupt_cleans_up_only_its_own_analysis_container(
     assert removed[0][2].startswith("kitt-re-job-")
     assert "kitt-re-full" not in " ".join(removed[0])
     assert "Iniciando Ghidra" in capsys.readouterr().err
+
+
+
+def _legacy_saved_job(tmp_path, source="2.1.308", job="job-27ee75656097"):
+    output = tmp_path / "reverse-engineering" / "decompiled" / "ghidra" / job
+    output.mkdir(parents=True)
+    (output / "KittAnalysis.gpr").write_bytes(b"")
+    (output / "KittAnalysis.rep").mkdir()
+    old_log = output / "docker-analysis.log"
+    old_log.write_text(
+        "INFO IMPORTING: file:///workspace/" + source + "\n"
+        "INFO REPORT: Save succeeded for: /" + Path(source).name + "\n"
+        "INFO REPORT: Import succeeded\n"
+    )
+    return output, old_log
+
+
+def test_resume_saved_legacy_project_uses_process_not_import_and_preserves_logs(
+    monkeypatch, tmp_path
+):
+    (tmp_path / "2.1.308").write_bytes(b"\x7fELF" + bytes(128))
+    output, old_log = _legacy_saved_job(tmp_path)
+    receipt = old_log.read_bytes()
+    monkeypatch.setattr(re_workspace, "_managed_image", lambda: "sha256:" + "a" * 64)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(re_workspace.subprocess, "run", fake_run)
+    result = re_workspace.analyze_workspace(
+        workspace=tmp_path, path="2.1.308", resume_job="job-27ee75656097"
+    )
+    assert result["status"] == "GHIDRA_COMPLETED"
+    assert result["mode"] == "resume"
+    assert result["output"] == str(output)
+    assert result["resume_job"] == "job-27ee75656097"
+    argv, kwargs = calls[0]
+    assert "-process" in argv and argv[argv.index("-process") + 1] == "2.1.308"
+    assert "-import" not in argv
+    assert argv[argv.index("-analysisTimeoutPerFile") + 1] == "1200"
+    assert kwargs["timeout"] == 1380
+    assert "resume-" in result["log"]
+    assert old_log.read_bytes() == receipt
+    assert Path(result["log"]).is_file()
+    assert not (output / "kitt-re-input.json").exists()
+
+
+def test_analysis_timeout_saved_by_ghidra_is_not_reported_as_success(
+    monkeypatch, tmp_path
+):
+    (tmp_path / "2.1.308").write_bytes(b"\x7fELF" + bytes(128))
+    monkeypatch.setattr(re_workspace, "_managed_image", lambda: "sha256:" + "a" * 64)
+
+    def fake_run(argv, **kwargs):
+        kwargs["stdout"].write(
+            b"INFO REPORT: Save succeeded for: /2.1.308\n"
+            b"ERROR REPORT: Analysis timed out at 600 seconds. "
+            b"Processing not completed for file: file:///workspace/2.1.308\n"
+        )
+        kwargs["stdout"].flush()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(re_workspace.subprocess, "run", fake_run)
+    result = re_workspace.analyze_workspace(workspace=tmp_path, path="2.1.308")
+    assert result["analysis_timed_out"] is True
+    assert result["status"] == "ANALYSIS_TIMED_OUT"
+    assert result["mode"] == "import"
+    assert Path(result["output"], "kitt-re-input.json").is_file()
+
+
+def test_resume_rejects_mismatched_project_and_symlink(monkeypatch, tmp_path):
+    (tmp_path / "2.1.308").write_bytes(b"\x7fELF" + bytes(128))
+    output, _ = _legacy_saved_job(tmp_path, source="wrong.elf")
+    monkeypatch.setattr(re_workspace, "_managed_image", lambda: "sha256:" + "a" * 64)
+    with pytest.raises(VMError, match="receipt"):
+        re_workspace.analyze_workspace(
+            workspace=tmp_path, path="2.1.308",
+            resume_job="job-27ee75656097", dry_run=True,
+        )
+    with pytest.raises(VMError, match="Invalid RE resume"):
+        re_workspace.analyze_workspace(
+            workspace=tmp_path, path="2.1.308", resume_job="../outside", dry_run=True,
+        )
+    (output / "docker-analysis.log").unlink()
+    (output / "docker-analysis.log").symlink_to(tmp_path / "2.1.308")
+    with pytest.raises(VMError, match="receipt"):
+        re_workspace.analyze_workspace(
+            workspace=tmp_path, path="2.1.308", resume_job=output.name, dry_run=True,
+        )

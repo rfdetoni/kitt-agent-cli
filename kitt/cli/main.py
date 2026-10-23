@@ -686,6 +686,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Active project to share read-only with the RE analysis guest (default: current directory)")
     analyze.add_argument("--path", required=True,
         help="Relative file in workspace; not copied, verified before/after analysis")
+    analyze.add_argument("--resume-job", default=None,
+        help="Reuse the saved job-<id> Ghidra project; never re-import the ELF")
     analyze.add_argument("--dry-run", "--plan", action="store_true",
         help="Inspect image, workspace mounts and source SHA256 without starting Docker")
     upgrade = re_lab_actions.add_parser(
@@ -1287,7 +1289,8 @@ def main(argv=None) -> int:
                 elif action == "analyze":
                     from kitt.re_workspace import analyze_workspace
                     result = analyze_workspace(
-                        workspace=args.workspace, path=args.path, dry_run=args.dry_run,
+                        workspace=args.workspace, path=args.path,
+                        dry_run=args.dry_run, resume_job=args.resume_job,
                     )
                 elif action == "stage-wine":
                     from kitt.re_source_stage import stage_wine
