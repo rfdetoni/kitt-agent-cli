@@ -71,6 +71,7 @@ jobs:
           tests/test_python_targeted_unittest.py
           tests/test_large_workspace_stream_verification.py
           tests/test_git_subprocess_diagnostics.py
+          tests/test_re_workspace_mount.py
       - name: Run release-critical regression contracts
         run: python -u scripts/run_release_critical.py
       - name: Complete project regression suite
