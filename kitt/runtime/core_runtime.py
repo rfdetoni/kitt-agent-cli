@@ -16,6 +16,7 @@ from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
 from kitt.runtime.program_runtime import BoundedProgramRuntime
 from kitt.runtime.persistent_program import PersistentProgramSessions
 from kitt.runtime.progressive import apply_progressive_search_view
+from kitt.tools.build_detector import BuildDetector
 from kitt.runtime.retrieval_guard import RetrievalGuard
 from kitt.runtime.state import RuntimeStateStore
 from kitt.security.control_plane import control_plane_paths
@@ -177,6 +178,11 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         sensitive=True,
         resume_tool_name="run_command",
         risk_cost=3,
+        sandbox_profile="workspace-write",
+    ),
+    "test.run": RuntimeOperationSpec(
+        "test.run", CAP_PROCESS_RUN, "run_command", sensitive=True,
+        resume_tool_name="run_command", risk_cost=3,
         sandbox_profile="workspace-write",
     ),
     "process.start": RuntimeOperationSpec(
@@ -950,6 +956,10 @@ class SafeRuntime:
             "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
+            "test.run": lambda: self._op_test_run(
+                args, turn_id, origin, security_context, grant,
+                expected_approval_id, automatic_budget_reserved,
+            ),
             "process.start": lambda: self._op_process_start(
                 args, turn_id, security_context, origin
             ),
@@ -2540,6 +2550,61 @@ class SafeRuntime:
             data=getattr(result, "data", str(result)),
             error=getattr(result, "error", None),
         )
+
+    def _op_test_run(
+        self, args, turn_id, origin, security_context, grant=None,
+        expected_approval_id=None, automatic_budget_reserved: bool = False,
+    ):
+        """Select a host-detected test, delegating execution to approved process.run."""
+        if not isinstance(args, dict) or set(args) - {"paths", "dry_run"}:
+            return SafeRuntimeResult(False, "test.run", error="Unsupported test.run arguments")
+        paths = args.get("paths")
+        dry_run = args.get("dry_run", False)
+        if (
+            not isinstance(paths, list) or not 1 <= len(paths) <= 16
+            or type(dry_run) is not bool
+        ):
+            return SafeRuntimeResult(False, "test.run", error="Expected 1..16 paths and optional boolean dry_run")
+        checked = []
+        for value in paths:
+            if not isinstance(value, str) or not value or "\\x00" in value or "\\" in value:
+                return SafeRuntimeResult(False, "test.run", error="Invalid test target path")
+            candidate = Path(value)
+            if candidate.is_absolute() or ".." in candidate.parts:
+                return SafeRuntimeResult(False, "test.run", error="Test target must be workspace relative")
+            resolved = (self.root / candidate).resolve()
+            if not resolved.is_relative_to(self.root) or not resolved.is_file():
+                return SafeRuntimeResult(False, "test.run", error="Test target not found under workspace")
+            if security_context is not None:
+                security_context.assert_path_allowed(value)
+            checked.append(value)
+        detector = BuildDetector(str(self.root))
+        targeted = [step for step in detector.plan_verification(checked) if step.kind == "test"]
+        candidates = targeted or [
+            step for step in detector.plan_verification(checked, full=True)
+            if step.kind == "test"
+        ]
+        if not candidates:
+            return SafeRuntimeResult(False, "test.run", error="No host-detected test command for these files")
+        chosen = candidates[0]
+        plan = {
+            "step": chosen.name, "argv": list(chosen.argv),
+            "timeout_seconds": min(int(chosen.timeout_seconds), 240),
+            "cwd": ".", "network": False,
+        }
+        if dry_run:
+            return SafeRuntimeResult(True, "test.run", data={
+                "planned": True, "executed": False, **plan,
+            })
+        delegated = self._op_registry_tool(
+            "test.run", "run_command", {
+                "argv": plan["argv"], "timeout_seconds": plan["timeout_seconds"],
+                "cwd": ".", "network": False,
+            },
+            turn_id, origin, security_context, grant,
+            expected_approval_id, automatic_budget_reserved,
+        )
+        return delegated
 
     def _op_mcp_discover(self, args, security_context):
         """List already-registered MCP tools without connecting or granting access."""

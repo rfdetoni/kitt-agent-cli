@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.66 — host-governed targeted test.run
+
+The test.run runtime operation selects an existing deterministic BuildDetector test recipe from workspace-contained source paths and delegates it through the regular capability-gated, approved and strongly sandboxed run_command path. Supports read-only dry_run preview, 16 input paths maximum, timeout <= 240 seconds, network off and no custom argv. Focused tests; unchanged dependency pins and uv.lock synchronized.
+
+
 ## 0.88.65 — bounded host-governed MCP tool discovery
 
 Expose mcp.discover to inspect already registered, trusted MCP tools, filtering by query/server with bounded results and scope-aware visibility. The operation requires the existing CAP_MCP_CALL capability and never connects servers, imports schemas, or executes a tool. mcp.call remains separately policy-checked. Focused regression; uv.lock synchronized; dependency pins unchanged.
