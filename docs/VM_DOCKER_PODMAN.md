@@ -168,3 +168,16 @@ Supplying --source still selects the QEMU VM flow.
 A Dockur console is not an authenticated probe oracle: oracle_ready stays
 false until a separate forced-command channel is established.
 Docker discovery never enables KITT's unattended guest autonomy.
+
+
+## Specialized RE executors (Agent CLI 0.88.77)
+
+Use `kitt vm container build --image ghidra|frida` or
+`kitt vm container pull --image ghidra|frida` to install the independently
+versioned Ghidra and Frida images. The `full` toolbox no longer installs
+those two tools. Ghidra runs noninteractive via `kitt re lab analyze`;
+Frida's interactive tool shell is operator-only through
+`kitt vm container toolbox --profile frida --workspace DIR`. Add
+`--allow-ptrace` only when isolated local instrumentation needs it.
+This does not provide remote attachment to Windows; instrument inside its VM.
+No backward-compatibility image fallback is provided.

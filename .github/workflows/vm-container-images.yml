@@ -54,13 +54,13 @@ jobs:
       - name: Build Debian RE image with GDB/LLDB
         run: |
           set -euo pipefail
-          docker build -f kitt/vm_assets/Dockerfile.re --target base -t kitt/linux-re:base-0.86.11 kitt/vm_assets
-          docker run --rm kitt/linux-re:base-0.86.11 gdb --version
+          docker build -f kitt/vm_assets/Dockerfile.re --target base -t kitt/linux-re:base-0.88.77 kitt/vm_assets
+          docker run --rm kitt/linux-re:base-0.88.77 gdb --version
       - name: Build Wine/MinGW image
         run: |
           set -euo pipefail
-          docker build -f kitt/vm_assets/Dockerfile.re --target wine -t kitt/linux-re:wine-0.86.11 kitt/vm_assets
-          docker run --rm --network none kitt/linux-re:wine-0.86.11 sh -ec '
+          docker build -f kitt/vm_assets/Dockerfile.re --target wine -t kitt/linux-re:wine-0.88.77 kitt/vm_assets
+          docker run --rm --network none kitt/linux-re:wine-0.88.77 sh -ec '
             command -v wine
             command -v wine64
             command -v wine-staging
@@ -71,16 +71,15 @@ jobs:
             grep -q "^wine-staging-amd64=" /usr/share/kitt/re-wine-packages.lock
             command -v x86_64-w64-mingw32-gcc
           '
-      - name: Build full image with verified Ghidra and Frida
+      - name: Build lean REA/Wine toolbox (no Ghidra or Frida)
         run: |
           set -euo pipefail
-          docker build -f kitt/vm_assets/Dockerfile.re --target full -t kitt/linux-re:full-0.86.11 kitt/vm_assets
-          docker run --rm --network none kitt/linux-re:full-0.86.11 sh -ec '
+          docker build -f kitt/vm_assets/Dockerfile.re --target full -t kitt/linux-re:full-0.88.77 kitt/vm_assets
+          docker run --rm --network none kitt/linux-re:full-0.88.77 sh -ec '
             wine --version
-            wine64 --version
             wine-staging --version
-            test -f /opt/ghidra/support/analyzeHeadless
-            python -c "import frida; print(frida.__version__)"
+            test ! -e /opt/ghidra/support/analyzeHeadless
+            test ! -e /opt/frida/bin/frida
             node --version
             rea --version
           '
@@ -95,3 +94,60 @@ jobs:
             docker tag "kitt/linux-re:$tier-0.86.11" "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.86.11"
             docker push "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.86.11"
           done
+
+  ghidra-executor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and smoke Ghidra 12.1.4 standalone
+        run: |
+          set -euo pipefail
+          docker build -f kitt/vm_assets/Dockerfile.re --target ghidra -t kitt/re-ghidra:0.88.77 kitt/vm_assets
+          docker run --rm --network none --entrypoint sh kitt/re-ghidra:0.88.77 -ec '
+            test -x /opt/ghidra/support/analyzeHeadless
+            test ! -e /opt/frida/bin/frida
+            test ! -e /opt/rea/bin/rea
+            java -version
+          '
+      - name: Publish dedicated Ghidra image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag kitt/re-ghidra:0.88.77 ghcr.io/rfdetoni/kitt-re-ghidra:0.88.77
+          docker push ghcr.io/rfdetoni/kitt-re-ghidra:0.88.77
+
+  frida-executor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and smoke Frida standalone
+        run: |
+          set -euo pipefail
+          docker build -f kitt/vm_assets/Dockerfile.re --target frida -t kitt/re-frida:0.88.77 kitt/vm_assets
+          docker run --rm --network none --entrypoint sh kitt/re-frida:0.88.77 -ec '
+            python -c "import frida; print(frida.__version__)"
+            command -v frida
+            test ! -e /opt/ghidra/support/analyzeHeadless
+          '
+      - name: Publish dedicated Frida image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag kitt/re-frida:0.88.77 ghcr.io/rfdetoni/kitt-re-frida:0.88.77
+          docker push ghcr.io/rfdetoni/kitt-re-frida:0.88.77

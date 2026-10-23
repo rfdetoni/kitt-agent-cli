@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.77 — dedicated Ghidra and Frida Docker executors (breaking)
+
+- Ghidra 12.1.4 now runs from `kitt/re-ghidra:0.88.77`, Java plus SHA256-verified official Ghidra release only. `kitt re lab analyze` pins the local dedicated image by Docker image ID and never falls back to `kitt-re-full`; project resumption, read-only workspace, CPU/memory budgets, progress/heartbeat and logs remain.
+- Frida 17.23.3 and frida-tools 14.11.0 now run from `kitt/re-frida:0.88.77`, separate from Wine/REA. Operator-only `kitt vm container toolbox --profile frida --workspace DIR`; `--allow-ptrace` explicitly grants SYS_PTRACE for container-local processes, never host PID/network access. Windows instrumentation remains inside Windows guest.
+- `kitt/linux-re:full-0.88.77` now contains REA/Wine, not Ghidra/Frida. Standalone images can be built/pulled using `kitt vm container build|pull --image ghidra|frida`; they are produced and smoke-checked in separate GHCR publish jobs. No legacy tool fallback or old all-in-one image requirement. Existing workspace projects remain intact.
+- `pyproject.toml` and `uv.lock` synchronized. Upstream tools remain on their previously pinned versions. Performance benefit is image/lifecycle isolation and per-tool resources; no unmeasured CPU speedup is claimed.
+
+
 ## 0.88.76 — Ghidra activity supervisor without mandatory timeouts
 
 Replace mandatory Ghidra/host analysis timeouts with opt-in `--analysis-timeout-seconds` and `--host-timeout-seconds`. Use `Popen.wait` with bounded heartbeats, incremental 64 KiB log reads and optional Docker CPU/RAM/block I/O snapshots; silence is only a warning. Preserve operator-only sandbox, SHA256 verification, project resume, cancellation and exclusive project locking. Inspect actual Docker OOMKilled before explicitly removing the transient container. Require Ghidra analysis and save report in addition to process exit code for `GHIDRA_COMPLETED`; even this does not guarantee every analyzer succeeded. CPU/RAM/heap limits configurable without raising defaults; 2 GiB heap fits 4 GiB container. Add regression tests and document host verification requirement; synchronized Python and uv.lock versions, external pins unchanged.

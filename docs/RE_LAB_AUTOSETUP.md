@@ -36,6 +36,43 @@ Fixed, benign differential event-probe pilot using Windows and current toolbox W
 
     kitt re lab verify --full
 
+## Dedicated analyzers (0.88.77, no old-toolbox fallback)
+
+The existing Linux toolbox keeps REA/Wine; it no longer bundles Ghidra or
+Frida. First install the dedicated, versioned images (once) using the operator
+CLI, independently of the Windows guest:
+
+```sh
+kitt vm container pull --image ghidra --runtime docker
+kitt vm container pull --image frida --runtime docker
+# If GHCR is unavailable, build directly from verified project Dockerfile:
+kitt vm container build --image ghidra --runtime docker
+kitt vm container build --image frida --runtime docker
+```
+
+`kitt re lab analyze --path 2.1.308` now requires the Ghidra-only image;
+it does not use or fall back to the old all-in-one `kitt-re-full` image. The
+old saved `KittAnalysis.gpr/.rep` projects remain valid since the Ghidra
+version remains 12.1.4, and the operator can resume them in place.
+The dedicated static analysis image has no Wine/REA/Frida dependencies;
+Ghidra heap and CPU limits remain per-job, and the process is networkless,
+with immutable image ID and workspace mounted read-only.
+
+The Frida image has its own operator-only, offline Linux instrumentation
+shell. The default container lacks ptrace privileges; the opt-in grants
+SYS_PTRACE only within an isolated process namespace:
+
+```sh
+kitt vm container toolbox --profile frida --workspace "$PWD" --runtime docker --allow-ptrace
+# Inside guest: frida --version
+```
+
+There is no --privileged or --pid=host, no general socket/network exposure,
+and it cannot attach to Windows guest processes from the Linux container.
+For Windows-specific Win32 tracing the authorized Frida agent still runs
+inside the Windows guest. Image separation improves deployment and memory
+isolation, not the inherent runtime of a particular Ghidra analyzer.
+
 ## Active project workspace shared with RE analysis (no copying)
 
 The KITT RE tooling now supports zero-copy, on-demand, isolated Linux analysis
@@ -48,9 +85,10 @@ kitt re lab analyze --path 2.1.308 --dry-run
 kitt re lab analyze --path 2.1.308
 ```
 
-The operator CLI discovers the existing, validated `kitt-re-full` image by
-immutable Docker SHA256 ID, then starts a **short-lived container from that
-image**, without modifying the persistent `kitt-re-full` container's mounts.
+The operator CLI resolves the independently installed `kitt/re-ghidra`
+image to its immutable local Docker SHA256 ID and starts a **short-lived
+Ghidra-only container**, without modifying the persistent Linux toolbox or
+Windows guest.
 The active project is mounted at `/workspace` **read-only**, and a new
 private run directory under `./reverse-engineering/decompiled/ghidra/` is
 mounted at `/output` read/write. The original executable is independently

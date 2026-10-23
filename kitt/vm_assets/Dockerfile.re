@@ -65,34 +65,44 @@ RUN set -eu; \
     wine-staging --version
 CMD ["/bin/sh"]
 FROM wine AS full
-# Keep the REA runtime in full only. base/wine images remain lightweight.
+# General-purpose RE toolbox: Wine + Wine-Staging + REA, without Frida or Ghidra.
 COPY --from=rea-cli /usr/local/bin/node /usr/local/bin/node
 COPY --from=rea-cli /opt/rea /opt/rea
-ENV PATH="/opt/rea/bin:${PATH}"
-ARG GHIDRA_SHA256=ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
-RUN apt-get update && apt-get install -y --no-install-recommends unzip \
- && rm -rf /var/lib/apt/lists/*
-RUN curl --fail --location --retry 3 --proto "=https" \
-    https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip \
-    --output /tmp/ghidra.zip \
- && echo "${GHIDRA_SHA256}  /tmp/ghidra.zip" | sha256sum --check - \
- && unzip -q /tmp/ghidra.zip -d /opt \
- && rm /tmp/ghidra.zip \
- && ln -s /opt/ghidra_12.1.4_PUBLIC /opt/ghidra
-ENV GHIDRA_HOME=/opt/ghidra
-ENV GHIDRA_INSTALL_DIR=/opt/ghidra
-ENV PATH="/opt/ghidra/support:${PATH}"
-ARG FRIDA_VERSION=17.23.3
-ARG FRIDA_TOOLS_VERSION=14.11.0
-RUN python3 -m venv /opt/frida \
- && /opt/frida/bin/pip install --no-cache-dir \
-    "frida==${FRIDA_VERSION}" "frida-tools==${FRIDA_TOOLS_VERSION}"
-ENV PATH="/opt/frida/bin:${PATH}"
-# Validate both independent Wine distributions, REA, Ghidra and Frida at build time.
+ENV PATH="/opt/rea/bin:$PATH"
 RUN wine --version && wine64 --version && wine-staging --version \
  && test -s /usr/share/kitt/re-wine-packages.lock \
- && node --version \
- && rea --version \
- && test -f /opt/ghidra/support/analyzeHeadless \
+ && node --version && rea --version
+CMD ["/bin/sh"]
+
+# Dedicated static analyzer. No Wine, Frida, REA, or guest OS virtualization.
+FROM debian:trixie-slim AS ghidra
+ENV DEBIAN_FRONTEND=noninteractive
+ARG GHIDRA_SHA256=ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl unzip default-jdk-headless \
+ && rm -rf /var/lib/apt/lists/*
+RUN curl --fail --location --retry 3 --proto '=https' \
+    https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip \
+    --output /tmp/ghidra.zip \
+ && echo "$GHIDRA_SHA256  /tmp/ghidra.zip" | sha256sum --check - \
+ && unzip -q /tmp/ghidra.zip -d /opt \
+ && rm /tmp/ghidra.zip \
+ && ln -s /opt/ghidra_12.1.4_PUBLIC /opt/ghidra \
+ && test -x /opt/ghidra/support/analyzeHeadless
+ENV GHIDRA_HOME=/opt/ghidra
+ENV GHIDRA_INSTALL_DIR=/opt/ghidra
+ENV PATH="/opt/ghidra/support:$PATH"
+WORKDIR /workspace
+CMD ["/bin/sh"]
+
+# Dedicated Frida instrumentor. Ptrace is opt-in at job launch, not at build.
+FROM python:3.14.4-slim-trixie AS frida
+ARG FRIDA_VERSION=17.23.3
+ARG FRIDA_TOOLS_VERSION=14.11.0
+RUN python -m venv /opt/frida \
+ && /opt/frida/bin/pip install --no-cache-dir \
+    "frida==$FRIDA_VERSION" "frida-tools==$FRIDA_TOOLS_VERSION" \
  && /opt/frida/bin/python -c 'import frida; print(frida.__version__)'
+ENV PATH="/opt/frida/bin:$PATH"
+WORKDIR /workspace
 CMD ["/bin/sh"]

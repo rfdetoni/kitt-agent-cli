@@ -78,7 +78,7 @@ def _checked(record: dict, system: str) -> dict:
         "auto": False, "oracle_ready": False,
         **({"console": "http://127.0.0.1:8006"} if system == "windows"
            else {"workspace": str(lab / "workspace"),
-                 "tools": ["rea", "frida", "ghidra"]}),
+                 "tools": ["rea", "wine", "wine-staging", "gdb", "lldb"]}),
     }
 
 

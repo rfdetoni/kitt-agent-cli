@@ -166,3 +166,61 @@ class ContainerVMTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_dedicated_executor_build_and_pull_without_full_dependencies():
+    from kitt.vm_container import IMAGES, RE_EXECUTOR_VERSION
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    from kitt.vm_container import build_image, pull_image
+    seen = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        return SimpleNamespace(returncode=0, stdout=b"")
+
+    with patch("kitt.vm_container._runtime", return_value="docker"), \
+         patch("kitt.vm_container.subprocess.run", side_effect=fake_run):
+        for tool in ("ghidra", "frida"):
+            result = build_image(runtime="docker", image=tool)
+            cmd = seen[-1]
+            assert result["image"] == IMAGES[tool]
+            assert cmd[cmd.index("--target") + 1] == tool
+            result = pull_image(runtime="docker", image=tool)
+            assert result["local_image"] == IMAGES[tool]
+            assert ("ghcr.io/rfdetoni/kitt-re-" + tool + ":" +
+                    RE_EXECUTOR_VERSION) in seen[-2]
+
+
+def test_dedicated_frida_ptrace_requires_optin_in_guest_only(tmp_path):
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    from kitt import vm_container
+    from kitt.vm_supervisor import VMError
+    import pytest
+
+    seen = []
+    def run(argv, **kwargs):
+        seen.append(argv)
+        return SimpleNamespace(returncode=0)
+
+    with patch("kitt.vm_container._runtime", return_value="docker"), \
+         patch("kitt.vm_container._image_id", return_value="sha256:" + "f" * 64), \
+         patch("kitt.vm_container.sys.stdin.isatty", return_value=True), \
+         patch("kitt.vm_container.subprocess.run", side_effect=run):
+        assert vm_container.toolbox(
+            runtime="docker", profile="frida", workspace=tmp_path) == 0
+        default_argv = seen[-1]
+        assert "--cap-add=SYS_PTRACE" not in default_argv
+        assert f"type=bind,src={tmp_path},dst=/workspace,readonly" in default_argv
+        assert "--privileged" not in default_argv and "--pid=host" not in default_argv
+        assert vm_container.toolbox(
+            runtime="docker", profile="frida", workspace=tmp_path,
+            allow_ptrace=True) == 0
+        assert "--cap-add=SYS_PTRACE" in seen[-1]
+        assert "--network" in seen[-1] and "none" in seen[-1]
+        with pytest.raises(VMError):
+            vm_container.toolbox(
+                runtime="docker", profile="ghidra", workspace=tmp_path,
+                allow_ptrace=True)
