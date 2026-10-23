@@ -4,7 +4,7 @@ import json
 
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional, Set
 
 from kitt.context_engine.context_map import ContextMapBuilder
@@ -182,6 +182,11 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     ),
     "test.run": RuntimeOperationSpec(
         "test.run", CAP_PROCESS_RUN, "run_command", sensitive=True,
+        resume_tool_name="run_command", risk_cost=3,
+        sandbox_profile="workspace-write",
+    ),
+    "git.action": RuntimeOperationSpec(
+        "git.action", CAP_PROCESS_RUN, "run_command", sensitive=True,
         resume_tool_name="run_command", risk_cost=3,
         sandbox_profile="workspace-write",
     ),
@@ -957,6 +962,10 @@ class SafeRuntime:
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "test.run": lambda: self._op_test_run(
+                args, turn_id, origin, security_context, grant,
+                expected_approval_id, automatic_budget_reserved,
+            ),
+            "git.action": lambda: self._op_git_action(
                 args, turn_id, origin, security_context, grant,
                 expected_approval_id, automatic_budget_reserved,
             ),
@@ -2551,6 +2560,70 @@ class SafeRuntime:
             error=getattr(result, "error", None),
         )
 
+    def _op_git_action(
+        self, args, turn_id, origin, security_context, grant=None,
+        expected_approval_id=None, automatic_budget_reserved: bool = False,
+    ):
+        """An argv-only Git envelope; never bypass the host's process security."""
+        if not isinstance(args, dict) or set(args) - {"action", "paths", "message", "dry_run"}:
+            return SafeRuntimeResult(False, "git.action", error="Unexpected Git action arguments")
+        action = args.get("action")
+        dry_run = args.get("dry_run", False)
+        paths = args.get("paths", [])
+        message = args.get("message")
+        if action not in {"status", "diff", "stage", "commit"} or type(dry_run) is not bool:
+            return SafeRuntimeResult(False, "git.action", error="Unsupported Git action or dry_run")
+        if not isinstance(paths, list) or len(paths) > 32 or (
+            action == "stage" and not paths
+        ) or (action == "commit" and paths):
+            return SafeRuntimeResult(False, "git.action", error="Invalid number of Git paths")
+        checked = []
+        for value in paths:
+            if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
+                return SafeRuntimeResult(False, "git.action", error="Invalid Git path")
+            candidate = Path(value)
+            if (
+                candidate.is_absolute() or PureWindowsPath(value).is_absolute()
+                or PureWindowsPath(value).drive or ":" in value
+                or ".." in candidate.parts
+                or set(candidate.parts) & {".git", ".kitt"}
+            ):
+                return SafeRuntimeResult(False, "git.action", error="Git path escapes workspace or uses protected metadata")
+            resolved = (self.root / candidate).resolve()
+            if not resolved.is_relative_to(self.root):
+                return SafeRuntimeResult(False, "git.action", error="Git path outside workspace")
+            if security_context is not None:
+                security_context.assert_path_allowed(value)
+            checked.append(value)
+        if action == "commit" and bool(getattr(security_context, "is_path_scoped", False)):
+            return SafeRuntimeResult(False, "git.action", error="Path-scoped agents cannot commit global staging state")
+        if action == "commit":
+            if (
+                not isinstance(message, str) or not 1 <= len(message.strip()) <= 200
+                or "\n" in message or "\r" in message or "\x00" in message
+            ):
+                return SafeRuntimeResult(False, "git.action", error="Commit message must be one line (1..200 characters)")
+            argv = ["git", "commit", "-m", message.strip()]
+        else:
+            if message is not None:
+                return SafeRuntimeResult(False, "git.action", error="Message allowed only for commit")
+            argv = {
+                "status": ["git", "status", "--short"],
+                "diff": ["git", "diff", "--", *checked],
+                "stage": ["git", "add", "--", *checked],
+            }[action]
+        if dry_run:
+            return SafeRuntimeResult(True, "git.action", data={
+                "planned": True, "executed": False, "argv": argv, "network": False,
+                "requires_host_approval": True,
+            })
+        return self._op_registry_tool(
+            "git.action", "run_command",
+            {"argv": argv, "cwd": ".", "timeout_seconds": 90, "network": False},
+            turn_id, origin, security_context, grant,
+            expected_approval_id, automatic_budget_reserved,
+        )
+
     def _op_test_run(
         self, args, turn_id, origin, security_context, grant=None,
         expected_approval_id=None, automatic_budget_reserved: bool = False,
@@ -2567,7 +2640,7 @@ class SafeRuntime:
             return SafeRuntimeResult(False, "test.run", error="Expected 1..16 paths and optional boolean dry_run")
         checked = []
         for value in paths:
-            if not isinstance(value, str) or not value or "\\x00" in value or "\\" in value:
+            if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
                 return SafeRuntimeResult(False, "test.run", error="Invalid test target path")
             candidate = Path(value)
             if candidate.is_absolute() or ".." in candidate.parts:
