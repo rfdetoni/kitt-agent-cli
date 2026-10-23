@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.73 — on-demand current project workspace sharing with KITT RE
+
+New operator-owned `kitt re lab analyze --path ...` uses the current project workspace by default and mounts it read-only into an ephemeral, networkless container from the SHA256-pinned managed RE toolbox image. A separate, private output bind mount writes Ghidra results directly into `reverse-engineering/decompiled/ghidra` of the current project. No file copying, persistent Linux container replacement, Docker socket/host credentials or automatic Windows guest mount. Strong limits, before/after streaming SHA256 and dry-run plan. Focused tests, uv.lock synchronized; external dependency pins unchanged.
+
+
 ## 0.88.72 — explicit Git subprocess sandbox diagnostics
 
 Distinguish real host Git policy failures from attempts to commit via python3 -c/subprocess. The strong sandbox keeps .git read-only for wrappers; preserve that boundary, return a typed non-retriable GIT_METADATA_READ_ONLY_WRAPPED_PROCESS result and guide agents to governed git.action or direct Git argv, avoiding repeated ineffective probes. Focused tests; version + uv.lock updated, external pins unchanged.

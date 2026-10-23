@@ -36,6 +36,44 @@ Fixed, benign differential event-probe pilot using Windows and current toolbox W
 
     kitt re lab verify --full
 
+## Active project workspace shared with RE analysis (no copying)
+
+The KITT RE tooling now supports zero-copy, on-demand, isolated Linux analysis
+against the **currently selected project** (current working directory by default).
+No special host staging or manual `cp` is needed:
+
+```bash
+cd ~/projects/claude
+kitt re lab analyze --path 2.1.308 --dry-run
+kitt re lab analyze --path 2.1.308
+```
+
+The operator CLI discovers the existing, validated `kitt-re-full` image by
+immutable Docker SHA256 ID, then starts a **short-lived container from that
+image**, without modifying the persistent `kitt-re-full` container's mounts.
+The active project is mounted at `/workspace` **read-only**, and a new
+private run directory under `./reverse-engineering/decompiled/ghidra/` is
+mounted at `/output` read/write. The original executable is independently
+SHA256-checked before and after; Ghidra's project and logs appear in the
+current project without transferring copies. Output files and logs are visible
+to the operator without further synchronization.
+
+Isolation: network disabled, no privileged Docker/host socket, caps dropped,
+read-only container root, bounded CPU/RAM/PIDs and execution timeout. **The
+full project source tree, including any sensitive files in the project, is
+readable inside this operator-invoked container.** Use this only for a trusted
+workspace; move credentials outside the project first if necessary.
+`--dry-run` performs validation without creating folders or running a guest.
+This operation is **not** an unreviewed model-facing MCP tool; any automated
+agent invocation requires a separate host-approval capability. The Windows
+Oracle remains unchanged and does not receive broad mounts of project data:
+Windows still exchanges controlled, pinned probe files only.
+
+The Ghidra project is the native analysis result. This command does not
+automatically reconstruct original source code, export pseudocode for every
+function, or complete Bun/JavaScriptCore extraction. Operator guest
+attestation and code recovery must be verified separately.
+
 ## Host source staging for networkless Linux RE
 
 The managed `kitt-re-full` has `--network none`, and the Linux guest cannot

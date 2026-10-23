@@ -680,6 +680,14 @@ def build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--state-root", type=Path, default=None)
     stage.add_argument("--approve", action="store_true",
                        help="Approve the fixed GitHub clone on the networked host")
+    analyze = re_lab_actions.add_parser(
+        "analyze", help="Analyze a workspace file with Ghidra in an ephemeral, networkless RE toolbox")
+    analyze.add_argument("--workspace", type=Path, default=None,
+        help="Active project to share read-only with the RE analysis guest (default: current directory)")
+    analyze.add_argument("--path", required=True,
+        help="Relative file in workspace; not copied, verified before/after analysis")
+    analyze.add_argument("--dry-run", "--plan", action="store_true",
+        help="Inspect image, workspace mounts and source SHA256 without starting Docker")
     upgrade = re_lab_actions.add_parser(
         "upgrade-linux", help="Replace managed Linux toolbox with locally prepared full image; preserve workspace and Windows")
     upgrade.add_argument("--state-root", type=Path, default=None)
@@ -1276,6 +1284,11 @@ def main(argv=None) -> int:
                             yes=args.yes, accept_license=args.accept_license)
                 elif action == "verify":
                     result = re_lab.verify(state_root=args.state_root, full=args.full)
+                elif action == "analyze":
+                    from kitt.re_workspace import analyze_workspace
+                    result = analyze_workspace(
+                        workspace=args.workspace, path=args.path, dry_run=args.dry_run,
+                    )
                 elif action == "stage-wine":
                     from kitt.re_source_stage import stage_wine
                     result = stage_wine(state_root=args.state_root, approve=args.approve)
@@ -1290,6 +1303,8 @@ def main(argv=None) -> int:
                     else:
                         result = re_lab.operate(action, state_root=args.state_root)
                 print(_json.dumps(result, ensure_ascii=False))
+                if action == "analyze":
+                    return 0 if result["status"] in {"PLAN_ONLY", "GHIDRA_COMPLETED"} else 2
                 if action == "doctor":
                     return 0 if result["ready_for_setup"] else 2
                 if action == "verify":
