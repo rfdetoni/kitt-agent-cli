@@ -40,21 +40,47 @@ class BuildDetector:
         return False
 
     def _python_targeted(self, target_files: List[str]) -> list[VerificationStep]:
-        if importlib.util.find_spec("pytest") is None:
-            return []
-        paired: list[str] = []
-        for path in (Path(p) for p in target_files if p.endswith(".py")):
-            candidate = self.root_path / "tests" / f"test_{path.stem}.py"
-            if candidate.is_file():
-                paired.append(str(candidate.relative_to(self.root_path)))
+        """Find real test files, including siblings outside a tests/ package.
+
+        Host verification must never report PASS from a model's claimed local
+        test execution. These commands still run only via governed process.run.
+        """
+        paired: set[str] = set()
+        for raw in target_files:
+            path = Path(raw)
+            if path.suffix.casefold() != ".py":
+                continue
+            candidates = [
+                path.parent / f"test_{path.stem}.py",
+                Path("tests") / f"test_{path.stem}.py",
+            ]
+            if path.name.startswith("test_"):
+                candidates.insert(0, path)
+            for candidate in candidates:
+                located = self.root_path / candidate
+                resolved = located.resolve()
+                if (
+                    resolved.is_relative_to(self.root_path)
+                    and resolved.is_file() and not located.is_symlink()
+                ):
+                    paired.add(str(resolved.relative_to(self.root_path)))
         if not paired:
             return []
+        matched = sorted(paired)
+        if importlib.util.find_spec("pytest") is not None:
+            argv = ["python3", "-m", "pytest", "-q", *matched]
+        else:
+            # stdlib unittest remains available in air-gapped/guest Python.
+            # A single match uses an exact pattern; multiple matches use a
+            # bounded discovery rooted at their common directory (or cwd).
+            parents = {Path(name).parent for name in matched}
+            common = next(iter(parents)) if len(parents) == 1 else Path(".")
+            pattern = Path(matched[0]).name if len(matched) == 1 else "test_*.py"
+            argv = ["python3", "-m", "unittest", "discover",
+                    "-s", str(common), "-p", pattern, "-v"]
         return [
             VerificationStep(
-                "python.targeted-tests",
-                ["python3", "-m", "pytest", "-q", *paired],
-                120,
-                scope="paths",
+                "python.targeted-tests", argv, 120, scope="paths"
             )
         ]
 
