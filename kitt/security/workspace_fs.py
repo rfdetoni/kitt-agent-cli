@@ -11,6 +11,9 @@ from pathlib import Path
 
 FORBIDDEN_PARTS = frozenset({".git", ".env"})
 DEFAULT_MAX_FILE_BYTES = 8 * 1024 * 1024
+# Streaming checks do not relax the 8 MiB limit on in-memory file reads.
+MAX_STREAM_VERIFY_BYTES = 512 * 1024 * 1024
+STREAM_VERIFY_CHUNK_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -18,6 +21,14 @@ class WorkspaceFileStat:
     rel_path: str
     size: int
     mtime_ns: int
+
+
+@dataclass(frozen=True)
+class WorkspaceFileHash:
+    rel_path: str
+    size: int
+    mtime_ns: int
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -196,6 +207,83 @@ class WorkspaceFileSystem:
         finally:
             os.close(fd)
             os.close(parent_fd)
+
+    def hash_regular(
+        self, rel: str | Path, *, max_bytes: int = MAX_STREAM_VERIFY_BYTES
+    ) -> WorkspaceFileHash:
+        """Read an entire regular file in 1 MiB blocks without buffering it.
+
+        Paths use the same protected-component and no-symlink checks as read().
+        The open file and its workspace name must still refer to the same
+        stable inode after the pass. A normal SHA-256 pass is not an atomic
+        snapshot against malicious concurrent byte changes; callers needing a
+        durable proof must use an immutable snapshot or a pinned expected hash.
+        """
+        parts = self._normalize(rel)
+        if not parts:
+            raise IsADirectoryError("Workspace root is not a file")
+        limit = min(MAX_STREAM_VERIFY_BYTES, max(0, int(max_bytes)))
+        rel_path = "/".join(parts)
+
+        def _stable(before: os.stat_result, after: os.stat_result) -> bool:
+            return (
+                before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                before.st_ctime_ns
+            ) == (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+                after.st_ctime_ns
+            )
+
+        def _digest(handle_fd: int) -> tuple[os.stat_result, str]:
+            before = os.fstat(handle_fd)
+            if not stat.S_ISREG(before.st_mode):
+                raise PermissionError("Workspace target must be a regular file")
+            if before.st_size > limit:
+                raise ValueError(f"Workspace streaming verification exceeds {limit} bytes")
+            digester = hashlib.sha256()
+            total = 0
+            while total <= limit:
+                block = os.read(handle_fd, min(STREAM_VERIFY_CHUNK_BYTES, limit + 1 - total))
+                if not block:
+                    break
+                total += len(block)
+                digester.update(block)
+            after = os.fstat(handle_fd)
+            if total != before.st_size or total > limit or not _stable(before, after):
+                raise PermissionError("Workspace file changed during streaming verification")
+            return before, digester.hexdigest()
+
+        if os.name == "nt":
+            target = self._windows_path(parts)
+            prior = target.lstat()
+            if self._windows_reparse_point(prior) or not stat.S_ISREG(prior.st_mode):
+                raise PermissionError("Workspace target must be a regular non-reparse file")
+            flags = os.O_RDONLY | int(getattr(os, "O_BINARY", 0))
+            handle_fd = os.open(target, flags)
+            try:
+                opened = os.fstat(handle_fd)
+                if not _stable(prior, opened):
+                    raise PermissionError("Workspace file changed before streaming verification")
+                start, checksum = _digest(handle_fd)
+                after_name = target.lstat()
+                if self._windows_reparse_point(after_name) or not _stable(start, after_name):
+                    raise PermissionError("Workspace file replaced during streaming verification")
+            finally:
+                os.close(handle_fd)
+        else:
+            parent_fd, handle_fd = self._open_regular_posix(parts, nonblocking=True)
+            try:
+                start, checksum = _digest(handle_fd)
+                after_name = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+                if not _stable(start, after_name):
+                    raise PermissionError("Workspace file replaced during streaming verification")
+            finally:
+                os.close(handle_fd)
+                os.close(parent_fd)
+        return WorkspaceFileHash(
+            rel_path=rel_path, size=start.st_size,
+            mtime_ns=start.st_mtime_ns, sha256=checksum,
+        )
 
     def create_directory(
         self, rel: str | Path, *, parents: bool = True, exist_ok: bool = True
