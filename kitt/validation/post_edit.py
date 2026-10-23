@@ -69,6 +69,26 @@ class PostEditValidator:
 
     def _validate_one(self, relative: str) -> tuple[GateDiagnostic | None, bool]:
         suffix = Path(relative).suffix.casefold()
+        # Syntax validation must keep its strict 8 MiB memory budget. Unknown
+        # large artifacts (e.g. a 292 MB ELF named 2.1.308) instead receive a
+        # separate independent, bounded SHA-256 streaming verification.
+        # This is an integrity/readability check, not source syntax validation.
+        syntax_suffixes = SOURCE_SUFFIXES | {
+            ".json", ".toml", ".xml", ".xhtml", ".svg",
+        }
+        if suffix not in syntax_suffixes:
+            try:
+                file_stat = self.fs.stat_regular(relative)
+            except FileNotFoundError:
+                return None, True
+            if file_stat.size > self.fs.max_file_bytes:
+                fingerprint = self.fs.hash_regular(relative)
+                return GateDiagnostic(
+                    relative, "workspace.sha256-stream", True,
+                    f"size={fingerprint.size} sha256={fingerprint.sha256} "
+                    "(independent complete bounded read; compare against pinned "
+                    "reference separately)",
+                ), False
         try:
             data = self.fs.read(relative)
         except FileNotFoundError:

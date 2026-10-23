@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.71 — independent streaming verification of large workspace binaries
+
+Fix host `workspace-read` validation errors for large non-source artifacts such as the 292 MB `2.1.308` ELF. Add a file-descriptor-safe workspace SHA256 streaming API (1 MiB blocks, hard cap 512 MiB, stable inode/size/mtime/ctime, strict symlink restrictions), and route oversized non-source artifacts to this independent read rather than the 8 MiB in-memory syntax parser. Keep all source syntax checks and normal workspace-read/write limits unchanged; return SHA256/size as verifiable evidence, not a claim of comparison with an external pinned manifest or of decompilation. Focused boundary tests and synchronized uv.lock. Existing dependency pins unchanged.
+
+
 ## 0.88.70 — host-targeted Python check works in RE workspaces
 
 BuildDetector finds directly selected test_*.py files and sibling test_<module>.py alongside source, not only tests/test_*.py. Air-gapped guests without pytest use a bounded stdlib unittest discovery target instead of reporting python.targeted-tests UNAVAILABLE when a real test exists. Host policy, approval, sandbox and independent verification remain mandatory. Focused regression and uv.lock synchronized, pins unchanged.
