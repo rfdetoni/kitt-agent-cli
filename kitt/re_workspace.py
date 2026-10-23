@@ -16,6 +16,8 @@ from pathlib import Path, PureWindowsPath
 import re
 import secrets
 import shutil
+import signal
+import threading
 import subprocess
 import sys
 import time
@@ -229,6 +231,24 @@ def _remove_job(container: str) -> bool:
 
 
 @contextlib.contextmanager
+def _cancel_on_sigterm():
+    """Treat operator SIGTERM like Ctrl+C so the transient Docker job is cleaned."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def cancel(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, cancel)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+@contextlib.contextmanager
 def _project_lock(output: Path):
     """Do not let two resumptions write concurrently to the same Ghidra DB."""
     flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
@@ -288,11 +308,12 @@ class _ProgressMonitor:
             elif "Save succeeded" in line or "SAVING" in line:
                 self.phase = "SAVING"
         stats = _sample_stats(self.container)
-        cpu = memory = "unavailable"
+        cpu = memory = io_display = "unavailable"
+        self.telemetry_available = stats is not None
         if stats is not None:
-            self.telemetry_available = True
             cpu = str(stats.get("CPUPerc", "unavailable"))
             memory = str(stats.get("MemUsage", "unavailable"))
+            io_display = str(stats.get("BlockIO", "unavailable"))
             try:
                 cpu_active = float(cpu.strip().rstrip("%")) > 0.5
             except ValueError:
@@ -310,7 +331,7 @@ class _ProgressMonitor:
                       else self.phase)
         print(
             f"[KITT RE] {self.container} | {self.state} | {int(now-self.started)}s | "
-            f"CPU {cpu} | RAM {memory} | log +{delta} bytes | "
+            f"CPU {cpu} | RAM {memory} | I/O {io_display} | log +{delta} bytes | "
             f"telemetry {'available' if self.telemetry_available else 'unavailable'} | "
             f"{self.logfile}", file=sys.stderr, flush=True,
         )
@@ -423,7 +444,7 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
     oom = False
     cleanup_ok = True
     # fcntl lock is operator-owned and safe across independent CLI processes.
-    with _project_lock(output):
+    with _project_lock(output), _cancel_on_sigterm():
         with logfile.open("wb") as log:
             try:
                 proc = subprocess.Popen(
