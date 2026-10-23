@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.70 — host-targeted Python check works in RE workspaces
+
+BuildDetector finds directly selected test_*.py files and sibling test_<module>.py alongside source, not only tests/test_*.py. Air-gapped guests without pytest use a bounded stdlib unittest discovery target instead of reporting python.targeted-tests UNAVAILABLE when a real test exists. Host policy, approval, sandbox and independent verification remain mandatory. Focused regression and uv.lock synchronized, pins unchanged.
+
+
 ## 0.88.69 — streaming inventory for large ELF binaries
 
 The opt-in KITT RE MCP plugin adds `elf_inspect_stream` for read-only ELF metadata and incremental SHA256 hashing up to 512 MiB in constant RAM. Symlink-safe workspace traversal, bounded regular-file check, and concurrent size/mtime change detection. Plugin version 0.4.0. This is inventory, not decompilation; Ghidra analysis remains separately governed. No new dependencies or pin changes.
