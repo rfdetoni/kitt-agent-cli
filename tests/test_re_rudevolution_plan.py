@@ -49,6 +49,7 @@ class RuDevolutionPlanTest(unittest.TestCase):
                 ("sample.js", "0" * 64, "out/new"),
                 ("sample.js", digest, "../outside"),
                 ("sample.js", digest, "out"),
+                ("sample.js", digest, "nonexistent/new"),
             ):
                 with self.subTest(path=path, pin=pin, output=output):
                     with self.assertRaises(InspectionError):

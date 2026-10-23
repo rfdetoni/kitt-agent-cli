@@ -68,7 +68,10 @@ def plan(root: Path, path: str, executable: str, binary_sha256: str, output_dir:
     if len(data) > MAX_BUNDLE_BYTES:
         raise InspectionError("JavaScript bundle exceeds 32 MiB")
     destination = _relative(root, output_dir)
-    parent = destination.parent.resolve(strict=True)
+    try:
+        parent = destination.parent.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise InspectionError("Output parent must already exist") from exc
     if not parent.is_relative_to(root) or destination.exists() or destination.is_symlink():
         raise InspectionError("Output must be a fresh directory under an existing workspace parent")
     executable, executable_sha = _operator_executable(executable, binary_sha256)
