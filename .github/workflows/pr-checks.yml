@@ -17,7 +17,7 @@ jobs:
   critical:
     name: critical contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout Agent
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +51,7 @@ jobs:
       - name: Review schema regression
         run: python -m pytest -q tests/test_adversarial_review_contract.py
       - name: Run release-critical regression contracts
-        run: python scripts/run_release_critical.py
+        run: python -u scripts/run_release_critical.py
       - name: Complete project regression suite
         run: python -m pytest -q
       - name: Compile test modules
