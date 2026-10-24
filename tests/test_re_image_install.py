@@ -108,7 +108,11 @@ def test_failed_image_smoke_fails_installer(monkeypatch):
                         lambda binary, image: "sha256:" + "b" * 64)
     monkeypatch.setattr(re_image_install.subprocess, "run",
                         lambda *a, **kw: SimpleNamespace(returncode=42))
-    with pytest.raises(VMError, match="smoke check failed"):
+    monkeypatch.setattr(re_image_install.vm_container, "pull_image",
+                        lambda **kw: (_ for _ in ()).throw(VMError("pull blocked")))
+    monkeypatch.setattr(re_image_install.vm_container, "build_image",
+                        lambda **kw: (_ for _ in ()).throw(VMError("build blocked")))
+    with pytest.raises(VMError, match="could not be repaired"):
         re_image_install.prepare()
 
 def test_prepare_replaces_present_but_broken_ghidra_image(monkeypatch):
