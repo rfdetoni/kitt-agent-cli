@@ -15,15 +15,20 @@ BIN_DIR="${KITT_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
 NATIVE=1
 UNINSTALL=0
 PREPARE_SEMANTIC=0
+WITH_RE_TOOLS=0
+SKIP_RE_TOOLS=0
 
 usage() {
   cat <<'EOF'
 K.I.T.T. Agent CLI installer/updater
 
-Usage: install.sh [--ref REF] [--no-native] [--prepare-semantic-model] [--uninstall]
+Usage: install.sh [--ref REF] [--no-native] [--prepare-semantic-model] [--with-re-tools] [--no-re-tools] [--uninstall]
 
 The installer composes the portable Agent control plane with the Assistant
 runtime and Evolution/Evals packages. The shared Rust backend is optional.
+An existing Linux RE lab automatically triggers required Docker image repair.
+--with-re-tools also provisions RE Toolbox, Ghidra and Frida on first install,
+without creating or modifying a Windows VM. --no-re-tools skips this step.
 
 Environment:
   KITT_AGENT_HOME       installation root
@@ -43,6 +48,8 @@ while [[ $# -gt 0 ]]; do
     --ref) REF="${2:?missing ref}"; shift 2 ;;
     --no-native) NATIVE=0; shift ;;
     --prepare-semantic-model) PREPARE_SEMANTIC=1; shift ;;
+    --with-re-tools) WITH_RE_TOOLS=1; shift ;;
+    --no-re-tools) SKIP_RE_TOOLS=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -195,6 +202,18 @@ finally:
 print('KITT companion packages and state schema: ok')
 PY
 backend="$($VPY -c "from kitt.native.bridge import NativeCodeEngine; print(NativeCodeEngine('$SRC').status.backend)")"
+# An already-provisioned RE lab must not silently lose its required images
+# when updating to separated Ghidra/Frida executors. Fresh installation remains
+# opt-in because these are large Linux-only Docker images. Avoid reinstalling
+# or reconfiguring the Windows guest and never mount the Docker socket in agents.
+if [[ $SKIP_RE_TOOLS -eq 0 && ( $WITH_RE_TOOLS -eq 1 || ( "$(uname -s)" == "Linux" && -d "$HOME/.local/share/kitt/re-lab" ) ) ]]; then
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    echo "RE Docker executors require a Linux host." >&2
+    exit 1
+  fi
+  echo "Checking and provisioning KITT RE Docker images (toolbox, Ghidra, Frida)..."
+  "$LAUNCHER" re lab images prepare --runtime docker
+fi
 if [[ $PREPARE_SEMANTIC -eq 1 ]]; then
   # Explicit opt-in: Ollama remains user-owned. No services or weights are
   # downloaded by ordinary installation or on startup.

@@ -36,6 +36,42 @@ Fixed, benign differential event-probe pilot using Windows and current toolbox W
 
     kitt re lab verify --full
 
+## Installer-managed images
+
+On Linux, the standard KITT installer now repairs all three RE Docker images
+automatically **when it detects an existing lab** under
+`~/.local/share/kitt/re-lab`. New operators can explicitly include them:
+
+```bash
+./install.sh --with-re-tools
+# or on an already-installed Agent CLI:
+kitt re lab images status
+kitt re lab images prepare --runtime docker
+```
+
+The prepare action ensures the version-pinned full RE Toolbox, Ghidra and
+Frida images, reusing existing images or trying GHCR pull first with an
+official Dockerfile build fallback. All images must pass offline smoke
+checks or the installation reports failure. The installer does **not**
+create or reset the Windows Oracle and does **not** make Docker accessible
+from a confined model-execution sandbox. `--no-re-tools` explicitly
+skips image provisioning during installation.
+
+KITT root agents can call `kitt_runtime` `re.lab.images` for read-only host
+image readiness or `re.lab.analyze` with `{"path":"2.1.308"}` and optional
+`resume_job`/`dry_run` for the fixed Ghidra host workflow. Execution
+requires the `process.run` capability and passes the host `re_lab_analyze`
+policy and approval checks. Path-scoped child agents are denied. This operation
+is synchronous and may occupy one KITT tool turn for a long analysis; project
+and logs remain persistent. No generic Docker argument or host mount is accepted.
+
+When a model's `process.run` executes in a strong sandbox, Docker's
+`/var/run/docker.sock` can legitimately be absent even though host Docker
+is healthy. Neither building images nor chmod/chown of the socket resolves
+that isolation boundary: run approved RE jobs using host-owned KITT RE
+operations. Never mount the Docker socket or use `--privileged` merely
+to bypass sandbox isolation.
+
 ## Dedicated analyzers (0.88.77, no old-toolbox fallback)
 
 The existing Linux toolbox keeps REA/Wine; it no longer bundles Ghidra or

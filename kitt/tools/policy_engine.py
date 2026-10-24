@@ -216,6 +216,12 @@ class PolicyEngine:
         if origin == "MODEL":
             if tool_name == "kitt_runtime" or tool_name in read_tools:
                 return "ALLOW"
+            # A fixed, isolated Ghidra host operation follows the user's
+            # existing process autonomy preference. It is NOT a Docker shell:
+            # SafeRuntime admits only source/resume IDs and root principals.
+            if tool_name == "re_lab_analyze":
+                return ("ALLOW" if getattr(self.autonomy, "allow_run_command_auto", False)
+                        else "ASK")
             if tool_name == "run_command":
                 decision = self.evaluate_argv(args.get("argv"))
                 if decision == "DENY":

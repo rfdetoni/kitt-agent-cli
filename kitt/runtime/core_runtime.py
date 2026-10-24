@@ -106,6 +106,11 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "plan.dispatch_ready": RuntimeOperationSpec("plan.dispatch_ready", CAP_CHILD_SPAWN),
     "plan.verify": RuntimeOperationSpec("plan.verify", CAP_PROCESS_RUN),
     "repo.read": RuntimeOperationSpec("repo.read", CAP_REPO_READ, "read_file"),
+    "re.lab.images": RuntimeOperationSpec("re.lab.images", CAP_REPO_READ),
+    "re.lab.analyze": RuntimeOperationSpec(
+        "re.lab.analyze", CAP_PROCESS_RUN, "re_lab_analyze",
+        sensitive=True, risk_cost=3,
+    ),
     "repo.search": RuntimeOperationSpec("repo.search", CAP_REPO_SEARCH, "search"),
     "repo.inspect_symbol": RuntimeOperationSpec(
         "repo.inspect_symbol", CAP_REPO_READ, "read_file"
@@ -904,6 +909,8 @@ class SafeRuntime:
     ) -> SafeRuntimeResult:
         handlers = {
             "repo.read": lambda: self._op_repo_read(args, turn_id, origin, security_context),
+            "re.lab.images": lambda: self._op_re_lab_images(args, security_context),
+            "re.lab.analyze": lambda: self._op_re_lab_analyze(args, security_context),
             "repo.search": lambda: self._op_repo_search(args, turn_id, origin, security_context),
             "repo.inspect_symbol": lambda: self._op_repo_inspect_symbol(args, turn_id, origin, security_context),
             "repo.read_symbol": lambda: self._op_repo_read_symbol(args, security_context),
@@ -1027,6 +1034,71 @@ class SafeRuntime:
         if op.startswith("plan."):
             return self._op_plan(op, args, turn_id, origin, security_context, grant, expected_approval_id)
         return handlers[op]()
+
+    def _op_re_lab_images(self, args, security_context):
+        """Host read-only Docker image availability without sandbox socket access.
+
+        No Docker writes, no guest execution or capability escalation.
+        """
+        if not isinstance(args, dict) or args:
+            return SafeRuntimeResult(
+                False, "re.lab.images", error="re.lab.images takes no arguments",
+            )
+        if security_context is None:
+            return SafeRuntimeResult(
+                False, "re.lab.images", error="ExecutionSecurityContext is required",
+            )
+        from kitt import re_image_install
+        data = re_image_install.status()
+        return SafeRuntimeResult(
+            data["status"] == "READY", "re.lab.images", data=data,
+            error=(None if data["status"] == "READY"
+                   else "RE Docker images are not all ready on the host"),
+        )
+
+    def _op_re_lab_analyze(self, args, security_context):
+        """Narrow, host-policy-governed Ghidra operation; never expose Docker socket.
+
+        This call is synchronous while Ghidra runs and may be long lived on slow
+        hosts. Run it from an authorized root agent only, not path-scoped children.
+        """
+        from kitt.vm_supervisor import VMError
+        if (not isinstance(args, dict)
+                or set(args) - {"path", "resume_job", "dry_run"}):
+            return SafeRuntimeResult(
+                False, "re.lab.analyze", error="Unexpected RE analysis arguments",
+            )
+        path = args.get("path")
+        job = args.get("resume_job")
+        dry_run = args.get("dry_run", False)
+        if (not isinstance(path, str) or not path or len(path) > 1024
+                or (job is not None and (not isinstance(job, str) or len(job) > 128))
+                or type(dry_run) is not bool):
+            return SafeRuntimeResult(
+                False, "re.lab.analyze", error="Invalid RE source, resume job or dry_run",
+            )
+        if security_context is None or getattr(security_context, "is_path_scoped", False):
+            return SafeRuntimeResult(
+                False, "re.lab.analyze",
+                error="RE host execution requires a root, scoped agent principal",
+            )
+        try:
+            security_context.assert_path_allowed(path)
+            from kitt.re_workspace import analyze_workspace
+            data = analyze_workspace(
+                workspace=self.root, path=path,
+                resume_job=job, dry_run=dry_run,
+            )
+        except (ValueError, PermissionError, OSError, VMError) as exc:
+            return SafeRuntimeResult(
+                False, "re.lab.analyze", error=str(exc)[:300],
+            )
+        return SafeRuntimeResult(
+            data["status"] in {"PLAN_ONLY", "GHIDRA_COMPLETED"},
+            "re.lab.analyze", data=data,
+            error=(None if data["status"] in {"PLAN_ONLY", "GHIDRA_COMPLETED"}
+                   else f"Ghidra ended with {data['status']}; see retained logs"),
+        )
 
     def _op_plan(self, operation, args, turn_id, origin, security_context, grant, approval_id):
         from kitt.runtime.plan_runtime import execute_plan_action

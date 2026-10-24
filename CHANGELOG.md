@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.79 — repair missing RE Docker images during installation
+
+- Added narrow model-visible `kitt_runtime re.lab.images` (host image inspection, read-only) and `re.lab.analyze` (root-agent-only, CAP_PROCESS_RUN and policy-gated host Ghidra execution using strictly validated source and resume IDs). This eliminates the need to expose a Docker socket to the model's process sandbox. Analysis is synchronous and remains subject to user/policy approvals; long-running job background management is a follow-up.
+- Added `kitt re lab images status|prepare` for dedicated `ghidra`, `frida` and full RE Toolbox images. Reuse existing immutable image IDs; when missing, pull the version-pinned GHCR image, otherwise build from the project Dockerfile, then run a bounded offline smoke test for installed executables.
+- The Linux `install.sh` now supports `--with-re-tools`; it automatically reconciles images when an existing operator RE lab is detected, with `--no-re-tools` opt-out. No Windows licensing, guest resets, Docker-socket exposure to agent sandboxes, or implicit unrequested VM creation.
+- Tested image pull/build fallbacks, idempotence, errors, installer command flags. Third-party pins unchanged, uv.lock synchronized.
+
+
 ## 0.88.78 — fix RE Toolbox registry publication
 
 - Corrected the Linux RE Toolbox publisher: it had built `base/wine/full-0.88.77` but attempted to tag/push the nonexistent `0.86.11` images. The GHCR publication now uses the pinned `0.88.77` Toolbox image tags, exactly matching the build and `vm_container.RE_TOOLBOX_VERSION` consumer.

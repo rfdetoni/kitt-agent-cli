@@ -680,6 +680,12 @@ def build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--state-root", type=Path, default=None)
     stage.add_argument("--approve", action="store_true",
                        help="Approve the fixed GitHub clone on the networked host")
+    images = re_lab_actions.add_parser(
+        "images", help="Check or install dedicated KITT RE Docker images (no Windows changes)")
+    image_actions = images.add_subparsers(dest="image_action", required=True)
+    for command_name in ("status", "prepare"):
+        image_action = image_actions.add_parser(command_name)
+        image_action.add_argument("--runtime", choices=["docker"], default="docker")
     analyze = re_lab_actions.add_parser(
         "analyze", help="Analyze a workspace file with a dedicated, isolated Ghidra Docker executor")
     analyze.add_argument("--workspace", type=Path, default=None,
@@ -1300,6 +1306,11 @@ def main(argv=None) -> int:
                             yes=args.yes, accept_license=args.accept_license)
                 elif action == "verify":
                     result = re_lab.verify(state_root=args.state_root, full=args.full)
+                elif action == "images":
+                    from kitt import re_image_install
+                    result = (re_image_install.status(runtime=args.runtime)
+                              if args.image_action == "status"
+                              else re_image_install.prepare(runtime=args.runtime))
                 elif action == "analyze":
                     from kitt.re_workspace import analyze_workspace
                     result = analyze_workspace(
@@ -1325,6 +1336,8 @@ def main(argv=None) -> int:
                     else:
                         result = re_lab.operate(action, state_root=args.state_root)
                 print(_json.dumps(result, ensure_ascii=False))
+                if action == "images":
+                    return 0 if result["status"] == "READY" else 2
                 if action == "analyze":
                     return 0 if result["status"] in {"PLAN_ONLY", "GHIDRA_COMPLETED"} else 2
                 if action == "doctor":

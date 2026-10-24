@@ -64,6 +64,22 @@ class TestAutonomyPolicy(unittest.TestCase):
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("ask")).evaluate_tool("run_command", command), "ASK")
         self.assertEqual(PolicyEngine(autonomy=AutonomyPolicy.preset("deny")).evaluate_tool("run_command", command), "DENY")
 
+    def test_host_ghidra_operation_respects_user_autonomy_preset(self):
+        arg = {"path": "2.1.308"}
+        self.assertEqual(
+            PolicyEngine(autonomy=AutonomyPolicy.preset("allow_all"))
+            .evaluate_tool("re_lab_analyze", arg), "ALLOW",
+        )
+        self.assertEqual(
+            PolicyEngine(autonomy=AutonomyPolicy.preset("ask"))
+            .evaluate_tool("re_lab_analyze", arg), "ASK",
+        )
+        # SafeRuntime separately blocks every sensitive operation in read_only.
+        self.assertEqual(
+            PolicyEngine(autonomy=AutonomyPolicy.preset("deny"))
+            .evaluate_tool("re_lab_analyze", arg), "ASK",
+        )
+
     def test_read_only_git_dash_c_is_allowed_only_inside_workspace(self):
         import tempfile
         from pathlib import Path
