@@ -83,7 +83,7 @@ def prepare(*, runtime: str = "docker") -> dict:
         try:
             image_id = vm_container._image_id(docker, tag)
             _smoke(docker, image_id, profile)
-        except (OSError, subprocess.TimeoutExpired, VMError):
+        except (OSError, subprocess.TimeoutExpired, VMError) as initial_failure:
             # A tagged image can be corrupt, stale or missing required tools.
             # Reconcile on failed smoke too, not only on missing image ID.
             repaired = False
@@ -105,7 +105,7 @@ def prepare(*, runtime: str = "docker") -> dict:
                     f"{profile} RE image could not be repaired: pinned pull and "
                     "local build both failed verification. Check Docker build "
                     "logs, disk space and access to the image registry."
-                )
+                ) from initial_failure
         images[profile] = {"status": "READY", "image": tag,
                            "image_id": image_id, "source": method}
     return {"status": "READY", "runtime": runtime, "images": images,
