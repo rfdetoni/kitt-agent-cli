@@ -43,6 +43,7 @@ from kitt.tools.registry import ToolRegistry
 from kitt.tools.surface_selector import ToolSurfaceSelector
 from kitt.llm.client import LLMClient
 from kitt.llm.domain import ProviderRecoverableError
+from kitt.llm.http_security import TransportCancelled
 from kitt.core.session_state import SessionState
 from kitt.core.turn_command import TurnCommand
 from kitt.core.execution_budget import ExecutionBudgetExceeded
@@ -1363,6 +1364,16 @@ Use read_file/search/repository_map for project data and pass only selected JSON
                     return
                 yield ev
 
+        except TransportCancelled:
+            # The transport is explicitly cancelled by the operator/turn guard.
+            # This is not a provider crash and must not emit a traceback or
+            # leave the turn in FAILED state when the user pressed Cancel.
+            self.cancelled_turns.discard(cmd.turn_id)
+            debug_event(
+                logger, "turn.cancelled", turn_id=cmd.turn_id,
+                conversation_id=cmd.conversation_id, reason="transport_cancelled",
+            )
+            yield TurnCancelled(reason="Provider request cancelled")
         except ExecutionBudgetExceeded as e:
             yield TurnBlocked(reason=(
                 f"Execution budget checkpoint: {e}. "
