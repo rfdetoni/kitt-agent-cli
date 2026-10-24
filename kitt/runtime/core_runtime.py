@@ -1334,6 +1334,30 @@ class SafeRuntime:
                     "subject to host policy and approval. Do not retry the "
                     "same wrapper; if direct Git also fails, report BLOCKED_ENV."
                 )
+        if (
+            tool_name == "run_command"
+            and not tool_result.success
+            and isinstance(argv, list) and argv
+            and isinstance(argv[0], str)
+            and argv[0].rsplit("/", 1)[-1] in {"docker", "podman"}
+        ):
+            output = str(getattr(tool_result, "output", "") or "")[:8192].casefold()
+            if any(fragment in output for fragment in (
+                "failed to connect to the docker api",
+                "cannot connect to the docker daemon",
+                "permission denied while trying to connect to the docker daemon",
+                "dial unix /var/run/docker.sock",
+            )):
+                metadata["failure_kind"] = "DOCKER_SANDBOX_SOCKET_UNAVAILABLE"
+                metadata["retry_same_command"] = False
+                error = (
+                    "Docker daemon socket is not available inside the agent process "
+                    "sandbox. Do not retry docker process.run, infer the host daemon "
+                    "is stopped, or request a broader sandbox. For RE image status "
+                    "use kitt_runtime re.lab.images; for Ghidra use the host-governed "
+                    "re.lab.analyze operation (subject to existing host policy). "
+                    "Operator CLI may run 'kitt re lab images prepare'."
+                )
         handles: list[str] = []
         if tool_name == "artifact_store" and metadata.get("artifact_id"):
             handles.append(f"artifact:{metadata['artifact_id']}")

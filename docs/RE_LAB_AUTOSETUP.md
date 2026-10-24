@@ -290,3 +290,21 @@ Never run `recreate` just to recover a refused SSH connection.
   PowerShell syntax parsing and mock tests are not substitutes for that test.
 
 See docs/WINDOWS_ORACLE_DOCKUR.md for the existing OEM and pilot contracts.
+
+
+### Repairing existing RE images and diagnosing sandbox Docker errors
+
+`kitt re lab images prepare` now rechecks the contents of the local pinned
+REA/Wine, Ghidra and Frida images even when all three tags exist. If an image
+fails its offline executable smoke check, the host tries a fresh version-pinned
+registry pull, checks that image again, then falls back to building from the
+bundled Dockerfile and rechecking. Neither the Windows guest nor already
+running containers are recreated.
+
+The normal agent `process.run` tool executes in a filesystem/process sandbox
+without the Docker socket. A `docker ps` failure in that sandbox is **not**
+evidence that the host Docker daemon is down. Use host-governed
+`kitt_runtime re.lab.images` for read-only image discovery, or policy-gated
+`kitt_runtime re.lab.analyze` for actual Ghidra execution. Operator CLI may
+run `kitt re lab images prepare`; the agent must not request Docker socket
+mounts or disable the sandbox.
