@@ -5,7 +5,6 @@ model tools; the host executes fixed image management commands.
 """
 from __future__ import annotations
 
-import shutil
 import subprocess
 
 from kitt import vm_container
