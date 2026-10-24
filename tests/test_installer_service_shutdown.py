@@ -19,6 +19,15 @@ class InstallerServiceShutdownTests(unittest.TestCase):
         self.assertIn("Python 3.14+ is required", text)
         self.assertIn("HistoryDatabase(\":memory:\", in_memory=True)", text)
 
+    def test_installer_repairs_existing_re_lab_and_supports_explicit_opt_in(self):
+        text = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn('--with-re-tools) WITH_RE_TOOLS=1', text)
+        self.assertIn('--no-re-tools) SKIP_RE_TOOLS=1', text)
+        self.assertIn('re lab images prepare --runtime docker', text)
+        self.assertIn('-d "$HOME/.local/share/kitt/re-lab"', text)
+        self.assertIn('SKIP_RE_TOOLS -eq 0', text)
+        self.assertNotIn('--accept-license --yes', text)
+
     def test_windows_installer_stops_daemon_before_mutating_install_tree(self):
         text = (ROOT / "install.ps1").read_text(encoding="utf-8")
 

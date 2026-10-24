@@ -106,6 +106,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "plan.dispatch_ready": RuntimeOperationSpec("plan.dispatch_ready", CAP_CHILD_SPAWN),
     "plan.verify": RuntimeOperationSpec("plan.verify", CAP_PROCESS_RUN),
     "repo.read": RuntimeOperationSpec("repo.read", CAP_REPO_READ, "read_file"),
+    "re.lab.images": RuntimeOperationSpec("re.lab.images", CAP_REPO_READ),
     "repo.search": RuntimeOperationSpec("repo.search", CAP_REPO_SEARCH, "search"),
     "repo.inspect_symbol": RuntimeOperationSpec(
         "repo.inspect_symbol", CAP_REPO_READ, "read_file"
@@ -904,6 +905,7 @@ class SafeRuntime:
     ) -> SafeRuntimeResult:
         handlers = {
             "repo.read": lambda: self._op_repo_read(args, turn_id, origin, security_context),
+            "re.lab.images": lambda: self._op_re_lab_images(args, security_context),
             "repo.search": lambda: self._op_repo_search(args, turn_id, origin, security_context),
             "repo.inspect_symbol": lambda: self._op_repo_inspect_symbol(args, turn_id, origin, security_context),
             "repo.read_symbol": lambda: self._op_repo_read_symbol(args, security_context),
@@ -1027,6 +1029,27 @@ class SafeRuntime:
         if op.startswith("plan."):
             return self._op_plan(op, args, turn_id, origin, security_context, grant, expected_approval_id)
         return handlers[op]()
+
+    def _op_re_lab_images(self, args, security_context):
+        """Host read-only Docker image availability without sandbox socket access.
+
+        No Docker writes, no guest execution or capability escalation.
+        """
+        if not isinstance(args, dict) or args:
+            return SafeRuntimeResult(
+                False, "re.lab.images", error="re.lab.images takes no arguments",
+            )
+        if security_context is None:
+            return SafeRuntimeResult(
+                False, "re.lab.images", error="ExecutionSecurityContext is required",
+            )
+        from kitt import re_image_install
+        data = re_image_install.status()
+        return SafeRuntimeResult(
+            data["status"] == "READY", "re.lab.images", data=data,
+            error=(None if data["status"] == "READY"
+                   else "RE Docker images are not all ready on the host"),
+        )
 
     def _op_plan(self, operation, args, turn_id, origin, security_context, grant, approval_id):
         from kitt.runtime.plan_runtime import execute_plan_action
