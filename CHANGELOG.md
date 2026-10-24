@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.82 — child worktree fallback for an unborn Git HEAD
+
+- Fix the observed `fatal: invalid reference: HEAD` when a child agent starts inside a repository created by `git init` but without an initial commit. Worktree isolation is enabled only after `git rev-parse --verify HEAD^{commit}` succeeds. Until then the coordinator reuses the existing explicit shared-workspace fallback; it never commits files or rewrites Git metadata automatically.
+- Add regression coverage for the unborn-to-committed transition, preserving isolated child worktrees after a real initial commit. `pyproject.toml`, `uv.lock`, and installed package fallback version are synchronized; third-party pins unchanged.
+- Installer-provisioned Toolbox, Ghidra, and Frida images and the host-policy RE execution route from 0.88.81 remain unchanged. Sandbox Docker socket access is intentionally not granted to `process.run`; use `re.lab.images` and `re.lab.analyze` operations.
+
+
+
 ## 0.88.81 — self-repair damaged RE executor images and diagnose sandbox Docker access
 
 - KITT RE installer now retries **present but broken** local Toolbox/Ghidra/Frida image tags when their offline smoke test fails. A pinned GHCR pull is verified first, falling back to an isolated local Dockerfile build with a second offline smoke check. A failure of both methods remains explicit and blocking; no stale image is accepted as ready.

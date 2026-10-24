@@ -141,14 +141,19 @@ class WorkspaceCoordinator:
         return proc
 
     def is_git_repository(self) -> bool:
+        """Require a committed HEAD before isolating a child in a Git worktree.
+
+        `git init` reports a valid worktree but has an unborn HEAD, and
+        `git worktree add -b ... HEAD` fails with 'invalid reference: HEAD'.
+        Those workspaces follow the existing shared-workspace fallback instead.
+        Never create an implicit initial commit in an operator's project.
+        """
         try:
-            return (
-                self._git(
-                    ["rev-parse", "--is-inside-work-tree"],
-                    check=False,
-                ).returncode
-                == 0
-            )
+            inside = self._git(["rev-parse", "--is-inside-work-tree"], check=False)
+            if inside.returncode != 0 or inside.stdout.strip() != "true":
+                return False
+            commit = self._git(["rev-parse", "--verify", "HEAD^{commit}"], check=False)
+            return commit.returncode == 0
         except OSError:
             return False
 
