@@ -91,8 +91,8 @@ jobs:
           set -euo pipefail
           echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for tier in base wine full; do
-            docker tag "kitt/linux-re:$tier-0.86.11" "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.86.11"
-            docker push "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.86.11"
+            docker tag "kitt/linux-re:$tier-0.88.77" "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.88.77"
+            docker push "ghcr.io/rfdetoni/kitt-linux-re:$tier-0.88.77"
           done
 
   ghidra-executor:
