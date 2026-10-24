@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.81 — self-repair damaged RE executor images and diagnose sandbox Docker access
+
+- KITT RE installer now retries **present but broken** local Toolbox/Ghidra/Frida image tags when their offline smoke test fails. A pinned GHCR pull is verified first, falling back to an isolated local Dockerfile build with a second offline smoke check. A failure of both methods remains explicit and blocking; no stale image is accepted as ready.
+- When agent `process.run docker ...` fails due to an inaccessible Docker socket, KITT records a non-retryable `DOCKER_SANDBOX_SOCKET_UNAVAILABLE` diagnostic and points to the existing host-policy-governed `re.lab.images` and `re.lab.analyze` operations, rather than sending the agent into repeated container probes. This does not expose the Docker socket or elevate model permissions.
+- Tests for stale image recovery, double failure and scoped Docker error classification; installer and existing Docker image version pins remain unchanged. Package metadata and uv.lock synchronized.
+
+
 ## 0.88.80 — RE Docker provisioning on first install; quiet intentional cancellations
 
 - Linux installations with an already usable Docker daemon now automatically prepare and smoke-check all three pinned dedicated RE images (REA/Wine Toolbox, Ghidra, Frida), without requiring `--with-re-tools`; `--no-re-tools` skips the large downloads. Existing RE labs still fail visibly if Docker cannot be reached. Fresh machines without a working daemon are not silently assumed to have Docker.

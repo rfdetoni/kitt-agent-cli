@@ -78,19 +78,34 @@ def prepare(*, runtime: str = "docker") -> dict:
     images = {}
     for kind, build_profile, profile in _IMAGE_SPECS:
         tag = vm_container.IMAGES[profile]
+        image_id = None
+        method = "existing"
         try:
             image_id = vm_container._image_id(docker, tag)
-            method = "existing"
-        except (OSError, subprocess.TimeoutExpired, VMError):
-            try:
-                vm_container.pull_image(runtime=runtime, image=kind, profile=build_profile)
-                method = "pulled"
-            except (OSError, subprocess.TimeoutExpired, VMError):
-                # Project-controlled Dockerfile, pinned tool versions and checksums.
-                vm_container.build_image(runtime=runtime, image=kind, profile=build_profile)
-                method = "built"
-            image_id = vm_container._image_id(docker, tag)
-        _smoke(docker, image_id, profile)
+            _smoke(docker, image_id, profile)
+        except (OSError, subprocess.TimeoutExpired, VMError) as initial_failure:
+            # A tagged image can be corrupt, stale or missing required tools.
+            # Reconcile on failed smoke too, not only on missing image ID.
+            repaired = False
+            for recovery, method_name in (
+                (vm_container.pull_image, "pulled"),
+                (vm_container.build_image, "built"),
+            ):
+                try:
+                    recovery(runtime=runtime, image=kind, profile=build_profile)
+                    image_id = vm_container._image_id(docker, tag)
+                    _smoke(docker, image_id, profile)
+                except (OSError, subprocess.TimeoutExpired, VMError):
+                    continue
+                method = method_name
+                repaired = True
+                break
+            if not repaired:
+                raise VMError(
+                    f"{profile} RE image could not be repaired: pinned pull and "
+                    "local build both failed verification. Check Docker build "
+                    "logs, disk space and access to the image registry."
+                ) from initial_failure
         images[profile] = {"status": "READY", "image": tag,
                            "image_id": image_id, "source": method}
     return {"status": "READY", "runtime": runtime, "images": images,

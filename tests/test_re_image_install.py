@@ -108,5 +108,67 @@ def test_failed_image_smoke_fails_installer(monkeypatch):
                         lambda binary, image: "sha256:" + "b" * 64)
     monkeypatch.setattr(re_image_install.subprocess, "run",
                         lambda *a, **kw: SimpleNamespace(returncode=42))
-    with pytest.raises(VMError, match="smoke check failed"):
+    monkeypatch.setattr(re_image_install.vm_container, "pull_image",
+                        lambda **kw: (_ for _ in ()).throw(VMError("pull blocked")))
+    monkeypatch.setattr(re_image_install.vm_container, "build_image",
+                        lambda **kw: (_ for _ in ()).throw(VMError("build blocked")))
+    with pytest.raises(VMError, match="could not be repaired"):
+        re_image_install.prepare()
+
+def test_prepare_replaces_present_but_broken_ghidra_image(monkeypatch):
+    monkeypatch.setattr(re_image_install.vm_container, "_runtime",
+                        lambda runtime: "/usr/bin/docker")
+    monkeypatch.setattr(re_image_install.vm_container, "_image_id",
+                        lambda binary, tag: "sha256:" + "a" * 64)
+    repaired = []
+    def smoke(binary, image_id, profile):
+        if profile == "ghidra" and "ghidra" not in repaired:
+            raise VMError("stale image missing analyzeHeadless")
+    def pull(**kw):
+        repaired.append(kw["image"])
+    monkeypatch.setattr(re_image_install, "_smoke", smoke)
+    monkeypatch.setattr(re_image_install.vm_container, "pull_image", pull)
+    monkeypatch.setattr(re_image_install.vm_container, "build_image",
+                        lambda **kw: (_ for _ in ()).throw(
+                            AssertionError("no build when repaired pull passes")))
+    result = re_image_install.prepare()
+    assert result["status"] == "READY"
+    assert result["images"]["ghidra"]["source"] == "pulled"
+    assert result["images"]["frida"]["source"] == "existing"
+    assert repaired == ["ghidra"]
+
+
+def test_prepare_rebuilds_broken_frida_if_pulled_image_fails_smoke(monkeypatch):
+    monkeypatch.setattr(re_image_install.vm_container, "_runtime",
+                        lambda runtime: "/usr/bin/docker")
+    monkeypatch.setattr(re_image_install.vm_container, "_image_id",
+                        lambda binary, tag: "sha256:" + "b" * 64)
+    stage = []
+    def smoke(binary, image_id, profile):
+        if profile == "frida" and "built" not in stage:
+            raise VMError("Frida import failed")
+    def pull(**kw):
+        stage.append("pulled")
+    def build(**kw):
+        stage.append("built")
+    monkeypatch.setattr(re_image_install, "_smoke", smoke)
+    monkeypatch.setattr(re_image_install.vm_container, "pull_image", pull)
+    monkeypatch.setattr(re_image_install.vm_container, "build_image", build)
+    result = re_image_install.prepare()
+    assert result["images"]["frida"]["source"] == "built"
+    assert stage == ["pulled", "built"]
+
+
+def test_prepare_stops_if_broken_image_cannot_be_repaired(monkeypatch):
+    monkeypatch.setattr(re_image_install.vm_container, "_runtime",
+                        lambda runtime: "/usr/bin/docker")
+    monkeypatch.setattr(re_image_install.vm_container, "_image_id",
+                        lambda binary, tag: "sha256:" + "b" * 64)
+    monkeypatch.setattr(re_image_install, "_smoke",
+                        lambda *args: (_ for _ in ()).throw(VMError("cannot run")))
+    monkeypatch.setattr(re_image_install.vm_container, "pull_image",
+                        lambda **kw: (_ for _ in ()).throw(VMError("pull broken")))
+    monkeypatch.setattr(re_image_install.vm_container, "build_image",
+                        lambda **kw: (_ for _ in ()).throw(VMError("build broken")))
+    with pytest.raises(VMError, match="could not be repaired"):
         re_image_install.prepare()

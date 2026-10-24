@@ -90,3 +90,42 @@ def test_re_lab_analyze_returns_partial_failure_with_diagnostics(monkeypatch, tm
     assert not result.success
     assert "ANALYSIS_TIMED_OUT" in result.error
     assert result.data["status"] == "ANALYSIS_TIMED_OUT"
+
+def test_docker_socket_failure_in_agent_sandbox_routes_to_governed_re_tools():
+    runtime = object.__new__(SafeRuntime)
+    runtime.conversation_id = "session"
+    runtime.workspace_id = "workspace"
+    output = ("failed to connect to the docker API at "
+              "unix:///var/run/docker.sock; permission denied")
+    runtime.registry = SimpleNamespace(
+        execute_tool=lambda *args, **kwargs: SimpleNamespace(
+            success=False, output=output, error="process failed",
+            metadata={}, requires_approval=False),
+    )
+    result = runtime._op_registry_tool(
+        "process.run", "run_command", {"argv": ["docker", "ps"]},
+        "turn", "MODEL", None,
+    )
+    assert not result.success
+    assert "re.lab.images" in result.error
+    assert "re.lab.analyze" in result.error
+    assert result.metadata["failure_kind"] == "DOCKER_SANDBOX_SOCKET_UNAVAILABLE"
+    assert result.metadata["retry_same_command"] is False
+    assert result.data == output
+
+
+def test_docker_socket_guidance_does_not_rewrite_unrelated_failures():
+    runtime = object.__new__(SafeRuntime)
+    runtime.conversation_id = "session"
+    runtime.workspace_id = "workspace"
+    runtime.registry = SimpleNamespace(
+        execute_tool=lambda *args, **kwargs: SimpleNamespace(
+            success=False, output="file not found", error="unrelated failure",
+            metadata={}, requires_approval=False),
+    )
+    result = runtime._op_registry_tool(
+        "process.run", "run_command", {"argv": ["docker", "build", "."]},
+        "turn", "MODEL", None,
+    )
+    assert result.error == "unrelated failure"
+    assert "failure_kind" not in result.metadata
