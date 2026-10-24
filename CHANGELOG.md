@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.78 — fix RE Toolbox registry publication
+
+- Corrected the Linux RE Toolbox publisher: it had built `base/wine/full-0.88.77` but attempted to tag/push the nonexistent `0.86.11` images. The GHCR publication now uses the pinned `0.88.77` Toolbox image tags, exactly matching the build and `vm_container.RE_TOOLBOX_VERSION` consumer.
+- Added a focused regression check ensuring build, publish, and CLI image references stay aligned for all three Toolbox tiers, independently of the core Agent CLI version. Ghidra/Frida remain isolated `0.88.77` images (both build and publish previously passed).
+- No runtime isolation, resource budget, external dependency, or Windows guest changes. Agent CLI version and `uv.lock` updated to `0.88.78`.
+
+
+
 ## 0.88.77 — dedicated Ghidra and Frida Docker executors (breaking)
 
 - Ghidra 12.1.4 now runs from `kitt/re-ghidra:0.88.77`, Java plus SHA256-verified official Ghidra release only. `kitt re lab analyze` pins the local dedicated image by Docker image ID and never falls back to `kitt-re-full`; project resumption, read-only workspace, CPU/memory budgets, progress/heartbeat and logs remain.

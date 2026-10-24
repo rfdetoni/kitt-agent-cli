@@ -224,3 +224,23 @@ def test_dedicated_frida_ptrace_requires_optin_in_guest_only(tmp_path):
             vm_container.toolbox(
                 runtime="docker", profile="ghidra", workspace=tmp_path,
                 allow_ptrace=True)
+
+
+def test_re_toolbox_publisher_tags_match_operator_image_contract():
+    """Never publish tags that differ from those successfully built in CI."""
+    from pathlib import Path
+    from kitt.vm_container import IMAGES, RE_TOOLBOX_VERSION
+
+    workflow = (Path(__file__).resolve().parents[1] /
+                ".github/workflows/vm-container-images.yml").read_text()
+    for tier in ("base", "wine", "full"):
+        image = IMAGES[tier]
+        assert image == f"kitt/linux-re:{tier}-{RE_TOOLBOX_VERSION}"
+        assert f"-t {image} " in workflow
+    expected_source = (
+        f'docker tag "kitt/linux-re:$tier-{RE_TOOLBOX_VERSION}" '
+        f'"ghcr.io/rfdetoni/kitt-linux-re:$tier-{RE_TOOLBOX_VERSION}"'
+    )
+    expected_push = f'docker push "ghcr.io/rfdetoni/kitt-linux-re:$tier-{RE_TOOLBOX_VERSION}"'
+    assert expected_source in workflow
+    assert expected_push in workflow
