@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -107,3 +108,43 @@ def test_invalid_timeouts_are_rejected_before_admission(children, timeout):
     with pytest.raises(ValueError, match="finite"):
         manager.spawn(conv, "t", task="Inspect", timeout_seconds=timeout)
     assert manager.repo.list(conv) == []
+
+
+def test_unborn_git_head_uses_shared_fallback_until_initial_commit(tmp_path):
+    """Regression: children.spawn must not fail with 'invalid reference: HEAD'."""
+    import subprocess
+    from kitt.native.coordinator import WorkspaceCoordinator
+
+    project = tmp_path / "project"
+    state = tmp_path / "state"
+    project.mkdir()
+    state.mkdir()
+    subprocess.run(["git", "init", str(project)], check=True, capture_output=True)
+
+    db = HistoryDatabase(str(state))
+    try:
+        coordinator = WorkspaceCoordinator(str(project), str(state), db, "ws")
+        assert coordinator.is_git_repository() is False
+        child = coordinator.prepare_child("no-head")
+        assert child.state == "SHARED_FALLBACK"
+        assert Path(child.path) == project
+        assert not any((state / ".kitt" / "worktrees").iterdir())
+
+        (project / "first.txt").write_text("first\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(project), "add", "first.txt"],
+                       check=True, capture_output=True)
+        subprocess.run([
+            "git", "-C", str(project),
+            "-c", "user.name=KITT Tests",
+            "-c", "user.email=kitt-tests@local.invalid",
+            "commit", "-m", "initial",
+        ], check=True, capture_output=True)
+
+        assert coordinator.is_git_repository() is True
+        isolated = coordinator.prepare_child("after-head")
+        assert isolated.state == "READY"
+        assert Path(isolated.path) != project
+        assert Path(isolated.path, "first.txt").is_file()
+        coordinator.discard_isolated_workspace("after-head")
+    finally:
+        db.close()
