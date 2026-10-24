@@ -26,9 +26,10 @@ Usage: install.sh [--ref REF] [--no-native] [--prepare-semantic-model] [--with-r
 
 The installer composes the portable Agent control plane with the Assistant
 runtime and Evolution/Evals packages. The shared Rust backend is optional.
-An existing Linux RE lab automatically triggers required Docker image repair.
---with-re-tools also provisions RE Toolbox, Ghidra and Frida on first install,
-without creating or modifying a Windows VM. --no-re-tools skips this step.
+On Linux with a usable Docker Engine, installation automatically installs or
+repairs the pinned RE Toolbox, Ghidra and Frida images (no Windows VM changes).
+--with-re-tools forces the checks even if the daemon is not initially detected.
+--no-re-tools opts out, e.g. for lightweight or offline installations.
 
 Environment:
   KITT_AGENT_HOME       installation root
@@ -202,11 +203,19 @@ finally:
 print('KITT companion packages and state schema: ok')
 PY
 backend="$($VPY -c "from kitt.native.bridge import NativeCodeEngine; print(NativeCodeEngine('$SRC').status.backend)")"
-# An already-provisioned RE lab must not silently lose its required images
-# when updating to separated Ghidra/Frida executors. Fresh installation remains
-# opt-in because these are large Linux-only Docker images. Avoid reinstalling
-# or reconfiguring the Windows guest and never mount the Docker socket in agents.
-if [[ $SKIP_RE_TOOLS -eq 0 && ( $WITH_RE_TOOLS -eq 1 || ( "$(uname -s)" == "Linux" && -d "$HOME/.local/share/kitt/re-lab" ) ) ]]; then
+# Provision pinned RE images on first install when the operator already has a
+# usable Docker Engine. A previously provisioned lab (or explicit opt-in) must
+# fail visibly if Docker stops responding; never silently skip its repair.
+# Do not create Windows guests, install privileged containers or share sockets.
+AUTO_RE_TOOLS=0
+if [[ "$(uname -s)" == "Linux" && $SKIP_RE_TOOLS -eq 0 ]]; then
+  if [[ $WITH_RE_TOOLS -eq 1 || -d "$HOME/.local/share/kitt/re-lab" ]]; then
+    AUTO_RE_TOOLS=1
+  elif command -v docker >/dev/null 2>&1 && timeout 10 docker info >/dev/null 2>&1; then
+    AUTO_RE_TOOLS=1
+  fi
+fi
+if [[ $SKIP_RE_TOOLS -eq 0 && ( $WITH_RE_TOOLS -eq 1 || $AUTO_RE_TOOLS -eq 1 ) ]]; then
   if [[ "$(uname -s)" != "Linux" ]]; then
     echo "RE Docker executors require a Linux host." >&2
     exit 1

@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.80 — RE Docker provisioning on first install; quiet intentional cancellations
+
+- Linux installations with an already usable Docker daemon now automatically prepare and smoke-check all three pinned dedicated RE images (REA/Wine Toolbox, Ghidra, Frida), without requiring `--with-re-tools`; `--no-re-tools` skips the large downloads. Existing RE labs still fail visibly if Docker cannot be reached. Fresh machines without a working daemon are not silently assumed to have Docker.
+- Operator-triggered `TransportCancelled` is classified as `TurnCancelled` rather than `TurnFailed` with duplicate error tracebacks in the Agent's tool loop. Other provider exceptions remain failures.
+- Added regression checks for cancellation and the RE installer auto-detection contract. Version and `uv.lock` synchronized; RE executor image pins remain `0.88.77`, with no image changes, Windows guest resets, credentials or Docker socket exposure.
+
+
 ## 0.88.79 — repair missing RE Docker images during installation
 
 - Added narrow model-visible `kitt_runtime re.lab.images` (host image inspection, read-only) and `re.lab.analyze` (root-agent-only, CAP_PROCESS_RUN and policy-gated host Ghidra execution using strictly validated source and resume IDs). This eliminates the need to expose a Docker socket to the model's process sandbox. Analysis is synchronous and remains subject to user/policy approvals; long-running job background management is a follow-up.

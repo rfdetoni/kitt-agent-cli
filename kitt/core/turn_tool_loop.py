@@ -33,6 +33,7 @@ from kitt.edit_format.strategy import (
 )
 from kitt.llm.attachments import AttachmentError
 from kitt.llm.client import LLMClient
+from kitt.llm.http_security import TransportCancelled
 from kitt.llm.domain import ProviderOutputLimitError, ProviderRecoverableError
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.protocol import extract_tool_reasoning_summary, parse_tool_call
@@ -303,6 +304,14 @@ class TurnToolLoopMixin:
                 })
                 full_response = ""
                 continue
+            except TransportCancelled:
+                # Operator cancellation is expected; don't emit an ERROR
+                # traceback and duplicate the terminal cancellation event.
+                trace_event(
+                    logger, "tool_loop.model_dispatch_cancelled",
+                    turn_id=cmd.turn_id, route=effective_agent_route,
+                )
+                raise
             except Exception as exc:
                 logger.exception(
                     "tool loop model dispatch failed",
