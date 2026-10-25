@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.85 — validate pinned RE executors, not only Docker image tags
+
+- Offline image health checks now reject retagged/stale RE images whose actual REA, Ghidra, or Frida versions do not match their pinned toolchain versions. The installer repairs these images using the existing GHCR pull / local Dockerfile build fallback.
+- The read-only `re lab images status` report explicitly records `smoke_verified=false` because image ID inspection does not run executable checks. The installer / `images prepare` reports `smoke_verified=true` only after actual offline smoke tests.
+- Added narrow regression contracts; existing Docker isolation, Windows guest permission gates, external dependency versions and image tags remain unchanged. Version and uv.lock aligned.
+
+
+
 ## 0.88.84 — shared RE image verification for fresh lab setup
 
 Fresh `kitt re lab setup` now delegates Docker toolbox image preparation to the same pinned image reconciler used by the installer (`kitt re lab images prepare`), ensuring Ghidra, Frida and REA/Wine toolbox are present and smoke-verified without needless registry pulls of already healthy images. If any image cannot be repaired, setup stops before creating the Linux guest; existing Linux/Windows guests remain untouched. Regression tests assert reuse and failure behavior. The default installer already provisions the three independent images on Linux when Docker is available; no changes to Frida/Ghidra source versions or third-party pins.
