@@ -17,9 +17,20 @@ _IMAGE_SPECS = (
     ("frida", "full", "frida"),
 )
 _PROBES = {
-    "full": ["sh", "-ec", "command -v rea; command -v wine; command -v wine-staging"],
-    "ghidra": ["sh", "-ec", "test -x /opt/ghidra/support/analyzeHeadless"],
-    "frida": ["sh", "-ec", "command -v frida; python -c 'import frida'"],
+    # Presence alone is insufficient: an operator can retag an old local image
+    # as the current executor version. Verify the actual pinned executables.
+    "full": ["sh", "-ec",
+             "command -v rea; command -v wine; command -v wine-staging; "
+             "case \"$(rea --version)\" in *6.4.0*) ;; *) exit 11;; esac"],
+    "ghidra": ["sh", "-ec",
+               "test -x /opt/ghidra_12.1.4_PUBLIC/support/analyzeHeadless; "
+               "test -x /opt/ghidra/support/analyzeHeadless; "
+               "test \"$(readlink /opt/ghidra)\" = /opt/ghidra_12.1.4_PUBLIC"],
+    "frida": ["sh", "-ec",
+              "command -v frida; python -c 'import frida; "
+              "from importlib.metadata import version; "
+              "assert frida.__version__ == \"17.23.3\"; "
+              "assert version(\"frida-tools\") == \"14.11.0\"'"],
 }
 
 
@@ -41,6 +52,7 @@ def status(*, runtime: str = "docker") -> dict:
                 "status": "READY",
                 "image": tag,
                 "image_id": vm_container._image_id(docker, tag),
+                "smoke_verified": False,
             }
         except (OSError, subprocess.TimeoutExpired, VMError):
             images[profile] = {"status": "MISSING", "image": tag}
@@ -48,6 +60,7 @@ def status(*, runtime: str = "docker") -> dict:
         "status": "READY" if all(x["status"] == "READY" for x in images.values())
         else "MISSING_IMAGES",
         "runtime": runtime, "images": images,
+        "note": "Read-only status checks image IDs only; run images prepare for verified executables",
     }
 
 
@@ -112,6 +125,7 @@ def prepare(*, runtime: str = "docker") -> dict:
                     + "; ".join(recovery_failures)
                 ) from initial_failure
         images[profile] = {"status": "READY", "image": tag,
-                           "image_id": image_id, "source": method}
+                           "image_id": image_id, "source": method,
+                           "smoke_verified": True}
     return {"status": "READY", "runtime": runtime, "images": images,
             "windows_guest_unchanged": True, "existing_containers_unchanged": True}

@@ -174,3 +174,37 @@ def test_prepare_stops_if_broken_image_cannot_be_repaired(monkeypatch):
                         lambda **kw: (_ for _ in ()).throw(VMError("build broken")))
     with pytest.raises(VMError, match="could not be repaired"):
         re_image_install.prepare()
+
+
+def test_offline_smoke_requires_exact_pinned_tool_versions():
+    """A stale image may carry the right Docker tag but contain old executables."""
+    probes = re_image_install._PROBES
+    assert "6.4.0" in " ".join(probes["full"])
+    assert "12.1.4_PUBLIC" in " ".join(probes["ghidra"])
+    assert "readlink /opt/ghidra" in " ".join(probes["ghidra"])
+    assert "17.23.3" in " ".join(probes["frida"])
+    assert "14.11.0" in " ".join(probes["frida"])
+
+
+def test_image_status_does_not_misrepresent_smoke_verification(monkeypatch):
+    monkeypatch.setattr(re_image_install.vm_container, "_runtime",
+                        lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(re_image_install.vm_container, "_image_id",
+                        lambda binary, image: "sha256:" + "a" * 64)
+    state = re_image_install.status()
+    assert state["status"] == "READY"
+    assert all(x["smoke_verified"] is False for x in state["images"].values())
+    assert "images prepare" in state["note"]
+
+
+def test_prepare_reports_actual_offline_smoke_verification(monkeypatch):
+    monkeypatch.setattr(re_image_install.vm_container, "_runtime",
+                        lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(re_image_install.vm_container, "_image_id",
+                        lambda binary, tag: "sha256:" + "b" * 64)
+    checked = []
+    monkeypatch.setattr(re_image_install, "_smoke",
+                        lambda binary, image, profile: checked.append(profile))
+    result = re_image_install.prepare()
+    assert checked == ["full", "ghidra", "frida"]
+    assert all(x["smoke_verified"] is True for x in result["images"].values())

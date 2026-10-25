@@ -58,7 +58,12 @@ kitt re lab images prepare --runtime docker
 The prepare action ensures the version-pinned full RE Toolbox, Ghidra and
 Frida images, reusing existing images or trying GHCR pull first with an
 official Dockerfile build fallback. All images must pass offline smoke
-checks or the installation reports failure. The installer does **not**
+checks or the installation reports failure. Smoke checks now verify that the
+actual REA 6.4.0, Ghidra 12.1.4 and Frida 17.23.3 / frida-tools 14.11.0
+executables are installed in the pinned images, not only that named commands
+exist; stale or retagged images are repaired. `images status` remains read-only
+and identifies images by immutable local image ID, but reports
+`smoke_verified: false` until `images prepare` runs its offline health checks. The installer does **not**
 create or reset the Windows Oracle and does **not** make Docker accessible
 from a confined model-execution sandbox. `--no-re-tools` explicitly
 skips image provisioning during installation.
