@@ -222,6 +222,10 @@ if [[ $SKIP_RE_TOOLS -eq 0 && ( $WITH_RE_TOOLS -eq 1 || $AUTO_RE_TOOLS -eq 1 ) ]
   fi
   echo "Checking and provisioning KITT RE Docker images (toolbox, Ghidra, Frida)..."
   "$LAUNCHER" re lab images prepare --runtime docker
+elif [[ "$(uname -s)" == "Linux" && $SKIP_RE_TOOLS -eq 0 && $AUTO_RE_TOOLS -eq 0 ]]; then
+  echo "WARNING: KITT RE images (Toolbox, Ghidra, Frida) were NOT provisioned: Docker Engine is missing or unavailable to this user." >&2
+  echo "Start/install Docker and verify 'docker info'; then rerun install.sh or run 'kitt re lab images prepare --runtime docker'." >&2
+  echo "To require image provisioning and fail if Docker is unavailable, use install.sh --with-re-tools." >&2
 fi
 if [[ $PREPARE_SEMANTIC -eq 1 ]]; then
   # Explicit opt-in: Ollama remains user-owned. No services or weights are

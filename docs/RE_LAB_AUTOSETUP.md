@@ -38,9 +38,15 @@ Fixed, benign differential event-probe pilot using Windows and current toolbox W
 
 ## Installer-managed images
 
-On Linux, the standard KITT installer now repairs all three RE Docker images
-automatically **when it detects an existing lab** under
-`~/.local/share/kitt/re-lab`. New operators can explicitly include them:
+On Linux, the KITT installer automatically provisions or repairs all three
+RE Docker images when Docker is usable, including **fresh installations**.
+Existing labs trigger provisioning even if Docker is temporarily unavailable:
+the installer fails visibly rather than skipping repair. When Docker is
+missing or inaccessible on a fresh install, the Agent CLI can still install,
+but the installer explicitly warns that RE images were not provisioned and
+gives recovery instructions. Installing Docker Engine requires operator
+permissions and is not done automatically. New operators can require
+provisioning (and fail closed if Docker is down) with:
 
 ```bash
 ./install.sh --with-re-tools

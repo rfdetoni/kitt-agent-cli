@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.83 — visible Docker installer preflight and actionable RE image recovery
+
+- Linux first install now visibly warns when Docker Engine is unavailable and none of the Toolbox/Ghidra/Frida images were provisioned. `--no-re-tools` remains a quiet explicit opt-out, while `--with-re-tools` still requires successful provision or fails closed; existing labs still require successful repair. The installer never silently claims that RE executors are ready.
+- RE image repair failures include bounded, per-method diagnostics for pinned registry pull and local Docker build, without revealing secrets, changing guest mounts, or relaxing container isolation. Documentation reflects actual auto-provisioning behavior. Regression tests cover missing daemon and recovery hints.
+- Latest provided Agent CLI/Reverse Proxy logs (2026-10-24) were reviewed: the proxy's single HTTP cancellation was intentional and the Agent CLI now handles that signal as `TurnCancelled`; unrelated plan-mode/policy refusals are contracts, not permission bugs. No reverse-proxy changes required.
+- Version metadata and `uv.lock` updated together. Docker image/version pins and all third-party dependencies are unchanged.
+
+
 ## 0.88.82 — child worktree fallback for an unborn Git HEAD
 
 - Fix the observed `fatal: invalid reference: HEAD` when a child agent starts inside a repository created by `git init` but without an initial commit. Worktree isolation is enabled only after `git rev-parse --verify HEAD^{commit}` succeeds. Until then the coordinator reuses the existing explicit shared-workspace fallback; it never commits files or rewrites Git metadata automatically.

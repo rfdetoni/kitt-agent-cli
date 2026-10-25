@@ -27,13 +27,18 @@ def test_installer_fresh_linux_auto_provisions_and_opt_out(tmp_path):
                                 env=dict(env, **changes), capture_output=True, text=True,
                                 check=False, timeout=20)
         assert result.returncode == 0, result.stderr
+        return result
 
-    call()
+    assert "NOT provisioned" not in call().stderr
     assert (tmp_path / "calls.log").read_text().strip() == "re lab images prepare --runtime docker"
     (tmp_path / "calls.log").unlink()
-    call(SKIP_RE_TOOLS="1")
+    assert "NOT provisioned" not in call(SKIP_RE_TOOLS="1").stderr
     assert not (tmp_path / "calls.log").exists()
-    call(DOCKER_INFO_EXIT="1")
+    missing = call(DOCKER_INFO_EXIT="1")
+    assert "NOT provisioned" in missing.stderr
+    assert "docker info" in missing.stderr
+    assert "--with-re-tools" in missing.stderr
     assert not (tmp_path / "calls.log").exists()
-    call(WITH_RE_TOOLS="1", DOCKER_INFO_EXIT="1")
+    # Explicit provisioning keeps a fail-closed invocation even when Docker is down.
+    assert "NOT provisioned" not in call(WITH_RE_TOOLS="1", DOCKER_INFO_EXIT="1").stderr
     assert (tmp_path / "calls.log").exists()
