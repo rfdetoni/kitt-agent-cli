@@ -206,12 +206,12 @@ def _linux(root: Path) -> None:
             raise VMError("Existing Linux lab belongs to another root; refusing takeover")
         re_docker_lab.operate("linux", "start")
         return
-    from kitt import vm_container
-    try:
-        vm_container.pull_image(runtime="docker", image="toolbox", profile="full")
-    except VMError:
-        vm_container.build_image(runtime="docker", image="toolbox", profile="full")
-    image = vm_container._image_id(shutil.which("docker") or "docker", vm_container.IMAGES["full"])
+    from kitt import re_image_install
+    # The installer and lab setup must agree on image identity and smoke checks.
+    # Reuse healthy local images without a redundant registry pull/rebuild.
+    # A missing or stale image is repaired by the same pinned pull/build path.
+    prepared = re_image_install.prepare(runtime="docker")
+    image = prepared["images"]["full"]["image_id"]
     _create_linux_container(root, image)
 
 

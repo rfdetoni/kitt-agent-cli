@@ -115,6 +115,20 @@ For Windows-specific Win32 tracing the authorized Frida agent still runs
 inside the Windows guest. Image separation improves deployment and memory
 isolation, not the inherent runtime of a particular Ghidra analyzer.
 
+## Installer and fresh lab image reconciliation
+
+On Linux with a usable Docker Engine, the ordinary KITT installer checks and
+prepares the REA/Wine toolbox, standalone Ghidra, and standalone Frida images.
+The explicit `kitt re lab images prepare` command reuses healthy local
+versions and smoke-checks each executor. If an image is missing or broken,
+it attempts the pinned GHCR pull then a local build, failing with a concrete
+error if neither passes the offline smoke check.
+
+A fresh `kitt re lab setup` uses **that same preparation and verification**
+rather than independently re-pulling the toolbox, and refuses to create the
+Linux guest if any required image fails validation. Existing managed guests
+are preserved; Windows needs separate operator permission and a license.
+
 ## Active project workspace shared with RE analysis (no copying)
 
 The KITT RE tooling now supports zero-copy, on-demand, isolated Linux analysis

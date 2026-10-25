@@ -1,5 +1,10 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.84 — shared RE image verification for fresh lab setup
+
+Fresh `kitt re lab setup` now delegates Docker toolbox image preparation to the same pinned image reconciler used by the installer (`kitt re lab images prepare`), ensuring Ghidra, Frida and REA/Wine toolbox are present and smoke-verified without needless registry pulls of already healthy images. If any image cannot be repaired, setup stops before creating the Linux guest; existing Linux/Windows guests remain untouched. Regression tests assert reuse and failure behavior. The default installer already provisions the three independent images on Linux when Docker is available; no changes to Frida/Ghidra source versions or third-party pins.
+
+
 ## 0.88.83 — visible Docker installer preflight and actionable RE image recovery
 
 - Linux first install now visibly warns when Docker Engine is unavailable and none of the Toolbox/Ghidra/Frida images were provisioned. `--no-re-tools` remains a quiet explicit opt-out, while `--with-re-tools` still requires successful provision or fails closed; existing labs still require successful repair. The installer never silently claims that RE executors are ready.

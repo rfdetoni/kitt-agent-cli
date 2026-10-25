@@ -142,3 +142,37 @@ def test_verify_missing_manifest_never_contacts_windows(monkeypatch, tmp_path):
     monkeypatch.setattr(re_lab.re_oracle, "doctor",
                         lambda **kwargs: (_ for _ in ()).throw(AssertionError("SSH unexpectedly used")))
     assert re_lab.verify()["status"] == "BLOCKED_ENV"
+
+
+def test_fresh_linux_setup_reuses_verified_image_bundle_without_extra_pull(monkeypatch, tmp_path):
+    from kitt import re_image_install, vm_container
+    root = tmp_path / "re-lab"
+    bundled = "sha256:" + "a" * 64
+    events = []
+    monkeypatch.setattr(re_lab.re_docker_lab, "inspect", lambda role: None)
+    monkeypatch.setattr(re_image_install, "prepare", lambda **kwargs:
+                        events.append(("prepare", kwargs)) or
+                        {"images": {"full": {"image_id": bundled},
+                                    "ghidra": {"image_id": "sha256:" + "b" * 64},
+                                    "frida": {"image_id": "sha256:" + "c" * 64}}})
+    monkeypatch.setattr(vm_container, "pull_image",
+                        lambda **kwargs: (_ for _ in ()).throw(AssertionError("duplicate pull")))
+    monkeypatch.setattr(vm_container, "build_image",
+                        lambda **kwargs: (_ for _ in ()).throw(AssertionError("duplicate build")))
+    monkeypatch.setattr(re_lab, "_create_linux_container",
+                        lambda destination, image: events.append(("create", destination, image)))
+    re_lab._linux(root)
+    assert events == [("prepare", {"runtime": "docker"}), ("create", root, bundled)]
+
+
+def test_fresh_linux_setup_fails_closed_if_re_bundle_cannot_be_prepared(
+    monkeypatch, tmp_path
+):
+    from kitt import re_image_install
+    monkeypatch.setattr(re_lab.re_docker_lab, "inspect", lambda role: None)
+    monkeypatch.setattr(re_image_install, "prepare",
+                        lambda **kwargs: (_ for _ in ()).throw(VMError("Ghidra missing")))
+    monkeypatch.setattr(re_lab, "_create_linux_container",
+                        lambda *args: (_ for _ in ()).throw(AssertionError("unverified image used")))
+    with pytest.raises(VMError, match="Ghidra missing"):
+        re_lab._linux(tmp_path / "re-lab")
