@@ -112,8 +112,10 @@ def test_failed_image_smoke_fails_installer(monkeypatch):
                         lambda **kw: (_ for _ in ()).throw(VMError("pull blocked")))
     monkeypatch.setattr(re_image_install.vm_container, "build_image",
                         lambda **kw: (_ for _ in ()).throw(VMError("build blocked")))
-    with pytest.raises(VMError, match="could not be repaired"):
+    with pytest.raises(VMError, match="could not be repaired") as error:
         re_image_install.prepare()
+    assert "pulled:" in str(error.value)
+    assert "built:" in str(error.value)
 
 def test_prepare_replaces_present_but_broken_ghidra_image(monkeypatch):
     monkeypatch.setattr(re_image_install.vm_container, "_runtime",

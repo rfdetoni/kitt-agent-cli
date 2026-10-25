@@ -87,6 +87,7 @@ def prepare(*, runtime: str = "docker") -> dict:
             # A tagged image can be corrupt, stale or missing required tools.
             # Reconcile on failed smoke too, not only on missing image ID.
             repaired = False
+            recovery_failures: list[str] = []
             for recovery, method_name in (
                 (vm_container.pull_image, "pulled"),
                 (vm_container.build_image, "built"),
@@ -95,7 +96,10 @@ def prepare(*, runtime: str = "docker") -> dict:
                     recovery(runtime=runtime, image=kind, profile=build_profile)
                     image_id = vm_container._image_id(docker, tag)
                     _smoke(docker, image_id, profile)
-                except (OSError, subprocess.TimeoutExpired, VMError):
+                except (OSError, subprocess.TimeoutExpired, VMError) as exc:
+                    recovery_failures.append(
+                        f"{method_name}: {type(exc).__name__}: {str(exc)[:160]}"
+                    )
                     continue
                 method = method_name
                 repaired = True
@@ -104,7 +108,8 @@ def prepare(*, runtime: str = "docker") -> dict:
                 raise VMError(
                     f"{profile} RE image could not be repaired: pinned pull and "
                     "local build both failed verification. Check Docker build "
-                    "logs, disk space and access to the image registry."
+                    "logs, disk space and access to the image registry. "
+                    + "; ".join(recovery_failures)
                 ) from initial_failure
         images[profile] = {"status": "READY", "image": tag,
                            "image_id": image_id, "source": method}
