@@ -45,7 +45,7 @@ def test_broker_workspace_discovered_from_own_docker_mount():
 
     with patch("kitt.security.autopilot_broker.socket.gethostname", return_value="broker-id"), (
         patch("kitt.security.autopilot_broker.subprocess.run",
-              return_value=SimpleNamespace(returncode=0, stdout=b"/home/user/project\\n"))
+              return_value=SimpleNamespace(returncode=0, stdout=b"/home/user/project"))
     ) as run:
         assert host_workspace_from_mount("/usr/bin/docker") == "/home/user/project"
         assert run.call_args.args[0][-1] == "broker-id"
