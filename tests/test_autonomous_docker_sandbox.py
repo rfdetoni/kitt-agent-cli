@@ -70,3 +70,37 @@ def test_host_run_stays_unchanged_without_automatic_sandbox(tmp_path: Path):
     )
     assert not result.success
     assert "sandbox" in (result.error or "").lower()
+
+
+def test_numeric_network_flag_is_not_accepted_without_network_capability(tmp_path: Path):
+    from types import SimpleNamespace
+    from kitt.runtime.core_runtime import SafeRuntime
+    from kitt.security.capabilities import CAP_PROCESS_RUN, CAP_REPO_WRITE
+    from kitt.core.autonomy_policy import AutonomyPolicy
+
+    class Sandbox:
+        def is_strong_available(self, _profile):
+            return True
+
+    class Principal:
+        capabilities = {CAP_PROCESS_RUN, CAP_REPO_WRITE}
+        is_path_scoped = False
+
+        def assert_scope(self, workspace, conversation):
+            assert workspace == "workspace" and conversation == "conversation"
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    registry = SimpleNamespace(
+        process_runner=SimpleNamespace(sandbox=Sandbox()),
+        policy=SimpleNamespace(autonomy=AutonomyPolicy.preset("autonomous")),
+    )
+    runtime = SafeRuntime(root, "workspace", "conversation", tool_registry=registry)
+    for operation in ("sandbox.run", "process.run"):
+        for numeric in (1, 0):
+            result = runtime.execute(
+                operation, {"argv": ["sh", "-c", "true"], "network": numeric},
+                security_context=Principal(),
+            )
+            assert not result.success
+            assert "network must be a boolean" in (result.error or "")

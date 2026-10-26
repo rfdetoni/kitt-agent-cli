@@ -470,6 +470,8 @@ class ExecutionSandbox:
         profile: SandboxProfile,
         argv: Sequence[str],
         cwd: Path,
+        *,
+        autonomous_git_write: bool = False,
     ) -> SandboxPlan:
         scratch = self._scratch()
         wrapped = [
@@ -526,8 +528,10 @@ class ExecutionSandbox:
         # executable; .kitt always belongs to the host control plane.
         git_writable = (
             profile in {"workspace-write", "workspace-write+network"}
-            and bool(argv)
-            and argv[0] in {"git", "git.exe"}
+            and (
+                (autonomous_git_write and (self.root / ".git").is_dir())
+                or (bool(argv) and argv[0] in {"git", "git.exe"})
+            )
         )
         for protected_name in (".git", ".kitt"):
             if protected_name == ".git" and git_writable:
@@ -611,6 +615,7 @@ class ExecutionSandbox:
         *,
         profile: SandboxProfile | None = None,
         require_strong: bool = False,
+        autonomous_git_write: bool = False,
     ) -> SandboxPlan:
         target = profile or self.default_profile
         cwd_path = Path(cwd).resolve()
@@ -622,7 +627,10 @@ class ExecutionSandbox:
 
         bwrap = self._probe_bwrap()
         if bwrap is not None:
-            return self._bwrap_plan(bwrap[0], target, argv, cwd_path)
+            return self._bwrap_plan(
+                bwrap[0], target, argv, cwd_path,
+                autonomous_git_write=autonomous_git_write,
+            )
 
         docker = self._probe_docker()
         if docker is not None:

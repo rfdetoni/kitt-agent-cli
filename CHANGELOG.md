@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.94 — autonomous shell Git metadata in confined workspace
+
+- Permit `sandbox.run` and automatically delegated autonomous shell commands to update an in-workspace `.git` directory under Bubblewrap.
+- Keep `.kitt` protected, refuse external worktree metadata elevation, and retain read-only Git state for unrelated process execution.
+- Add regression coverage and synchronize package version/lock without changing third-party dependencies.
+
+
 ## 0.88.93 — scoped autonomous commands with Docker fallback
 
 - Introduce `sandbox.run` for authorized autonomous workspaces, and automatically redirect authorized `process.run` calls when isolation is available: shell commands and workspace mutations no longer go through the host argv denylist.
