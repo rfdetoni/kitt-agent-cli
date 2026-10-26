@@ -33,6 +33,8 @@ READ_ONLY_FLOW_OPERATIONS = {
     "handles.resolve",
     "state.get",
     "state.list",
+    "mcp.discover",
+    "mcp.describe",
 }
 
 
