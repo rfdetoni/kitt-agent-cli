@@ -364,6 +364,20 @@ Rust implementation and Rust CI belong in `kitt-toolbox`; this repository intent
 
 ---
 
+## Persistent sandbox broker for Compose
+
+In Compose, the Agent connects to a private local Unix-socket broker. Only
+this trusted sidecar holds the Docker daemon socket. Reusable workers are
+keyed by workspace, toolchain image and permission profile; a private tmpfs
+home maintains language caches between commands. Workers cannot reach the
+broker socket, Docker socket, or the KITT state directory.
+
+Configure `KITT_HOST_WORKSPACE` as the absolute **host** path corresponding
+to the Agent's `KITT_WORKSPACE` bind mount. The broker refuses relative paths.
+Network-enabled workers additionally require operator
+`KITT_BROKER_ALLOW_NETWORK=true` and model runtime `network.access`
+capability. No host-shell fallback is permitted.
+
 ## Autonomous sandbox execution
 
 In an explicitly **autonomous** workspace, `kitt_runtime` provides
