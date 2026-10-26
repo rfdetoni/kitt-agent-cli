@@ -145,5 +145,11 @@ class AutopilotTaskService:
             if result.returncode != 0 or result.timed_out:
                 return {"ok": False, "checks": checks}
         report = {"ok": True, "checks": checks}
+        if os.environ.get("KITT_AUTOPILOT_PUBLISH_ENABLED", "").lower() == "true":
+            from kitt.runtime.autopilot_publish import inventory
+            snapshot = inventory(self.runtime.root)
+            report["publication_snapshot"] = {
+                "digest": snapshot["digest"], "head": snapshot["head"],
+            }
         self.runtime.state.set(self.VERIFY_KEY, report)
         return report

@@ -364,6 +364,32 @@ Rust implementation and Rust CI belong in `kitt-toolbox`; this repository intent
 
 ---
 
+## GitHub delivery with prior operator authorization
+
+`autopilot.publish` can publish a previously verified workspace to one
+specific GitHub repository/branch, but **only** after the operator configures:
+
+- `KITT_AUTOPILOT_PUBLISH_ENABLED=true`
+- `KITT_AUTOPILOT_PUBLISH_REPO=owner/repo`
+- `KITT_AUTOPILOT_PUBLISH_BRANCH=main` (or the permitted branch)
+- `KITT_AUTOPILOT_GITHUB_TOKEN_FILE=/run/secrets/kitt-github-publisher`
+  (preferred for containers, mounted by a trusted Compose override), or
+  `KITT_AUTOPILOT_GITHUB_TOKEN` for an operator-managed native runtime.
+
+Credentials are used in the trusted Agent process, not supplied to model
+commands, Docker workers, or the browser. The publisher reads file changes
+from a bounded Git workspace, requires `autopilot.verify` to have passed
+**after** the last modification, verifies local and remote HEAD equality, and
+updates the preauthorized GitHub ref non-forcibly. Protected branches or
+missing credentials fail closed. The model supplies only a commit message;
+it cannot select another repo, branch, remote or token.
+Only Content-write scoped GitHub permissions are necessary. The token file
+must reside outside the model-accessible workspace; do **not** place secrets
+in a project `.env`. The publisher is limited to 100 changed files and
+64 MiB of source contents per task; ignored builds/caches and sensitive paths
+are never published. Workspaces with local unpushed commits require alignment
+before this API-based publication workflow.
+
 ## Recoverable autonomous task checkpoints
 
 A root autonomous principal can call `autopilot.checkpoint` with

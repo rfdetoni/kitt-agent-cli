@@ -205,6 +205,9 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "autopilot.verify": RuntimeOperationSpec(
         "autopilot.verify", CAP_PROCESS_RUN, sensitive=True, risk_cost=3,
     ),
+    "autopilot.publish": RuntimeOperationSpec(
+        "autopilot.publish", CAP_NETWORK_ACCESS, sensitive=True, risk_cost=5,
+    ),
     "process.run": RuntimeOperationSpec(
         "process.run",
         CAP_PROCESS_RUN,
@@ -1122,6 +1125,7 @@ class SafeRuntime:
                 True, op, data=self.autopilot_tasks.rollback(args),
             ),
             "autopilot.verify": lambda: self._op_autopilot_verify(args, capabilities),
+            "autopilot.publish": lambda: self._op_autopilot_publish(args, capabilities),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "test.run": lambda: self._op_test_run(
                 args, turn_id, origin, security_context, grant,
@@ -1261,6 +1265,16 @@ class SafeRuntime:
         from kitt.runtime.plan_runtime import execute_plan_action
         return execute_plan_action(self, operation, args, turn_id, origin,
                                    security_context, grant, approval_id)
+
+    def _op_autopilot_publish(self, args: dict, capabilities: set[str]) -> SafeRuntimeResult:
+        from kitt.runtime.autopilot_publish import publish_verified
+        try:
+            result = publish_verified(
+                self, args, allow_network=CAP_NETWORK_ACCESS in capabilities,
+            )
+        except (ValueError, PermissionError, RuntimeError, OSError) as exc:
+            return SafeRuntimeResult(False, "autopilot.publish", error=str(exc))
+        return SafeRuntimeResult(True, "autopilot.publish", data=result)
 
     def _op_autopilot_verify(self, args: dict, capabilities: set[str]) -> SafeRuntimeResult:
         try:
