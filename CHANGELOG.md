@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.89 — ACP v1, guarded workspace changes, editable recipes and browser diagnostics
+- Add `kitt acp --root DIR` supporting ACP v1 initialization, text session creation/prompt/update/cancel over stdio. Reuse KITT TurnProcessor, history and cancellation; the ACP bridge cannot grant new capabilities or bypass approvals.
+- Bind clients to the configured workspace; reject client-specified MCP servers and unsupported content blocks.
+- Introduce review.preview/diff/apply/rewind with per-file SHA guards and atomic mutations, and recipe.preview/apply/rewind via the same host-authorized review pipeline.
+- Add browser.diagnose structural, metadata-only diagnostics for existing bound browser sessions. Synchronize package version and uv.lock.
+
+
 ## 0.88.88 — enforce path-scoped recipe visibility
 
 - Enforce the calling principal's allowed paths when enumerating, inspecting

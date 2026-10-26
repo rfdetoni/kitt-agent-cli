@@ -403,6 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not start schedulers/extensions while serving RPC",
     )
 
+    subparsers.add_parser("acp", parents=[common], help="Serve Agent Client Protocol v1 over stdio")
+
     sessions_parser = subparsers.add_parser(
         "sessions",
         parents=[common],
@@ -998,6 +1000,28 @@ async def async_main(args) -> int:
     return code
 
 
+async def _run_acp_mode(args) -> int:
+    """ACP is a local stdio protocol, never the terminal UI or the daemon frontend."""
+    from kitt.acp.server import ACPServer
+
+    config = replace(
+        RuntimeConfig.from_env(),
+        daemon_enabled=False,
+        frontend_only=False,
+        scheduler_enabled=False,
+        wake_scheduler_enabled=False,
+        history_enabled=True,
+        persistence_enabled=True,
+    )
+    runtime = KittRuntime.build(args.root, config=config)
+    try:
+        await runtime.start()
+        await ACPServer(runtime).serve(sys.stdin, sys.stdout)
+        return 0
+    finally:
+        await runtime.aclose()
+
+
 async def _run_rpc_mode(args) -> int:
     config = RuntimeConfig.from_env()
     if bool(getattr(args, "no_start_services", False)):
@@ -1022,7 +1046,7 @@ def main(argv=None) -> int:
     _configure_debug_log(args)
     _log_runtime_identity()
     # Workspace recommendations must not trigger network update checks.
-    if args.subcommand != "setup":
+    if args.subcommand not in {"setup", "acp"}:
         notify_if_update_available(component="agent-cli")
 
     if args.subcommand == "memory":
@@ -1163,6 +1187,8 @@ def main(argv=None) -> int:
 
     if args.subcommand == "rpc":
         return asyncio.run(_run_rpc_mode(args))
+    if args.subcommand == "acp":
+        return asyncio.run(_run_acp_mode(args))
 
     if args.subcommand == "sessions":
         from kitt.cli.commands import handle_sessions_command

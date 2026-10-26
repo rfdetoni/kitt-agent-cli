@@ -50,3 +50,31 @@ Use `state` for bounded parameters, referenced by the existing program IR
   engine and proxy integration contracts remain unchanged.
 
 For existing program syntax, see `kitt/runtime/program_runtime.py`.
+
+## Guarded write recipes
+
+A change recipe replaces `[[program]]` with one or more `[[changes]]`
+entries, each specifying a workspace-relative `path` and UTF-8 `content`:
+
+```toml
+version = 1
+title = "Update metadata"
+[[changes]]
+path = "metadata.txt"
+content = "new content"
+```
+
+1. Call `recipe.preview` with the name to obtain the hash-guarded
+   `review_id` and a unified diff; no file is modified.
+2. Call `recipe.apply` with `{"name":"...", "review_id":"..."}`. Normal
+   KITT `repo.write` capability, host write policy, risk budget and
+   approval process apply to this operation.
+3. Call `recipe.rewind` with the same arguments to restore exact preimages
+   only if the current files still match the applied hashes.
+
+`review.preview`, `review.diff`, `review.apply`, and `review.rewind`
+provide the same staging lifecycle without a recipe.
+The total original plus proposed content limit is 16 KiB per review, across
+at most eight files. Git and KITT control-plane files are not eligible.
+A recipe digest change invalidates its staged plan. Files changed by
+other processes are never silently overwritten.

@@ -16,6 +16,7 @@ from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
 from kitt.runtime.program_runtime import BoundedProgramRuntime
 from kitt.runtime.persistent_program import PersistentProgramSessions
 from kitt.runtime.recipe_runtime import ReadOnlyRecipeService
+from kitt.runtime.workspace_review import WorkspaceReview
 from kitt.runtime.progressive import apply_progressive_search_view
 from kitt.tools.build_detector import BuildDetector
 from kitt.runtime.retrieval_guard import RetrievalGuard
@@ -138,6 +139,13 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "recipe.list": RuntimeOperationSpec("recipe.list", CAP_REPO_READ),
     "recipe.inspect": RuntimeOperationSpec("recipe.inspect", CAP_REPO_READ),
     "recipe.run": RuntimeOperationSpec("recipe.run", CAP_REPO_READ),
+    "recipe.preview": RuntimeOperationSpec("recipe.preview", CAP_REPO_READ),
+    "recipe.apply": RuntimeOperationSpec("recipe.apply", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=2),
+    "recipe.rewind": RuntimeOperationSpec("recipe.rewind", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=3),
+    "review.preview": RuntimeOperationSpec("review.preview", CAP_REPO_READ),
+    "review.diff": RuntimeOperationSpec("review.diff", CAP_REPO_READ),
+    "review.apply": RuntimeOperationSpec("review.apply", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=2),
+    "review.rewind": RuntimeOperationSpec("review.rewind", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=3),
     "repo.edit_symbol": RuntimeOperationSpec(
         "repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=1
     ),
@@ -302,6 +310,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "mcp.describe": RuntimeOperationSpec("mcp.describe", CAP_MCP_CALL),
     "browser.open": RuntimeOperationSpec("browser.open", CAP_BROWSER_READ),
     "browser.inspect": RuntimeOperationSpec("browser.inspect", CAP_BROWSER_READ),
+    "browser.diagnose": RuntimeOperationSpec("browser.diagnose", CAP_BROWSER_READ),
     "browser.screenshot": RuntimeOperationSpec("browser.screenshot", CAP_BROWSER_READ),
     "browser.click": RuntimeOperationSpec(
         "browser.click", CAP_BROWSER_WRITE, "browser.click", sensitive=True, risk_cost=1
@@ -428,6 +437,7 @@ class SafeRuntime:
         self.program_runtime = BoundedProgramRuntime(self)
         self.program_sessions = PersistentProgramSessions(self.state, self.program_runtime)
         self.recipes = ReadOnlyRecipeService(self)
+        self.reviews = WorkspaceReview(self)
         self.context_map_builder = ContextMapBuilder(
             self.index, self.goals, self.registry
         )
@@ -962,6 +972,13 @@ class SafeRuntime:
                 args, turn_id=turn_id, origin=origin,
                 capabilities=capabilities, security_context=security_context,
             ),
+            "recipe.preview": lambda: SafeRuntimeResult(True, op, data=self.recipes.preview(args, security_context)),
+            "recipe.apply": lambda: SafeRuntimeResult(True, op, data=self.recipes.apply(args, security_context)),
+            "recipe.rewind": lambda: SafeRuntimeResult(True, op, data=self.recipes.rewind(args, security_context)),
+            "review.preview": lambda: SafeRuntimeResult(True, op, data=self.reviews.preview(args, security_context)),
+            "review.diff": lambda: SafeRuntimeResult(True, op, data=self.reviews.diff(args, security_context)),
+            "review.apply": lambda: SafeRuntimeResult(True, op, data=self.reviews.apply(args, security_context)),
+            "review.rewind": lambda: SafeRuntimeResult(True, op, data=self.reviews.rewind(args, security_context)),
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context, automatic_budget_reserved=automatic_budget_reserved),
@@ -1035,6 +1052,7 @@ class SafeRuntime:
             "mcp.describe": lambda: self._op_mcp_describe(args, security_context),
             "browser.open": lambda: self._op_browser_action("browser.open", args),
             "browser.inspect": lambda: self._op_browser_action("browser.inspect", args),
+            "browser.diagnose": lambda: self._op_browser_diagnose(args),
             "browser.screenshot": lambda: self._op_browser_action("browser.screenshot", args),
             "browser.click": lambda: self._op_browser_action("browser.click", args),
             "browser.type": lambda: self._op_browser_action("browser.type", args),
@@ -1228,6 +1246,43 @@ class SafeRuntime:
             turn_id=turn_id,
         )
         return SafeRuntimeResult(True, "process.resume", data=data)
+
+    def _op_browser_diagnose(self, args: dict) -> SafeRuntimeResult:
+        """Summarize the current, authorized browser inspection without leaking page contents."""
+        if not isinstance(args, dict) or args:
+            return SafeRuntimeResult(False, "browser.diagnose", error="browser.diagnose takes no arguments")
+        observed = self._op_browser_action("browser.inspect", {})
+        if not observed.success:
+            return SafeRuntimeResult(False, "browser.diagnose", error=observed.error)
+        payload = observed.data
+        if not isinstance(payload, dict):
+            return SafeRuntimeResult(True, "browser.diagnose", data={
+                "inspection_type": type(payload).__name__,
+                "available": True,
+                "metrics": {},
+                "hint": "Use browser.inspect for authorized page details",
+            })
+        metrics = {}
+        # Preserve structural counts only. Raw console, DOM and request payloads
+        # can carry credentials, personal information or prompt injection text.
+        for field in ("errors", "console_errors", "failed_requests", "warnings",
+                      "forms", "buttons", "links", "inputs", "elements"):
+            value = payload.get(field)
+            if isinstance(value, list):
+                metrics[field] = min(len(value), 100000)
+            elif isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                metrics[field] = min(value, 100000)
+        return SafeRuntimeResult(True, "browser.diagnose", data={
+            "available": True,
+            "inspection_keys": sorted(set(payload).intersection({
+                "errors", "console_errors", "failed_requests", "warnings",
+                "forms", "buttons", "links", "inputs", "elements",
+            })),
+            "metrics": metrics,
+            "has_console_errors": bool(metrics.get("console_errors", 0)),
+            "has_failed_requests": bool(metrics.get("failed_requests", 0)),
+            "hint": "Use browser.inspect for detailed authorized evidence; diagnostics omit raw content",
+        })
 
     def _op_browser_action(self, operation: str, args: dict) -> SafeRuntimeResult:
         if not self.registry or not hasattr(self.registry, "get_browser_gateway"):

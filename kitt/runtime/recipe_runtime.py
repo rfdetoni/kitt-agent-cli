@@ -1,8 +1,7 @@
-"""Workspace-local, read-only recipes backed by the existing bounded program runtime.
+"""Workspace-local declarative recipes backed by the bounded program and review runtimes.
 
-Recipe files are untrusted data. They never grant capabilities, execute Python,
-shell or arbitrary code, or install extensions. Every nested operation passes
-through the usual SafeRuntime security context and read-only allowlist.
+Recipe files are untrusted data. Write recipes prepare guarded reviews; no
+recipe grants capabilities, executes arbitrary code or bypasses policy approval.
 """
 from __future__ import annotations
 
@@ -56,22 +55,33 @@ class ReadOnlyRecipeService:
         if len(data) > _MAX_RECIPE_BYTES:
             raise ValueError("recipe exceeds 16 KiB")
         doc = tomllib.loads(data.decode("utf-8", errors="strict"))
-        if not isinstance(doc, dict) or set(doc) - {"version", "title", "description", "program"}:
+        if not isinstance(doc, dict) or set(doc) - {"version", "title", "description", "program", "changes"}:
             raise ValueError("unsupported recipe fields")
         if doc.get("version") != 1:
             raise ValueError("recipe version must be 1")
         title, description = doc.get("title"), doc.get("description", "")
         program = doc.get("program")
+        changes = doc.get("changes")
         if (not isinstance(title, str) or not 1 <= len(title.strip()) <= 120
                 or not isinstance(description, str) or len(description) > 512
-                or not isinstance(program, list) or not 1 <= len(program) <= 64
-                or any(not isinstance(item, dict) for item in program)):
-            raise ValueError("invalid title, description or program")
+                or (program is None) == (changes is None)):
+            raise ValueError("recipe must declare exactly one program or changes")
+        if program is not None and (not isinstance(program, list) or not 1 <= len(program) <= 64
+                                    or any(not isinstance(item, dict) for item in program)):
+            raise ValueError("invalid read-only recipe program")
+        if changes is not None and (
+            not isinstance(changes, list) or not 1 <= len(changes) <= 8
+            or any(not isinstance(item, dict) or set(item) != {"path", "content"}
+                   or not isinstance(item["path"], str) or not isinstance(item["content"], str)
+                   for item in changes)
+        ):
+            raise ValueError("invalid change recipe files")
         return {
             "name": name,
             "title": title.strip(),
             "description": description,
             "program": program,
+            "changes": changes,
             "sha256": hashlib.sha256(data).hexdigest(),
         }
 
@@ -120,6 +130,7 @@ class ReadOnlyRecipeService:
             "description": loaded["description"],
             "sha256": loaded["sha256"],
             "program": loaded["program"],
+            "changes": loaded["changes"],
             "instructions_untrusted": True,
             "authority": "read_only_program_runtime",
         }
@@ -129,6 +140,8 @@ class ReadOnlyRecipeService:
         if not isinstance(arguments, dict) or set(arguments) - {"name", "state", "max_tokens"}:
             raise ValueError("recipe.run requires name and optional state/max_tokens")
         loaded = self._load(arguments.get("name"), security_context)
+        if loaded["program"] is None:
+            raise ValueError("write recipes require recipe.preview and recipe.apply")
         state = arguments.get("state", {})
         if (not isinstance(state, dict) or len(state) > 32
                 or any(not isinstance(k, str) or len(k) > 64 for k in state)):
@@ -153,3 +166,34 @@ class ReadOnlyRecipeService:
         if result.success and isinstance(result.data, dict):
             result.data["recipe"] = {"name": loaded["name"], "sha256": loaded["sha256"]}
         return result
+
+    def preview(self, arguments: dict[str, Any], security_context):
+        if not isinstance(arguments, dict) or set(arguments) != {"name"}:
+            raise ValueError("recipe.preview requires name")
+        loaded = self._load(arguments["name"], security_context)
+        if loaded["changes"] is None:
+            raise ValueError("recipe.preview requires a change recipe")
+        report = self.runtime.reviews.preview({"files": loaded["changes"]}, security_context)
+        # Bind the staged payload to this precise version of the recipe.
+        record = self.runtime.reviews._load(report["review_id"], security_context)
+        record["recipe_name"] = loaded["name"]
+        record["recipe_sha256"] = loaded["sha256"]
+        self.runtime.reviews.state.set(report["review_id"], record, ttl_seconds=86400)
+        report["recipe"] = {"name": loaded["name"], "sha256": loaded["sha256"]}
+        return report
+
+    def _transition(self, arguments: dict[str, Any], security_context, *, reverse: bool):
+        if not isinstance(arguments, dict) or set(arguments) != {"name", "review_id"}:
+            raise ValueError("recipe transition requires name and review_id")
+        loaded = self._load(arguments["name"], security_context)
+        record = self.runtime.reviews._load(arguments["review_id"], security_context)
+        if record.get("recipe_name") != loaded["name"] or record.get("recipe_sha256") != loaded["sha256"]:
+            raise ValueError("recipe changed after preview; generate a new preview")
+        action = self.runtime.reviews.rewind if reverse else self.runtime.reviews.apply
+        return action({"review_id": arguments["review_id"]}, security_context)
+
+    def apply(self, arguments: dict[str, Any], security_context):
+        return self._transition(arguments, security_context, reverse=False)
+
+    def rewind(self, arguments: dict[str, Any], security_context):
+        return self._transition(arguments, security_context, reverse=True)
