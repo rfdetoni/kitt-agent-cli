@@ -25,3 +25,5 @@ the usual host policy evaluation and integrity checks. `browser.diagnose`
 provides structural diagnostics from the browser gateway already bound to
 the session. It never opens a browser session, captures screenshots or
 returns raw page/network/console payloads.
+
+**Security note:** Review mutations require explicit per-file `ALLOW` authorization from the host policy. An `ASK` decision is blocked pending the normal host-managed permission workflow; the review identifier alone is not a grant. Review IDs and principal ownership persist in the conversation state. Atomic CAS state claims reject concurrent mutation attempts.
