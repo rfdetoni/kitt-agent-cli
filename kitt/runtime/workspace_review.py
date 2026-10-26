@@ -9,6 +9,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import secrets
+import threading
 import copy
 from pathlib import Path
 
@@ -28,6 +29,7 @@ class WorkspaceReview:
         self.runtime = runtime
         self.fs = WorkspaceFileSystem(Path(runtime.root))
         self.state = runtime.state
+        self._lock = threading.RLock()
 
     def _store(self):
         if self.state is None:
@@ -163,41 +165,41 @@ class WorkspaceReview:
     def _transition(self, args, security_context, *, reverse: bool):
         if not isinstance(args, dict) or set(args) != {"review_id"}:
             raise ValueError("review transition requires review_id")
-        record = self._load(args["review_id"], security_context)
-        expected_status = "APPLIED" if reverse else "PREVIEW"
-        if record["status"] != expected_status:
-            raise ValueError(f"review requires status {expected_status}")
-        self._validate(record, expect_after=reverse)
-        done = []
-        try:
-            for item in (list(reversed(record["files"])) if reverse else record["files"]):
-                self._write(item, reverse)
-                done.append(item)
-        except Exception:
-            # Best effort rollback of partial transitions, guarded by the hashes
-            # we just wrote. A conflicting concurrent edit must never be overwritten.
-            for item in reversed(done):
-                try:
-                    self._write(item, not reverse)
-                except Exception:
-                    pass
-            raise
-        # Keep the durable state transition in the same compensation boundary.
-        # If SQLite persistence fails, roll back the writes using CAS guards.
-        record["status"] = "REWOUND" if reverse else "APPLIED"
-        try:
-            self._store().set(args["review_id"], record, ttl_seconds=86400)
-        except Exception:
-            for item in reversed(done):
-                try:
-                    self._write(item, not reverse)
-                except Exception:
-                    pass
-            raise
-        return {
-            "review_id": args["review_id"], "status": record["status"],
-            "changed_paths": [item["path"] for item in record["files"]],
-        }
+        with self._lock:
+            record = self._load(args["review_id"], security_context)
+            expected = "APPLIED" if reverse else "PREVIEW"
+            final = "REWOUND" if reverse else "APPLIED"
+            busy = "REWINDING" if reverse else "APPLYING"
+            if record["status"] != expected:
+                raise ValueError(f"review requires status {expected}")
+            self._validate(record, expect_after=reverse)
+            state = self._store()
+            if not hasattr(state, "compare_and_swap_status"):
+                raise RuntimeError("durable compare-and-swap required for review writes")
+            claimed = {**record, "status": busy}
+            if not state.compare_and_swap_status(args["review_id"], expected, claimed):
+                raise ValueError("review concurrent transition or stale state")
+            done = []
+            try:
+                for item in (list(reversed(record["files"])) if reverse else record["files"]):
+                    self._write(item, reverse)
+                    done.append(item)
+                completed = {**record, "status": final}
+                if not state.compare_and_swap_status(args["review_id"], busy, completed):
+                    raise RuntimeError("review state changed during mutation")
+            except BaseException:
+                compensated = True
+                for item in reversed(done):
+                    try:
+                        self._write(item, not reverse)
+                    except Exception:
+                        compensated = False
+                if compensated:
+                    state.compare_and_swap_status(args["review_id"], busy, record)
+                # If interrupted or unable to compensate, leave sealed busy state.
+                raise
+            return {"review_id": args["review_id"], "status": final,
+                    "changed_paths": [item["path"] for item in record["files"]]}
 
     def apply(self, args: dict, security_context):
         return self._transition(args, security_context, reverse=False)
