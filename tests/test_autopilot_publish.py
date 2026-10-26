@@ -60,6 +60,7 @@ def test_non_fast_forward_guard_is_explicit():
                    "sha": "c" * 40, "mode": "100644"}]},
         {"sha": "d" * 40},
         {"sha": "e" * 40},
+        {"sha": "f" * 40},
         {},
     ])
     publisher.api = api
