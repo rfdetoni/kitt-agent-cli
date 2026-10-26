@@ -86,3 +86,56 @@ def test_acp_permission_client_reply_only_authorizes_exact_allow_once():
         return await task
     assert asyncio.run(exercise("allow-once")) is True
     assert asyncio.run(exercise("reject-once")) is False
+
+def test_acp_load_replays_entire_conversation_before_return(tmp_path):
+    class History:
+        def __init__(self):
+            self.repo = self
+        def get_conversation(self, ident):
+            return {"id": ident, "workspace_id": "w"}
+        def get_messages_for_conversation(self, ident):
+            assert ident == "existing"
+            return [
+                {"role": "user", "content": "Question"},
+                {"role": "assistant", "content": "A" * 20000},
+                {"role": "user", "content": "Follow-up"},
+            ]
+    server = ACPServer(SimpleNamespace(
+        canonical_root=tmp_path, workspace_id="w", history=History(),
+    ))
+    server._initialized = True
+
+    async def run():
+        sink = io.StringIO()
+        server._output = sink
+        await server._on_frame({"jsonrpc": "2.0", "id": 6,
+            "method": "session/load",
+            "params": {"sessionId": "existing", "cwd": str(tmp_path)}})
+        return [json.loads(line) for line in sink.getvalue().splitlines()]
+    frames = asyncio.run(run())
+    assert frames[-1] == {"jsonrpc": "2.0", "id": 6, "result": {}}
+    updates = [frame["params"]["update"] for frame in frames[:-1]]
+    assert [item["sessionUpdate"] for item in updates] == [
+        "user_message_chunk", "agent_message_chunk",
+        "agent_message_chunk", "user_message_chunk",
+    ]
+    assert "".join(item["content"]["text"] for item in updates[1:3]) == "A" * 20000
+    assert updates[-1]["content"]["text"] == "Follow-up"
+
+
+def test_acp_cancel_only_affects_target_session_permission(tmp_path):
+    server = ACPServer(SimpleNamespace())
+    server._initialized = True
+    server._sessions.update(["first", "second"])
+
+    async def run():
+        sink = io.StringIO()
+        server._output = sink
+        first = asyncio.get_running_loop().create_future()
+        second = asyncio.get_running_loop().create_future()
+        server._pending_permissions.update({"p1": first, "p2": second})
+        server._permission_sessions.update({"p1": "first", "p2": "second"})
+        await server._on_frame({"jsonrpc": "2.0", "method": "session/cancel",
+                                "params": {"sessionId": "first"}})
+        return first.cancelled(), second.cancelled()
+    assert asyncio.run(run()) == (True, False)

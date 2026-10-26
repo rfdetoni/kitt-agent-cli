@@ -36,3 +36,11 @@ returns raw page/network/console payloads.
 - Local review UI: `kitt review list --conversation-id ID`, `kitt review diff REVIEW_ID --conversation-id ID`, and `kitt review apply|rewind REVIEW_ID --conversation-id ID --yes`.
 - The CLI write commands never bypass host policy: every actual path needs ALLOW. The `--yes` switch cannot override ASK/DENY.
 - `python scripts/benchmark_review.py --iterations 100 --file-bytes 1024` reports p50/p95 and traced peak memory for a single-file local review transaction; it is not a model/token benchmark.
+
+## ACP v1 session restoration
+
+`session/load` now replays persisted user and assistant message history as
+ordered `session/update` notifications, then returns the ACP-required empty
+result. Individual chunks are bounded; text is not silently truncated.
+`session/cancel` terminates permission requests only for the addressed
+session, not unrelated conversations in the same ACP process.
