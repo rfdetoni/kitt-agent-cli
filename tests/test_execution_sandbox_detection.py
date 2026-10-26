@@ -190,3 +190,31 @@ def test_workspace_write_does_not_reintroduce_host_dns_after_run_mask(tmp_path):
         resolver_mounts.assert_not_called()
         sandbox._bwrap_plan("bwrap", "workspace-write+network", ["/usr/bin/true"], workspace)
         resolver_mounts.assert_called_once()
+
+
+def test_autonomous_shell_may_write_only_workspace_git_metadata(tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    git_dir = root / ".git"
+    git_dir.mkdir()
+    kitt_dir = root / ".kitt"
+    kitt_dir.mkdir()
+    sandbox = ExecutionSandbox(root)
+    with patch.object(sandbox, "_scratch", return_value=tmp_path / "scratch"), (
+        patch.object(sandbox, "_sensitive_host_paths", return_value=())
+    ), patch.object(sandbox, "_append_resolver_mounts"):
+        ordinary = sandbox._bwrap_plan("bwrap", "workspace-write", ["sh", "-c", "git add ."], root)
+        granted = sandbox._bwrap_plan(
+            "bwrap", "workspace-write", ["sh", "-c", "git add ."], root,
+            autonomous_git_write=True,
+        )
+
+    def readonly(plan):
+        return {
+            plan.argv[i + 1] for i, flag in enumerate(plan.argv[:-1])
+            if flag == "--ro-bind"
+        }
+
+    assert str(git_dir) in readonly(ordinary)
+    assert str(git_dir) not in readonly(granted)
+    assert str(kitt_dir) in readonly(granted)

@@ -387,6 +387,12 @@ none; network-capable tasks use Docker bridge egress, so only delegate it to
 trusted workspaces. The repository's `.git` remains writable by the task;
 use a disposable checkout/worktree for untrusted code.
 
+The autonomous Bubblewrap executor permits Git metadata writes when `.git` is
+an actual directory within the authorized workspace, including Git invoked
+through a shell script. Nonautonomous processes still receive read-only `.git`.
+Linked worktrees referencing metadata outside the workspace do not gain write
+access to external Git state.
+
 This operation does **not** bypass host permissions for `process.run`, change
 workspace settings, manage Docker infrastructure, modify unrelated directories,
 or provide secret credentials. Without an operational strong sandbox it fails

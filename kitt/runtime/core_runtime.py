@@ -1242,6 +1242,7 @@ class SafeRuntime:
                     else "workspace-write"
                 ),
                 require_strong_sandbox=True,
+                autonomous_git_write=True,
             )
         except (ValueError, OSError, PermissionError, SandboxUnavailable) as exc:
             return SafeRuntimeResult(False, "sandbox.run", error=str(exc))
