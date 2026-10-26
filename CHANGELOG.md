@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.95 — on-demand fixed toolchain sandboxes
+
+- Auto-select official Maven/JDK 25, Node 24 or Rust worker images for autonomous Docker-executed tasks, using command and workspace markers; explicit operator image overrides selection.
+- Provision only fixed allowlisted images via trusted Docker commands; keep the daemon/socket outside model tools.
+- Use writable ephemeral HOME for package managers, preserve workspace/credential isolation, and add deterministic selection/provisioning tests.
+- Synchronize package version and uv.lock without changing Python dependencies.
+
+
 ## 0.88.94 — autonomous shell Git metadata in confined workspace
 
 - Permit `sandbox.run` and automatically delegated autonomous shell commands to update an in-workspace `.git` directory under Bubblewrap.

@@ -376,6 +376,13 @@ through `sandbox.run` when the sandbox and capabilities are available, allowing
 unmodified agent prompts to use the contained executor.
 Network access additionally requires predelegated `network.access`.
 
+The Docker worker selects an official, fixed Java 25/Maven, Node 24, or Rust
+toolchain image based on invoked commands and current project markers. Missing
+toolchain images are pulled by the trusted host broker on first use, without
+exposing Docker credentials or the socket to the model. `KITT_AUTOPILOT_IMAGE`
+explicitly overrides selection. This may download large images; subsequent
+invocations reuse local Docker layers. Package-manager caches are ephemeral.
+
 Execution prefers a functional Bubblewrap installation (>=0.12). If that is
 blocked by AppArmor, the trusted host broker can use an already-pulled local
 Docker image (`KITT_AUTOPILOT_IMAGE`, default
