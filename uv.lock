@@ -31,7 +31,7 @@ wheels = [
 
 [[package]]
 name = "kitt-agent-cli"
-version = "0.88.97"
+version = "0.88.98"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },

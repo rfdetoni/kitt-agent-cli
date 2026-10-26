@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.98 — host-authorized persistent Compose sandbox broker
+
+- Introduce bounded Unix-socket command protocol and trusted Docker sidecar, keeping Docker socket inaccessible to Agent and sandbox workers.
+- Reuse isolated container workers and dependency caches per workspace, toolchain image and network permission, with explicit operator network grant.
+- Prefer healthy broker as strong sandbox for Agent-in-Compose, fail closed otherwise; add protocol and path security regressions.
+- Align version/uv lock without dependency changes.
+
+
 ## 0.88.97 — prefer Docker toolchains over host Bubblewrap executables
 
 - For explicitly autonomous build/test commands, prefer fixed Docker language images even if Bubblewrap is functional, avoiding missing host dependencies.

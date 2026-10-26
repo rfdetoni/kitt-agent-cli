@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import json
 import shutil
 import subprocess
 import sys
@@ -121,6 +122,8 @@ class ExecutionSandbox:
         self._docker_cache: tuple[str, str] | None | bool = False
         self._docker_cache_until = 0.0
         self._docker_ready_images: set[str] = set()
+        self._broker_cache_until = 0.0
+        self._broker_cache: str | None = None
 
     def _probe_landlock(self) -> int:
         if self._landlock_cache is None:
@@ -264,6 +267,47 @@ class ExecutionSandbox:
         if selected is not None:
             return f"functional bubblewrap {'.'.join(map(str, selected[1]))} at {selected[0]}"
         return "; ".join(self._bwrap_failures[:4])[:900]
+
+    def _probe_broker(self) -> str | None:
+        """A healthy Unix-socket broker is a separate trusted sandbox backend."""
+        if time.monotonic() < self._broker_cache_until:
+            return self._broker_cache
+        self._broker_cache_until = time.monotonic() + 3
+        self._broker_cache = None
+        if not self._auto_detect or sys.platform != "linux":
+            return None
+        path = os.getenv("KITT_SANDBOX_BROKER_SOCKET", "").strip()
+        if not path:
+            return None
+        try:
+            if not Path(path).is_socket():
+                return None
+            from kitt.security.autopilot_broker import send
+            if send(path, {"op": "ping"}, timeout=1).get("stdout") == "pong":
+                self._broker_cache = path
+        except (OSError, ValueError, TimeoutError, ConnectionError, json.JSONDecodeError):
+            pass
+        return self._broker_cache
+
+    def _broker_plan(
+        self, socket_path: str, profile: SandboxProfile,
+        argv: Sequence[str], cwd: Path, timeout_seconds: int,
+    ) -> SandboxPlan:
+        rel = cwd.relative_to(self.root)
+        return SandboxPlan(
+            argv=[
+                sys.executable, "-m", "kitt.security.autopilot_broker",
+                "client", json.dumps({
+                    "argv": list(argv), "cwd": str(rel),
+                    "timeout": int(timeout_seconds), "profile": profile,
+                }),
+            ],
+            profile=profile, backend="broker", strong=True,
+            network_isolated=profile != "workspace-write+network",
+            host_cwd=self.root,
+            env_overrides={"KITT_SANDBOX_BROKER_SOCKET": socket_path},
+            reason="trusted-local-broker;persisted-sandbox-worker",
+        )
 
     def _probe_docker(self) -> tuple[str, str] | None:
         """Probe only a local, installed Docker daemon and an already-pulled image.
@@ -426,6 +470,8 @@ class ExecutionSandbox:
     def backend_for(self, profile: SandboxProfile) -> str | None:
         if profile == "full-access":
             return "none"
+        if self._probe_broker() is not None:
+            return "broker"
         if self._probe_bwrap() is not None:
             return "bubblewrap"
         if profile != "full-access" and self._probe_docker() is not None:
@@ -446,7 +492,7 @@ class ExecutionSandbox:
         target = profile or self.default_profile
         # Landlock confines selected filesystem writes, but it cannot provide
         # the namespace/socket isolation required for unattended process.exec.
-        return self.backend_for(target) in {"bubblewrap", "docker"}
+        return self.backend_for(target) in {"bubblewrap", "docker", "broker"}
 
     @staticmethod
     def _scratch() -> Path:
@@ -704,6 +750,7 @@ class ExecutionSandbox:
         require_strong: bool = False,
         autonomous_git_write: bool = False,
         prefer_docker_toolchain: bool = False,
+        timeout_seconds: int = 120,
     ) -> SandboxPlan:
         target = profile or self.default_profile
         cwd_path = Path(cwd).resolve()
@@ -711,6 +758,12 @@ class ExecutionSandbox:
             return SandboxPlan(
                 list(argv), target, "none", False, False, cwd_path,
                 reason="explicit-full-access",
+            )
+
+        broker = self._probe_broker()
+        if broker is not None:
+            return self._broker_plan(
+                broker, target, argv, cwd_path, timeout_seconds,
             )
 
         # Development commands use their fixed Docker toolchain even when

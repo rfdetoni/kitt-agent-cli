@@ -286,6 +286,7 @@ class ProcessRunner:
             require_strong=require_strong_sandbox,
             autonomous_git_write=autonomous_git_write,
             prefer_docker_toolchain=prefer_docker_toolchain,
+            timeout_seconds=timeout_seconds,
         )
 
         out_cap = _HeadTailCapture(self.max_output_bytes)
