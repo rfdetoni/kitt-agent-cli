@@ -1274,7 +1274,10 @@ class SafeRuntime:
                 metrics[field] = min(value, 100000)
         return SafeRuntimeResult(True, "browser.diagnose", data={
             "available": True,
-            "inspection_keys": sorted(str(k)[:64] for k in payload.keys())[:32],
+            "inspection_keys": sorted(set(payload).intersection({
+                "errors", "console_errors", "failed_requests", "warnings",
+                "forms", "buttons", "links", "inputs", "elements",
+            })),
             "metrics": metrics,
             "has_console_errors": bool(metrics.get("console_errors", 0)),
             "has_failed_requests": bool(metrics.get("failed_requests", 0)),

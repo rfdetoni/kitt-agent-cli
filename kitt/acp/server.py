@@ -161,6 +161,22 @@ class ACPServer:
                     pass
             return
         if method == "session/prompt":
+            try:
+                session_id = self._validate_session(params)
+                items = params.get("prompt")
+                if not isinstance(items, list) or not items or len(items) > 32:
+                    raise ValueError("prompt must contain 1..32 content blocks")
+                if any(not isinstance(x, dict) or x.get("type") != "text"
+                       or not isinstance(x.get("text"), str) for x in items):
+                    raise ValueError("only ACP text prompt blocks are supported")
+                if not 0 < len("\\n".join(x["text"] for x in items).strip().encode("utf-8")) <= 65536:
+                    raise ValueError("ACP prompt exceeds text budget")
+                if session_id in self._active:
+                    raise ValueError("ACP session already has an active prompt")
+            except ValueError as exc:
+                await self._send({"jsonrpc": "2.0", "id": request_id,
+                                  "error": {"code": -32602, "message": str(exc)}})
+                return
             task = asyncio.create_task(self._prompt(request_id, params))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
@@ -186,7 +202,8 @@ class ACPServer:
                 if len(line.encode("utf-8")) > _MAX_FRAME_BYTES or not line.endswith("\n"):
                     await self._send({"jsonrpc": "2.0", "id": None,
                                       "error": {"code": -32600, "message": "Frame too large"}})
-                    continue
+                    # Never parse the remainder of a rejected oversized frame.
+                    break
                 try:
                     frame = json.loads(line)
                 except json.JSONDecodeError:
