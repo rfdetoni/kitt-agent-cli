@@ -270,6 +270,7 @@ class ProcessRunner:
         sandbox_profile: SandboxProfile | None = None,
         require_strong_sandbox: bool = False,
         autonomous_git_write: bool = False,
+        prefer_docker_toolchain: bool = False,
     ) -> ProcessResult:
         if not argv or not all(isinstance(x, str) and x for x in argv):
             raise ValueError("argv must be a non-empty string list")
@@ -284,6 +285,7 @@ class ProcessRunner:
             profile=sandbox_profile or "full-access",
             require_strong=require_strong_sandbox,
             autonomous_git_write=autonomous_git_write,
+            prefer_docker_toolchain=prefer_docker_toolchain,
         )
 
         out_cap = _HeadTailCapture(self.max_output_bytes)

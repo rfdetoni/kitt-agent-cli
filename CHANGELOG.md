@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.97 — prefer Docker toolchains over host Bubblewrap executables
+
+- For explicitly autonomous build/test commands, prefer fixed Docker language images even if Bubblewrap is functional, avoiding missing host dependencies.
+- Keep generic Git, shell and inspection commands on Bubblewrap. Existing nonautonomous host execution and policy gates remain unchanged.
+- Add regression coverage and sync version/lock without external dependency changes.
+
+
 ## 0.88.96 — toolchain routing and real Docker isolation smoke
 
 - Select Gradle/JDK 25 for gradle/gradlew and retain Maven/JDK 25 for Maven.
