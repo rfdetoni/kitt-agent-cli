@@ -403,7 +403,7 @@ class ToolRegistry:
             {
                 "name": "kitt_runtime",
                 "description": (
-                    "Execute compact KITT operations (repo.*, artifacts.*, patch.*, process.*, sandbox.*, children.*, goal.*, memory.*, state.*, handles.*). "
+                    "Execute compact KITT operations (repo.*, artifacts.*, patch.*, process.*, sandbox.*, autopilot.*, children.*, goal.*, memory.*, state.*, handles.*). "
                     "In autonomous mode, prefer sandbox.run for unrestricted shell/build/file commands inside a verified workspace sandbox; "
                     "process.run retains host policy restrictions. Use repo.create_directory for simple file operations."
                 ),

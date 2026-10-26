@@ -421,6 +421,7 @@ class KittRuntime:
         processor.run_coordinator = run_coordinator
         processor.resource_coordinator = resource_coordinator
         processor.workspace_snapshot_service = workspace_snapshots
+        registry.workspace_snapshot_service = workspace_snapshots
         processor.execution_budgets = {}
         processor.execution_budget_snapshots = {}
         processor.child_budget_leases = {}
