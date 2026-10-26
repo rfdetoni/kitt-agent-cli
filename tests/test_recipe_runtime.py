@@ -93,7 +93,7 @@ return = "ok"
     (tmp_path / ".kitt" / "recipes" / "linked.toml").symlink_to(
         tmp_path / ".kitt" / "recipes" / "safe.toml"
     )
-    assert [r["name"] for r in service.list({})] == ["safe"]
+    assert [r["name"] for r in service.list({})["recipes"]] == ["safe"]
     with pytest.raises(PermissionError):
         service.inspect({"name": "linked"})
 
