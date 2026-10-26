@@ -2,7 +2,7 @@
 
 ## 0.88.93 — scoped autonomous commands with Docker fallback
 
-- Introduce `sandbox.run` for authorized autonomous workspaces: shell commands and workspace file mutations no longer go through the host argv denylist.
+- Introduce `sandbox.run` for authorized autonomous workspaces, and automatically redirect authorized `process.run` calls when isolation is available: shell commands and workspace mutations no longer go through the host argv denylist.
 - Require strong Bubblewrap or Docker isolation, explicit process/write capabilities and predelegated network permission; block path-scoped principals and protect the KITT control plane.
 - Probe prepared local Docker images without downloads, constrain container resources and permissions, and retain the existing host `process.run` controls.
 - Add sandbox fallback regression coverage. No third-party dependency changes.

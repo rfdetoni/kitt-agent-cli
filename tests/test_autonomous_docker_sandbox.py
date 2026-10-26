@@ -38,3 +38,35 @@ def test_docker_fallback_read_only_mount(tmp_path: Path):
     ):
         plan = sandbox.plan(["pwd"], root, profile="read-only", require_strong=True)
     assert any(x.startswith("type=bind,") and x.endswith(",readonly") for x in plan.argv)
+
+
+def test_host_run_stays_unchanged_without_automatic_sandbox(tmp_path: Path):
+    from types import SimpleNamespace
+    from kitt.runtime.core_runtime import SafeRuntime
+    from kitt.security.capabilities import CAP_PROCESS_RUN, CAP_REPO_WRITE
+    from kitt.core.autonomy_policy import AutonomyPolicy
+
+    class Sandbox:
+        def is_strong_available(self, _profile):
+            return False
+
+    class Principal:
+        capabilities = {CAP_PROCESS_RUN, CAP_REPO_WRITE}
+        is_path_scoped = False
+
+        def assert_scope(self, workspace, conversation):
+            assert workspace == "workspace" and conversation == "conversation"
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    registry = SimpleNamespace(
+        process_runner=SimpleNamespace(sandbox=Sandbox()),
+        policy=SimpleNamespace(autonomy=AutonomyPolicy.preset("autonomous")),
+    )
+    runtime = SafeRuntime(root, "workspace", "conversation", tool_registry=registry)
+    result = runtime.execute(
+        "sandbox.run", {"argv": ["sh", "-c", "true"]},
+        security_context=Principal(),
+    )
+    assert not result.success
+    assert "sandbox" in (result.error or "").lower()

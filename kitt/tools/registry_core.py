@@ -403,8 +403,9 @@ class ToolRegistry:
             {
                 "name": "kitt_runtime",
                 "description": (
-                    "Execute safe, compact, policy-governed KITT runtime operations "
-                    "(repo.*, artifacts.*, patch.*, process.*, children.*, goal.*, memory.*, state.*, handles.*), including repo.create_directory."
+                    "Execute compact KITT operations (repo.*, artifacts.*, patch.*, process.*, sandbox.*, children.*, goal.*, memory.*, state.*, handles.*). "
+                    "In autonomous mode, prefer sandbox.run for unrestricted shell/build/file commands inside a verified workspace sandbox; "
+                    "process.run retains host policy restrictions. Use repo.create_directory for simple file operations."
                 ),
             },
             {"name": "list_files", "description": "List files in directory"},

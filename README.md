@@ -371,6 +371,9 @@ In an explicitly **autonomous** workspace, `kitt_runtime` provides
 Commands are not interpreted by the host command allowlist: arbitrary shell,
 build, test and file operations are allowed **inside** a proven OS sandbox.
 The principal must hold both `process.run` and `repo.write` capabilities.
+In autonomous mode, existing `process.run` calls are automatically redirected
+through `sandbox.run` when the sandbox and capabilities are available, allowing
+unmodified agent prompts to use the contained executor.
 Network access additionally requires predelegated `network.access`.
 
 Execution prefers a functional Bubblewrap installation (>=0.12). If that is

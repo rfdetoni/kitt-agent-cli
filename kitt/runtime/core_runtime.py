@@ -522,6 +522,25 @@ class SafeRuntime:
         else:
             capabilities = set()
 
+        # Backward tool traffic is deliberately routed to the contained worker
+        # for autonomous principals. Policy restrictions on host process.run
+        # remain unchanged when sandbox or delegated authority is absent.
+        if op == "process.run":
+            policy = getattr(self.registry, "policy", None) if self.registry else None
+            sandbox = getattr(getattr(self.registry, "process_runner", None), "sandbox", None)
+            if (
+                security_context is not None
+                and not getattr(security_context, "is_path_scoped", False)
+                and CAP_REPO_WRITE in capabilities
+                and CAP_PROCESS_RUN in capabilities
+                and policy is not None
+                and getattr(getattr(policy, "autonomy", None), "level", "") == "autonomous"
+                and sandbox is not None
+                and sandbox.is_strong_available("workspace-write")
+            ):
+                op = "sandbox.run"
+                spec = self.operation_registry[op]
+
         if spec.required_capability and spec.required_capability not in capabilities:
             return self._result(
                 start,
