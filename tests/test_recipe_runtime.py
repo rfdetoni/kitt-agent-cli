@@ -153,6 +153,12 @@ def test_write_recipe_previews_and_applies_only_through_guarded_review(tmp_path)
         def __init__(self): self.data = {}
         def get(self, key): return self.data.get(key)
         def set(self, key, value, ttl_seconds=None): self.data[key] = value
+        def compare_and_swap_status(self, key, expected, next_value):
+            old = self.data.get(key)
+            if not old or old["status"] != expected:
+                return False
+            self.data[key] = next_value
+            return True
 
     target = tmp_path / "hello.txt"
     target.write_text("old", encoding="utf-8")
@@ -185,6 +191,12 @@ def test_mutable_recipe_rechecks_source_digest_before_apply(tmp_path):
         def __init__(self): self.data = {}
         def get(self, key): return self.data.get(key)
         def set(self, key, value, ttl_seconds=None): self.data[key] = value
+        def compare_and_swap_status(self, key, expected, next_value):
+            old = self.data.get(key)
+            if not old or old["status"] != expected:
+                return False
+            self.data[key] = next_value
+            return True
     _write_recipe(tmp_path, "change", '''
 version = 1
 title = "Change"
