@@ -78,3 +78,18 @@ The total original plus proposed content limit is 16 KiB per review, across
 at most eight files. Git and KITT control-plane files are not eligible.
 A recipe digest change invalidates its staged plan. Files changed by
 other processes are never silently overwritten.
+
+## Parameterized change recipes
+
+Change recipes can declare `parameters = ["name"]` and use `${name}` only
+in UTF-8 content (not paths). Each supplied value must be at most 256 bytes;
+undeclared or missing parameters are rejected.
+
+Declare `[[checks]]` with `path` and `contains` to test post-apply file
+content within the workspace, and `[[after_apply]]` with read-only program
+statements to run bounded validation hooks. A failed check/hook attempts
+to revert files using the same SHA guards; conflicting external edits are
+never overwritten. Hooks cannot execute shell or grant additional tools.
+
+Conditional and looped read-only recipes use existing `program.execute`
+`if` and `for_each` statements; mutable changes remain explicitly staged.
