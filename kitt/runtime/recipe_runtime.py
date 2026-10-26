@@ -206,7 +206,7 @@ class ReadOnlyRecipeService:
         for item in loaded["changes"]:
             # Paths are literal: templates may modify only UTF-8 content.
             files.append({"path": item["path"],
-                          "content": Template(item["content"]).substitute(values)})
+                          "content": Template(item["content"]).substitute(values) if loaded["parameters"] else item["content"]})
         report = self.runtime.reviews.preview({"files": files}, security_context)
         record = self.runtime.reviews._load(report["review_id"], security_context)
         record["recipe_name"] = loaded["name"]
@@ -230,7 +230,7 @@ class ReadOnlyRecipeService:
         try:
             for check in loaded["checks"]:
                 rel = self.runtime.reviews._path(check["path"], security_context)
-                actual = self.fs.read_text(rel, max_bytes=16384)
+                actual, _ = self.fs.read_text(rel, max_bytes=16384)
                 if check["contains"] not in actual:
                     raise ValueError(f"recipe verification failed for {rel}")
             if loaded["after_apply"]:
