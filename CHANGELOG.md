@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.0 — recoverable task checkpoints and verification gates
+
+- Expose `autopilot.checkpoint`, `autopilot.diff`, `autopilot.rollback`, and `autopilot.verify` under autonomous principal authority.
+- Reuse durable workspace snapshots and event ledger, with explicit expected-current hashes for conflict-aware rollback; control-plane paths remain excluded.
+- Run fixed operator-configured or bounded auto-discovered build/test validation within strong sandbox workers.
+- Update package and lock versions without changing third-party Python dependencies.
+
+
 ## 0.88.99 — discover broker workspace from Docker metadata
 
 - Derive the broker-authorized host workspace from Docker inspect of the broker container's own /workspace bind mount; avoid manual absolute host-path setup.
