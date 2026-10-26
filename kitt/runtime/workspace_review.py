@@ -157,8 +157,18 @@ class WorkspaceReview:
                 except Exception:
                     pass
             raise
+        # Keep the durable state transition in the same compensation boundary.
+        # If SQLite persistence fails, roll back the writes using CAS guards.
         record["status"] = "REWOUND" if reverse else "APPLIED"
-        self._store().set(args["review_id"], record, ttl_seconds=86400)
+        try:
+            self._store().set(args["review_id"], record, ttl_seconds=86400)
+        except Exception:
+            for item in reversed(done):
+                try:
+                    self._write(item, not reverse)
+                except Exception:
+                    pass
+            raise
         return {
             "review_id": args["review_id"], "status": record["status"],
             "changed_paths": [item["path"] for item in record["files"]],

@@ -66,3 +66,18 @@ def test_review_path_scope_and_authority(tmp_path):
     assert OPERATION_REGISTRY["review.preview"].required_capability == CAP_REPO_READ
     assert OPERATION_REGISTRY["review.apply"].required_capability == CAP_REPO_WRITE
     assert OPERATION_REGISTRY["review.rewind"].sensitive is True
+
+def test_review_durable_state_failure_restores_preimage(tmp_path):
+    from kitt.runtime.workspace_review import WorkspaceReview
+    class FailingState(State):
+        def set(self, key, value, ttl_seconds=None):
+            if value["status"] == "APPLIED":
+                raise RuntimeError("sqlite unavailable")
+            super().set(key, value, ttl_seconds)
+    file = tmp_path / "text.txt"
+    file.write_text("before")
+    service = WorkspaceReview(SimpleNamespace(root=tmp_path, state=FailingState()))
+    ident = service.preview({"files": [{"path": "text.txt", "content": "after"}]}, None)["review_id"]
+    with pytest.raises(RuntimeError, match="sqlite unavailable"):
+        service.apply({"review_id": ident}, None)
+    assert file.read_text() == "before"

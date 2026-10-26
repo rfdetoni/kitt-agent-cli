@@ -25,6 +25,7 @@ class ACPServer:
         self._initialized = False
         self._sessions: set[str] = set()
         self._active: dict[str, TurnCommand] = {}
+        self._pending_sessions: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._write_lock = asyncio.Lock()
         self._output = None
@@ -171,15 +172,19 @@ class ACPServer:
                     raise ValueError("only ACP text prompt blocks are supported")
                 if not 0 < len("\n".join(x["text"] for x in items).strip().encode("utf-8")) <= 65536:
                     raise ValueError("ACP prompt exceeds text budget")
-                if session_id in self._active:
+                if session_id in self._active or session_id in self._pending_sessions:
                     raise ValueError("ACP session already has an active prompt")
             except ValueError as exc:
                 await self._send({"jsonrpc": "2.0", "id": request_id,
                                   "error": {"code": -32602, "message": str(exc)}})
                 return
+            self._pending_sessions.add(session_id)
             task = asyncio.create_task(self._prompt(request_id, params))
             self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+            def release(task):
+                self._pending_sessions.discard(session_id)
+                self._tasks.discard(task)
+            task.add_done_callback(release)
             return
         try:
             result = self._dispatch(method, params)
