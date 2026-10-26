@@ -376,8 +376,9 @@ through `sandbox.run` when the sandbox and capabilities are available, allowing
 unmodified agent prompts to use the contained executor.
 Network access additionally requires predelegated `network.access`.
 
-The Docker worker selects an official, fixed Java 25/Maven, Node 24, or Rust
-toolchain image based on invoked commands and current project markers. Missing
+The Docker worker selects an official Java 25/Maven, Gradle/JDK 25, Node 24, or Rust
+toolchain image based on the invoked command. Generic Git and inspection commands
+continue to use the base image rather than a project-inferred worker. Missing
 toolchain images are pulled by the trusted host broker on first use, without
 exposing Docker credentials or the socket to the model. `KITT_AUTOPILOT_IMAGE`
 explicitly overrides selection. This may download large images; subsequent

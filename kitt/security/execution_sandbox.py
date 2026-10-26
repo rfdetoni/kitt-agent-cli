@@ -26,10 +26,12 @@ DEFAULT_PROCESS_SANDBOX_PROFILE: SandboxProfile = "workspace-write"
 # Fixed, operator-controlled toolchain catalog. Never accept an image from tool input.
 _TOOLCHAIN_IMAGES = {
     "java": "maven:3.9-eclipse-temurin-25-noble",
+    "gradle": "gradle:9-jdk25-noble",
     "node": "node:24-bookworm",
     "rust": "rust:1.99-bookworm",
 }
-_JAVA_TOOLS = frozenset({"mvn", "mvnw", "java", "javac", "gradle", "gradlew"})
+_JAVA_TOOLS = frozenset({"mvn", "mvnw", "java", "javac"})
+_GRADLE_TOOLS = frozenset({"gradle", "gradlew"})
 _NODE_TOOLS = frozenset({"node", "npm", "npx", "pnpm", "yarn"})
 _RUST_TOOLS = frozenset({"cargo", "rustc", "rustup"})
 _MIN_BWRAP_VERSION = (0, 12, 0)
@@ -325,6 +327,8 @@ class ExecutionSandbox:
             executable = "gradle"
         if executable in _JAVA_TOOLS:
             return _TOOLCHAIN_IMAGES["java"]
+        if executable in _GRADLE_TOOLS:
+            return _TOOLCHAIN_IMAGES["gradle"]
         if executable in _NODE_TOOLS:
             return _TOOLCHAIN_IMAGES["node"]
         if executable in _RUST_TOOLS:
@@ -338,18 +342,14 @@ class ExecutionSandbox:
                 tool = name.lower()
                 if tool in _JAVA_TOOLS:
                     return _TOOLCHAIN_IMAGES["java"]
+                if tool in _GRADLE_TOOLS:
+                    return _TOOLCHAIN_IMAGES["gradle"]
                 if tool in _NODE_TOOLS:
                     return _TOOLCHAIN_IMAGES["node"]
                 if tool in _RUST_TOOLS:
                     return _TOOLCHAIN_IMAGES["rust"]
-        if (cwd / "pom.xml").is_file() or (cwd / "build.gradle").is_file() or (
-            cwd / "build.gradle.kts"
-        ).is_file():
-            return _TOOLCHAIN_IMAGES["java"]
-        if (cwd / "package.json").is_file():
-            return _TOOLCHAIN_IMAGES["node"]
-        if (cwd / "Cargo.toml").is_file():
-            return _TOOLCHAIN_IMAGES["rust"]
+        # Project metadata alone cannot reroute generic git and inspection
+        # commands to language workers missing these OS tools.
         return default_image
 
     def _ensure_toolchain_image(self, docker: str, image: str) -> None:
@@ -404,6 +404,7 @@ class ExecutionSandbox:
             "--tmpfs", "/home/kitt:rw,nosuid,nodev,size=1g,mode=1777",
             "--env", "HOME=/home/kitt",
             "--env", "MAVEN_CONFIG=/home/kitt/.m2",
+            "--env", "GRADLE_USER_HOME=/home/kitt/.gradle",
             "--env", "CARGO_HOME=/home/kitt/.cargo",
             "--user", f"{os.getuid()}:{os.getgid()}",
             "--mount", (

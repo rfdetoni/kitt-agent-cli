@@ -123,8 +123,12 @@ def test_fixed_language_toolchain_selection(tmp_path: Path):
         )
         assert choose("prepared:image", ["npm", "test"], frontend) == "node:24-bookworm"
         assert choose("prepared:image", ["cargo", "test"], rust) == "rust:1.99-bookworm"
-        assert choose("prepared:image", ["echo", "hi"], root) == (
-            "maven:3.9-eclipse-temurin-25-noble"
+        assert choose("prepared:image", ["echo", "hi"], root) == "prepared:image"
+        assert choose("prepared:image", ["git", "status"], root) == "prepared:image"
+        assert choose("prepared:image", ["bash", "-lc", "git status"], root) == "prepared:image"
+        assert choose("prepared:image", ["./gradlew", "test"], root) == "gradle:9-jdk25-noble"
+        assert choose("prepared:image", ["bash", "-lc", "./gradlew test"], root) == (
+            "gradle:9-jdk25-noble"
         )
     with patch.dict("os.environ", {"KITT_AUTOPILOT_IMAGE": "custom:trusted"}):
         assert choose("custom:trusted", ["npm", "test"], frontend) == "custom:trusted"

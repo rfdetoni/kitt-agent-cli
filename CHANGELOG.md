@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.96 — toolchain routing and real Docker isolation smoke
+
+- Select Gradle/JDK 25 for gradle/gradlew and retain Maven/JDK 25 for Maven.
+- Keep generic shell, Git and inspection commands on the base image even inside Java/Node projects.
+- Add a real Docker CI smoke for workspace writes, private control-plane state, network isolation and read-only execution.
+- Synchronize Python package metadata and uv.lock.
+
+
 ## 0.88.95 — on-demand fixed toolchain sandboxes
 
 - Auto-select official Maven/JDK 25, Node 24 or Rust worker images for autonomous Docker-executed tasks, using command and workspace markers; explicit operator image overrides selection.

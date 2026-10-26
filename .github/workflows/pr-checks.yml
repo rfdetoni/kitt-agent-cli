@@ -158,7 +158,7 @@ jobs:
         env:
           KITT_CONTAINER_RUNTIME: docker
           KITT_RUNTIME_TEST_IMAGE: alpine:3.20
-        run: python -m pytest -q tests/integration/test_real_container_runtime.py
+        run: python -m pytest -q tests/integration/test_real_container_runtime.py tests/integration/test_autonomous_docker_sandbox.py
 
   podman-runtime:
     name: podman runtime smoke
