@@ -956,8 +956,8 @@ class SafeRuntime:
             ),
             "program.session.get": lambda: self._op_program_session_get(args),
             "program.session.clear": lambda: self._op_program_session_clear(args),
-            "recipe.list": lambda: SafeRuntimeResult(True, "recipe.list", data=self.recipes.list(args)),
-            "recipe.inspect": lambda: SafeRuntimeResult(True, "recipe.inspect", data=self.recipes.inspect(args)),
+            "recipe.list": lambda: SafeRuntimeResult(True, "recipe.list", data=self.recipes.list(args, security_context)),
+            "recipe.inspect": lambda: SafeRuntimeResult(True, "recipe.inspect", data=self.recipes.inspect(args, security_context)),
             "recipe.run": lambda: self.recipes.run(
                 args, turn_id=turn_id, origin=origin,
                 capabilities=capabilities, security_context=security_context,

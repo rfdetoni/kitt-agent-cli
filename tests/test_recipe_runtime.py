@@ -112,3 +112,34 @@ def test_recipe_directory_enumeration_is_bounded(tmp_path):
         (recipes / f"not-a-recipe-{index}.txt").write_text("", encoding="utf-8")
     service, _ = _service(tmp_path)
     assert service.list({})["truncated"] is True
+
+def test_path_scoped_agent_cannot_inspect_or_run_other_recipes(tmp_path):
+    _write_recipe(tmp_path, "visible", '''
+version = 1
+title = "Visible"
+[[program]]
+return = "ok"
+''')
+    _write_recipe(tmp_path, "private", '''
+version = 1
+title = "Private"
+[[program]]
+return = "secret"
+''')
+    service, calls = _service(tmp_path)
+
+    class ScopedPrincipal:
+        is_path_scoped = True
+
+        def assert_path_allowed(self, path):
+            if path != ".kitt/recipes/visible.toml":
+                raise PermissionError("recipe outside allowed paths")
+
+    principal = ScopedPrincipal()
+    assert [item["name"] for item in service.list({}, principal)["recipes"]] == ["visible"]
+    with pytest.raises(PermissionError):
+        service.inspect({"name": "private"}, principal)
+    with pytest.raises(PermissionError):
+        service.run({"name": "private"}, turn_id="t", origin="MODEL",
+                    capabilities={CAP_REPO_READ}, security_context=principal)
+    assert calls == []
