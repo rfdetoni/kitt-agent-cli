@@ -23,6 +23,15 @@ SandboxProfile = Literal[
 ]
 
 DEFAULT_PROCESS_SANDBOX_PROFILE: SandboxProfile = "workspace-write"
+# Fixed, operator-controlled toolchain catalog. Never accept an image from tool input.
+_TOOLCHAIN_IMAGES = {
+    "java": "maven:3.9-eclipse-temurin-25-noble",
+    "node": "node:24-bookworm",
+    "rust": "rust:1.99-bookworm",
+}
+_JAVA_TOOLS = frozenset({"mvn", "mvnw", "java", "javac", "gradle", "gradlew"})
+_NODE_TOOLS = frozenset({"node", "npm", "npx", "pnpm", "yarn"})
+_RUST_TOOLS = frozenset({"cargo", "rustc", "rustup"})
 _MIN_BWRAP_VERSION = (0, 12, 0)
 _LANDLOCK_CREATE_RULESET_VERSION = 1
 _SUPPORTED_LANDLOCK_MACHINES = frozenset(
@@ -109,6 +118,7 @@ class ExecutionSandbox:
         self._landlock_cache: int | None = None
         self._docker_cache: tuple[str, str] | None | bool = False
         self._docker_cache_until = 0.0
+        self._docker_ready_images: set[str] = set()
 
     def _probe_landlock(self) -> int:
         if self._landlock_cache is None:
@@ -301,6 +311,76 @@ class ExecutionSandbox:
         self._docker_cache = (str(binary), image)
         return self._docker_cache
 
+    @staticmethod
+    def _select_toolchain_image(
+        default_image: str, argv: Sequence[str], cwd: Path,
+    ) -> str:
+        """Choose an image from fixed catalog, not from model-selected strings."""
+        if os.environ.get("KITT_AUTOPILOT_IMAGE"):
+            return default_image
+        executable = Path(argv[0]).name.lower() if argv else ""
+        if executable.startswith("mvnw"):
+            executable = "mvn"
+        elif executable.startswith("gradlew"):
+            executable = "gradle"
+        if executable in _JAVA_TOOLS:
+            return _TOOLCHAIN_IMAGES["java"]
+        if executable in _NODE_TOOLS:
+            return _TOOLCHAIN_IMAGES["node"]
+        if executable in _RUST_TOOLS:
+            return _TOOLCHAIN_IMAGES["rust"]
+        if executable in {"sh", "bash", "dash", "zsh"} and len(argv) >= 3 and argv[1] in {"-c", "-lc"}:
+            names = re.findall(
+                r"(?<![\\w.-])(mvnw?|gradlew?|java|javac|npm|npx|node|pnpm|yarn|cargo|rustc|rustup)(?![\\w.-])",
+                argv[2], flags=re.IGNORECASE,
+            )
+            for name in names:
+                tool = name.lower()
+                if tool in _JAVA_TOOLS:
+                    return _TOOLCHAIN_IMAGES["java"]
+                if tool in _NODE_TOOLS:
+                    return _TOOLCHAIN_IMAGES["node"]
+                if tool in _RUST_TOOLS:
+                    return _TOOLCHAIN_IMAGES["rust"]
+        if (cwd / "pom.xml").is_file() or (cwd / "build.gradle").is_file() or (
+            cwd / "build.gradle.kts"
+        ).is_file():
+            return _TOOLCHAIN_IMAGES["java"]
+        if (cwd / "package.json").is_file():
+            return _TOOLCHAIN_IMAGES["node"]
+        if (cwd / "Cargo.toml").is_file():
+            return _TOOLCHAIN_IMAGES["rust"]
+        return default_image
+
+    def _ensure_toolchain_image(self, docker: str, image: str) -> None:
+        """Provision known worker images with trusted host commands on demand."""
+        if image in self._docker_ready_images:
+            return
+        if image not in _TOOLCHAIN_IMAGES.values():
+            raise SandboxUnavailable("Only known toolchain images may be auto-provisioned")
+        try:
+            inspect = subprocess.run(
+                [docker, "image", "inspect", image, "--format", "{{.Id}}"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=5, check=False,
+            )
+            if inspect.returncode != 0:
+                pull = subprocess.run(
+                    [docker, "pull", image], stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                    timeout=600, check=False,
+                )
+                if pull.returncode != 0:
+                    raise SandboxUnavailable(
+                        f"Trusted Docker toolchain image {image} unavailable: "
+                        + pull.stderr.decode("utf-8", "replace")[-500:]
+                    )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SandboxUnavailable(
+                f"Unable to prepare trusted Docker toolchain image {image}: {exc}"
+            ) from exc
+        self._docker_ready_images.add(image)
+
     def _docker_plan(
         self, docker: str, image: str, profile: SandboxProfile,
         argv: Sequence[str], cwd: Path,
@@ -309,6 +389,9 @@ class ExecutionSandbox:
         if any(char in str(self.root) for char in (",", ":")):
             raise SandboxUnavailable("Docker bind mount cannot represent workspace path")
         relative_cwd = cwd.relative_to(self.root)
+        selected_image = self._select_toolchain_image(image, argv, cwd)
+        if selected_image != image:
+            self._ensure_toolchain_image(docker, selected_image)
         network_isolated = profile != "workspace-write+network"
         writable = profile != "read-only"
         wrapped = [
@@ -316,9 +399,12 @@ class ExecutionSandbox:
             "--network", "none" if network_isolated else "bridge",
             "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", "--pids-limit=256",
-            "--memory=2g", "--cpus=2",
+            "--memory=4g", "--cpus=2",
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g",
-            "--tmpfs", "/home/kitt:rw,nosuid,nodev,size=256m",
+            "--tmpfs", "/home/kitt:rw,nosuid,nodev,size=1g,mode=1777",
+            "--env", "HOME=/home/kitt",
+            "--env", "MAVEN_CONFIG=/home/kitt/.m2",
+            "--env", "CARGO_HOME=/home/kitt/.cargo",
             "--user", f"{os.getuid()}:{os.getgid()}",
             "--mount", (
                 f"type=bind,src={self.root},dst=/workspace"
@@ -329,11 +415,11 @@ class ExecutionSandbox:
         # KITT control-plane state is never directly visible or writable.
         if (self.root / ".kitt").is_dir():
             wrapped += ["--mount", "type=tmpfs,dst=/workspace/.kitt"]
-        wrapped += ["--entrypoint", "/usr/bin/env", image, *argv]
+        wrapped += ["--entrypoint", "/usr/bin/env", selected_image, *argv]
         return SandboxPlan(
             argv=wrapped, profile=profile, backend="docker", strong=True,
             network_isolated=network_isolated, host_cwd=self.root,
-            reason="local-docker-container;workspace-scoped",
+            reason=f"local-docker-container;workspace-scoped;image={selected_image}",
         )
 
     def backend_for(self, profile: SandboxProfile) -> str | None:
