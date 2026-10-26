@@ -81,3 +81,13 @@ def test_review_durable_state_failure_restores_preimage(tmp_path):
     with pytest.raises(RuntimeError, match="sqlite unavailable"):
         service.apply({"review_id": ident}, None)
     assert file.read_text() == "before"
+
+def test_review_owner_isolation(tmp_path):
+    svc = WorkspaceReview(SimpleNamespace(root=tmp_path, state=State()))
+    def principal(ident):
+        return SimpleNamespace(principal_type="child", principal_id=ident,
+            workspace_id="w", conversation_id="c", assert_path_allowed=lambda path: None)
+    rid = svc.preview({"files":[{"path":"a.txt","content":"ok"}]},principal("one"))["review_id"]
+    with pytest.raises(PermissionError, match="another execution principal"):
+        svc.apply({"review_id":rid},principal("two"))
+    assert not (tmp_path/"a.txt").exists()

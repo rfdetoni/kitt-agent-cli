@@ -9,6 +9,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import secrets
+import copy
 from pathlib import Path
 
 from kitt.security.workspace_fs import WorkspaceFileSystem
@@ -46,15 +47,26 @@ class WorkspaceReview:
             security_context.assert_path_allowed(rel)
         return rel
 
+    @staticmethod
+    def _owner(context):
+        if context is None:
+            return None
+        if not hasattr(context, "principal_id"):
+            return None
+        return [context.principal_type, context.principal_id,
+                context.workspace_id, context.conversation_id]
+
     def _load(self, identifier: str, security_context):
         if not isinstance(identifier, str) or not identifier.startswith("review_") or len(identifier) != 39:
             raise ValueError("invalid review id")
         record = self._store().get(identifier)
         if not isinstance(record, dict) or not isinstance(record.get("files"), list):
             raise ValueError("review not found in current conversation")
+        if record.get("owner") != self._owner(security_context):
+            raise PermissionError("review belongs to another execution principal")
         for file in record["files"]:
             self._path(file["path"], security_context)
-        return record
+        return copy.deepcopy(record)
 
     def preview(self, args: dict, security_context):
         if not isinstance(args, dict) or set(args) != {"files"}:
@@ -94,7 +106,7 @@ class WorkspaceReview:
                 "after_sha256": _sha(proposed), "existed": existed,
             })
         identifier = "review_" + secrets.token_hex(16)
-        self._store().set(identifier, {"status": "PREVIEW", "files": record}, ttl_seconds=86400)
+        self._store().set(identifier, {"status": "PREVIEW", "files": record, "owner": self._owner(security_context)}, ttl_seconds=86400)
         return self.diff({"review_id": identifier}, security_context)
 
     def diff(self, args: dict, security_context):
@@ -134,6 +146,19 @@ class WorkspaceReview:
         else:
             text = item["before"] if reverse else item["after"]
             self.fs.atomic_write(rel, text, expected_sha256=expected, expected_exists=expected is not None)
+
+    def authorization_manifest(self, args, security_context):
+        if not isinstance(args, dict) or set(args) != {"review_id"}:
+            raise ValueError("invalid review authorization request")
+        record = self._load(args["review_id"], security_context)
+        return {
+            "status": record["status"], "review_id": args["review_id"],
+            "files": [
+                {"path": f["path"], "before_sha256": f["before_sha256"],
+                 "after_sha256": f["after_sha256"]}
+                for f in record["files"]
+            ],
+        }
 
     def _transition(self, args, security_context, *, reverse: bool):
         if not isinstance(args, dict) or set(args) != {"review_id"}:

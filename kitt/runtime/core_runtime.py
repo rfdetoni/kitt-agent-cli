@@ -528,6 +528,35 @@ class SafeRuntime:
                 ),
             )
 
+        if op in {"review.apply", "review.rewind", "recipe.apply", "recipe.rewind"}:
+            # Resolve effective paths and content from the staged record.
+            # An opaque review_id is not an authorization subject.
+            if security_context is None or self.registry is None or getattr(self.registry, "policy", None) is None:
+                return self._result(start, SafeRuntimeResult(False, op,
+                    error="Review writes require security principal and policy (fail-closed)"))
+            try:
+                if op.startswith("recipe."):
+                    recipe = self.recipes._load(args.get("name"), security_context)
+                    record = self.reviews._load(args.get("review_id"), security_context)
+                    if record.get("recipe_name") != recipe["name"] or record.get("recipe_sha256") != recipe["sha256"]:
+                        raise ValueError("recipe changed after preview")
+                manifest = self.reviews.authorization_manifest({"review_id": args.get("review_id")}, security_context)
+                if manifest["status"] != ("APPLIED" if op.endswith("rewind") else "PREVIEW"):
+                    raise ValueError("review state ineligible for mutation")
+                identity = f"{security_context.principal_type}:{security_context.principal_id}"
+                for f in manifest["files"]:
+                    verdict = self.registry.policy.evaluate_tool(
+                        "write_file",
+                        {"path": f["path"], "review_id": manifest["review_id"],
+                         "before_sha256": f["before_sha256"], "after_sha256": f["after_sha256"]},
+                        origin=origin, conversation_id=self.conversation_id,
+                        workspace_id=self.workspace_id, executable_identity=identity,
+                    )
+                    if verdict != "ALLOW":
+                        raise PermissionError("Explicit per-file ALLOW policy required for " + f["path"])
+            except (PermissionError, ValueError, KeyError, TypeError) as exc:
+                return self._result(start, SafeRuntimeResult(False, op, error=str(exc)))
+
         if op == "repo.edit_symbol":
             try:
                 args = self._canonicalize_repo_edit_args(args, security_context)
