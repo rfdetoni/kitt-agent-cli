@@ -372,8 +372,10 @@ keyed by workspace, toolchain image and permission profile; a private tmpfs
 home maintains language caches between commands. Workers cannot reach the
 broker socket, Docker socket, or the KITT state directory.
 
-Configure `KITT_HOST_WORKSPACE` as the absolute **host** path corresponding
-to the Agent's `KITT_WORKSPACE` bind mount. The broker refuses relative paths.
+The broker derives the authorized host workspace from its own Docker
+`/workspace` bind-mount metadata; no host path needs to be entered manually.
+The optional trusted `KITT_BROKER_HOST_WORKSPACE` override must be an absolute,
+non-root host path. A missing/unverifiable mount fails closed.
 Network-enabled workers additionally require operator
 `KITT_BROKER_ALLOW_NETWORK=true` and model runtime `network.access`
 capability. No host-shell fallback is permitted.

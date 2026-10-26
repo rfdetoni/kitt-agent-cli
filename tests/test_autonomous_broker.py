@@ -37,3 +37,25 @@ def test_broker_plan_does_not_expose_docker_socket(tmp_path: Path):
     ]
     assert plan.env_overrides["KITT_SANDBOX_BROKER_SOCKET"].startswith("/run/")
     assert "/var/run/docker.sock" not in " ".join(plan.argv)
+
+
+def test_broker_workspace_discovered_from_own_docker_mount():
+    from types import SimpleNamespace
+    from kitt.security.autopilot_broker import host_workspace_from_mount
+
+    with patch("kitt.security.autopilot_broker.socket.gethostname", return_value="broker-id"), (
+        patch("kitt.security.autopilot_broker.subprocess.run",
+              return_value=SimpleNamespace(returncode=0, stdout=b"/home/user/project"))
+    ) as run:
+        assert host_workspace_from_mount("/usr/bin/docker") == "/home/user/project"
+        assert run.call_args.args[0][-1] == "broker-id"
+
+
+def test_broker_rejects_missing_or_root_mount():
+    from types import SimpleNamespace
+    from kitt.security.autopilot_broker import host_workspace_from_mount
+    for output in (b"", b"/", b"relative/path"):
+        with patch("kitt.security.autopilot_broker.subprocess.run",
+                   return_value=SimpleNamespace(returncode=0, stdout=output)):
+            with pytest.raises(ValueError):
+                host_workspace_from_mount()

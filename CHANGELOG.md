@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.99 — discover broker workspace from Docker metadata
+
+- Derive the broker-authorized host workspace from Docker inspect of the broker container's own /workspace bind mount; avoid manual absolute host-path setup.
+- Reject missing, relative and root mounts rather than allowing a guessed path; keep explicit operator override for specialized deployments.
+- Add mount-discovery regression tests, synchronize version and lock.
+
+
 ## 0.88.98 — host-authorized persistent Compose sandbox broker
 
 - Introduce bounded Unix-socket command protocol and trusted Docker sidecar, keeping Docker socket inaccessible to Agent and sandbox workers.
