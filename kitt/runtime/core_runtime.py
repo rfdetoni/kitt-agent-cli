@@ -15,6 +15,7 @@ from kitt.runtime.operation_registry import RuntimeOperationRegistry
 from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
 from kitt.runtime.program_runtime import BoundedProgramRuntime
 from kitt.runtime.persistent_program import PersistentProgramSessions
+from kitt.runtime.recipe_runtime import ReadOnlyRecipeService
 from kitt.runtime.progressive import apply_progressive_search_view
 from kitt.tools.build_detector import BuildDetector
 from kitt.runtime.retrieval_guard import RetrievalGuard
@@ -134,6 +135,9 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "program.session.clear": RuntimeOperationSpec(
         "program.session.clear", CAP_REPO_READ, sensitive=False
     ),
+    "recipe.list": RuntimeOperationSpec("recipe.list", CAP_REPO_READ),
+    "recipe.inspect": RuntimeOperationSpec("recipe.inspect", CAP_REPO_READ),
+    "recipe.run": RuntimeOperationSpec("recipe.run", CAP_REPO_READ),
     "repo.edit_symbol": RuntimeOperationSpec(
         "repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=1
     ),
@@ -423,6 +427,7 @@ class SafeRuntime:
         self.programmatic_flow = ProgrammaticToolFlow(self)
         self.program_runtime = BoundedProgramRuntime(self)
         self.program_sessions = PersistentProgramSessions(self.state, self.program_runtime)
+        self.recipes = ReadOnlyRecipeService(self)
         self.context_map_builder = ContextMapBuilder(
             self.index, self.goals, self.registry
         )
@@ -951,6 +956,12 @@ class SafeRuntime:
             ),
             "program.session.get": lambda: self._op_program_session_get(args),
             "program.session.clear": lambda: self._op_program_session_clear(args),
+            "recipe.list": lambda: SafeRuntimeResult(True, "recipe.list", data=self.recipes.list(args)),
+            "recipe.inspect": lambda: SafeRuntimeResult(True, "recipe.inspect", data=self.recipes.inspect(args)),
+            "recipe.run": lambda: self.recipes.run(
+                args, turn_id=turn_id, origin=origin,
+                capabilities=capabilities, security_context=security_context,
+            ),
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context, automatic_budget_reserved=automatic_budget_reserved),

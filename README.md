@@ -1,6 +1,6 @@
 # K.I.T.T. Agent CLI
 
-Versão **0.88.86**. Documentação de instalação, arquitetura, configuração e uso. Consulte o [CHANGELOG.md](CHANGELOG.md) para o histórico de versões e [integrações opcionais](docs/OPTIONAL_AGENT_ECOSYSTEM.md) para ferramentas externas.
+Versão **0.88.87**. Documentação de instalação, arquitetura, configuração e uso. Consulte o [CHANGELOG.md](CHANGELOG.md) para o histórico de versões e [integrações opcionais](docs/OPTIONAL_AGENT_ECOSYSTEM.md) para ferramentas externas.
 
 ## What’s included
 
@@ -28,6 +28,9 @@ Versão **0.88.86**. Documentação de instalação, arquitetura, configuração
 ---
 
 ## Quick links
+
+- [Read-only workflow recipes](docs/RECIPES.md): declarative TOML workflows through the existing bounded KITT runtime.
+
 
 - **Optional ecosystem integrations (FreeLLMAPI, Strix, native memory, project advisor):** [guide](docs/OPTIONAL_AGENT_ECOSYSTEM.md)
 

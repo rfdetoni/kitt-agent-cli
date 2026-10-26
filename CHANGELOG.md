@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.87 — workspace-local read-only workflow recipes
+
+- Add declarative `.kitt/recipes/<name>.toml` workflows, backed by the existing `program.execute` interpreter, with `recipe.list`, `recipe.inspect` and `recipe.run` runtime operations.
+- Recipes are bounded, reject symlinks and invalid schemas, carry a content digest, cannot execute arbitrary shell/Python, and cannot grant new tool capabilities. All nested calls preserve the host's normal security context.
+- Add focused regression tests and synchronize version metadata and uv.lock. External dependency pins and protocol contracts are unchanged.
+
+
 ## 0.88.86 — bounded on-demand MCP schema discovery
 
 - Add `mcp.describe` to the existing KITT runtime to inspect an already-registered MCP tool's validated JSON input schema. Require `mcp.call` capability, enforce path-scoped visibility, cap schema size and never invoke the MCP server during introspection.
