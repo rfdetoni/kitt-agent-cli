@@ -6,7 +6,7 @@ import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
-from kitt.config.settings import RuntimeConfig
+from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.runtime import KittRuntime
 from kitt.runtime.state import RuntimeStateStore
 from kitt.runtime.workspace_review import WorkspaceReview
