@@ -703,6 +703,7 @@ class ExecutionSandbox:
         profile: SandboxProfile | None = None,
         require_strong: bool = False,
         autonomous_git_write: bool = False,
+        prefer_docker_toolchain: bool = False,
     ) -> SandboxPlan:
         target = profile or self.default_profile
         cwd_path = Path(cwd).resolve()
@@ -712,6 +713,16 @@ class ExecutionSandbox:
                 reason="explicit-full-access",
             )
 
+        # Development commands use their fixed Docker toolchain even when
+        # Bubblewrap is functional. Otherwise a missing host-side Maven/Node
+        # would fail despite the image being provisionable by the broker.
+        docker = self._probe_docker() if prefer_docker_toolchain else None
+        if docker is not None and (
+            self._select_toolchain_image(docker[1], argv, cwd_path) != docker[1]
+            or bool(os.environ.get("KITT_AUTOPILOT_IMAGE"))
+        ):
+            return self._docker_plan(docker[0], docker[1], target, argv, cwd_path)
+
         bwrap = self._probe_bwrap()
         if bwrap is not None:
             return self._bwrap_plan(
@@ -719,7 +730,7 @@ class ExecutionSandbox:
                 autonomous_git_write=autonomous_git_write,
             )
 
-        docker = self._probe_docker()
+        docker = docker if docker is not None else self._probe_docker()
         if docker is not None:
             return self._docker_plan(docker[0], docker[1], target, argv, cwd_path)
 

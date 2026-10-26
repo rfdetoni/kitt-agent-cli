@@ -156,3 +156,40 @@ def test_docker_toolchain_provisioning_uses_only_fixed_images(tmp_path: Path):
             assert False, "Expected fail-closed"
         except SandboxUnavailable:
             runner.assert_not_called()
+
+
+def test_autonomous_build_prefers_docker_when_bubblewrap_is_present(tmp_path: Path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    sandbox = ExecutionSandbox(root, auto_detect=False)
+    with patch.object(sandbox, "_probe_bwrap", return_value=("/usr/bin/bwrap", (0, 12, 0))), (
+        patch.object(sandbox, "_probe_docker", return_value=("/usr/bin/docker", "prepared:image"))
+    ), patch.object(sandbox, "_ensure_toolchain_image"), (
+        patch.dict("os.environ", {"KITT_AUTOPILOT_IMAGE": ""})
+    ):
+        build = sandbox.plan(
+            ["mvn", "test"], root, profile="workspace-write",
+            require_strong=True, prefer_docker_toolchain=True,
+        )
+        host = sandbox.plan(
+            ["mvn", "test"], root, profile="workspace-write",
+            require_strong=True,
+        )
+    assert build.backend == "docker"
+    assert "maven:3.9-eclipse-temurin-25-noble" in build.argv
+    assert host.backend == "bubblewrap"
+
+
+def test_generic_autonomous_command_stays_on_bubblewrap(tmp_path: Path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pom.xml").write_text("<project/>")
+    sandbox = ExecutionSandbox(root, auto_detect=False)
+    with patch.object(sandbox, "_probe_bwrap", return_value=("/usr/bin/bwrap", (0, 12, 0))), (
+        patch.object(sandbox, "_probe_docker", return_value=("/usr/bin/docker", "prepared:image"))
+    ), patch.dict("os.environ", {"KITT_AUTOPILOT_IMAGE": ""}):
+        plan = sandbox.plan(
+            ["git", "status"], root, profile="workspace-write",
+            require_strong=True, prefer_docker_toolchain=True,
+        )
+    assert plan.backend == "bubblewrap"

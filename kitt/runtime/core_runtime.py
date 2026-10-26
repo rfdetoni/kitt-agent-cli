@@ -1247,6 +1247,7 @@ class SafeRuntime:
                 ),
                 require_strong_sandbox=True,
                 autonomous_git_write=True,
+                prefer_docker_toolchain=True,
             )
         except (ValueError, OSError, PermissionError, SandboxUnavailable) as exc:
             return SafeRuntimeResult(False, "sandbox.run", error=str(exc))

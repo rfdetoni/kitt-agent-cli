@@ -384,6 +384,11 @@ exposing Docker credentials or the socket to the model. `KITT_AUTOPILOT_IMAGE`
 explicitly overrides selection. This may download large images; subsequent
 invocations reuse local Docker layers. Package-manager caches are ephemeral.
 
+In autonomous sessions, known toolchain commands prefer the pre-provisioned
+Docker image even when Bubblewrap is functional, avoiding host-side missing
+executables. Generic Git and inspection commands continue using Bubblewrap.
+Explicit operator `KITT_AUTOPILOT_IMAGE` also prefers Docker when available.
+
 Execution prefers a functional Bubblewrap installation (>=0.12). If that is
 blocked by AppArmor, the trusted host broker can use an already-pulled local
 Docker image (`KITT_AUTOPILOT_IMAGE`, default
