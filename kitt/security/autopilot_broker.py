@@ -44,13 +44,34 @@ def _relative_cwd(value: Any, root: Path) -> str:
     return "." if resolved == root else str(resolved.relative_to(root))
 
 
+def host_workspace_from_mount(docker: str = "docker") -> str:
+    """Trust Docker's own bind source for this broker's /workspace mount."""
+    name = socket.gethostname()
+    fmt = '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}'
+    try:
+        report = subprocess.run(
+            [docker, "inspect", "--format", fmt, name],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("cannot inspect broker workspace bind") from exc
+    if report.returncode != 0:
+        raise ValueError("cannot discover broker workspace bind")
+    source = report.stdout.decode("utf-8", "replace").strip()
+    if not source or not Path(source).is_absolute() or source == "/":
+        raise ValueError("broker workspace bind is missing or unsafe")
+    return source
+
+
 class DockerBroker:
     """Persistent, bounded Docker workers keyed by workspace/image/authority."""
 
     def __init__(self, host_workspace: str, docker: str = "docker"):
-        if not host_workspace or not Path(host_workspace).is_absolute():
-            raise ValueError("KITT_BROKER_HOST_WORKSPACE must be an absolute host path")
-        self.host_workspace = host_workspace
+        selected = host_workspace or host_workspace_from_mount(docker)
+        if not selected or not Path(selected).is_absolute() or selected == "/":
+            raise ValueError("broker host workspace must be an absolute, non-root path")
+        self.host_workspace = selected
         self.root = Path("/workspace").resolve()
         if not self.root.is_dir():
             raise ValueError("broker requires workspace mounted at /workspace")
