@@ -218,3 +218,41 @@ content = "two"
     with pytest.raises(ValueError, match="recipe changed"):
         service.apply({"name": "change", "review_id": preview["review_id"]}, None)
     assert not (tmp_path / "hello.txt").exists()
+
+def test_parameterized_recipe_applies_validated_content_only(tmp_path):
+    from kitt.runtime.workspace_review import WorkspaceReview
+    from types import SimpleNamespace
+
+    class State:
+        def __init__(self): self.data = {}
+        def get(self, key): return self.data.get(key)
+        def set(self, key, value, ttl_seconds=None): self.data[key] = value
+        def compare_and_swap_status(self, key, expected, value):
+            row = self.data.get(key)
+            if not row or row["status"] != expected:
+                return False
+            self.data[key] = value
+            return True
+
+    _write_recipe(tmp_path, "template", """
+version = 1
+title = "Write a template"
+parameters = ["message"]
+[[changes]]
+path = "note.txt"
+content = "Hello ${message}"
+[[checks]]
+path = "note.txt"
+contains = "Hello"
+""")
+    runtime = SimpleNamespace(root=tmp_path, state=State())
+    runtime.reviews = WorkspaceReview(runtime)
+    service = ReadOnlyRecipeService(runtime)
+    staged = service.preview({"name": "template", "values": {"message": "world"}}, None)
+    assert not (tmp_path / "note.txt").exists()
+    service.apply({"name": "template", "review_id": staged["review_id"]}, None)
+    assert (tmp_path / "note.txt").read_text() == "Hello world"
+    service.rewind({"name": "template", "review_id": staged["review_id"]}, None)
+    assert not (tmp_path / "note.txt").exists()
+    with pytest.raises(ValueError):
+        service.preview({"name": "template", "values": {"unknown": "wrong"}}, None)
