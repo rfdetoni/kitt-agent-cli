@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.92 — fix explicit Python targeted verification
+
+- Keep `python.targeted-tests` discoverable when a step explicitly requires it and `check_ids` activates full verification.
+- Use the same governed deterministic detector, contract and host authorization; unavailable tests remain UNAVAILABLE rather than silently passing.
+- Add regression tests for sibling tests and missing tests, including the flat ELF inventory layout.
+
+
 ## 0.88.91 — ACP v1 history replay and permission isolation
 
 - Replay complete, ordered user/assistant history through session/update notifications before returning an empty session/load result, as required by ACP v1; bound individual notification frames without truncating text.

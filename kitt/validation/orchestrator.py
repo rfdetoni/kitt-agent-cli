@@ -147,6 +147,18 @@ class VerificationOrchestrator:
             )
 
         plan = self._plan(unique, full)
+        # Explicit targeted checks must remain discoverable when required
+        # check_ids switches the verifier into full mode. The full detector
+        # intentionally selects project-wide checks instead of sibling tests.
+        # Resolve targeted tests through the same trusted contract and policy
+        # pipeline, never from an arbitrary workspace command.
+        if "python.targeted-tests" in required and not any(
+            step.name == "python.targeted-tests" for step in plan
+        ):
+            plan.extend(
+                step for step in self._plan(unique, False)
+                if step.name == "python.targeted-tests"
+            )
         if native_source and not any(step.name == "c.build" for step in plan):
             return VerificationReport(
                 False,
