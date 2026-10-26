@@ -364,6 +364,22 @@ Rust implementation and Rust CI belong in `kitt-toolbox`; this repository intent
 
 ---
 
+## Recoverable autonomous task checkpoints
+
+A root autonomous principal can call `autopilot.checkpoint` with
+`{"paths":["src","tests"]}`, or omit `paths` for bounded top-level discovery,
+before shell-based file mutations. `autopilot.diff` returns current file hashes;
+`autopilot.rollback` requires the exact `expected_current` map from diff and
+fails closed if concurrent edits make restoration unsafe. These actions reuse
+the existing durable ArtifactStore and EventLedger snapshots (directory bounds
+are 1,000 entries and 32 MiB).
+
+`autopilot.verify` runs real build/test gates inside strong sandbox isolation:
+operator-provided `KITT_AUTOPILOT_VALIDATION` JSON argument arrays or default
+Maven, Gradle, npm, Cargo and Pytest commands detected from the project root.
+Exit-code failures report diagnostics, not false completion. Network is opt-in
+and requires delegated `network.access`.
+
 ## Persistent sandbox broker for Compose
 
 In Compose, the Agent connects to a private local Unix-socket broker. Only

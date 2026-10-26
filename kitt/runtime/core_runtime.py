@@ -195,6 +195,16 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "sandbox.run", CAP_PROCESS_RUN, sensitive=True, risk_cost=3,
         sandbox_profile="workspace-write",
     ),
+    "autopilot.checkpoint": RuntimeOperationSpec(
+        "autopilot.checkpoint", CAP_REPO_WRITE, sensitive=True, risk_cost=2,
+    ),
+    "autopilot.diff": RuntimeOperationSpec("autopilot.diff", CAP_REPO_READ),
+    "autopilot.rollback": RuntimeOperationSpec(
+        "autopilot.rollback", CAP_REPO_WRITE, sensitive=True, risk_cost=4,
+    ),
+    "autopilot.verify": RuntimeOperationSpec(
+        "autopilot.verify", CAP_PROCESS_RUN, sensitive=True, risk_cost=3,
+    ),
     "process.run": RuntimeOperationSpec(
         "process.run",
         CAP_PROCESS_RUN,
@@ -448,6 +458,8 @@ class SafeRuntime:
         self.context_map_builder = ContextMapBuilder(
             self.index, self.goals, self.registry
         )
+        from kitt.runtime.autopilot_tasks import AutopilotTaskService
+        self.autopilot_tasks = AutopilotTaskService(self)
 
     def _requested_control_plane_paths(
         self,
@@ -590,6 +602,28 @@ class SafeRuntime:
                 return self._result(
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
+
+        if op.startswith("autopilot."):
+            autonomy = getattr(
+                getattr(getattr(self.registry, "policy", None), "autonomy", None),
+                "level", None,
+            )
+            if (
+                security_context is None
+                or getattr(security_context, "is_path_scoped", False)
+                or CAP_REPO_WRITE not in capabilities
+                or CAP_PROCESS_RUN not in capabilities
+                or autonomy != "autonomous"
+            ):
+                return self._result(start, SafeRuntimeResult(
+                    False, op, error="autopilot operations require an autonomous root with write/process authority",
+                ))
+            if op == "autopilot.verify" and args.get("network") is True and (
+                CAP_NETWORK_ACCESS not in capabilities
+            ):
+                return self._result(start, SafeRuntimeResult(
+                    False, op, error="autopilot verification needs delegated network.access",
+                ))
 
         if op == "sandbox.run" and type(args.get("network", False)) is not bool:
             return self._result(start, SafeRuntimeResult(
@@ -1078,6 +1112,16 @@ class SafeRuntime:
             "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "sandbox.run": lambda: self._op_autonomous_sandbox_run(args, turn_id, security_context),
+            "autopilot.checkpoint": lambda: SafeRuntimeResult(
+                True, op, data=self.autopilot_tasks.checkpoint(args, turn_id),
+            ),
+            "autopilot.diff": lambda: SafeRuntimeResult(
+                True, op, data=self.autopilot_tasks.diff(),
+            ),
+            "autopilot.rollback": lambda: SafeRuntimeResult(
+                True, op, data=self.autopilot_tasks.rollback(args),
+            ),
+            "autopilot.verify": lambda: self._op_autopilot_verify(args, capabilities),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "test.run": lambda: self._op_test_run(
                 args, turn_id, origin, security_context, grant,
@@ -1217,6 +1261,18 @@ class SafeRuntime:
         from kitt.runtime.plan_runtime import execute_plan_action
         return execute_plan_action(self, operation, args, turn_id, origin,
                                    security_context, grant, approval_id)
+
+    def _op_autopilot_verify(self, args: dict, capabilities: set[str]) -> SafeRuntimeResult:
+        try:
+            report = self.autopilot_tasks.verify(
+                args, allow_network=CAP_NETWORK_ACCESS in capabilities,
+            )
+        except (ValueError, PermissionError, RuntimeError, OSError) as exc:
+            return SafeRuntimeResult(False, "autopilot.verify", error=str(exc))
+        return SafeRuntimeResult(
+            report["ok"], "autopilot.verify", data=report,
+            error=None if report["ok"] else "Project validation failed; inspect output and repair",
+        )
 
     def _op_autonomous_sandbox_run(
         self, args: dict, turn_id: str, security_context,
