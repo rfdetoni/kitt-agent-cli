@@ -104,7 +104,7 @@ class ACPServer:
 
     def _dispatch(self, method: str, params: dict):
         if method == "initialize":
-            if self._initialized or params.get("protocolVersion") != 1:
+            if self._initialized or not isinstance(params.get("protocolVersion"), int) or params["protocolVersion"] < 1:
                 raise ValueError("ACP protocolVersion 1 expected exactly once")
             self._initialized = True
             return {

@@ -29,7 +29,8 @@ Versão **0.88.88**. Documentação de instalação, arquitetura, configuração
 
 ## Quick links
 
-- [Read-only workflow recipes](docs/RECIPES.md): declarative TOML workflows through the existing bounded KITT runtime.
+- [Workflow recipes](docs/RECIPES.md): bounded read-only programs and host-approved write reviews.
+- [ACP bridge and review workflow](docs/ACP_AND_REVIEW.md): local IDE integration, preview/apply/rewind and browser diagnostics.
 
 
 - **Optional ecosystem integrations (FreeLLMAPI, Strix, native memory, project advisor):** [guide](docs/OPTIONAL_AGENT_ECOSYSTEM.md)
