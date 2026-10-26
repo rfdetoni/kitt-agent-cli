@@ -4,8 +4,11 @@ from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 from typing import Any, FrozenSet, Iterable, Optional
 import uuid
+import os
 
-from kitt.security.capabilities import canonicalize_capabilities, compute_child_privileges
+from kitt.security.capabilities import (
+    CAP_NETWORK_ACCESS, canonicalize_capabilities, compute_child_privileges,
+)
 
 
 def _normalize_relative_scope_path(value: str) -> str:
@@ -222,6 +225,14 @@ class ExecutionSecurityContext:
         path_scope: Optional[Iterable[str]] = None,
     ) -> ExecutionSecurityContext:
         caps = frozenset(canonicalize_capabilities(capabilities or ()))
+        # An explicit operator environment flag may predelegate network access
+        # to a root user task. Path-scoped children never receive this elevation.
+        # The broker enforces its own independent operator egress gate.
+        if (
+            path_scope is None
+            and os.environ.get("KITT_AUTOPILOT_DELEGATE_NETWORK", "").lower() == "true"
+        ):
+            caps = frozenset({*caps, CAP_NETWORK_ACCESS})
         normalized_scope = (
             None
             if path_scope is None
