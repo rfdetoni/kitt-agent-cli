@@ -1277,40 +1277,41 @@ class SafeRuntime:
         return SafeRuntimeResult(True, "process.resume", data=data)
 
     def _op_browser_diagnose(self, args: dict) -> SafeRuntimeResult:
-        """Summarize the current, authorized browser inspection without leaking page contents."""
+        """Request observed, session-bound Playwright events from the proxy."""
         if not isinstance(args, dict) or args:
             return SafeRuntimeResult(False, "browser.diagnose", error="browser.diagnose takes no arguments")
-        observed = self._op_browser_action("browser.inspect", {})
-        if not observed.success:
-            return SafeRuntimeResult(False, "browser.diagnose", error=observed.error)
-        payload = observed.data
-        if not isinstance(payload, dict):
-            return SafeRuntimeResult(True, "browser.diagnose", data={
-                "inspection_type": type(payload).__name__,
-                "available": True,
-                "metrics": {},
-                "hint": "Use browser.inspect for authorized page details",
+        result = self._op_browser_action("browser.diagnose", {})
+        if not result.success:
+            return result
+        data = result.data
+        if not isinstance(data, dict) or data.get("action") != "diagnose":
+            return SafeRuntimeResult(False, "browser.diagnose",
+                                     error="Proxy does not support browser diagnostics")
+        counters = data.get("counters")
+        recent = data.get("recent")
+        allowed = {"console", "pageerror", "requestfailed", "http_error"}
+        if not isinstance(counters, dict) or set(counters) != allowed:
+            return SafeRuntimeResult(False, "browser.diagnose",
+                                     error="Unexpected diagnostic counter contract")
+        if not isinstance(recent, list) or len(recent) > 32:
+            return SafeRuntimeResult(False, "browser.diagnose",
+                                     error="Invalid bounded browser event list")
+        cleaned = []
+        for item in recent:
+            if not isinstance(item, dict) or item.get("kind") not in allowed:
+                return SafeRuntimeResult(False, "browser.diagnose",
+                                         error="Invalid browser event contract")
+            cleaned.append({
+                key: item[key] for key in (
+                    "kind", "severity", "origin", "fingerprint", "status", "resource_type"
+                ) if key in item
             })
-        metrics = {}
-        # Preserve structural counts only. Raw console, DOM and request payloads
-        # can carry credentials, personal information or prompt injection text.
-        for field in ("errors", "console_errors", "failed_requests", "warnings",
-                      "forms", "buttons", "links", "inputs", "elements"):
-            value = payload.get(field)
-            if isinstance(value, list):
-                metrics[field] = min(len(value), 100000)
-            elif isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                metrics[field] = min(value, 100000)
         return SafeRuntimeResult(True, "browser.diagnose", data={
-            "available": True,
-            "inspection_keys": sorted(set(payload).intersection({
-                "errors", "console_errors", "failed_requests", "warnings",
-                "forms", "buttons", "links", "inputs", "elements",
-            })),
-            "metrics": metrics,
-            "has_console_errors": bool(metrics.get("console_errors", 0)),
-            "has_failed_requests": bool(metrics.get("failed_requests", 0)),
-            "hint": "Use browser.inspect for detailed authorized evidence; diagnostics omit raw content",
+            "counters": {
+                name: max(0, min(1000000, int(counters[name]))) for name in sorted(allowed)
+            },
+            "recent": cleaned, "truncated": bool(data.get("truncated")),
+            "evidence": "live Playwright browser session event capture",
         })
 
     def _op_browser_action(self, operation: str, args: dict) -> SafeRuntimeResult:
