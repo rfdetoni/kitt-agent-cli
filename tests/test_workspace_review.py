@@ -1,0 +1,68 @@
+"""Review/apply/rewind preserves content integrity and principal path scope."""
+from types import SimpleNamespace
+
+import pytest
+
+from kitt.runtime.workspace_review import WorkspaceReview
+from kitt.runtime.core_runtime import OPERATION_REGISTRY
+from kitt.security.capabilities import CAP_REPO_READ, CAP_REPO_WRITE
+
+
+class State:
+    def __init__(self):
+        self.data = {}
+    def set(self, key, value, ttl_seconds=None):
+        self.data[key] = value
+    def get(self, key):
+        return self.data.get(key)
+
+
+def test_review_previews_applies_and_rewinds(tmp_path):
+    file = tmp_path / "hello.txt"
+    file.write_text("old\n", encoding="utf-8")
+    svc = WorkspaceReview(SimpleNamespace(root=tmp_path, state=State()))
+    draft = svc.preview({"files": [{"path": "hello.txt", "content": "new\n"}]}, None)
+    assert file.read_text() == "old\n"
+    assert "-old" in draft["changes"][0]["diff"]
+    ident = draft["review_id"]
+    assert svc.apply({"review_id": ident}, None)["status"] == "APPLIED"
+    assert file.read_text() == "new\n"
+    assert svc.rewind({"review_id": ident}, None)["status"] == "REWOUND"
+    assert file.read_text() == "old\n"
+
+
+def test_review_rejects_tampering_and_control_plane(tmp_path):
+    svc = WorkspaceReview(SimpleNamespace(root=tmp_path, state=State()))
+    with pytest.raises(PermissionError):
+        svc.preview({"files": [{"path": ".git/config", "content": "oops"}]}, None)
+    with pytest.raises(PermissionError):
+        svc.preview({"files": [{"path": ".kitt/config", "content": "oops"}]}, None)
+    file = tmp_path / "file.txt"
+    file.write_text("old")
+    ident = svc.preview({"files": [{"path": "file.txt", "content": "new"}]}, None)["review_id"]
+    file.write_text("external")
+    with pytest.raises(ValueError, match="conflict"):
+        svc.apply({"review_id": ident}, None)
+    assert file.read_text() == "external"
+
+
+def test_review_undo_detects_post_apply_conflicts(tmp_path):
+    svc = WorkspaceReview(SimpleNamespace(root=tmp_path, state=State()))
+    ident = svc.preview({"files": [{"path": "created.txt", "content": "new"}]}, None)["review_id"]
+    svc.apply({"review_id": ident}, None)
+    (tmp_path / "created.txt").write_text("someone else")
+    with pytest.raises(ValueError, match="conflict"):
+        svc.rewind({"review_id": ident}, None)
+    assert (tmp_path / "created.txt").read_text() == "someone else"
+
+
+def test_review_path_scope_and_authority(tmp_path):
+    svc = WorkspaceReview(SimpleNamespace(root=tmp_path, state=State()))
+    restricted = SimpleNamespace(assert_path_allowed=lambda path: (
+        None if path == "allowed.txt" else (_ for _ in ()).throw(PermissionError(path))
+    ))
+    with pytest.raises(PermissionError):
+        svc.preview({"files": [{"path": "hidden.txt", "content": "secret"}]}, restricted)
+    assert OPERATION_REGISTRY["review.preview"].required_capability == CAP_REPO_READ
+    assert OPERATION_REGISTRY["review.apply"].required_capability == CAP_REPO_WRITE
+    assert OPERATION_REGISTRY["review.rewind"].sensitive is True

@@ -16,6 +16,7 @@ from kitt.runtime.programmatic_flow import ProgrammaticToolFlow
 from kitt.runtime.program_runtime import BoundedProgramRuntime
 from kitt.runtime.persistent_program import PersistentProgramSessions
 from kitt.runtime.recipe_runtime import ReadOnlyRecipeService
+from kitt.runtime.workspace_review import WorkspaceReview
 from kitt.runtime.progressive import apply_progressive_search_view
 from kitt.tools.build_detector import BuildDetector
 from kitt.runtime.retrieval_guard import RetrievalGuard
@@ -138,6 +139,10 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "recipe.list": RuntimeOperationSpec("recipe.list", CAP_REPO_READ),
     "recipe.inspect": RuntimeOperationSpec("recipe.inspect", CAP_REPO_READ),
     "recipe.run": RuntimeOperationSpec("recipe.run", CAP_REPO_READ),
+    "review.preview": RuntimeOperationSpec("review.preview", CAP_REPO_READ),
+    "review.diff": RuntimeOperationSpec("review.diff", CAP_REPO_READ),
+    "review.apply": RuntimeOperationSpec("review.apply", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=2),
+    "review.rewind": RuntimeOperationSpec("review.rewind", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=3),
     "repo.edit_symbol": RuntimeOperationSpec(
         "repo.edit_symbol", CAP_REPO_WRITE, "write_file", sensitive=True, risk_cost=1
     ),
@@ -428,6 +433,7 @@ class SafeRuntime:
         self.program_runtime = BoundedProgramRuntime(self)
         self.program_sessions = PersistentProgramSessions(self.state, self.program_runtime)
         self.recipes = ReadOnlyRecipeService(self)
+        self.reviews = WorkspaceReview(self)
         self.context_map_builder = ContextMapBuilder(
             self.index, self.goals, self.registry
         )
@@ -962,6 +968,10 @@ class SafeRuntime:
                 args, turn_id=turn_id, origin=origin,
                 capabilities=capabilities, security_context=security_context,
             ),
+            "review.preview": lambda: SafeRuntimeResult(True, op, data=self.reviews.preview(args, security_context)),
+            "review.diff": lambda: SafeRuntimeResult(True, op, data=self.reviews.diff(args, security_context)),
+            "review.apply": lambda: SafeRuntimeResult(True, op, data=self.reviews.apply(args, security_context)),
+            "review.rewind": lambda: SafeRuntimeResult(True, op, data=self.reviews.rewind(args, security_context)),
             "repo.edit_symbol": lambda: self._op_repo_edit_symbol(args, turn_id, security_context),
             "artifacts.store": lambda: self._op_registry_tool("artifacts.store", "artifact_store", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "artifacts.read": lambda: self._op_registry_tool("artifacts.read", "artifact_read", args, turn_id, origin, security_context, automatic_budget_reserved=automatic_budget_reserved),
