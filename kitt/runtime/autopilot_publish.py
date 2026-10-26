@@ -69,7 +69,7 @@ def _safe_path(value: str) -> bool:
 def inventory(root: Path) -> dict:
     root = root.resolve()
     # Sparse trees are not allowed: absent files could otherwise be deleted.
-    if _git(root, "config", "--bool", "core.sparseCheckout").strip() == b"true":
+    if _git(root, "config", "--default", "false", "--bool", "core.sparseCheckout").strip() == b"true":
         raise ValueError("Sparse checkouts cannot be automatically published")
     head = _git(root, "rev-parse", "--verify", "HEAD").decode().strip()
     if not SHA_RE.fullmatch(head):
@@ -245,6 +245,15 @@ def publish_verified(runtime, args: dict, *, allow_network: bool) -> dict:
     repo = os.environ.get("KITT_AUTOPILOT_PUBLISH_REPO", "").strip()
     branch = os.environ.get("KITT_AUTOPILOT_PUBLISH_BRANCH", "main").strip()
     token = os.environ.get("KITT_AUTOPILOT_GITHUB_TOKEN", "")
+    token_file = os.environ.get("KITT_AUTOPILOT_GITHUB_TOKEN_FILE", "").strip()
+    if not token and token_file:
+        token_path = Path(token_file)
+        if not token_path.is_absolute() or token_path.is_relative_to(runtime.root):
+            raise PermissionError("Publication secret file must be outside workspace")
+        try:
+            token = token_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise PermissionError("Unable to read trusted publication credential") from exc
     result = GithubPublisher(repo, token).publish(now, branch, message.strip())
     if result.get("published"):
         runtime.state.delete("autopilot.task.verification")
