@@ -392,6 +392,12 @@ The broker derives the authorized host workspace from its own Docker
 `/workspace` bind-mount metadata; no host path needs to be entered manually.
 The optional trusted `KITT_BROKER_HOST_WORKSPACE` override must be an absolute,
 non-root host path. A missing/unverifiable mount fails closed.
+To approve network access once before an autonomous task, the operator sets
+`KITT_AUTOPILOT_DELEGATE_NETWORK=true` for the Agent and
+`KITT_BROKER_ALLOW_NETWORK=true` for the broker. The former adds
+`network.access` only to new unscoped root user contexts; path-scoped child
+principals do not gain a grant automatically. This is deliberately opt-in.
+
 Network-enabled workers additionally require operator
 `KITT_BROKER_ALLOW_NETWORK=true` and model runtime `network.access`
 capability. No host-shell fallback is permitted.

@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.1 — explicit operator network predelegation
+
+- Allow trusted operator flag `KITT_AUTOPILOT_DELEGATE_NETWORK=true` to pregrant `network.access` to unscoped root user sessions, so authorized dependency downloads can proceed unattended.
+- Never elevate path-scoped principals; broker must independently opt into network egress. Defaults remain network-denied.
+- Update security docs and regression coverage; sync package and uv lock metadata.
+
+
 ## 0.89.0 — recoverable task checkpoints and verification gates
 
 - Expose `autopilot.checkpoint`, `autopilot.diff`, `autopilot.rollback`, and `autopilot.verify` under autonomous principal authority.
