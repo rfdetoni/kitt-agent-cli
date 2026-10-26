@@ -7,12 +7,13 @@ JSON-RPC 2.0 server over stdin/stdout. Supported baseline methods:
 The client must set `cwd` to the same configured root directory.
 
 This bridge invokes the canonical `TurnProcessor`. It does not implement a
-second agent runtime, does not grant filesystem/MCP access, and cannot
-auto-approve mutations. Prompt turns requiring approval return `refusal`.
-Client MCP server configuration, audio, images and session resume are not
-advertised or supported. Terminals, filesystem RPCs and remote network access
-are not exposed through ACP. For a fully interactive approval UX, use the
-native KITT TUI.
+second agent runtime or grant new filesystem/MCP capabilities. It supports
+workspace-bound `session/load` and client-mediated `session/request_permission`
+with an explicit single-use allow decision; the host still issues and validates
+the bound approval grant. Missing, denied or timed-out permissions fail closed.
+Client-supplied MCP servers, audio and image prompts are not supported.
+Terminal and direct filesystem RPCs and remote network access are not exposed
+through ACP.
 
 See the Agent Client Protocol v1 specification:
 https://agentclientprotocol.com/protocol/overview
