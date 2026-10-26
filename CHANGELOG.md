@@ -1,5 +1,14 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.90 — secure reviews, ACP resume, recipes, browser evidence
+
+- Bind staged reviews to their creating principal; apply/rewind now validate every real target path and content hash against host write policy. An ASK/DENY decision fails closed rather than treating an opaque review ID as authorization.
+- Add SQLite atomic state claims to prevent duplicate review execution from independent workers. Unexpected interruptions leave review state sealed.
+- Add ACP v1 session/load and client-mediated host permission request/reply, with denial and timeout protection.
+- Add human-facing review CLI, bounded write-recipe parameters and post-apply validation hooks, live browser diagnostic consumption and reproducible local p50/p95/peak-memory measurement.
+- Add regression tests; synchronize pyproject.toml, uv.lock and source version without new external dependencies.
+
+
 ## 0.88.89 — ACP v1, guarded workspace changes, editable recipes and browser diagnostics
 - Add `kitt acp --root DIR` supporting ACP v1 initialization, text session creation/prompt/update/cancel over stdio. Reuse KITT TurnProcessor, history and cancellation; the ACP bridge cannot grant new capabilities or bypass approvals.
 - Bind clients to the configured workspace; reject client-specified MCP servers and unsupported content blocks.

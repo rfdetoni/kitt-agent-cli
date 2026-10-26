@@ -528,6 +528,35 @@ class SafeRuntime:
                 ),
             )
 
+        if op in {"review.apply", "review.rewind", "recipe.apply", "recipe.rewind"}:
+            # Resolve effective paths and content from the staged record.
+            # An opaque review_id is not an authorization subject.
+            if security_context is None or self.registry is None or getattr(self.registry, "policy", None) is None:
+                return self._result(start, SafeRuntimeResult(False, op,
+                    error="Review writes require security principal and policy (fail-closed)"))
+            try:
+                if op.startswith("recipe."):
+                    recipe = self.recipes._load(args.get("name"), security_context)
+                    record = self.reviews._load(args.get("review_id"), security_context)
+                    if record.get("recipe_name") != recipe["name"] or record.get("recipe_sha256") != recipe["sha256"]:
+                        raise ValueError("recipe changed after preview")
+                manifest = self.reviews.authorization_manifest({"review_id": args.get("review_id")}, security_context)
+                if manifest["status"] != ("APPLIED" if op.endswith("rewind") else "PREVIEW"):
+                    raise ValueError("review state ineligible for mutation")
+                identity = f"{security_context.principal_type}:{security_context.principal_id}"
+                for f in manifest["files"]:
+                    verdict = self.registry.policy.evaluate_tool(
+                        "write_file",
+                        {"path": f["path"], "review_id": manifest["review_id"],
+                         "before_sha256": f["before_sha256"], "after_sha256": f["after_sha256"]},
+                        origin=origin, conversation_id=self.conversation_id,
+                        workspace_id=self.workspace_id, executable_identity=identity,
+                    )
+                    if verdict != "ALLOW":
+                        raise PermissionError("Explicit per-file ALLOW policy required for " + f["path"])
+            except (PermissionError, ValueError, KeyError, TypeError) as exc:
+                return self._result(start, SafeRuntimeResult(False, op, error=str(exc)))
+
         if op == "repo.edit_symbol":
             try:
                 args = self._canonicalize_repo_edit_args(args, security_context)
@@ -1248,40 +1277,41 @@ class SafeRuntime:
         return SafeRuntimeResult(True, "process.resume", data=data)
 
     def _op_browser_diagnose(self, args: dict) -> SafeRuntimeResult:
-        """Summarize the current, authorized browser inspection without leaking page contents."""
+        """Request observed, session-bound Playwright events from the proxy."""
         if not isinstance(args, dict) or args:
             return SafeRuntimeResult(False, "browser.diagnose", error="browser.diagnose takes no arguments")
-        observed = self._op_browser_action("browser.inspect", {})
-        if not observed.success:
-            return SafeRuntimeResult(False, "browser.diagnose", error=observed.error)
-        payload = observed.data
-        if not isinstance(payload, dict):
-            return SafeRuntimeResult(True, "browser.diagnose", data={
-                "inspection_type": type(payload).__name__,
-                "available": True,
-                "metrics": {},
-                "hint": "Use browser.inspect for authorized page details",
+        result = self._op_browser_action("browser.diagnose", {})
+        if not result.success:
+            return result
+        data = result.data
+        if not isinstance(data, dict) or data.get("action") != "diagnose":
+            return SafeRuntimeResult(False, "browser.diagnose",
+                                     error="Proxy does not support browser diagnostics")
+        counters = data.get("counters")
+        recent = data.get("recent")
+        allowed = {"console", "pageerror", "requestfailed", "http_error"}
+        if not isinstance(counters, dict) or set(counters) != allowed:
+            return SafeRuntimeResult(False, "browser.diagnose",
+                                     error="Unexpected diagnostic counter contract")
+        if not isinstance(recent, list) or len(recent) > 32:
+            return SafeRuntimeResult(False, "browser.diagnose",
+                                     error="Invalid bounded browser event list")
+        cleaned = []
+        for item in recent:
+            if not isinstance(item, dict) or item.get("kind") not in allowed:
+                return SafeRuntimeResult(False, "browser.diagnose",
+                                         error="Invalid browser event contract")
+            cleaned.append({
+                key: item[key] for key in (
+                    "kind", "severity", "origin", "fingerprint", "status", "resource_type"
+                ) if key in item
             })
-        metrics = {}
-        # Preserve structural counts only. Raw console, DOM and request payloads
-        # can carry credentials, personal information or prompt injection text.
-        for field in ("errors", "console_errors", "failed_requests", "warnings",
-                      "forms", "buttons", "links", "inputs", "elements"):
-            value = payload.get(field)
-            if isinstance(value, list):
-                metrics[field] = min(len(value), 100000)
-            elif isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                metrics[field] = min(value, 100000)
         return SafeRuntimeResult(True, "browser.diagnose", data={
-            "available": True,
-            "inspection_keys": sorted(set(payload).intersection({
-                "errors", "console_errors", "failed_requests", "warnings",
-                "forms", "buttons", "links", "inputs", "elements",
-            })),
-            "metrics": metrics,
-            "has_console_errors": bool(metrics.get("console_errors", 0)),
-            "has_failed_requests": bool(metrics.get("failed_requests", 0)),
-            "hint": "Use browser.inspect for detailed authorized evidence; diagnostics omit raw content",
+            "counters": {
+                name: max(0, min(1000000, int(counters[name]))) for name in sorted(allowed)
+            },
+            "recent": cleaned, "truncated": bool(data.get("truncated")),
+            "evidence": "live Playwright browser session event capture",
         })
 
     def _op_browser_action(self, operation: str, args: dict) -> SafeRuntimeResult:

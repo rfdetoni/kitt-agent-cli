@@ -15,7 +15,7 @@ from typing import Any, Iterable, Optional
 from kitt.llm.http_security import read_error_body, sanitize_remote_text, secure_urlopen
 
 
-_ALLOWED_ACTIONS = frozenset({"open", "inspect", "click", "type", "screenshot", "close"})
+_ALLOWED_ACTIONS = frozenset({"open", "inspect", "diagnose", "click", "type", "screenshot", "close"})
 _MAX_REQUEST_BYTES = 64 * 1024
 _MAX_RESPONSE_BYTES = 6 * 1024 * 1024
 _MAX_IMAGE_BYTES = 4 * 1024 * 1024

@@ -157,3 +157,41 @@ class RuntimeStateStore:
             )
             conn.commit()
             return cur.rowcount
+
+    def compare_and_swap_status(self, key: str, expected: str, next_value: dict) -> bool:
+        """SQLite claim prevents workers from applying one review concurrently."""
+        if not isinstance(key, str) or not key.startswith("review_"):
+            raise ValueError("invalid review key")
+        raw = json.dumps(next_value, ensure_ascii=False)
+        size = len(raw.encode("utf-8"))
+        if size > self.MAX_ENTRY_BYTES:
+            raise ValueError("review exceeds state limit")
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT value_json,expires_at FROM runtime_states "
+                    "WHERE workspace_id=? AND conversation_id=? AND state_key=?",
+                    (self.workspace_id, self.conversation_id, key),
+                ).fetchone()
+                if not row or (row[1] is not None and row[1] < time.time()):
+                    conn.rollback()
+                    return False
+                current = json.loads(row[0])
+                if current.get("status") != expected:
+                    conn.rollback()
+                    return False
+                for attr in ("owner", "files", "recipe_name", "recipe_sha256"):
+                    if current.get(attr) != next_value.get(attr):
+                        conn.rollback()
+                        return False
+                changed = conn.execute(
+                    "UPDATE runtime_states SET value_json=?,bytes_count=?,updated_at=? "
+                    "WHERE workspace_id=? AND conversation_id=? AND state_key=? AND value_json=?",
+                    (raw, size, time.time(), self.workspace_id, self.conversation_id, key, row[0]),
+                )
+                conn.commit()
+                return changed.rowcount == 1
+            except BaseException:
+                conn.rollback()
+                raise

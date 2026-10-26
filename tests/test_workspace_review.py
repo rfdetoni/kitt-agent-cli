@@ -15,6 +15,12 @@ class State:
         self.data[key] = value
     def get(self, key):
         return self.data.get(key)
+    def compare_and_swap_status(self, key, expected, next_value):
+        current = self.data.get(key)
+        if not current or current["status"] != expected:
+            return False
+        self.data[key] = next_value
+        return True
 
 
 def test_review_previews_applies_and_rewinds(tmp_path):
@@ -70,10 +76,10 @@ def test_review_path_scope_and_authority(tmp_path):
 def test_review_durable_state_failure_restores_preimage(tmp_path):
     from kitt.runtime.workspace_review import WorkspaceReview
     class FailingState(State):
-        def set(self, key, value, ttl_seconds=None):
-            if value["status"] == "APPLIED":
+        def compare_and_swap_status(self, key, expected, next_value):
+            if next_value["status"] == "APPLIED":
                 raise RuntimeError("sqlite unavailable")
-            super().set(key, value, ttl_seconds)
+            return super().compare_and_swap_status(key, expected, next_value)
     file = tmp_path / "text.txt"
     file.write_text("before")
     service = WorkspaceReview(SimpleNamespace(root=tmp_path, state=FailingState()))
@@ -81,3 +87,50 @@ def test_review_durable_state_failure_restores_preimage(tmp_path):
     with pytest.raises(RuntimeError, match="sqlite unavailable"):
         service.apply({"review_id": ident}, None)
     assert file.read_text() == "before"
+
+def test_review_owner_isolation(tmp_path):
+    svc = WorkspaceReview(SimpleNamespace(root=tmp_path, state=State()))
+    def principal(ident):
+        return SimpleNamespace(principal_type="child", principal_id=ident,
+            workspace_id="w", conversation_id="c", assert_path_allowed=lambda path: None)
+    rid = svc.preview({"files":[{"path":"a.txt","content":"ok"}]},principal("one"))["review_id"]
+    with pytest.raises(PermissionError, match="another execution principal"):
+        svc.apply({"review_id":rid},principal("two"))
+    assert not (tmp_path/"a.txt").exists()
+
+def test_review_only_one_concurrent_apply_succeeds(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    svc = WorkspaceReview(SimpleNamespace(root=tmp_path, state=State()))
+    rid = svc.preview({"files": [{"path": "file.txt", "content": "content"}]}, None)["review_id"]
+    def apply(_):
+        try:
+            return svc.apply({"review_id": rid}, None)["status"]
+        except ValueError:
+            return "CONFLICT"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = sorted(pool.map(apply, range(2)))
+    assert outcomes == ["APPLIED", "CONFLICT"]
+    assert (tmp_path / "file.txt").read_text() == "content"
+
+def test_sqlite_compare_and_swap_across_independent_workers(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from kitt.history.database import HistoryDatabase
+    from kitt.runtime.state import RuntimeStateStore
+
+    database = HistoryDatabase(root_dir=str(tmp_path))
+    first = RuntimeStateStore(database, "workspace", "conversation")
+    second = RuntimeStateStore(database, "workspace", "conversation")
+    key = "review_" + "a" * 32
+    row = {"status": "PREVIEW", "owner": None, "files": []}
+    first.set(key, row, ttl_seconds=86400)
+
+    def attempt(store):
+        return store.compare_and_swap_status(key, "PREVIEW", {**row, "status": "APPLYING"})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(attempt, (first, second)))
+
+    assert sorted(outcomes) == [False, True]
+    assert first.get(key)["status"] == "APPLYING"
+    assert not second.compare_and_swap_status(key, "PREVIEW", {**row, "status": "APPLIED"})
+    database.close()

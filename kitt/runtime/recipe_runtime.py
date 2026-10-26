@@ -10,6 +10,7 @@ import os
 import json
 import re
 import stat
+from string import Template
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -55,13 +56,30 @@ class ReadOnlyRecipeService:
         if len(data) > _MAX_RECIPE_BYTES:
             raise ValueError("recipe exceeds 16 KiB")
         doc = tomllib.loads(data.decode("utf-8", errors="strict"))
-        if not isinstance(doc, dict) or set(doc) - {"version", "title", "description", "program", "changes"}:
+        if not isinstance(doc, dict) or set(doc) - {"version", "title", "description", "program", "changes", "parameters", "checks", "after_apply"}:
             raise ValueError("unsupported recipe fields")
         if doc.get("version") != 1:
             raise ValueError("recipe version must be 1")
         title, description = doc.get("title"), doc.get("description", "")
         program = doc.get("program")
         changes = doc.get("changes")
+        parameters = doc.get("parameters", [])
+        checks = doc.get("checks", [])
+        after_apply = doc.get("after_apply", [])
+        if not isinstance(parameters, list) or len(parameters) > 16 or any(
+            not isinstance(name, str) or not _SLUG.fullmatch(name) for name in parameters
+        ) or len(set(parameters)) != len(parameters):
+            raise ValueError("recipe parameters must be up to 16 unique lowercase names")
+        if not isinstance(checks, list) or len(checks) > 16 or any(
+            not isinstance(c, dict) or set(c) != {"path", "contains"}
+            or not isinstance(c["path"], str) or not isinstance(c["contains"], str)
+            for c in checks
+        ):
+            raise ValueError("invalid recipe checks")
+        if not isinstance(after_apply, list) or len(after_apply) > 16 or any(
+            not isinstance(statement, dict) for statement in after_apply
+        ):
+            raise ValueError("invalid recipe after_apply program")
         if (not isinstance(title, str) or not 1 <= len(title.strip()) <= 120
                 or not isinstance(description, str) or len(description) > 512
                 or (program is None) == (changes is None)):
@@ -82,6 +100,9 @@ class ReadOnlyRecipeService:
             "description": description,
             "program": program,
             "changes": changes,
+            "parameters": parameters,
+            "checks": checks,
+            "after_apply": after_apply,
             "sha256": hashlib.sha256(data).hexdigest(),
         }
 
@@ -131,6 +152,9 @@ class ReadOnlyRecipeService:
             "sha256": loaded["sha256"],
             "program": loaded["program"],
             "changes": loaded["changes"],
+            "parameters": loaded["parameters"],
+            "checks": loaded["checks"],
+            "after_apply": loaded["after_apply"],
             "instructions_untrusted": True,
             "authority": "read_only_program_runtime",
         }
@@ -168,16 +192,26 @@ class ReadOnlyRecipeService:
         return result
 
     def preview(self, arguments: dict[str, Any], security_context):
-        if not isinstance(arguments, dict) or set(arguments) != {"name"}:
-            raise ValueError("recipe.preview requires name")
+        if not isinstance(arguments, dict) or set(arguments) - {"name", "values"} or "name" not in arguments:
+            raise ValueError("recipe.preview requires name and optional values")
         loaded = self._load(arguments["name"], security_context)
         if loaded["changes"] is None:
             raise ValueError("recipe.preview requires a change recipe")
-        report = self.runtime.reviews.preview({"files": loaded["changes"]}, security_context)
-        # Bind the staged payload to this precise version of the recipe.
+        values = arguments.get("values", {})
+        if not isinstance(values, dict) or set(values) != set(loaded["parameters"]):
+            raise ValueError("recipe values must match declared parameters exactly")
+        if any(not isinstance(value, str) or len(value.encode("utf-8")) > 256 for value in values.values()):
+            raise ValueError("recipe parameter values must be strings of at most 256 bytes")
+        files = []
+        for item in loaded["changes"]:
+            # Paths are literal: templates may modify only UTF-8 content.
+            files.append({"path": item["path"],
+                          "content": Template(item["content"]).substitute(values) if loaded["parameters"] else item["content"]})
+        report = self.runtime.reviews.preview({"files": files}, security_context)
         record = self.runtime.reviews._load(report["review_id"], security_context)
         record["recipe_name"] = loaded["name"]
         record["recipe_sha256"] = loaded["sha256"]
+        record["recipe_values"] = values
         self.runtime.reviews.state.set(report["review_id"], record, ttl_seconds=86400)
         report["recipe"] = {"name": loaded["name"], "sha256": loaded["sha256"]}
         return report
@@ -190,7 +224,30 @@ class ReadOnlyRecipeService:
         if record.get("recipe_name") != loaded["name"] or record.get("recipe_sha256") != loaded["sha256"]:
             raise ValueError("recipe changed after preview; generate a new preview")
         action = self.runtime.reviews.rewind if reverse else self.runtime.reviews.apply
-        return action({"review_id": arguments["review_id"]}, security_context)
+        result = action({"review_id": arguments["review_id"]}, security_context)
+        if reverse:
+            return result
+        try:
+            for check in loaded["checks"]:
+                rel = self.runtime.reviews._path(check["path"], security_context)
+                actual, _ = self.fs.read_text(rel, max_bytes=16384)
+                if check["contains"] not in actual:
+                    raise ValueError(f"recipe verification failed for {rel}")
+            if loaded["after_apply"]:
+                from kitt.security.capabilities import CAP_REPO_READ
+                program_result = self.runtime.program_runtime.execute(
+                    {"program": loaded["after_apply"], "max_statements": 16,
+                     "max_tool_calls": 8, "max_tokens": 1200},
+                    turn_id=getattr(security_context, "turn_id", "recipe"),
+                    origin=getattr(security_context, "origin", "MODEL"),
+                    capabilities={CAP_REPO_READ}, security_context=security_context,
+                )
+                if not program_result.success:
+                    raise ValueError("recipe post-apply read-only hook failed")
+        except Exception:
+            self.runtime.reviews.rewind({"review_id": arguments["review_id"]}, security_context)
+            raise
+        return result
 
     def apply(self, arguments: dict[str, Any], security_context):
         return self._transition(arguments, security_context, reverse=False)

@@ -405,6 +405,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("acp", parents=[common], help="Serve Agent Client Protocol v1 over stdio")
 
+    review_parser = subparsers.add_parser(
+        "review", parents=[common], help="Review staged file changes"
+    )
+    review_parser.add_argument("review_action", choices=["list", "diff", "apply", "rewind"])
+    review_parser.add_argument("review_id", nargs="?")
+    review_parser.add_argument("--conversation-id", default=None)
+    review_parser.add_argument("--yes", action="store_true")
+
     sessions_parser = subparsers.add_parser(
         "sessions",
         parents=[common],
@@ -1189,6 +1197,11 @@ def main(argv=None) -> int:
         return asyncio.run(_run_rpc_mode(args))
     if args.subcommand == "acp":
         return asyncio.run(_run_acp_mode(args))
+
+    if args.subcommand == "review":
+        from kitt.cli.review import run_review_command
+
+        return run_review_command(args)
 
     if args.subcommand == "sessions":
         from kitt.cli.commands import handle_sessions_command
