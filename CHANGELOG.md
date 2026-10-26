@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.2 — preauthorized, validated GitHub publication
+
+- Add trusted `autopilot.publish` with explicit operator repo/branch/token grant and network capability; GitHub Git Data API publishes bounded file diffs without exposing credentials to toolchains or invoking host Git push/hooks.
+- Require passing `autopilot.verify` and unchanged Git HEAD/workspace content digest before publishing; reject diverged remote refs and use non-forced branch update.
+- Keep publication disabled unless explicitly configured. Add GitHub publisher conflict/authorization regression tests and sync package version/uv.lock.
+
+
 ## 0.89.1 — explicit operator network predelegation
 
 - Allow trusted operator flag `KITT_AUTOPILOT_DELEGATE_NETWORK=true` to pregrant `network.access` to unscoped root user sessions, so authorized dependency downloads can proceed unattended.
