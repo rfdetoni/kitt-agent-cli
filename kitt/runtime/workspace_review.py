@@ -65,7 +65,18 @@ class WorkspaceReview:
         if not isinstance(record, dict) or not isinstance(record.get("files"), list):
             raise ValueError("review not found in current conversation")
         if record.get("owner") != self._owner(security_context):
-            raise PermissionError("review belongs to another execution principal")
+            # Only the locally invoked, host-created CLI operator can review
+            # a conversation's model-staged changes. Model/user tool contexts
+            # cannot mint this principal type or an interactive CLI command.
+            if (
+                security_context is None
+                or getattr(security_context, "principal_type", None) != "LOCAL_OPERATOR"
+                or record.get("owner") is None
+                or record["owner"][2:] != [
+                    security_context.workspace_id, security_context.conversation_id
+                ]
+            ):
+                raise PermissionError("review belongs to another execution principal")
         for file in record["files"]:
             self._path(file["path"], security_context)
         return copy.deepcopy(record)
