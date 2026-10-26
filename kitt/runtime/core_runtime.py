@@ -591,6 +591,10 @@ class SafeRuntime:
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
 
+        if op == "sandbox.run" and type(args.get("network", False)) is not bool:
+            return self._result(start, SafeRuntimeResult(
+                False, op, error="sandbox.run network must be a boolean",
+            ))
         if op == "sandbox.run":
             policy = getattr(self.registry, "policy", None) if self.registry else None
             sandbox = getattr(getattr(self.registry, "process_runner", None), "sandbox", None)
@@ -1227,7 +1231,7 @@ class SafeRuntime:
         if (not isinstance(argv, list) or not argv
                 or not all(isinstance(x, str) and x and "\\x00" not in x for x in argv)):
             return SafeRuntimeResult(False, "sandbox.run", error="argv must be non-empty strings")
-        if args.get("network", False) not in (True, False):
+        if type(args.get("network", False)) is not bool:
             return SafeRuntimeResult(False, "sandbox.run", error="network must be boolean")
         try:
             timeout = int(args.get("timeout_seconds", 120))
