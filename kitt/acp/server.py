@@ -30,6 +30,7 @@ class ACPServer:
         self._write_lock = asyncio.Lock()
         self._output = None
         self._pending_permissions: dict[str, asyncio.Future] = {}
+        self._permission_sessions: dict[str, str] = {}
         self._permission_seq = 0
 
     async def _send(self, message: dict):
@@ -49,6 +50,7 @@ class ACPServer:
         request_id = f"kitt_permission_{self._permission_seq}"
         future = asyncio.get_running_loop().create_future()
         self._pending_permissions[request_id] = future
+        self._permission_sessions[request_id] = session_id
         try:
             await self._send({
                 "jsonrpc": "2.0", "id": request_id,
@@ -78,6 +80,7 @@ class ACPServer:
             return False
         finally:
             self._pending_permissions.pop(request_id, None)
+            self._permission_sessions.pop(request_id, None)
 
     def _validate_session(self, params: dict) -> str:
         session_id = params.get("sessionId")
@@ -230,6 +233,29 @@ class ACPServer:
             return {"sessionId": session_id}
         raise KeyError(method)
 
+    async def _replay_history(self, session_id: str):
+        """ACP v1 requires full ordered session replay before session/load returns."""
+        repo = self.runtime.history.repo
+        messages = repo.get_messages_for_conversation(session_id)
+        if not isinstance(messages, list):
+            raise RuntimeError("session history unavailable")
+        for message in messages:
+            if not isinstance(message, dict):
+                raise RuntimeError("invalid persisted message")
+            role = message.get("role")
+            if role not in {"user", "assistant"}:
+                continue
+            content = message.get("content")
+            if not isinstance(content, str):
+                raise RuntimeError("persisted ACP message must be text")
+            variant = "user_message_chunk" if role == "user" else "agent_message_chunk"
+            # Bound each transport frame without truncating the saved conversation.
+            for pos in range(0, len(content), 16384):
+                await self._notification(session_id, {
+                    "sessionUpdate": variant,
+                    "content": {"type": "text", "text": content[pos:pos + 16384]},
+                })
+
     async def _on_frame(self, frame):
         if (isinstance(frame, dict) and frame.get("jsonrpc") == "2.0"
                 and "method" not in frame and "id" in frame):
@@ -260,11 +286,11 @@ class ACPServer:
                             cmd.turn_id, "ACP cancellation", conversation_id=session_id,
                         ):
                             pass
+                    for identifier, pending in list(self._pending_permissions.items()):
+                        if self._permission_sessions.get(identifier) == session_id and not pending.done():
+                            pending.cancel()
                 except (ValueError, PermissionError):
                     pass
-                for pending in list(self._pending_permissions.values()):
-                    if not pending.done():
-                        pending.cancel()
             return
         if method == "session/prompt":
             try:
@@ -293,6 +319,14 @@ class ACPServer:
             return
         try:
             result = self._dispatch(method, params)
+            if method == "session/load":
+                session_id = result["sessionId"]
+                try:
+                    await self._replay_history(session_id)
+                except Exception:
+                    self._sessions.discard(session_id)
+                    raise
+                result = {}  # ACP v1 session/load result shape.
             response = {"jsonrpc": "2.0", "id": request_id, "result": result}
         except KeyError:
             response = {"jsonrpc": "2.0", "id": request_id,

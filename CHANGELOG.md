@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.91 — ACP v1 history replay and permission isolation
+
+- Replay complete, ordered user/assistant history through session/update notifications before returning an empty session/load result, as required by ACP v1; bound individual notification frames without truncating text.
+- Scope cancellation of in-flight permission requests to the targeted ACP session; unrelated sessions continue.
+- Add protocol acceptance and concurrency regressions, synchronize pyproject.toml/uv.lock/source metadata with no dependency changes.
+
+
 ## 0.88.90 — secure reviews, ACP resume, recipes, browser evidence
 
 - Bind staged reviews to their creating principal; apply/rewind now validate every real target path and content hash against host write policy. An ASK/DENY decision fails closed rather than treating an opaque review ID as authorization.
