@@ -188,6 +188,13 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         resume_tool_name="apply_patch",
         risk_cost=1,
     ),
+    # Deliberately not routed through the host command classifier.
+    # A host-owned autonomous session may run arbitrary argv ONLY inside
+    # an independently verified strong sandbox and a scoped workspace.
+    "sandbox.run": RuntimeOperationSpec(
+        "sandbox.run", CAP_PROCESS_RUN, sensitive=True, risk_cost=3,
+        sandbox_profile="workspace-write",
+    ),
     "process.run": RuntimeOperationSpec(
         "process.run",
         CAP_PROCESS_RUN,
@@ -515,6 +522,25 @@ class SafeRuntime:
         else:
             capabilities = set()
 
+        # Backward tool traffic is deliberately routed to the contained worker
+        # for autonomous principals. Policy restrictions on host process.run
+        # remain unchanged when sandbox or delegated authority is absent.
+        if op == "process.run":
+            policy = getattr(self.registry, "policy", None) if self.registry else None
+            sandbox = getattr(getattr(self.registry, "process_runner", None), "sandbox", None)
+            if (
+                security_context is not None
+                and not getattr(security_context, "is_path_scoped", False)
+                and CAP_REPO_WRITE in capabilities
+                and CAP_PROCESS_RUN in capabilities
+                and policy is not None
+                and getattr(getattr(policy, "autonomy", None), "level", "") == "autonomous"
+                and sandbox is not None
+                and sandbox.is_strong_available("workspace-write")
+            ):
+                op = "sandbox.run"
+                spec = self.operation_registry[op]
+
         if spec.required_capability and spec.required_capability not in capabilities:
             return self._result(
                 start,
@@ -565,7 +591,29 @@ class SafeRuntime:
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
 
-        if op in {"process.run", "process.start"}:
+        if op == "sandbox.run":
+            policy = getattr(self.registry, "policy", None) if self.registry else None
+            sandbox = getattr(getattr(self.registry, "process_runner", None), "sandbox", None)
+            if (
+                security_context is None
+                or getattr(security_context, "is_path_scoped", False)
+                or CAP_REPO_WRITE not in capabilities
+                or policy is None
+                or getattr(getattr(policy, "autonomy", None), "level", "") != "autonomous"
+            ):
+                return self._result(start, SafeRuntimeResult(
+                    False, op, error="sandbox.run requires an autonomous, workspace-write principal",
+                ))
+            if sandbox is None or not sandbox.is_strong_available("workspace-write"):
+                return self._result(start, SafeRuntimeResult(
+                    False, op, error="sandbox.run needs functional Bubblewrap or prepared Docker image",
+                ))
+            if args.get("network", False) is True and CAP_NETWORK_ACCESS not in capabilities:
+                return self._result(start, SafeRuntimeResult(
+                    False, op, error="sandbox.run network requires predelegated network.access capability",
+                ))
+
+        if op in {"process.run", "process.start", "sandbox.run"}:
             argv = args.get("argv")
             if (
                 not isinstance(argv, list) or not argv
@@ -1025,6 +1073,7 @@ class SafeRuntime:
             "backend.compile": lambda: self._op_backend_compile(args),
             "repo.create_directory": lambda: self._op_registry_tool("repo.create_directory", "create_directory", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "patch.apply": lambda: self._op_registry_tool("patch.apply", "apply_patch", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
+            "sandbox.run": lambda: self._op_autonomous_sandbox_run(args, turn_id, security_context),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "test.run": lambda: self._op_test_run(
                 args, turn_id, origin, security_context, grant,
@@ -1164,6 +1213,51 @@ class SafeRuntime:
         from kitt.runtime.plan_runtime import execute_plan_action
         return execute_plan_action(self, operation, args, turn_id, origin,
                                    security_context, grant, approval_id)
+
+    def _op_autonomous_sandbox_run(
+        self, args: dict, turn_id: str, security_context,
+    ) -> SafeRuntimeResult:
+        """Execute model-selected commands ONLY through the trusted sandbox broker."""
+        from kitt.security.execution_sandbox import SandboxUnavailable
+
+        accepted = {"argv", "cwd", "timeout_seconds", "network"}
+        if not isinstance(args, dict) or set(args) - accepted:
+            return SafeRuntimeResult(False, "sandbox.run", error="Unsupported sandbox.run arguments")
+        argv = args.get("argv")
+        if (not isinstance(argv, list) or not argv
+                or not all(isinstance(x, str) and x and "\\x00" not in x for x in argv)):
+            return SafeRuntimeResult(False, "sandbox.run", error="argv must be non-empty strings")
+        if args.get("network", False) not in (True, False):
+            return SafeRuntimeResult(False, "sandbox.run", error="network must be boolean")
+        try:
+            timeout = int(args.get("timeout_seconds", 120))
+            if not 1 <= timeout <= 3600:
+                raise ValueError("timeout_seconds must be between 1 and 3600")
+            runner = self.registry.process_runner
+            result = runner.run(
+                argv, cwd=args.get("cwd"),
+                timeout_seconds=timeout,
+                sandbox_profile=(
+                    "workspace-write+network" if args.get("network", False)
+                    else "workspace-write"
+                ),
+                require_strong_sandbox=True,
+            )
+        except (ValueError, OSError, PermissionError, SandboxUnavailable) as exc:
+            return SafeRuntimeResult(False, "sandbox.run", error=str(exc))
+        success = result.returncode == 0 and not result.timed_out and not result.cancelled
+        return SafeRuntimeResult(
+            success, "sandbox.run",
+            data={
+                "stdout": result.stdout, "stderr": result.stderr,
+                "returncode": result.returncode,
+                "timed_out": result.timed_out,
+                "cancelled": result.cancelled,
+                "truncated": result.truncated,
+                "sandbox": result.sandbox_backend,
+            },
+            error=None if success else "Sandbox command failed; examine returncode and stderr",
+        )
 
     def _managed_processes(self):
         manager = self.process_manager

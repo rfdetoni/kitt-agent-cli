@@ -893,12 +893,12 @@ class TurnToolLoopMixin:
                         "content": (
                             "[KITT POLICY DENIAL]\n"
                             f"The host policy denied {operation or tool_name}: {tool_result.error}\n"
-                            "Do not retry the same denied command. Never use process.run, shell "
-                            "redirection, printf, cat, echo, heredocs, or mkdir as a substitute for "
-                            "workspace file mutation. For files/directories use kitt_runtime with "
-                            "repo.write_file, repo.create_directory, or patch.apply when the route "
-                            "allows mutation. If this is validation-only, choose a non-mutating "
-                            "validation command or answer from the available evidence."
+                            "Do not retry the same denied host command. For an autonomous workspace "
+                            "with process.run + repo.write capabilities and a working sandbox, "
+                            "use kitt_runtime operation sandbox.run for shell commands, mkdir, "
+                            "scripts, file writes and test/build tasks inside the sandbox. "
+                            "Otherwise use repo.write_file, repo.create_directory, or patch.apply "
+                            "when permitted. Never bypass a missing sandbox by executing on host."
                         ),
                     },
                 ])

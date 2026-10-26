@@ -107,6 +107,8 @@ class ExecutionSandbox:
         self._bwrap_cache_until = 0.0
         self._bwrap_failures: list[str] = []
         self._landlock_cache: int | None = None
+        self._docker_cache: tuple[str, str] | None | bool = False
+        self._docker_cache_until = 0.0
 
     def _probe_landlock(self) -> int:
         if self._landlock_cache is None:
@@ -251,11 +253,96 @@ class ExecutionSandbox:
             return f"functional bubblewrap {'.'.join(map(str, selected[1]))} at {selected[0]}"
         return "; ".join(self._bwrap_failures[:4])[:900]
 
+    def _probe_docker(self) -> tuple[str, str] | None:
+        """Probe only a local, installed Docker daemon and an already-pulled image.
+
+        No downloads or container execution occur during capability detection.
+        The daemon is contacted by this trusted host broker, never by the agent.
+        """
+        if self._docker_cache is not False and time.monotonic() < self._docker_cache_until:
+            return self._docker_cache
+        self._docker_cache = None
+        self._docker_cache_until = time.monotonic() + 60
+        if sys.platform != "linux" or not self._auto_detect:
+            return None
+        executable = shutil.which("docker")
+        if not executable:
+            return None
+        binary = Path(executable).resolve()
+        try:
+            binary.relative_to(self.root)
+            return None  # Never execute a workspace-supplied Docker shim.
+        except ValueError:
+            pass
+        try:
+            st = binary.stat()
+            if not binary.is_file() or st.st_uid != 0 or st.st_mode & 0o022:
+                return None
+        except OSError:
+            return None
+        image = os.environ.get(
+            "KITT_AUTOPILOT_IMAGE", "ghcr.io/rfdetoni/kitt-agent-cli:latest"
+        ).strip()
+        if not image or any(char.isspace() for char in image) or len(image) > 256:
+            return None
+        try:
+            for cmd in (
+                [str(binary), "info", "--format", "{{.Server.Version}}"],
+                [str(binary), "image", "inspect", image, "--format", "{{.Id}}"],
+            ):
+                check = subprocess.run(
+                    cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, timeout=3, check=False,
+                )
+                if check.returncode != 0:
+                    return None
+        except (OSError, subprocess.SubprocessError):
+            return None
+        self._docker_cache = (str(binary), image)
+        return self._docker_cache
+
+    def _docker_plan(
+        self, docker: str, image: str, profile: SandboxProfile,
+        argv: Sequence[str], cwd: Path,
+    ) -> SandboxPlan:
+        """Run a workspace-scoped process without exposing Docker to the guest."""
+        if any(char in str(self.root) for char in (",", ":")):
+            raise SandboxUnavailable("Docker bind mount cannot represent workspace path")
+        relative_cwd = cwd.relative_to(self.root)
+        network_isolated = profile != "workspace-write+network"
+        writable = profile != "read-only"
+        wrapped = [
+            docker, "run", "--rm", "--init", "--pull=never",
+            "--network", "none" if network_isolated else "bridge",
+            "--read-only", "--cap-drop=ALL",
+            "--security-opt=no-new-privileges", "--pids-limit=256",
+            "--memory=2g", "--cpus=2",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g",
+            "--tmpfs", "/home/kitt:rw,nosuid,nodev,size=256m",
+            "--user", f"{os.getuid()}:{os.getgid()}",
+            "--mount", (
+                f"type=bind,src={self.root},dst=/workspace"
+                + (",readonly" if not writable else "")
+            ),
+            "--workdir", str(Path("/workspace") / relative_cwd),
+        ]
+        # KITT control-plane state is never directly visible or writable.
+        if (self.root / ".kitt").is_dir():
+            wrapped += ["--mount", "type=tmpfs,dst=/workspace/.kitt"]
+        wrapped += ["--entrypoint", "/usr/bin/env", image, *argv]
+        return SandboxPlan(
+            argv=wrapped, profile=profile, backend="docker", strong=True,
+            network_isolated=network_isolated, host_cwd=self.root,
+            reason="local-docker-container;workspace-scoped",
+        )
+
     def backend_for(self, profile: SandboxProfile) -> str | None:
         if profile == "full-access":
             return "none"
         if self._probe_bwrap() is not None:
             return "bubblewrap"
+        if profile != "full-access" and self._probe_docker() is not None:
+            return "docker"
         if (
             self._probe_landlock() > 0
             and profile in {"read-only", "workspace-write+network"}
@@ -272,7 +359,7 @@ class ExecutionSandbox:
         target = profile or self.default_profile
         # Landlock confines selected filesystem writes, but it cannot provide
         # the namespace/socket isolation required for unattended process.exec.
-        return self.backend_for(target) == "bubblewrap"
+        return self.backend_for(target) in {"bubblewrap", "docker"}
 
     @staticmethod
     def _scratch() -> Path:
@@ -537,9 +624,13 @@ class ExecutionSandbox:
         if bwrap is not None:
             return self._bwrap_plan(bwrap[0], target, argv, cwd_path)
 
+        docker = self._probe_docker()
+        if docker is not None:
+            return self._docker_plan(docker[0], docker[1], target, argv, cwd_path)
+
         if require_strong:
             raise SandboxUnavailable(
-                f"Strong sandbox profile '{target}' requires functional bubblewrap >= 0.12. "
+                f"Strong sandbox profile '{target}' requires functional bubblewrap >= 0.12 or local Docker with a prepared image. "
                 f"{self.bubblewrap_diagnostic()}"
             )
 
