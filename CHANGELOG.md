@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.86 — bounded on-demand MCP schema discovery
+
+- Add `mcp.describe` to the existing KITT runtime to inspect an already-registered MCP tool's validated JSON input schema. Require `mcp.call` capability, enforce path-scoped visibility, cap schema size and never invoke the MCP server during introspection.
+- Allow `mcp.discover` and `mcp.describe` in the existing bounded read-only flow/program execution for composable discovery. `mcp.call` remains excluded; mutations continue through host permission/approval policy.
+- Add focused regression tests, synchronize Python package metadata, source fallback and uv.lock. No new dependencies, external component pins or protocol changes.
+
+
 ## 0.88.85 — validate pinned RE executors, not only Docker image tags
 
 - Offline image health checks now reject retagged/stale RE images whose actual REA, Ghidra, or Frida versions do not match their pinned toolchain versions. The installer repairs these images using the existing GHCR pull / local Dockerfile build fallback.

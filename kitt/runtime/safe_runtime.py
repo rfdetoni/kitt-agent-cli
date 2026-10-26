@@ -319,7 +319,7 @@ class SafeRuntime(_core.SafeRuntime):
                 "host_tool": "kitt_runtime",
                 "features": ["repo.batch_read", "repo.ref.create", "repo.ref.read",
                              "repo.ref.write", "plan.patch", "plan.inspect", "sandbox.python",
-                             "test.run", "git.action", "mcp.discover"],
+                             "test.run", "git.action", "mcp.discover", "mcp.describe"],
                 "positional_schema_digest": POSITIONAL_DIGEST,
                 "frame_batch": False,
                 "early_stream_termination": False,

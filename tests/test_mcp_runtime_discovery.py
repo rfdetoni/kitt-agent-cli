@@ -41,3 +41,55 @@ def test_discover_requires_mcp_capability_and_never_executes_tools():
     assert not runtime._op_mcp_discover(
         {"limit": 999}, SimpleNamespace(is_path_scoped=False)
     ).success
+
+def test_describe_exposes_only_bounded_registered_schema_without_execution():
+    assert OPERATION_REGISTRY["mcp.describe"].required_capability == CAP_MCP_CALL
+
+    class Registry:
+        _custom_tools = {
+            "mcp.good.read": {
+                "description": "Read evidence",
+                "scope_aware": True,
+                "trusted_read_only": True,
+                "args": {"type": "object", "properties": {"query": {"type": "string"}}},
+            },
+            "mcp.restricted.write": {
+                "description": "Change evidence",
+                "scope_aware": False,
+                "trusted_read_only": False,
+                "args": {"type": "object"},
+            },
+            "mcp.huge.read": {
+                "scope_aware": True,
+                "args": {"type": "object", "description": "x" * 17000},
+            },
+            "not_mcp.read": {"scope_aware": True, "args": {"type": "object"}},
+        }
+
+        def execute_tool(self, *args, **kwargs):
+            raise AssertionError("Describing a tool cannot execute it")
+
+    runtime = object.__new__(SafeRuntime)
+    runtime.registry = Registry()
+    scope = SimpleNamespace(is_path_scoped=True)
+    result = runtime._op_mcp_describe({"tool_name": "mcp.good.read"}, scope)
+    assert result.success
+    assert result.data["name"] == "mcp.good.read"
+    assert result.data["input_schema"]["properties"]["query"]["type"] == "string"
+    assert result.data["trusted_read_only"] is True
+    assert result.data["descriptions_and_schema_untrusted"] is True
+
+    for name in ("mcp.restricted.write", "mcp.missing", "not_mcp.read", "mcp.huge.read"):
+        assert not runtime._op_mcp_describe({"tool_name": name}, scope).success
+    assert not runtime._op_mcp_describe({"tool_name": "mcp.good.read", "other": True}, scope).success
+
+    unrestricted = SimpleNamespace(is_path_scoped=False)
+    assert runtime._op_mcp_describe({"tool_name": "mcp.restricted.write"}, unrestricted).success
+
+
+def test_program_mode_allows_mcp_schema_discovery_but_not_execution():
+    from kitt.runtime.programmatic_flow import READ_ONLY_FLOW_OPERATIONS
+
+    assert "mcp.discover" in READ_ONLY_FLOW_OPERATIONS
+    assert "mcp.describe" in READ_ONLY_FLOW_OPERATIONS
+    assert "mcp.call" not in READ_ONLY_FLOW_OPERATIONS

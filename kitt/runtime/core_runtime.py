@@ -295,6 +295,7 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
         "mcp.call", CAP_MCP_CALL, "mcp_call", sensitive=True
     ),
     "mcp.discover": RuntimeOperationSpec("mcp.discover", CAP_MCP_CALL),
+    "mcp.describe": RuntimeOperationSpec("mcp.describe", CAP_MCP_CALL),
     "browser.open": RuntimeOperationSpec("browser.open", CAP_BROWSER_READ),
     "browser.inspect": RuntimeOperationSpec("browser.inspect", CAP_BROWSER_READ),
     "browser.screenshot": RuntimeOperationSpec("browser.screenshot", CAP_BROWSER_READ),
@@ -1020,6 +1021,7 @@ class SafeRuntime:
                 args, turn_id, security_context, automatic_budget_reserved
             ),
             "mcp.discover": lambda: self._op_mcp_discover(args, security_context),
+            "mcp.describe": lambda: self._op_mcp_describe(args, security_context),
             "browser.open": lambda: self._op_browser_action("browser.open", args),
             "browser.inspect": lambda: self._op_browser_action("browser.inspect", args),
             "browser.screenshot": lambda: self._op_browser_action("browser.screenshot", args),
@@ -2852,6 +2854,45 @@ class SafeRuntime:
             "tools": found[:limit], "truncated": len(found) > limit,
             "source": "trusted_registered_tools_only", "descriptions_untrusted": True,
             "invocation": "mcp.call (still subject to host capability, scope, and tool policy)",
+        })
+
+    def _op_mcp_describe(self, args, security_context):
+        """Inspect a registered MCP tool schema without invoking the tool or its server."""
+        name = args.get("tool_name") if isinstance(args, dict) else None
+        if (
+            not isinstance(args, dict) or set(args) != {"tool_name"}
+            or not isinstance(name, str) or not name.startswith("mcp.")
+            or not 5 <= len(name) <= 256
+        ):
+            return SafeRuntimeResult(
+                False, "mcp.describe",
+                error="mcp.describe requires one registered MCP tool_name",
+            )
+        if not self.registry:
+            return SafeRuntimeResult(False, "mcp.describe", error="Tool registry not attached")
+        metadata = getattr(self.registry, "_custom_tools", {}).get(name)
+        if not isinstance(metadata, dict):
+            return SafeRuntimeResult(False, "mcp.describe", error="MCP tool unavailable")
+        if getattr(security_context, "is_path_scoped", False) and not metadata.get("scope_aware"):
+            return SafeRuntimeResult(False, "mcp.describe", error="MCP tool unavailable")
+        schema = metadata.get("args")
+        if not isinstance(schema, dict):
+            return SafeRuntimeResult(False, "mcp.describe", error="MCP tool schema unavailable")
+        try:
+            serialized = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        except (TypeError, ValueError, RecursionError):
+            return SafeRuntimeResult(False, "mcp.describe", error="MCP tool schema invalid")
+        if len(serialized.encode("utf-8")) > 16384:
+            return SafeRuntimeResult(False, "mcp.describe", error="MCP tool schema exceeds 16 KiB")
+        return SafeRuntimeResult(True, "mcp.describe", data={
+            "name": name,
+            "description": str(metadata.get("description") or "")[:512],
+            "input_schema": json.loads(serialized),
+            "scope_aware": bool(metadata.get("scope_aware")),
+            "trusted_read_only": bool(metadata.get("trusted_read_only")),
+            "source": "trusted_registered_tools_only",
+            "descriptions_and_schema_untrusted": True,
+            "invocation": "mcp.call (requires normal host permissions and approvals)",
         })
 
     def _op_mcp_call(
