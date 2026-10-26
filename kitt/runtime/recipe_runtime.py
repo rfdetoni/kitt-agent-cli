@@ -7,6 +7,7 @@ through the usual SafeRuntime security context and read-only allowlist.
 from __future__ import annotations
 
 import hashlib
+import os
 import json
 import re
 import stat
@@ -80,19 +81,32 @@ class ReadOnlyRecipeService:
             raise PermissionError("recipe symlink is not allowed")
         if not directory.is_dir():
             return {"recipes": [], "truncated": False}
-        entries = sorted(directory.iterdir(), key=lambda p: p.name)
+        # Directory discovery is bounded even if an untrusted workspace has
+        # thousands of non-recipe entries. This avoids a sorted(iterdir()) spike.
+        candidate_names = []
+        truncated = False
+        with os.scandir(directory) as entries:
+            for index, entry in enumerate(entries):
+                if index >= 256:
+                    truncated = True
+                    break
+                if (
+                    entry.name.endswith(".toml")
+                    and _SLUG.fullmatch(entry.name[:-5])
+                    and entry.is_file(follow_symlinks=False)
+                ):
+                    candidate_names.append(entry.name[:-5])
         recipes = []
-        for item in entries:
-            if item.suffix != ".toml" or not _SLUG.fullmatch(item.stem):
-                continue
+        for name in sorted(candidate_names):
             if len(recipes) >= _MAX_RECIPES:
-                return {"recipes": recipes, "truncated": True}
+                truncated = True
+                break
             try:
-                loaded = self._load(item.stem)
+                loaded = self._load(name)
             except (OSError, PermissionError, ValueError, UnicodeError, tomllib.TOMLDecodeError):
                 continue
             recipes.append({key: loaded[key] for key in ("name", "title", "description", "sha256")})
-        return {"recipes": recipes, "truncated": False}
+        return {"recipes": recipes, "truncated": truncated}
 
     def inspect(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(arguments, dict) or set(arguments) != {"name"}:

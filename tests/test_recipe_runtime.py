@@ -104,3 +104,11 @@ def test_recipe_authority_metadata_is_read_only():
     from kitt.runtime.programmatic_flow import READ_ONLY_FLOW_OPERATIONS
     assert "process.run" not in READ_ONLY_FLOW_OPERATIONS
     assert "mcp.call" not in READ_ONLY_FLOW_OPERATIONS
+
+def test_recipe_directory_enumeration_is_bounded(tmp_path):
+    recipes = tmp_path / ".kitt" / "recipes"
+    recipes.mkdir(parents=True)
+    for index in range(270):
+        (recipes / f"not-a-recipe-{index}.txt").write_text("", encoding="utf-8")
+    service, _ = _service(tmp_path)
+    assert service.list({})["truncated"] is True
