@@ -307,19 +307,19 @@ class SafeRuntime(_core.SafeRuntime):
             return SafeRuntimeResult(True, op, data={
                 "workspace_process_sandbox": {
                     "available": strong_sandbox,
-                    "required": "functional bubblewrap>=0.12",
+                    "required": "functional bubblewrap>=0.12 or local Docker with prepared image",
                     "diagnostic": (
                         sandbox.bubblewrap_diagnostic()
                         if sandbox is not None and hasattr(sandbox, "bubblewrap_diagnostic")
                         else "sandbox not attached"
                     ),
-                    "fallback": "repo mutations or an already authorized guest executor; never unsandboxed process.run",
+                    "fallback": "Docker scoped worker when bubblewrap is unavailable; never unsandboxed process.run",
                 },
                 "format": AGENT_WIRE_FORMAT,
                 "host_tool": "kitt_runtime",
                 "features": ["repo.batch_read", "repo.ref.create", "repo.ref.read",
                              "repo.ref.write", "plan.patch", "plan.inspect", "sandbox.python",
-                             "test.run", "git.action", "mcp.discover", "mcp.describe",
+                             "sandbox.run", "test.run", "git.action", "mcp.discover", "mcp.describe",
                              "recipe.list", "recipe.inspect", "recipe.run",
                              "recipe.preview", "recipe.apply", "recipe.rewind",
                              "review.preview", "review.diff", "review.apply", "review.rewind",

@@ -364,6 +364,32 @@ Rust implementation and Rust CI belong in `kitt-toolbox`; this repository intent
 
 ---
 
+## Autonomous sandbox execution
+
+In an explicitly **autonomous** workspace, `kitt_runtime` provides
+`sandbox.run` with `{"argv":["bash","-lc","mkdir -p out && python -m pytest"],"cwd":".","network":false}`.
+Commands are not interpreted by the host command allowlist: arbitrary shell,
+build, test and file operations are allowed **inside** a proven OS sandbox.
+The principal must hold both `process.run` and `repo.write` capabilities.
+Network access additionally requires predelegated `network.access`.
+
+Execution prefers a functional Bubblewrap installation (>=0.12). If that is
+blocked by AppArmor, the trusted host broker can use an already-pulled local
+Docker image (`KITT_AUTOPILOT_IMAGE`, default
+`ghcr.io/rfdetoni/kitt-agent-cli:latest`). Prepare the image with
+`docker pull ghcr.io/rfdetoni/kitt-agent-cli:latest` outside the agent. The
+Docker socket and host home are not mounted; guest filesystem is read-only
+except for the authorized workspace and private tmpfs. Network defaults to
+none; network-capable tasks use Docker bridge egress, so only delegate it to
+trusted workspaces. The repository's `.git` remains writable by the task;
+use a disposable checkout/worktree for untrusted code.
+
+This operation does **not** bypass host permissions for `process.run`, change
+workspace settings, manage Docker infrastructure, modify unrelated directories,
+or provide secret credentials. Without an operational strong sandbox it fails
+closed. It is an unattended *execution capability*, not proof that tests pass;
+run the project's real validation gates before reporting completion.
+
 ## Security & autonomy
 
 K.I.T.T. treats tool execution as an authority boundary rather than a convenience API. Core invariants include:
