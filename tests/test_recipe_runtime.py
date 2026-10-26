@@ -143,3 +143,66 @@ return = "secret"
         service.run({"name": "private"}, turn_id="t", origin="MODEL",
                     capabilities={CAP_REPO_READ}, security_context=principal)
     assert calls == []
+
+def test_write_recipe_previews_and_applies_only_through_guarded_review(tmp_path):
+    from kitt.runtime.workspace_review import WorkspaceReview
+    from kitt.runtime.core_runtime import OPERATION_REGISTRY
+    from kitt.security.capabilities import CAP_REPO_WRITE
+
+    class State:
+        def __init__(self): self.data = {}
+        def get(self, key): return self.data.get(key)
+        def set(self, key, value, ttl_seconds=None): self.data[key] = value
+
+    target = tmp_path / "hello.txt"
+    target.write_text("old", encoding="utf-8")
+    _write_recipe(tmp_path, "change-file", '''
+version = 1
+title = "Change a file"
+[[changes]]
+path = "hello.txt"
+content = "updated"
+''')
+    runtime = SimpleNamespace(root=tmp_path, state=State())
+    runtime.reviews = WorkspaceReview(runtime)
+    service = ReadOnlyRecipeService(runtime)
+    preview = service.preview({"name": "change-file"}, None)
+    assert target.read_text() == "old"
+    assert service.apply({"name": "change-file", "review_id": preview["review_id"]}, None)["status"] == "APPLIED"
+    assert target.read_text() == "updated"
+    assert service.rewind({"name": "change-file", "review_id": preview["review_id"]}, None)["status"] == "REWOUND"
+    assert target.read_text() == "old"
+    assert OPERATION_REGISTRY["recipe.apply"].required_capability == CAP_REPO_WRITE
+    assert OPERATION_REGISTRY["recipe.apply"].sensitive
+    with pytest.raises(ValueError):
+        service.run({"name": "change-file"}, turn_id="t", origin="MODEL",
+                    capabilities={CAP_REPO_READ}, security_context=None)
+
+
+def test_mutable_recipe_rechecks_source_digest_before_apply(tmp_path):
+    from kitt.runtime.workspace_review import WorkspaceReview
+    class State:
+        def __init__(self): self.data = {}
+        def get(self, key): return self.data.get(key)
+        def set(self, key, value, ttl_seconds=None): self.data[key] = value
+    _write_recipe(tmp_path, "change", '''
+version = 1
+title = "Change"
+[[changes]]
+path = "hello.txt"
+content = "one"
+''')
+    runtime = SimpleNamespace(root=tmp_path, state=State())
+    runtime.reviews = WorkspaceReview(runtime)
+    service = ReadOnlyRecipeService(runtime)
+    preview = service.preview({"name": "change"}, None)
+    _write_recipe(tmp_path, "change", '''
+version = 1
+title = "Change"
+[[changes]]
+path = "hello.txt"
+content = "two"
+''')
+    with pytest.raises(ValueError, match="recipe changed"):
+        service.apply({"name": "change", "review_id": preview["review_id"]}, None)
+    assert not (tmp_path / "hello.txt").exists()

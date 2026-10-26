@@ -321,6 +321,7 @@ class SafeRuntime(_core.SafeRuntime):
                              "repo.ref.write", "plan.patch", "plan.inspect", "sandbox.python",
                              "test.run", "git.action", "mcp.discover", "mcp.describe",
                              "recipe.list", "recipe.inspect", "recipe.run",
+                             "recipe.preview", "recipe.apply", "recipe.rewind",
                              "review.preview", "review.diff", "review.apply", "review.rewind"],
                 "positional_schema_digest": POSITIONAL_DIGEST,
                 "frame_batch": False,
