@@ -169,7 +169,7 @@ class ACPServer:
                 if any(not isinstance(x, dict) or x.get("type") != "text"
                        or not isinstance(x.get("text"), str) for x in items):
                     raise ValueError("only ACP text prompt blocks are supported")
-                if not 0 < len("\\n".join(x["text"] for x in items).strip().encode("utf-8")) <= 65536:
+                if not 0 < len("\n".join(x["text"] for x in items).strip().encode("utf-8")) <= 65536:
                     raise ValueError("ACP prompt exceeds text budget")
                 if session_id in self._active:
                     raise ValueError("ACP session already has an active prompt")
