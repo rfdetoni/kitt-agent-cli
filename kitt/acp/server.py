@@ -13,7 +13,7 @@ from pathlib import Path
 from kitt import __version__
 from kitt.core.turn_command import TurnCommand
 from kitt.core.turn_events import (
-    ApprovalRequired, TextDelta, TurnBlocked, TurnCancelled, TurnCompleted, TurnFailed,
+    ApprovalRequired, ToolStarted, ToolCompleted, TextDelta, TurnBlocked, TurnCancelled, TurnCompleted, TurnFailed,
 )
 
 _MAX_FRAME_BYTES = 1024 * 1024
@@ -29,6 +29,8 @@ class ACPServer:
         self._tasks: set[asyncio.Task] = set()
         self._write_lock = asyncio.Lock()
         self._output = None
+        self._pending_permissions: dict[str, asyncio.Future] = {}
+        self._permission_seq = 0
 
     async def _send(self, message: dict):
         async with self._write_lock:
@@ -40,6 +42,42 @@ class ACPServer:
             "jsonrpc": "2.0", "method": "session/update",
             "params": {"sessionId": session_id, "update": update},
         })
+
+    async def _request_permission(self, session_id: str, event: ApprovalRequired) -> bool:
+        """The client only expresses intent. KITT still issues an exact host grant."""
+        self._permission_seq += 1
+        request_id = f"kitt_permission_{self._permission_seq}"
+        future = asyncio.get_running_loop().create_future()
+        self._pending_permissions[request_id] = future
+        try:
+            await self._send({
+                "jsonrpc": "2.0", "id": request_id,
+                "method": "session/request_permission",
+                "params": {
+                    "sessionId": session_id,
+                    "toolCall": {
+                        "toolCallId": event.turn_id,
+                        "title": event.tool_name,
+                        "kind": "other",
+                        "status": "pending",
+                    },
+                    "options": [
+                        {"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+                        {"optionId": "reject-once", "name": "Deny", "kind": "reject_once"},
+                    ],
+                },
+            })
+            response = await asyncio.wait_for(future, timeout=120.0)
+            return (
+                isinstance(response, dict)
+                and isinstance(response.get("outcome"), dict)
+                and response["outcome"].get("outcome") == "selected"
+                and response["outcome"].get("optionId") == "allow-once"
+            )
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            return False
+        finally:
+            self._pending_permissions.pop(request_id, None)
 
     def _validate_session(self, params: dict) -> str:
         session_id = params.get("sessionId")
@@ -81,13 +119,54 @@ class ACPServer:
                                 "sessionUpdate": "agent_message_chunk",
                                 "content": {"type": "text", "text": suffix},
                             })
+                elif isinstance(event, ToolStarted):
+                    await self._notification(session_id, {
+                        "sessionUpdate": "tool_call", "toolCallId": event.call_id or event.tool_name,
+                        "title": event.tool_name, "kind": "other", "status": "in_progress",
+                    })
+                elif isinstance(event, ToolCompleted):
+                    await self._notification(session_id, {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": event.call_id or event.tool_name,
+                        "status": "completed" if event.success else "failed",
+                    })
                 elif isinstance(event, ApprovalRequired):
-                    # ACP clients do not bypass KITT's approval authority.
-                    for _ in self.runtime.processor.cancel_turn(
-                        cmd.turn_id, "ACP host approval unavailable", conversation_id=session_id,
+                    accepted = await self._request_permission(session_id, event)
+                    if not accepted:
+                        for _ in self.runtime.processor.cancel_turn(
+                            cmd.turn_id, "ACP approval denied or timed out", conversation_id=session_id,
+                        ):
+                            pass
+                        stopped = "refusal"
+                        break
+                    # No client-supplied grant is trusted. Only the host can
+                    # issue a nonce-bound authorization for this pending action.
+                    grant = self.runtime.approval.issue_grant(
+                        event.turn_id, session_id, event.workspace_id,
+                        event.action_hash, approval_id=event.approval_request_id,
+                    )
+                    from kitt.ui.fallback import _stream_iterator
+                    async for resumed in _stream_iterator(
+                        self.runtime.processor.continue_turn(event.turn_id, grant)
                     ):
-                        pass
-                    stopped = "refusal"
+                        if isinstance(resumed, TextDelta):
+                            streamed += resumed.delta
+                            await self._notification(session_id, {
+                                "sessionUpdate": "agent_message_chunk",
+                                "content": {"type": "text", "text": resumed.delta},
+                            })
+                        elif isinstance(resumed, TurnCompleted):
+                            if resumed.response and resumed.response.startswith(streamed):
+                                suffix = resumed.response[len(streamed):]
+                                if suffix:
+                                    await self._notification(session_id, {
+                                        "sessionUpdate": "agent_message_chunk",
+                                        "content": {"type": "text", "text": suffix},
+                                    })
+                        elif isinstance(resumed, (TurnBlocked, TurnFailed)):
+                            stopped = "refusal"
+                        elif isinstance(resumed, TurnCancelled):
+                            stopped = "cancelled"
                     break
                 elif isinstance(event, TurnCancelled):
                     stopped = "cancelled"
@@ -111,7 +190,7 @@ class ACPServer:
             return {
                 "protocolVersion": 1,
                 "agentCapabilities": {
-                    "loadSession": False,
+                    "loadSession": True,
                     "promptCapabilities": {"image": False, "audio": False, "embeddedContext": False},
                     "mcpCapabilities": {"http": False, "sse": False},
                 },
@@ -132,9 +211,32 @@ class ACPServer:
             session_id = str(conversation["id"])
             self._sessions.add(session_id)
             return {"sessionId": session_id}
+        if method == "session/load":
+            cwd = params.get("cwd")
+            session_id = params.get("sessionId")
+            if not isinstance(cwd, str) or not Path(cwd).is_absolute():
+                raise ValueError("session/load requires absolute cwd")
+            if Path(cwd).resolve() != Path(self.runtime.canonical_root).resolve():
+                raise PermissionError("ACP cwd must match the configured workspace root")
+            if not isinstance(session_id, str) or len(session_id) > 128:
+                raise ValueError("invalid session ID")
+            if params.get("mcpServers"):
+                raise ValueError("ACP client MCP servers are not supported")
+            repo = self.runtime.history.repo
+            conversation = repo.get_conversation(session_id)
+            if not conversation or conversation.get("workspace_id") != self.runtime.workspace_id:
+                raise ValueError("session does not belong to this workspace")
+            self._sessions.add(session_id)
+            return {"sessionId": session_id}
         raise KeyError(method)
 
     async def _on_frame(self, frame):
+        if (isinstance(frame, dict) and frame.get("jsonrpc") == "2.0"
+                and "method" not in frame and "id" in frame):
+            future = self._pending_permissions.get(frame["id"]) if isinstance(frame["id"], str) else None
+            if future is not None and not future.done():
+                future.set_result(frame.get("result"))
+            return
         if not isinstance(frame, dict) or frame.get("jsonrpc") != "2.0":
             await self._send({"jsonrpc": "2.0", "id": None,
                               "error": {"code": -32600, "message": "Invalid JSON-RPC request"}})
@@ -160,6 +262,9 @@ class ACPServer:
                             pass
                 except (ValueError, PermissionError):
                     pass
+                for pending in list(self._pending_permissions.values()):
+                    if not pending.done():
+                        pending.cancel()
             return
         if method == "session/prompt":
             try:
@@ -217,6 +322,9 @@ class ACPServer:
                     continue
                 await self._on_frame(frame)
         finally:
+            for pending in list(self._pending_permissions.values()):
+                if not pending.done():
+                    pending.cancel()
             for session_id, cmd in list(self._active.items()):
                 for _ in self.runtime.processor.cancel_turn(
                     cmd.turn_id, "ACP connection closed", conversation_id=session_id,
