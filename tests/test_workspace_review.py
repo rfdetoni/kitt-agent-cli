@@ -111,3 +111,26 @@ def test_review_only_one_concurrent_apply_succeeds(tmp_path):
         outcomes = sorted(pool.map(apply, range(2)))
     assert outcomes == ["APPLIED", "CONFLICT"]
     assert (tmp_path / "file.txt").read_text() == "content"
+
+def test_sqlite_compare_and_swap_across_independent_workers(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from kitt.history.database import HistoryDatabase
+    from kitt.runtime.state import RuntimeStateStore
+
+    database = HistoryDatabase(root_dir=str(tmp_path))
+    first = RuntimeStateStore(database, "workspace", "conversation")
+    second = RuntimeStateStore(database, "workspace", "conversation")
+    key = "review_" + "a" * 32
+    row = {"status": "PREVIEW", "owner": None, "files": []}
+    first.set(key, row, ttl_seconds=86400)
+
+    def attempt(store):
+        return store.compare_and_swap_status(key, "PREVIEW", {**row, "status": "APPLYING"})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(attempt, (first, second)))
+
+    assert sorted(outcomes) == [False, True]
+    assert first.get(key)["status"] == "APPLYING"
+    assert not second.compare_and_swap_status(key, "PREVIEW", {**row, "status": "APPLIED"})
+    database.close()
