@@ -13,7 +13,7 @@ from kitt.runtime.autopilot_publish import (
 def test_sensitive_paths_are_never_uploaded():
     for value in (".env", ".env.prod", ".git/config", ".kitt/index.db",
                   "node_modules/x", "../private", "/etc/passwd",
-                  "secrets/x.pem"):
+                  "secrets/x.pem", ".npmrc", "credentials.json", "src/secrets.yml"):
         assert not _safe_path(value)
     assert _safe_path("src/main/java/App.java")
 

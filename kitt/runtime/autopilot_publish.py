@@ -23,6 +23,7 @@ MAX_CHANGES = 100
 EXCLUDED = {
     ".git", ".kitt", ".venv", "venv", "node_modules", "dist",
     "build", "target", ".gradle", ".next", "__pycache__", ".pytest_cache",
+    ".ssh", ".aws", ".kube", ".gnupg", ".config", ".m2",
 }
 SOURCE_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -60,7 +61,13 @@ def _safe_path(value: str) -> bool:
         and ".." not in parts and not (set(parts) & EXCLUDED)
         and all(
             not part.startswith(".env")
-            and not part.endswith((".pem", ".key", ".p12", ".pfx"))
+            and part.casefold() not in {
+                ".npmrc", ".pypirc", "id_rsa", "id_ed25519", "credentials",
+                "credentials.json", "credentials.yml", "secrets.json",
+                "secrets.yml", "secrets.yaml", "token.json",
+                "settings-security.xml",
+            }
+            and not part.casefold().endswith((".pem", ".key", ".p12", ".pfx"))
             for part in parts
         )
     )
