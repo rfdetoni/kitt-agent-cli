@@ -1,5 +1,16 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.88.88 — enforce path-scoped recipe visibility
+
+- Enforce the calling principal's allowed paths when enumerating, inspecting
+  and executing workspace-local recipes. A path-scoped child can only inspect
+  and run an explicitly accessible recipe, while nested read-only tool calls
+  continue to obey their own capability and path boundaries.
+- Add regression coverage for restricted recipe metadata and execution.
+  Align pyproject.toml, uv.lock, package fallback and README version.
+- No external dependency, native runtime, provider or protocol changes.
+
+
 ## 0.88.87 — workspace-local read-only workflow recipes
 
 - Add declarative `.kitt/recipes/<name>.toml` workflows, backed by the existing `program.execute` interpreter, with `recipe.list`, `recipe.inspect` and `recipe.run` runtime operations.

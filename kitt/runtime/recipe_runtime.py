@@ -36,9 +36,11 @@ class ReadOnlyRecipeService:
             raise ValueError("recipe name must be a lowercase slug (1..48 characters)")
         return value
 
-    def _load(self, name: str) -> dict[str, Any]:
+    def _load(self, name: str, security_context=None) -> dict[str, Any]:
         name = self._name(name)
         relative = f".kitt/recipes/{name}.toml"
+        if security_context is not None:
+            security_context.assert_path_allowed(relative)
         path = self.root / relative
         # Do not follow workspace-config symlinks, including a substituted parent.
         for part in (self.root / ".kitt", self.root / ".kitt" / "recipes", path):
@@ -73,7 +75,7 @@ class ReadOnlyRecipeService:
             "sha256": hashlib.sha256(data).hexdigest(),
         }
 
-    def list(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    def list(self, arguments: dict[str, Any], security_context=None) -> dict[str, Any]:
         if arguments:
             raise ValueError("recipe.list takes no arguments")
         directory = self.root / ".kitt" / "recipes"
@@ -102,16 +104,16 @@ class ReadOnlyRecipeService:
                 truncated = True
                 break
             try:
-                loaded = self._load(name)
+                loaded = self._load(name, security_context)
             except (OSError, PermissionError, ValueError, UnicodeError, tomllib.TOMLDecodeError):
                 continue
             recipes.append({key: loaded[key] for key in ("name", "title", "description", "sha256")})
         return {"recipes": recipes, "truncated": truncated}
 
-    def inspect(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    def inspect(self, arguments: dict[str, Any], security_context=None) -> dict[str, Any]:
         if not isinstance(arguments, dict) or set(arguments) != {"name"}:
             raise ValueError("recipe.inspect requires name")
-        loaded = self._load(arguments["name"])
+        loaded = self._load(arguments["name"], security_context)
         return {
             "name": loaded["name"],
             "title": loaded["title"],
@@ -126,7 +128,7 @@ class ReadOnlyRecipeService:
             origin: str, capabilities: set[str], security_context):
         if not isinstance(arguments, dict) or set(arguments) - {"name", "state", "max_tokens"}:
             raise ValueError("recipe.run requires name and optional state/max_tokens")
-        loaded = self._load(arguments.get("name"))
+        loaded = self._load(arguments.get("name"), security_context)
         state = arguments.get("state", {})
         if (not isinstance(state, dict) or len(state) > 32
                 or any(not isinstance(k, str) or len(k) > 64 for k in state)):
