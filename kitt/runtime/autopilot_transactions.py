@@ -21,6 +21,8 @@ class TaskWorktree:
         self.root = Path(runtime.root).resolve()
 
     def current(self):
+        if self.runtime.state is None:
+            return None
         info = self.runtime.state.get(KEY)
         if info is None:
             return None
