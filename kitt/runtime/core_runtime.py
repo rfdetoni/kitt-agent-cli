@@ -617,26 +617,27 @@ class SafeRuntime:
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
 
-        if op in {
-            "repo.write_file", "repo.create_directory", "repo.edit_symbol",
-            "repo.move", "repo.rename", "repo.delete", "patch.apply",
-            "recipe.run", "recipe.apply", "recipe.rewind",
-            "review.apply", "review.rewind", "git.action",
-            "autopilot.checkpoint", "autopilot.diff", "autopilot.rollback",
-            "process.start", "process.run", "test.run", "flow.execute",
-            "program.execute", "program.session.execute", "sandbox.python",
-            "plan.patch", "plan.dispatch", "plan.dispatch_ready",
-            "plan.checkpoint", "harness.refine.apply", "harness.refine.rollback",
-            "backend.compile", "children.spawn", "mcp.call",
-        }:
-            if self.autopilot_worktree.current() is not None:
-                return self._result(start, SafeRuntimeResult(
-                    False, op, error=(
-                        "Transaction active: edit only through sandbox.run inside "
-                        "the isolated worktree. Use autopilot.transaction.abandon "
-                        "to discard task results without modifying the checkout."
-                    ),
-                ))
+        # A task's isolated worker is the ONLY mutation surface until the
+        # transaction is abandoned or published. Read-only inspection is safe,
+        # but generic state changes, children and process controls can modify
+        # the base checkout through another path.
+        transaction_allowed = {
+            "sandbox.run", "autopilot.verify", "autopilot.publish",
+            "autopilot.transaction.status", "autopilot.transaction.abandon",
+            "repo.read", "repo.search", "repo.list", "repo.context_map",
+            "repo.inspect_symbol", "repo.read_symbol", "repo.references",
+            "repo.definition", "repo.hover", "repo.references_semantic",
+            "repo.diagnostics", "repo.call_hierarchy", "repo.outline",
+            "state.get", "state.list", "agents.list",
+        }
+        if op not in transaction_allowed and self.autopilot_worktree.current() is not None:
+            return self._result(start, SafeRuntimeResult(
+                False, op, error=(
+                    "Task transaction active: only isolated sandbox.run, "
+                    "autopilot.verify/publish, transaction status/abandon and "
+                    "read-only inspection are allowed."
+                ),
+            ))
 
         if op.startswith("autopilot."):
             autonomy = getattr(
