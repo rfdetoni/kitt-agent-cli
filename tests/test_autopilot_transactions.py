@@ -57,3 +57,11 @@ def test_stateless_runtime_has_no_active_transaction(tmp_path):
     assert task.current() is None
     with pytest.raises(RuntimeError, match="durable"):
         task.start({})
+
+
+def test_rewritten_worktree_git_pointer_is_rejected(task):
+    task.start({})
+    pointer = task.directory() / ".git"
+    pointer.write_text("gitdir: /tmp/another-repository")
+    with pytest.raises(PermissionError, match="Git metadata changed"):
+        task.current()
