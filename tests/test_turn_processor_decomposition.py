@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
+from kitt.core.execution_budget import ExecutionBudgetExceeded
 from kitt.core.runtime_config import RuntimeConfig
 from kitt.core.turn_processor import TurnProcessor
 from kitt.core.turn_tool_loop import TurnToolLoopMixin
@@ -44,6 +45,50 @@ class TurnProcessorDecompositionTests(unittest.TestCase):
                 self.assertTrue(any(isinstance(e, TurnBlocked) and
                                     "journal is unavailable" in e.reason for e in events))
                 self.assertFalse((Path(root) / "mbs-wine").exists())
+            finally:
+                processor.close()
+                processor.registry.close()
+
+    def test_model_wallet_exhaustion_yields_checkpoint_not_failed_turn(self):
+        class ProxyClient:
+            profile = ModelProfile(
+                backend="kitt-reverse-proxy",
+                protocol="kitt-reverse-proxy",
+                model="chatgpt-web",
+                base_url="http://127.0.0.1:3000",
+                context_window=32768,
+            )
+
+            def chat_stream(self, messages, **kwargs):
+                raise AssertionError("Provider must not be contacted after budget refusal")
+                yield ""
+
+        with tempfile.TemporaryDirectory() as root:
+            processor = TurnProcessor(
+                root_dir=root,
+                execution_client=ProxyClient(),
+                config=RuntimeConfig(
+                    history_enabled=False,
+                    persistence_enabled=False,
+                    semantic_mode="local",
+                ),
+            )
+            try:
+                with patch.object(
+                    processor,
+                    "_stream_execution_response",
+                    side_effect=ExecutionBudgetExceeded("model call budget exceeded"),
+                ) as stream:
+                    events = list(processor.run_turn(TurnCommand(
+                        "conv", "Continue previously verified workspace changes.",
+                        mode="auto", no_history=True,
+                    )))
+                checkpoints = [event for event in events if isinstance(event, TurnBlocked)]
+                self.assertEqual(len(checkpoints), 1)
+                self.assertIn("model call budget exceeded", checkpoints[0].reason)
+                self.assertIn("new budgeted turn", checkpoints[0].reason)
+                self.assertFalse(any(isinstance(event, TurnFailed) for event in events))
+                self.assertEqual(stream.call_count, 1)
             finally:
                 processor.close()
                 processor.registry.close()

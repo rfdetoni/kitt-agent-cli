@@ -9,6 +9,7 @@ import time
 from typing import Iterator, Optional
 
 from kitt.context_filter.prompt_budget import TokenCounter
+from kitt.core.execution_budget import ExecutionBudgetExceeded
 from kitt.core.execution_request import ExecutionRequest
 from kitt.core.logging import summarize_trace_messages, summarize_trace_text, trace_event
 from kitt.core.turn_command import TurnCommand
@@ -304,6 +305,24 @@ class TurnToolLoopMixin:
                 })
                 full_response = ""
                 continue
+            except ExecutionBudgetExceeded as exc:
+                # The host has already enforced the wallet. Preserve verified
+                # tool receipts and ask for a fresh budgeted turn, not a replay
+                # or a traceback after potentially successful mutations.
+                trace_event(
+                    logger,
+                    "tool_loop.budget_checkpoint",
+                    turn_id=cmd.turn_id,
+                    route=effective_agent_route,
+                    tool_calls=tool_calls,
+                    reason=str(exc),
+                )
+                yield TurnBlocked(reason=(
+                    f"Execution budget checkpoint: {exc}. "
+                    "Completed host actions remain recorded; continue the pending "
+                    "contract item in a new budgeted turn."
+                )), None, None
+                return
             except TransportCancelled:
                 # Operator cancellation is expected; don't emit an ERROR
                 # traceback and duplicate the terminal cancellation event.
