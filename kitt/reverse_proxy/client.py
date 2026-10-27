@@ -100,7 +100,7 @@ class ReverseProxyClient:
         log_level = max(0, min(2, log_level))
         log_content = (os.getenv("KITT_LOG_CONTENT", "") or "").strip().lower()
         if log_content not in {"none", "metadata", "full"}:
-            log_content = "full" if log_level >= 2 else "metadata"
+            log_content = "metadata"  # full prompts/responses require explicit opt-in
         log_file = (
             (os.getenv("KITT_LOG_FILE", "") or "").strip()
             or (os.getenv("KITT_DEBUG_LOG", "") or "").strip()

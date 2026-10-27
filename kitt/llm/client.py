@@ -6,8 +6,12 @@ import concurrent.futures
 import hashlib
 import logging
 import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
-from kitt.llm.http_security import TransportCancellation, cancellation_scope
+from kitt.llm.http_security import TransportCancellation, cancellation_scope, secure_urlopen
 from kitt.llm.privacy import profile_processing_is_local
 
 from typing import Callable, Dict, Generator, List, Optional, TypeAlias
@@ -47,6 +51,50 @@ from kitt.router.models import ModelCapabilities
 logger = logging.getLogger(__name__)
 
 _FREE_LLM_API_COOLDOWNS = ProviderCooldowns()
+
+
+def _wait_for_local_kitt_proxy(
+    base_url: str,
+    cancellation: TransportCancellation,
+    *,
+    timeout_seconds: float = 30.0,
+) -> bool:
+    """Wait only for a local proxy that has not started listening yet.
+
+    The probe is a GET to /healthz; no chat POST is ever replayed here. A
+    reachable, older proxy without /healthz is left to normal negotiation.
+    """
+    parsed = urllib.parse.urlsplit(base_url)
+    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return False
+    health_url = f"{parsed.scheme}://{parsed.netloc}/healthz"
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        cancellation.check()
+        request = urllib.request.Request(
+            health_url, headers={"User-Agent": "Kitt-Agent-CLI/readiness"}, method="GET"
+        )
+        try:
+            with secure_urlopen(request, timeout=1.0) as response:
+                return response.status == 200
+        except urllib.error.HTTPError as exc:
+            # The HTTP listener exists. Let normal capability/error handling
+            # decide whether this is a compatible proxy.
+            if exc.code not in (502, 503):
+                return True
+        except urllib.error.URLError as exc:
+            if not isinstance(exc.reason, ConnectionRefusedError):
+                return False
+        except ConnectionRefusedError:
+            pass
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProviderConnectionError(
+                f"KITT reverse proxy at {parsed.netloc} did not become ready "
+                "within the startup window; start/check the managed proxy and retry."
+            )
+        cancellation.wait(min(1.0, remaining))
 
 _SHARED_LLM_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=4,
@@ -438,6 +486,15 @@ class LLMClient:
                 api_key=api_key,
                 timeout=min(1.0, max(0.2, float(self.profile.request_timeout_seconds))),
             )
+            if not discovered.discovered and _wait_for_local_kitt_proxy(base_url, cancellation):
+                # Failed discovery snapshots are cached; never keep an offline
+                # result after the local proxy has come online.
+                discovered = discover_kitt_proxy_capabilities(
+                    base_url,
+                    api_key=api_key,
+                    timeout=min(1.0, max(0.2, float(self.profile.request_timeout_seconds))),
+                    force=True,
+                )
             self._last_kitt_proxy_capabilities = discovered
             if discovered.discovered and discovered.agent_contract_version != AGENT_CONTRACT_VERSION:
                 raise ProviderProtocolError(

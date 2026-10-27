@@ -73,6 +73,19 @@ class ReverseProxyManagedLifecycleTests(unittest.TestCase):
         self.assertIn(str(os.getpid()), fallback)
         self.assertIn("agent-owned", client._owned_instance_ids)
 
+    def test_trace_logging_defaults_to_metadata_without_full_content_opt_in(self):
+        client = CaptureReverseProxyClient()
+        with patch.dict(
+            os.environ,
+            {
+                "KITT_LOG_LEVEL": "2",
+                "KITT_LOG_FILE": "/tmp/kitt/agent-cli.log",
+            },
+            clear=True,
+        ):
+            client.start_instance("chatgpt", port=3001)
+        self.assertEqual(client.calls[0][1]["log_content"], "metadata")
+
     def test_refreshes_resident_control_plane_once_before_managed_start(self):
         client = ReverseProxyClient(executable="kitt-reverse-proxy")
         commands = []
