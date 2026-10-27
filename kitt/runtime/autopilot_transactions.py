@@ -1,5 +1,6 @@
 """Task-isolated Git worktrees for the autonomous root principal."""
 from pathlib import Path
+import hashlib
 import re
 import uuid
 
@@ -34,6 +35,12 @@ class TaskWorktree:
                 or not task.is_dir()
                 or not task.resolve().is_relative_to(self.root)):
             raise PermissionError("transaction workspace missing or unsafe")
+        pointer = task / ".git"
+        if pointer.is_symlink() or not pointer.is_file():
+            raise PermissionError("transaction Git metadata is unsafe")
+        fingerprint = hashlib.sha256(pointer.read_bytes()).hexdigest()
+        if fingerprint != info.get("git_pointer_sha256"):
+            raise PermissionError("transaction Git metadata changed")
         if _git(task, "rev-parse", "HEAD").decode().strip() != info["head"]:
             raise PermissionError("transaction revision drift")
         return info
@@ -58,7 +65,13 @@ class TaskWorktree:
             raise ValueError("isolated task retention limit reached")
         rel = PREFIX + uuid.uuid4().hex
         _git(self.root, "worktree", "add", "--detach", str(self.root / rel), head)
-        info = {"path": rel, "head": head}
+        pointer = self.root / rel / ".git"
+        if pointer.is_symlink() or not pointer.is_file():
+            raise PermissionError("new task Git metadata is unsafe")
+        info = {
+            "path": rel, "head": head,
+            "git_pointer_sha256": hashlib.sha256(pointer.read_bytes()).hexdigest(),
+        }
         self.runtime.state.set(KEY, info)
         self.runtime.state.delete("autopilot.task.verification")
         return info

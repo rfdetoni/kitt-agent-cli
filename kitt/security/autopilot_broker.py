@@ -109,8 +109,8 @@ class DockerBroker:
                 not directory.is_dir() or
                 not directory.resolve().is_relative_to(self.root)):
             raise PermissionError("untrusted isolated task directory")
-        if not (directory / ".git").is_file():
-            raise PermissionError("isolated task must be a linked Git worktree")
+        if (directory / ".git").is_symlink() or not (directory / ".git").is_file():
+            raise PermissionError("isolated task must be a safe linked Git worktree")
         return directory
 
     def _worker_name(self, image: str, profile: str,
