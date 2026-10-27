@@ -62,3 +62,14 @@ class TaskWorktree:
             return {"active": False}
         dirty = bool(_git(self.directory(), "status", "--porcelain").strip())
         return {"active": True, "path": info["path"], "modified": dirty}
+
+    def abandon(self, args):
+        """Rollback by dropping the active pointer; retain files for audit."""
+        if args:
+            raise ValueError("transaction.abandon takes no arguments")
+        info = self.current()
+        if info is None:
+            raise ValueError("no active transaction")
+        self.runtime.state.delete(KEY)
+        self.runtime.state.delete("autopilot.task.verification")
+        return {"abandoned": True, "retained_path": info["path"]}
