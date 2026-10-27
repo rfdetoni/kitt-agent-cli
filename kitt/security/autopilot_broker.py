@@ -72,7 +72,7 @@ class DockerBroker:
         selected = host_workspace or host_workspace_from_mount(docker)
         if not selected or not Path(selected).is_absolute() or selected == "/":
             raise ValueError("broker host workspace must be an absolute, non-root path")
-        if any(char in selected for char in (",", "\\n", "\\r")):
+        if any(char in selected for char in (",", "\n", "\r")):
             raise ValueError("broker workspace source has unsafe Docker mount characters")
         self.host_workspace = selected
         self.root = Path(broker_root).resolve()
@@ -117,7 +117,7 @@ class DockerBroker:
             raise RuntimeError("unable to inspect approved Docker image")
         image_id = inspected.stdout.strip()
         probe = self._call(
-            ["inspect", "--format", "{{index .Config.Labels \\"dev.kitt.autopilot\\"}}", name]
+            ["inspect", "--format", "{{index .Config.Labels \"dev.kitt.autopilot\"}}", name]
         )
         if probe.returncode == 0:
             if probe.stdout.strip() != b"true":

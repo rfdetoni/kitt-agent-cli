@@ -34,7 +34,8 @@ def test_broker_worker_reuse_isolation_and_reprovision(tmp_path: Path, monkeypat
         assert first["returncode"] == 0, first["stderr"]
         second = broker.execute({
             "profile": "workspace-write",
-            "argv": ["sh", "-c", "test \\"$(cat /home/kitt/cache/item)\\" = reusable "
+            "argv": ["sh", "-c", "test -f /home/kitt/cache/item "
+                     "&& grep -q reusable /home/kitt/cache/item "
                      "&& test ! -e .kitt/secret && test ! -e /var/run/docker.sock "
                      "&& printf passed > proof"],
         })
