@@ -1346,10 +1346,12 @@ class SafeRuntime:
             requested_cwd = args.get("cwd", ".")
             if task is not None:
                 from pathlib import PurePosixPath
+                from kitt.tools.process_runner import ProcessRunner
                 relative = PurePosixPath(str(requested_cwd))
                 if relative.is_absolute() or ".." in relative.parts:
                     raise PermissionError("transaction cwd must stay inside task worktree")
-                requested_cwd = str(PurePosixPath(task["path"]) / relative)
+                runner = ProcessRunner(str(self.autopilot_worktree.directory()))
+                requested_cwd = str(relative)
             result = runner.run(
                 argv, cwd=requested_cwd,
                 timeout_seconds=timeout,

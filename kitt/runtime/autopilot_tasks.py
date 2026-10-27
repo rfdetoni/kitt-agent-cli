@@ -131,7 +131,10 @@ class AutopilotTaskService:
         checks = []
         task = (self.runtime.autopilot_worktree.current()
                 if hasattr(self.runtime, "autopilot_worktree") else None)
-        task_cwd = task["path"] if task else "."
+        task_cwd = "."
+        if task is not None:
+            from kitt.tools.process_runner import ProcessRunner
+            runner = ProcessRunner(str(self.runtime.autopilot_worktree.directory()))
         self.runtime.state.delete(self.VERIFY_KEY)
         for command in self._commands():
             result = runner.run(
