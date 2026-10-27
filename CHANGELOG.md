@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.6 — preserve checkpoints when model wallet is exhausted
+
+- Turn model-call, token, cost or duration budget exhaustion into an explicit `TurnBlocked` checkpoint instead of an unhandled model dispatch exception.
+- Preserve host execution receipts and stop dispatch immediately; the next step requires a new authorized budgeted turn, not automatic replay or limit escalation.
+- Add regression exercising the real turn processor and asserting no additional provider contact; synchronize package, runtime fallback and uv lock versions.
+- Reverse Proxy Chromium resource-pressure and large-composer errors remain separately diagnosed; no safety budget or browser memory guard was disabled.
+
 ## 0.89.5 — local proxy startup recovery and safe diagnostics
 
 - Wait up to 30 seconds, with cancellation, for a not-yet-listening local reverse proxy before the first chat POST. Do not replay a submitted WebChat request.
