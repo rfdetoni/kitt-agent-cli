@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.5 — local proxy startup recovery and safe diagnostics
+
+- Wait up to 30 seconds, with cancellation, for a not-yet-listening local reverse proxy before the first chat POST. Do not replay a submitted WebChat request.
+- Refresh proxy capability discovery after the listener becomes available rather than reusing the cached offline snapshot.
+- Make managed reverse-proxy logs metadata-only by default, even at TRACE; full content requires `KITT_LOG_CONTENT=full`.
+- Clarify that `flow.execute` is read-only and `process.run` must be issued as its own governed operation.
+- Add startup refusal/timeout/remote-host and managed logging regression coverage; synchronize `pyproject.toml` and `uv.lock`.
+
 ## 0.89.4 — isolated task worktrees
 
 - Add task-isolated Git worktree lifecycle through autopilot.transaction.start/status/abandon.

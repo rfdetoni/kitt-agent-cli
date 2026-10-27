@@ -27,7 +27,9 @@ def capability_snapshot_for_prompt(prompt: str, workspace: Path) -> str:
         "recommended_workflow": (
             "repo.batch_read for up to eight independent repo.read/repo.list calls, "
             "repo.search for targeted lookup, patch.apply or repo.write_file for edits, "
-            "process.run only for authorized validation; do not repeat cached host receipts"
+            "flow.execute is read-only and cannot contain process.run; "
+            "use process.run separately for authorized validation; "
+            "do not repeat cached host receipts"
         ),
     }
     if re_task:
