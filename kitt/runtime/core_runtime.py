@@ -619,8 +619,15 @@ class SafeRuntime:
 
         if op in {
             "repo.write_file", "repo.create_directory", "repo.edit_symbol",
-            "patch.apply", "recipe.apply", "review.apply", "git.action",
+            "repo.move", "repo.rename", "repo.delete", "patch.apply",
+            "recipe.run", "recipe.apply", "recipe.rewind",
+            "review.apply", "review.rewind", "git.action",
             "autopilot.checkpoint", "autopilot.diff", "autopilot.rollback",
+            "process.start", "process.run", "test.run", "flow.execute",
+            "program.execute", "program.session.execute", "sandbox.python",
+            "plan.patch", "plan.dispatch", "plan.dispatch_ready",
+            "plan.checkpoint", "harness.refine.apply", "harness.refine.rollback",
+            "backend.compile", "children.spawn", "mcp.call",
         }:
             if self.autopilot_worktree.current() is not None:
                 return self._result(start, SafeRuntimeResult(
