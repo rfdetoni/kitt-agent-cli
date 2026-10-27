@@ -13,6 +13,7 @@ import socket
 import socketserver
 import subprocess
 import sys
+import threading
 from typing import Any
 
 from kitt.security.execution_sandbox import ExecutionSandbox, _TOOLCHAIN_IMAGES
@@ -67,12 +68,14 @@ def host_workspace_from_mount(docker: str = "docker") -> str:
 class DockerBroker:
     """Persistent, bounded Docker workers keyed by workspace/image/authority."""
 
-    def __init__(self, host_workspace: str, docker: str = "docker"):
+    def __init__(self, host_workspace: str, docker: str = "docker", *, broker_root: str = "/workspace"):
         selected = host_workspace or host_workspace_from_mount(docker)
         if not selected or not Path(selected).is_absolute() or selected == "/":
             raise ValueError("broker host workspace must be an absolute, non-root path")
+        if any(char in selected for char in (",", "\n", "\r")):
+            raise ValueError("broker workspace source has unsafe Docker mount characters")
         self.host_workspace = selected
-        self.root = Path("/workspace").resolve()
+        self.root = Path(broker_root).resolve()
         if not self.root.is_dir():
             raise ValueError("broker requires workspace mounted at /workspace")
         self.docker = docker
@@ -82,6 +85,8 @@ class DockerBroker:
         self.allowed_images = frozenset({self.base_image, *_TOOLCHAIN_IMAGES.values()})
         self.runner = ProcessRunner(str(self.root), max_output_bytes=MAX_OUTPUT)
         self.allow_network = os.getenv("KITT_BROKER_ALLOW_NETWORK", "").lower() == "true"
+        self._lock_guard = threading.Lock()
+        self._worker_locks: dict[str, threading.Lock] = {}
 
     def _call(self, command: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -100,23 +105,34 @@ class DockerBroker:
         if profile == "workspace-write+network" and not self.allow_network:
             raise PermissionError("network not delegated to the broker by operator")
         name = self._worker_name(image, profile)
+        inspected = self._call(["image", "inspect", image, "--format", "{{.Id}}"])
+        if inspected.returncode != 0:
+            if image not in _TOOLCHAIN_IMAGES.values():
+                raise RuntimeError("operator must pre-pull the base broker image")
+            pulled = self._call(["pull", image], timeout=600)
+            if pulled.returncode != 0:
+                raise RuntimeError("failed to prepare fixed toolchain image")
+            inspected = self._call(["image", "inspect", image, "--format", "{{.Id}}"])
+        if inspected.returncode != 0 or not inspected.stdout.strip():
+            raise RuntimeError("unable to inspect approved Docker image")
+        image_id = inspected.stdout.strip()
         probe = self._call(
             ["inspect", "--format", "{{index .Config.Labels \"dev.kitt.autopilot\"}}", name]
         )
         if probe.returncode == 0:
             if probe.stdout.strip() != b"true":
                 raise PermissionError("worker name collision without KITT authority label")
-            state = self._call(["inspect", "--format", "{{.State.Running}}", name])
-            if state.returncode == 0 and state.stdout.strip() == b"true":
+            state = self._call(
+                ["inspect", "--format",
+                 "{{.State.Running}}|{{.Image}}|{{.HostConfig.NetworkMode}}|{{.HostConfig.ReadonlyRootfs}}", name]
+            )
+            network = "bridge" if profile == "workspace-write+network" else "none"
+            expected = b"true|" + image_id + b"|" + network.encode() + b"|true"
+            if state.returncode == 0 and state.stdout.strip() == expected:
                 return name
-            self._call(["rm", "-f", name])
-        inspect = self._call(["image", "inspect", image, "--format", "{{.Id}}"])
-        if inspect.returncode != 0:
-            if image not in _TOOLCHAIN_IMAGES.values():
-                raise RuntimeError("operator must pre-pull the base broker image")
-            pull = self._call(["pull", image], timeout=600)
-            if pull.returncode != 0:
-                raise RuntimeError("failed to prepare fixed toolchain image")
+            removed = self._call(["rm", "-f", name])
+            if removed.returncode != 0:
+                raise RuntimeError("stale sandbox worker could not be removed")
         st = self.root.stat()
         command = [
             "run", "-d", "--rm", "--init", "--name", name,
@@ -138,8 +154,11 @@ class DockerBroker:
             ),
             "--workdir", "/workspace",
         ]
-        if (self.root / ".kitt").is_dir():
-            command.extend(["--mount", "type=tmpfs,dst=/workspace/.kitt"])
+        if (self.root / ".kitt").is_symlink() or (self.root / ".kitt").is_file():
+            raise PermissionError("KITT control-plane path cannot be a symlink or file")
+        # Always mask KITT control-plane data, including when it was absent
+        # when this container was first created.
+        command.extend(["--mount", "type=tmpfs,dst=/workspace/.kitt"])
         command.extend(["--entrypoint", "/usr/bin/env", image, "sleep", "infinity"])
         launched = self._call(command, timeout=90)
         if launched.returncode != 0:
@@ -159,19 +178,23 @@ class DockerBroker:
         image = ExecutionSandbox._select_toolchain_image(
             self.base_image, argv, self.root / cwd
         )
-        name = self._worker(image, profile)
-        # The model supplies argv and relative cwd, never Docker arguments.
-        command = [
-            self.docker, "exec", "-w", str(PurePosixPath("/workspace") / cwd),
-            name, *argv,
-        ]
-        result = self.runner.run(
-            command, cwd=self.root, timeout_seconds=raw_timeout,
-            sandbox_profile="full-access",
-        )
-        if result.timed_out:
-            # Kill the worker as well: Docker exec can outlive its CLI process.
-            self._call(["rm", "-f", name], timeout=15)
+        name = self._worker_name(image, profile)
+        with self._lock_guard:
+            worker_lock = self._worker_locks.setdefault(name, threading.Lock())
+        with worker_lock:
+            name = self._worker(image, profile)
+            # The model supplies argv and relative cwd, never Docker arguments.
+            command = [
+                self.docker, "exec", "-w", str(PurePosixPath("/workspace") / cwd),
+                name, *argv,
+            ]
+            result = self.runner.run(
+                command, cwd=self.root, timeout_seconds=raw_timeout,
+                sandbox_profile="full-access",
+            )
+            if result.timed_out:
+                # Kill the worker as well: Docker exec can outlive its CLI process.
+                self._call(["rm", "-f", name], timeout=15)
         return {
             "returncode": result.returncode if not result.timed_out else 124,
             "stdout": result.stdout[:MAX_OUTPUT],

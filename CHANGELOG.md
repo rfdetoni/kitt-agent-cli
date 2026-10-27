@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.3 — broker real-Docker lifecycle and containment validation
+
+- Exercise real persistent worker reuse, ephemeral HOME cache retention, network refusal, read-only workspace enforcement, KITT state masking, and clean worker recovery in Docker CI.
+- Revalidate running worker image IDs and networking before reuse; regenerate when image updates or worker state drifts.
+- Serialize commands within each worker, and always mask the KITT control-plane directory, including if it did not previously exist.
+- Keep base broker/worker Docker socket isolated from sandbox commands; increment package and uv lock metadata.
+
+
 ## 0.89.2 — preauthorized, validated GitHub publication
 
 - Add trusted `autopilot.publish` with explicit operator repo/branch/token grant and network capability; GitHub Git Data API publishes bounded file diffs without exposing credentials to toolchains or invoking host Git push/hooks.
