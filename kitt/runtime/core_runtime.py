@@ -617,6 +617,20 @@ class SafeRuntime:
                     start, SafeRuntimeResult(False, op, error=f"Structural edit preflight failed: {exc}")
                 )
 
+        if op in {
+            "repo.write_file", "repo.create_directory", "repo.edit_symbol",
+            "patch.apply", "recipe.apply", "review.apply", "git.action",
+            "autopilot.checkpoint", "autopilot.diff", "autopilot.rollback",
+        }:
+            if self.autopilot_worktree.current() is not None:
+                return self._result(start, SafeRuntimeResult(
+                    False, op, error=(
+                        "Transaction active: edit only through sandbox.run inside "
+                        "the isolated worktree. Use autopilot.transaction.abandon "
+                        "to discard task results without modifying the checkout."
+                    ),
+                ))
+
         if op.startswith("autopilot."):
             autonomy = getattr(
                 getattr(getattr(self.registry, "policy", None), "autonomy", None),
