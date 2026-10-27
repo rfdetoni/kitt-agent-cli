@@ -90,6 +90,26 @@ class TestKittReverseProxyCompatibility(unittest.TestCase):
                     )))
 
 
+    def test_unterminated_stream_reports_request_id_without_replay(self):
+        class ResponseWithHeaders(io.BytesIO):
+            def __init__(self, raw):
+                super().__init__(raw)
+                self.headers = {"X-Kitt-Request-Id": "req-stream-123"}
+
+        raw = b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+        request = LLMRequest(
+            model="chatgpt-web",
+            messages=[{"role": "user", "content": "inspect"}],
+        )
+        with patch(
+            "kitt.llm.providers.kitt_reverse_proxy.secure_urlopen",
+            return_value=ResponseWithHeaders(raw),
+        ):
+            with self.assertRaises(ProviderProtocolError) as raised:
+                list(KittReverseProxyAdapter().stream(request))
+        self.assertIn("request_id=req-stream-123", str(raised.exception))
+        self.assertIn("do not automatically replay", str(raised.exception))
+
     def test_uncertain_webchat_timeouts_cannot_be_replayed(self):
         # A socket timeout can happen after the browser submitted the prompt.
         # Preserve this as a terminal protocol error, not a retryable timeout.

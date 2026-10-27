@@ -311,9 +311,15 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
         calls: Dict[int, Dict[str, str]] = {}
         stream_complete = False
         received_bytes = 0
+        response_request_id: Optional[str] = None
 
         try:
             with secure_urlopen(http_request, timeout=request.timeout_seconds) as response:
+                response_headers = getattr(response, "headers", None)
+                if response_headers is not None and hasattr(response_headers, "get"):
+                    value = response_headers.get("X-Kitt-Request-Id")
+                    if isinstance(value, str) and value.strip():
+                        response_request_id = value.strip()
                 for raw_line in iter(lambda: response.readline(4 * 1024 * 1024 + 1), b""):
                     received_bytes += len(raw_line)
                     if received_bytes > 4 * 1024 * 1024:
@@ -492,7 +498,18 @@ class KittReverseProxyAdapter(OpenAIChatAdapter):
             ) from exc
 
         if not stream_complete:
-            raise ProviderProtocolError("KITT reverse proxy stream ended before [DONE]")
+            details = [
+                f"received_bytes={received_bytes}",
+                f"content_chars={sum(len(part) for part in content_parts)}",
+                f"tool_calls={len(calls)}",
+            ]
+            if response_request_id:
+                details.append(f"request_id={response_request_id}")
+            raise ProviderProtocolError(
+                "KITT reverse proxy stream ended before [DONE] "
+                f"({', '.join(details)}). The WebChat request may already have been submitted; "
+                "do not automatically replay the logical request."
+            )
 
         if calls:
             if len(calls) != 1:
