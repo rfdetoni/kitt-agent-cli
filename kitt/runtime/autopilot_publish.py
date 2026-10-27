@@ -245,7 +245,10 @@ def publish_verified(runtime, args: dict, *, allow_network: bool) -> dict:
     snapshot = report.get("publication_snapshot")
     if not isinstance(snapshot, dict):
         raise PermissionError("Verification lacks publication workspace fingerprint")
-    now = inventory(runtime.root)
+    task_root = runtime.autopilot_worktree.directory() if hasattr(
+        runtime, "autopilot_worktree"
+    ) else runtime.root
+    now = inventory(task_root)
     if (now["digest"] != snapshot.get("digest")
             or now["head"] != snapshot.get("head")):
         raise PermissionError("Workspace changed since validation; rerun autopilot.verify")

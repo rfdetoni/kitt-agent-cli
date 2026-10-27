@@ -208,6 +208,15 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "autopilot.publish": RuntimeOperationSpec(
         "autopilot.publish", CAP_NETWORK_ACCESS, sensitive=True, risk_cost=5,
     ),
+    "autopilot.transaction.start": RuntimeOperationSpec(
+        "autopilot.transaction.start", CAP_REPO_WRITE, sensitive=True, risk_cost=3,
+    ),
+    "autopilot.transaction.status": RuntimeOperationSpec(
+        "autopilot.transaction.status", CAP_REPO_READ,
+    ),
+    "autopilot.transaction.abandon": RuntimeOperationSpec(
+        "autopilot.transaction.abandon", CAP_REPO_WRITE, sensitive=True, risk_cost=2,
+    ),
     "process.run": RuntimeOperationSpec(
         "process.run",
         CAP_PROCESS_RUN,
@@ -463,6 +472,8 @@ class SafeRuntime:
         )
         from kitt.runtime.autopilot_tasks import AutopilotTaskService
         self.autopilot_tasks = AutopilotTaskService(self)
+        from kitt.runtime.autopilot_transactions import TaskWorktree
+        self.autopilot_worktree = TaskWorktree(self)
 
     def _requested_control_plane_paths(
         self,
@@ -1126,6 +1137,15 @@ class SafeRuntime:
             ),
             "autopilot.verify": lambda: self._op_autopilot_verify(args, capabilities),
             "autopilot.publish": lambda: self._op_autopilot_publish(args, capabilities),
+            "autopilot.transaction.start": lambda: SafeRuntimeResult(
+                True, op, data=self.autopilot_worktree.start(args),
+            ),
+            "autopilot.transaction.status": lambda: SafeRuntimeResult(
+                True, op, data=self.autopilot_worktree.status(args),
+            ),
+            "autopilot.transaction.abandon": lambda: SafeRuntimeResult(
+                True, op, data=self.autopilot_worktree.abandon(args),
+            ),
             "process.run": lambda: self._op_registry_tool("process.run", "run_command", args, turn_id, origin, security_context, grant, expected_approval_id, automatic_budget_reserved),
             "test.run": lambda: self._op_test_run(
                 args, turn_id, origin, security_context, grant,
@@ -1308,8 +1328,16 @@ class SafeRuntime:
             if not 1 <= timeout <= 3600:
                 raise ValueError("timeout_seconds must be between 1 and 3600")
             runner = self.registry.process_runner
+            task = self.autopilot_worktree.current()
+            requested_cwd = args.get("cwd", ".")
+            if task is not None:
+                from pathlib import PurePosixPath
+                relative = PurePosixPath(str(requested_cwd))
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise PermissionError("transaction cwd must stay inside task worktree")
+                requested_cwd = str(PurePosixPath(task["path"]) / relative)
             result = runner.run(
-                argv, cwd=args.get("cwd"),
+                argv, cwd=requested_cwd,
                 timeout_seconds=timeout,
                 sandbox_profile=(
                     "workspace-write+network" if args.get("network", False)
