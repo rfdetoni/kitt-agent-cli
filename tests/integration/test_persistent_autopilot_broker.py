@@ -62,3 +62,41 @@ def test_broker_worker_reuse_isolation_and_reprovision(tmp_path: Path, monkeypat
     finally:
         broker._call(["rm", "-f", worker])
         broker._call(["rm", "-f", readonly])
+
+
+@pytest.mark.skipif(
+    os.environ.get("KITT_CONTAINER_RUNTIME") != "docker",
+    reason="Docker integration job only",
+)
+def test_broker_task_worker_cannot_read_parent_workspace(tmp_path: Path, monkeypatch):
+    if not shutil.which("docker"):
+        pytest.skip("docker CLI unavailable")
+    root = tmp_path / "workspace"
+    task_id = "a" * 32
+    task_rel = f".autopilot-tasks/{task_id}"
+    task = root / task_rel
+    task.mkdir(parents=True)
+    (task / ".git").write_text("gitdir: /private/root/.git/worktrees/1")
+    (task / "task.txt").write_text("task")
+    (root / "secret.txt").write_text("BASE_SECRET")
+    monkeypatch.setenv("KITT_BROKER_DEFAULT_IMAGE", "alpine:3.20")
+    broker = DockerBroker(str(root), broker_root=str(root))
+    name = broker._worker_name("alpine:3.20", "workspace-write", task_rel)
+    try:
+        reply = broker.execute({
+            "task_subdir": task_rel,
+            "profile": "workspace-write",
+            "argv": ["sh", "-c", "test -f task.txt && test ! -e secret.txt "
+                     "&& test ! -e /var/run/docker.sock && printf only_task > changed.txt"],
+        })
+        assert reply["returncode"] == 0, reply["stderr"]
+        assert (task / "changed.txt").read_text() == "only_task"
+        assert not (root / "changed.txt").exists()
+        assert (root / "secret.txt").read_text() == "BASE_SECRET"
+        with pytest.raises(PermissionError):
+            broker.execute({
+                "task_subdir": "../outside",
+                "profile": "workspace-write", "argv": ["sh", "-c", "true"],
+            })
+    finally:
+        broker._call(["rm", "-f", name])

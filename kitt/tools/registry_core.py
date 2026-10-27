@@ -405,7 +405,7 @@ class ToolRegistry:
                 "description": (
                     "Execute compact KITT operations (repo.*, artifacts.*, patch.*, process.*, sandbox.*, autopilot.*, children.*, goal.*, memory.*, state.*, handles.*). "
                     "In autonomous mode, prefer sandbox.run for unrestricted shell/build/file commands inside a verified workspace sandbox; "
-                    "process.run retains host policy restrictions. For unattended development use autopilot.checkpoint before edits, "
+                    "process.run retains host policy restrictions. For unattended development use autopilot.transaction.start or autopilot.checkpoint before edits, "
                     "autopilot.verify before reporting completion, and autopilot.publish only when prior operator authorization "
                     "has configured a GitHub repository and token. Use repo.create_directory for simple file operations."
                 ),

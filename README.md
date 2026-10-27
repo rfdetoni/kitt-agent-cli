@@ -364,6 +364,18 @@ Rust implementation and Rust CI belong in `kitt-toolbox`; this repository intent
 
 ---
 
+## Isolated task workspace
+
+Use `autopilot.transaction.start` from a clean Git checkout to create a
+separate task worktree under `.autopilot-tasks/`. Autonomous sandbox commands
+run inside that worktree. Run `autopilot.verify` before optional
+operator-authorized `autopilot.publish`; publication uses the fingerprinted
+task content. `autopilot.transaction.status` checks the task.
+`autopilot.transaction.abandon` leaves its files available for audit while
+clearing the active task. It does not overwrite the original checkout.
+Regular repository mutations are rejected while a transaction is active.
+Worktree metadata remains linked to the repository's Git object store.
+
 ## GitHub delivery with prior operator authorization
 
 `autopilot.publish` can publish a previously verified workspace to one

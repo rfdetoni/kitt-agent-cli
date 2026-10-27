@@ -96,7 +96,9 @@ class AutopilotTaskService:
         if value:
             commands = json.loads(value)
         else:
-            root = self.runtime.root
+            root = (self.runtime.autopilot_worktree.directory()
+                    if hasattr(self.runtime, "autopilot_worktree")
+                    else self.runtime.root)
             commands = []
             if (root / "pom.xml").is_file():
                 commands.append(["mvn", "test"])
@@ -127,10 +129,16 @@ class AutopilotTaskService:
         if runner is None:
             raise RuntimeError("strong sandbox process runner unavailable")
         checks = []
+        task = (self.runtime.autopilot_worktree.current()
+                if hasattr(self.runtime, "autopilot_worktree") else None)
+        task_cwd = "."
+        if task is not None:
+            from kitt.tools.process_runner import ProcessRunner
+            runner = ProcessRunner(str(self.runtime.autopilot_worktree.directory()))
         self.runtime.state.delete(self.VERIFY_KEY)
         for command in self._commands():
             result = runner.run(
-                command, cwd=".", timeout_seconds=1800,
+                command, cwd=task_cwd, timeout_seconds=1800,
                 sandbox_profile="workspace-write+network" if network else "workspace-write",
                 require_strong_sandbox=True,
                 prefer_docker_toolchain=True,
@@ -145,9 +153,12 @@ class AutopilotTaskService:
             if result.returncode != 0 or result.timed_out:
                 return {"ok": False, "checks": checks}
         report = {"ok": True, "checks": checks}
-        if os.environ.get("KITT_AUTOPILOT_PUBLISH_ENABLED", "").lower() == "true":
+        if (task is not None or
+                os.environ.get("KITT_AUTOPILOT_PUBLISH_ENABLED", "").lower() == "true"):
             from kitt.runtime.autopilot_publish import inventory
-            snapshot = inventory(self.runtime.root)
+            workspace = (self.runtime.autopilot_worktree.directory()
+                         if task is not None else self.runtime.root)
+            snapshot = inventory(workspace)
             report["publication_snapshot"] = {
                 "digest": snapshot["digest"], "head": snapshot["head"],
             }

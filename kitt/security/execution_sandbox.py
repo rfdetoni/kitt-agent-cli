@@ -300,6 +300,12 @@ class ExecutionSandbox:
                 "client", json.dumps({
                     "argv": list(argv), "cwd": str(rel),
                     "timeout": int(timeout_seconds), "profile": profile,
+                    "task_subdir": (
+                        f".autopilot-tasks/{self.root.name}"
+                        if self.root.parent.name == ".autopilot-tasks"
+                        and re.fullmatch(r"[0-9a-f]{32}", self.root.name)
+                        else None
+                    ),
                 }),
             ],
             profile=profile, backend="broker", strong=True,
@@ -760,7 +766,26 @@ class ExecutionSandbox:
                 reason="explicit-full-access",
             )
 
+        isolated_task = (
+            self.root.parent.name == ".autopilot-tasks"
+            and re.fullmatch(r"[0-9a-f]{32}", self.root.name) is not None
+        )
         broker = self._probe_broker()
+        if isolated_task:
+            if broker is not None:
+                if self.root.parent.parent != Path("/workspace"):
+                    raise SandboxUnavailable(
+                        "Compose broker transaction must live under /workspace/.autopilot-tasks"
+                    )
+                return self._broker_plan(
+                    broker, target, argv, cwd_path, timeout_seconds,
+                )
+            docker = self._probe_docker()
+            if docker is not None:
+                return self._docker_plan(docker[0], docker[1], target, argv, cwd_path)
+            raise SandboxUnavailable(
+                "Isolated transactions require Docker or a trusted Compose broker"
+            )
         if broker is not None:
             return self._broker_plan(
                 broker, target, argv, cwd_path, timeout_seconds,

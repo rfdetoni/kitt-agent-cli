@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import socket
 import socketserver
@@ -95,16 +96,36 @@ class DockerBroker:
             timeout=timeout, check=False,
         )
 
-    def _worker_name(self, image: str, profile: str) -> str:
-        value = f"{self.host_workspace}\x00{image}\x00{profile}"
+    def _task_root(self, task_subdir: str | None) -> Path:
+        if task_subdir is None:
+            return self.root
+        if not isinstance(task_subdir, str) or not re.fullmatch(
+            r"\.autopilot-tasks/[0-9a-f]{32}", task_subdir
+        ):
+            raise PermissionError("invalid isolated task identifier")
+        directory = self.root / task_subdir
+        if (directory.is_symlink() or
+                (self.root / ".autopilot-tasks").is_symlink() or
+                not directory.is_dir() or
+                not directory.resolve().is_relative_to(self.root)):
+            raise PermissionError("untrusted isolated task directory")
+        if (directory / ".git").is_symlink() or not (directory / ".git").is_file():
+            raise PermissionError("isolated task must be a safe linked Git worktree")
+        return directory
+
+    def _worker_name(self, image: str, profile: str,
+                     task_subdir: str | None = None) -> str:
+        value = f"{self.host_workspace}\x00{image}\x00{profile}\x00{task_subdir or ''}"
         return "kitt-autopilot-" + hashlib.sha256(value.encode()).hexdigest()[:24]
 
-    def _worker(self, image: str, profile: str) -> str:
+    def _worker(self, image: str, profile: str,
+                task_subdir: str | None = None) -> str:
         if image not in self.allowed_images or profile not in PROFILES:
             raise PermissionError("unapproved worker image or sandbox profile")
         if profile == "workspace-write+network" and not self.allow_network:
             raise PermissionError("network not delegated to the broker by operator")
-        name = self._worker_name(image, profile)
+        task_root = self._task_root(task_subdir)
+        name = self._worker_name(image, profile, task_subdir)
         inspected = self._call(["image", "inspect", image, "--format", "{{.Id}}"])
         if inspected.returncode != 0:
             if image not in _TOOLCHAIN_IMAGES.values():
@@ -133,7 +154,11 @@ class DockerBroker:
             removed = self._call(["rm", "-f", name])
             if removed.returncode != 0:
                 raise RuntimeError("stale sandbox worker could not be removed")
-        st = self.root.stat()
+        st = task_root.stat()
+        source_path = (
+            self.host_workspace if task_subdir is None
+            else str(Path(self.host_workspace) / task_subdir)
+        )
         command = [
             "run", "-d", "--rm", "--init", "--name", name,
             "--label", "dev.kitt.autopilot=true",
@@ -149,12 +174,12 @@ class DockerBroker:
             "--env", "CARGO_HOME=/home/kitt/.cargo",
             "--user", f"{st.st_uid}:{st.st_gid}",
             "--mount", (
-                f"type=bind,src={self.host_workspace},dst=/workspace"
+                f"type=bind,src={source_path},dst=/workspace"
                 + (",readonly" if profile == "read-only" else "")
             ),
             "--workdir", "/workspace",
         ]
-        if (self.root / ".kitt").is_symlink() or (self.root / ".kitt").is_file():
+        if (task_root / ".kitt").is_symlink() or (task_root / ".kitt").is_file():
             raise PermissionError("KITT control-plane path cannot be a symlink or file")
         # Always mask KITT control-plane data, including when it was absent
         # when this container was first created.
@@ -171,18 +196,20 @@ class DockerBroker:
         if profile not in PROFILES:
             raise PermissionError("sandbox profile not delegated")
         argv = _check_command(request.get("argv"))
-        cwd = _relative_cwd(request.get("cwd", "."), self.root)
+        task_subdir = request.get("task_subdir")
+        task_root = self._task_root(task_subdir)
+        cwd = _relative_cwd(request.get("cwd", "."), task_root)
         raw_timeout = request.get("timeout", 120)
         if type(raw_timeout) is not int or not 1 <= raw_timeout <= 3600:
             raise ValueError("invalid command timeout")
         image = ExecutionSandbox._select_toolchain_image(
-            self.base_image, argv, self.root / cwd
+            self.base_image, argv, task_root / cwd
         )
-        name = self._worker_name(image, profile)
+        name = self._worker_name(image, profile, task_subdir)
         with self._lock_guard:
             worker_lock = self._worker_locks.setdefault(name, threading.Lock())
         with worker_lock:
-            name = self._worker(image, profile)
+            name = self._worker(image, profile, task_subdir)
             # The model supplies argv and relative cwd, never Docker arguments.
             command = [
                 self.docker, "exec", "-w", str(PurePosixPath("/workspace") / cwd),
