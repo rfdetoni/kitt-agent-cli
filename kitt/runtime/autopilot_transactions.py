@@ -29,7 +29,10 @@ class TaskWorktree:
         if not isinstance(info, dict) or not PATTERN.fullmatch(str(info.get("path"))):
             raise PermissionError("invalid transaction record")
         task = self.root / info["path"]
-        if task.is_symlink() or not task.is_dir():
+        if ((self.root / ".autopilot-tasks").is_symlink()
+                or task.is_symlink()
+                or not task.is_dir()
+                or not task.resolve().is_relative_to(self.root)):
             raise PermissionError("transaction workspace missing or unsafe")
         if _git(task, "rev-parse", "HEAD").decode().strip() != info["head"]:
             raise PermissionError("transaction revision drift")
@@ -40,6 +43,8 @@ class TaskWorktree:
         return self.root / info["path"] if info else self.root
 
     def start(self, args):
+        if self.runtime.state is None:
+            raise RuntimeError("transaction requires durable runtime state")
         if args or self.current():
             raise ValueError("transaction arguments invalid or transaction already active")
         if not clean(self.root):
@@ -49,6 +54,8 @@ class TaskWorktree:
         if home.is_symlink():
             raise PermissionError("task directory is a symlink")
         home.mkdir(exist_ok=True, mode=0o700)
+        if sum(1 for _ in home.iterdir()) >= 16:
+            raise ValueError("isolated task retention limit reached")
         rel = PREFIX + uuid.uuid4().hex
         _git(self.root, "worktree", "add", "--detach", str(self.root / rel), head)
         info = {"path": rel, "head": head}
