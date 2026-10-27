@@ -1,5 +1,11 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.7 — improve stream diagnostics
+
+- Include request correlation and bounded content diagnostics when a proxy stream ends prematurely.
+- Keep ambiguous WebChat submissions from being retried automatically.
+- Add regression coverage for incomplete streams.
+
 ## 0.89.6 — preserve checkpoints when model wallet is exhausted
 
 - Turn model-call, token, cost or duration budget exhaustion into an explicit `TurnBlocked` checkpoint instead of an unhandled model dispatch exception.
