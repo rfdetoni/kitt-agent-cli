@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.4 — isolated task worktrees
+
+- Add task-isolated Git worktree lifecycle through autopilot.transaction.start/status/abandon.
+- Route autonomous sandbox commands and verified GitHub publication to the isolated task tree, not the base checkout.
+- Refuse direct workspace mutation operations while transaction active; abandonment preserves task data for audit.
+- Retain explicit operator network and GitHub publication authorization, with updated package/lock version.
+
+
 ## 0.89.3 — broker real-Docker lifecycle and containment validation
 
 - Exercise real persistent worker reuse, ephemeral HOME cache retention, network refusal, read-only workspace enforcement, KITT state masking, and clean worker recovery in Docker CI.
