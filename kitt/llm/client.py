@@ -42,6 +42,7 @@ from kitt.llm.kitt_proxy_capabilities import (
     discover_kitt_proxy_capabilities,
 )
 from kitt.llm.providers.base import LLMRequest
+from kitt.llm.providers.kitt_reverse_proxy import KittReverseProxyAdapter
 from kitt.llm.registry import ProviderRegistry
 from kitt.llm.retry import RetryConfig, RetryPolicy, ProviderCooldowns
 from kitt.prompts import normalize_execution_system_prompt
@@ -486,7 +487,11 @@ class LLMClient:
                 api_key=api_key,
                 timeout=min(1.0, max(0.2, float(self.profile.request_timeout_seconds))),
             )
-            if not discovered.discovered and _wait_for_local_kitt_proxy(base_url, cancellation):
+            if (
+                not discovered.discovered
+                and isinstance(adapter, KittReverseProxyAdapter)
+                and _wait_for_local_kitt_proxy(base_url, cancellation)
+            ):
                 # Failed discovery snapshots are cached; never keep an offline
                 # result after the local proxy has come online.
                 discovered = discover_kitt_proxy_capabilities(
