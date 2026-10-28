@@ -14,6 +14,7 @@ from typing import Any
 # mutations, external tools, or potentially expensive security subprocesses.
 READ_ONLY_FLOW_OPERATIONS = {
     "repo.read",
+    "repo.list",
     "repo.search",
     "repo.inspect_symbol",
     "repo.read_symbol",
