@@ -450,8 +450,11 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
     source, before_hash, size = _source(root, path)
     image = _managed_image()
     script_dir = _script_dir()
-    parent = _output_root(root, create=not dry_run)
-    pseudocode_output = _pseudocode_output(root, before_hash, create=not dry_run)
+    parent = _output_root(root, create=False)
+    pseudocode_output = _pseudocode_output(root, before_hash, create=False)
+    if not dry_run:
+        parent = _output_root(root, create=True)
+        pseudocode_output = _pseudocode_output(root, before_hash, create=True)
     resources = {"memory_mib": memory_mib, "heap_mib": heap_mib, "cpus": cpus}
     if dry_run:
         output = (_resume_output(root, source, before_hash, resume_job)
