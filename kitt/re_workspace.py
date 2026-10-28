@@ -32,6 +32,11 @@ _STALL_WARNING_SECONDS = 600
 _DEFAULT_MEMORY_MIB = 4096
 _DEFAULT_HEAP_MIB = 2048
 _DEFAULT_CPUS = 2
+_PSEUDOCODE_RELATIVE = "reimplement/pseudoc"
+_EXPORT_SCRIPT_DIR = (
+    Path(__file__).resolve().parent / "extensions" / "builtin_plugins"
+    / "reverse_engineering" / "ghidra_scripts"
+)
 
 
 def _project_dir(project: Path) -> Path:
@@ -98,7 +103,8 @@ def _output_root(root: Path, *, create: bool) -> Path:
 
 
 def _docker_args(image: str, root: Path, source: str, output: Path,
-                 *, job: str, resume: bool = False,
+                 *, job: str, pseudocode_output: Path, script_dir: Path,
+                 source_sha256: str, source_size: int, resume: bool = False,
                  ghidra_log: str = "ghidra-analysis.log",
                  analysis_timeout_seconds: int | None = None,
                  memory_mib: int = _DEFAULT_MEMORY_MIB,
@@ -112,6 +118,15 @@ def _docker_args(image: str, root: Path, source: str, output: Path,
         raise VMError("Ghidra CPU limit must be between 1 and 64")
     if analysis_timeout_seconds is not None and analysis_timeout_seconds <= 0:
         raise VMError("Ghidra per-file timeout must be positive")
+    if not re.fullmatch(r"[a-f0-9]{64}", source_sha256) or type(source_size) is not int or source_size <= 0:
+        raise VMError("Invalid pseudocode source identity")
+    if not pseudocode_output.is_dir() or pseudocode_output.is_symlink():
+        raise VMError("Pseudocode output must be an existing non-symlink directory")
+    if not script_dir.is_dir() or script_dir.is_symlink() or not (script_dir / "KittExportPseudocode.java").is_file():
+        raise VMError("Packaged Ghidra pseudocode export script is missing")
+    if any("," in str(path) or "\n" in str(path) or "\r" in str(path)
+           for path in (root, output, pseudocode_output, script_dir)):
+        raise VMError("Workspace/output paths cannot contain commas or newlines")
     # No --rm: inspect the stopped container's OOMKilled flag before removing
     # ONLY this transient job in finally. No network or Docker socket in guest.
     return [
@@ -128,15 +143,69 @@ def _docker_args(image: str, root: Path, source: str, output: Path,
         "--label", "dev.kitt.re-job=ghidra",
         "--mount", f"type=bind,src={root},dst=/workspace,readonly",
         "--mount", f"type=bind,src={output},dst=/output",
+        "--mount", f"type=bind,src={pseudocode_output},dst=/pseudoc",
+        "--mount", f"type=bind,src={script_dir},dst=/scripts,readonly",
         "--workdir", "/output",
         image, "/opt/ghidra/support/analyzeHeadless",
         "/output", "KittAnalysis",
         *(["-process", Path(source).name] if resume else ["-import", "/workspace/" + source]),
+        "-scriptPath", "/scripts",
+        "-postScript", "KittExportPseudocode.java",
+        "/pseudoc", "/pseudoc/manifest.json",
+        "source=" + source, "sha256=" + source_sha256, "size=" + str(source_size),
         *([] if analysis_timeout_seconds is None
           else ["-analysisTimeoutPerFile", str(analysis_timeout_seconds)]),
         "-max-cpu", str(cpus),
         "-log", "/output/" + ghidra_log,
     ]
+
+def _pseudocode_output(root: Path, source_sha256: str, *, create: bool) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{64}", source_sha256):
+        raise VMError("Invalid source SHA-256 for pseudocode export")
+    current = root
+    for part in ("reimplement", "pseudoc"):
+        current = current / part
+        if current.is_symlink():
+            raise VMError("Pseudocode output directory must not contain symlinks")
+        if not current.exists():
+            if create:
+                try:
+                    current.mkdir(mode=0o700)
+                except OSError as exc:
+                    raise VMError("Cannot create reimplement/pseudoc output directory") from exc
+            else:
+                continue
+        if current.exists() and (
+            not current.is_dir() or current.stat().st_uid != os.getuid()
+        ):
+            raise VMError("Pseudocode output directory must be operator-owned")
+    output = root / _PSEUDOCODE_RELATIVE
+    manifest = output / "manifest.json"
+    if manifest.exists() or manifest.is_symlink():
+        if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size > 16 * 1024 * 1024:
+            raise VMError("Existing pseudocode manifest is unsafe or oversized")
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeError) as exc:
+            raise VMError("Existing pseudocode manifest is malformed") from exc
+        if not isinstance(payload, dict) or payload.get("source_sha256") != source_sha256:
+            raise VMError(
+                "reimplement/pseudoc already belongs to a different source SHA-256; "
+                "preserving existing outputs rather than mixing binaries"
+            )
+    return output
+
+
+def _script_dir() -> Path:
+    directory = _EXPORT_SCRIPT_DIR
+    if (
+        directory.is_symlink() or not directory.is_dir()
+        or (directory / "KittExportPseudocode.java").is_symlink()
+        or not (directory / "KittExportPseudocode.java").is_file()
+    ):
+        raise VMError("Packaged Ghidra pseudocode export script is missing or unsafe")
+    return directory
+
 
 def _resume_output(root: Path, source: str, checksum: str, job_name: str) -> Path:
     """Validate operator-selected saved project; never import over existing data."""
@@ -380,6 +449,8 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
     root = _project_dir(workspace if workspace is not None else Path.cwd())
     source, before_hash, size = _source(root, path)
     image = _managed_image()
+    script_dir = _script_dir()
+    pseudocode_output = _pseudocode_output(root, before_hash, create=not dry_run)
     resources = {"memory_mib": memory_mib, "heap_mib": heap_mib, "cpus": cpus}
     if dry_run:
         output = (_resume_output(root, source, before_hash, resume_job)
@@ -389,6 +460,10 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
             "source_size": size, "source_sha256": before_hash,
             "workspace_mount": "read_only", "output": str(output),
             "output_mount": "dedicated_write_only_to_result_dir",
+            "pseudocode_output": str(pseudocode_output),
+            "pseudocode_manifest": str(pseudocode_output / "manifest.json"),
+            "pseudocode_export_script": "KittExportPseudocode.java",
+            "pseudocode_export_expected": True,
             "ghidra_image": image, "windows_guest_unchanged": True,
             "no_copy": True, "host_execute_requires_operator": True,
             "mode": "resume" if resume_job else "import",
@@ -421,6 +496,8 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
 
     argv = _docker_args(
         image, root, source, output, job=job,
+        pseudocode_output=pseudocode_output, script_dir=script_dir,
+        source_sha256=before_hash, source_size=size,
         resume=bool(resume_job), ghidra_log=ghidra_log,
         analysis_timeout_seconds=analysis_timeout_seconds,
         memory_mib=memory_mib, heap_mib=heap_mib, cpus=cpus,
@@ -504,6 +581,23 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
         status = "GHIDRA_COMPLETED"
     else:
         status = "PARTIAL"
+
+    from kitt.extensions.builtin_plugins.reverse_engineering.pseudocode_manifest import (
+        validate_pseudocode_manifest,
+    )
+    pseudocode_manifest, pseudocode_issue = validate_pseudocode_manifest(
+        root, _PSEUDOCODE_RELATIVE + "/manifest.json",
+        expected_source_path=source,
+        expected_source_sha256=before_hash,
+        expected_source_size=size,
+    )
+    pseudocode_status = str((pseudocode_manifest or {}).get("status") or "MISSING")
+    decompiled_count = int((pseudocode_manifest or {}).get("decompiled_count") or 0)
+    failed_count = int((pseudocode_manifest or {}).get("failed_count") or 0)
+    decompiled_source_exported = not bool(pseudocode_issue) and pseudocode_manifest is not None
+    if status == "GHIDRA_COMPLETED" and not decompiled_source_exported:
+        status = "PSEUDOCODE_INCOMPLETE"
+
     print(
         f"[KITT RE] {container} finalizado: {status}; exit_code={code}; "
         f"log: {logfile}", file=sys.stderr, flush=True,
@@ -512,7 +606,8 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
         "status": status, "analysis_timed_out": timed_out,
         "analysis_success_reported": evidence["analysis_succeeded"],
         "save_reported": evidence["saved"],
-        "completion_scope": ("ghidra_report_only" if status == "GHIDRA_COMPLETED" else None),
+        "completion_scope": ("ghidra_analysis_and_pseudocode_export"
+                             if status == "GHIDRA_COMPLETED" else None),
         "cancelled": cancelled, "host_timed_out": host_timed_out, "oom_killed": oom,
         "mode": "resume" if resume_job else "import",
         "resume_job": resume_job or output.name,
@@ -529,5 +624,11 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
         "output": str(output), "log": str(logfile),
         "ghidra_log": str(output / ghidra_log),
         "project_name": "KittAnalysis", "windows_guest_unchanged": True,
-        "decompiled_source_exported": False,
+        "decompiled_source_exported": decompiled_source_exported,
+        "pseudocode_status": pseudocode_status,
+        "pseudocode_output": str(pseudocode_output),
+        "pseudocode_manifest": str(pseudocode_output / "manifest.json"),
+        "decompiled_count": decompiled_count,
+        "failed_count": failed_count,
+        "pseudocode_issue": pseudocode_issue[:1000],
     }

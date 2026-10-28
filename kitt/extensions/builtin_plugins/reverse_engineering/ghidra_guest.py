@@ -448,7 +448,7 @@ def analyze_guest(
             "-import", str(target), "-scriptPath", str(script_dir),
             "-postScript", "KittExportFunctions.java", str(temporary_pseudoc),
             str(report), str(start_index), str(max_functions),
-            "-readOnly", "-deleteProject",
+            "-deleteProject",
             "-analysisTimeoutPerFile", str(ANALYSIS_SECONDS),
             "-max-cpu", "2",
         ]
