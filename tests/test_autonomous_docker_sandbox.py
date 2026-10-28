@@ -193,3 +193,43 @@ def test_generic_autonomous_command_stays_on_bubblewrap(tmp_path: Path):
             require_strong=True, prefer_docker_toolchain=True,
         )
     assert plan.backend == "bubblewrap"
+
+
+def test_sandbox_container_errors_are_actionable_without_exposing_host_socket():
+    from types import SimpleNamespace
+    from kitt.runtime.core_runtime import SafeRuntime
+
+    class FakeRunner:
+        def __init__(self):
+            self.stderr = ""
+
+        def run(self, argv, **kwargs):
+            return SimpleNamespace(
+                stdout="", stderr=self.stderr, returncode=1,
+                timed_out=False, cancelled=False, truncated=False,
+                sandbox_backend="bubblewrap",
+            )
+
+    runner = FakeRunner()
+    runtime = SimpleNamespace(
+        registry=SimpleNamespace(process_runner=runner),
+        autopilot_worktree=SimpleNamespace(current=lambda: None),
+    )
+    cases = (
+        ("docker", "failed to connect to the docker API at unix:///var/run/docker.sock",
+         "DOCKER_SANDBOX_SOCKET_UNAVAILABLE"),
+        ("podman", "bwrap: execvp podman: No such file or directory",
+         "PODMAN_SANDBOX_EXECUTABLE_UNAVAILABLE"),
+        ("find", "find: '/opt/containerd': Permission denied",
+         "HOST_PATH_SEARCH_DENIED"),
+    )
+    for command, stderr, expected in cases:
+        runner.stderr = stderr
+        result = SafeRuntime._op_autonomous_sandbox_run(
+            runtime, {"argv": [command, "--version"]}, "turn", None,
+        )
+        assert not result.success
+        assert result.metadata["failure_kind"] == expected
+        assert result.metadata["retry_same_command"] is False
+        assert "do not" in (result.error or "").lower()
+        assert len(result.data["stderr"]) > 0
