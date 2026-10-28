@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -38,6 +40,15 @@ class BuildDetector:
             ):
                 return True
         return False
+
+    @staticmethod
+    def ruff_executable() -> str | None:
+        """Find the linter bundled with KITT even when its venv is absent from PATH."""
+        name = "ruff.exe" if os.name == "nt" else "ruff"
+        bundled = Path(sys.executable).with_name(name)
+        if bundled.is_file() and os.access(bundled, os.X_OK):
+            return str(bundled)
+        return shutil.which("ruff")
 
     def _python_targeted(self, target_files: List[str]) -> list[VerificationStep]:
         """Find real test files, including siblings outside a tests/ package.
@@ -161,11 +172,12 @@ class BuildDetector:
                 p for p in target_files
                 if Path(p).suffix.casefold() in {".py", ".pyi"}
             ]
-            if py_files and shutil.which("ruff"):
+            ruff = self.ruff_executable() if py_files else None
+            if ruff:
                 steps.append(
                     VerificationStep(
                         "python.lint",
-                        ["ruff", "check", *py_files],
+                        [ruff, "check", *py_files],
                         90,
                         "lint",
                         scope="paths",

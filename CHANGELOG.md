@@ -1,5 +1,13 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.8 — reliable Python verification and sandbox diagnostics
+
+- Locate Ruff from the Agent CLI virtual environment even when its scripts directory is absent from PATH.
+- When a required Python lint check accompanies a Markdown-only change, run real Ruff against the Python workspace instead of silently omitting the check or reporting it unavailable.
+- Keep the verification gate fail-closed when Ruff is truly absent; never treat unavailable lint as a passed check.
+- Return actionable, non-retryable diagnostics for inaccessible Docker sockets, missing Podman executables and forbidden host-wide filesystem searches in the autonomous sandbox.
+- Add focused regression tests; synchronize Python package/lock/runtime versions.
+
 ## 0.89.7 — improve stream diagnostics
 
 - Include request correlation and bounded content diagnostics when a proxy stream ends prematurely.

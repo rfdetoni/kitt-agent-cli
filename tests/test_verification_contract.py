@@ -105,3 +105,61 @@ def test_c_code_requires_real_build_not_only_structural_pass():
         assert report.ok, report.failure_message()
         assert [s.name for s in report.steps] == ["c.build"]
         assert calls == [["make", "-C", ".", "-j2"]]
+
+
+def test_required_python_lint_verifies_workspace_after_docs_only_edit(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from kitt.tools.build_detector import BuildDetector
+    from kitt.validation.orchestrator import VerificationOrchestrator
+
+    (tmp_path / "validate_elf.py").write_text("value = 1\\n")
+    docs = tmp_path / "analysis"
+    docs.mkdir()
+    (docs / "baseline.md").write_text("# Baseline\\n")
+    monkeypatch.setattr(BuildDetector, "ruff_executable", staticmethod(lambda: "ruff"))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout="", stderr="", timed_out=False, cancelled=False)
+
+    report = VerificationOrchestrator(
+        tmp_path, SimpleNamespace(run=run)
+    ).verify(["analysis/baseline.md"], check_ids=["python.lint"])
+    assert report.ok, report.failure_message()
+    assert report.workspace_verified
+    assert calls == [["ruff", "check", "."]]
+    assert [step.name for step in report.steps] == ["python.lint"]
+
+
+def test_required_lint_fails_closed_when_ruff_is_unavailable(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from kitt.tools.build_detector import BuildDetector
+    from kitt.validation.orchestrator import VerificationOrchestrator
+
+    (tmp_path / "validate_elf.py").write_text("value = 1\\n")
+    (tmp_path / "baseline.md").write_text("# Baseline\\n")
+    monkeypatch.setattr(BuildDetector, "ruff_executable", staticmethod(lambda: None))
+    runner = SimpleNamespace(run=lambda argv, **kwargs: (_ for _ in ()).throw(
+        AssertionError("No lint should run without a linter")
+    ))
+    report = VerificationOrchestrator(tmp_path, runner).verify(
+        ["baseline.md"], check_ids=["python.lint"]
+    )
+    assert not report.ok
+    assert report.status == "UNAVAILABLE"
+    assert "python.lint" in report.command_output
+
+
+def test_ruff_discovery_uses_kitt_venv_even_when_path_is_unset(tmp_path, monkeypatch):
+    import sys
+    from kitt.tools.build_detector import BuildDetector
+
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir()
+    binary = binary_dir / "ruff"
+    binary.write_text("#!/bin/sh\\nexit 0\\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr(sys, "executable", str(binary_dir / "python"))
+    monkeypatch.setattr("kitt.tools.build_detector.shutil.which", lambda command: None)
+    assert BuildDetector.ruff_executable() == str(binary)
