@@ -19,7 +19,7 @@ import time
 from .binary import MAX_BYTES, InspectionError, inspect
 from .large_elf import inspect_large_elf
 
-MAX_REPORT_BYTES = 2 * 1024 * 1024
+MAX_REPORT_BYTES = 256 * 1024
 MAX_BATCH_FUNCTIONS = 128
 MAX_FUNCTION_PSEUDOCODE_BYTES = 256 * 1024
 MAX_LOG_BYTES = 2 * 1024 * 1024
