@@ -1,5 +1,12 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.11 — persist verified Ghidra pseudocode and block false completion
+
+- Wire the isolated, pinned Ghidra executor to a packaged post-analysis decompiler script. Successful imports now write per-function C pseudocode to `reimplement/pseudoc/` plus a SHA-256 manifest.
+- Return `PSEUDOCODE_INCOMPLETE` when Ghidra reports analysis/save success but the export manifest or any listed C file is missing, partial, truncated, or altered. The source ELF is never executed.
+- Preserve the original user objective through each durable contract item; require explicit pseudoc requests in the plan and fail final verification unless source and all C outputs are hash-verified.
+- Add regressions for output export, missing artifacts, tampering, planner omissions, and original-objective retention. No third-party dependency changes.
+
 ## 0.89.10 — permit governed directory reads in programmatic flow
 
 - Allow `repo.list` inside bounded `flow.execute` and `program.execute`; it already works directly and in `repo.batch_read`, but was rejected by the shared flow allowlist in the 2026-10-28 runtime logs.

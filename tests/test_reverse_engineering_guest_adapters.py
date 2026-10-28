@@ -60,9 +60,16 @@ class GhidraBoundaryTests(unittest.TestCase):
     def test_valid_and_malformed_report(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "result.json"
-            path.write_text('{"language":"x86","functions":[{"name":"main","entry":"00400000"}],"truncated":false}')
+            path.write_text(
+                '{"language":"x86","functions":[{"name":"main","entry":"00400000",'
+                '"status":"DECOMPILED","file":"fn_00400000.c","error":"",'
+                '"pseudocode_bytes":12}],"truncated":false,"start_index":0,"next_index":1}'
+            )
             self.assertEqual(_read_report(path)["functions"][0]["name"], "main")
-            path.write_text('{"language":"x86","functions":[],"functions":[],"truncated":false}')
+            path.write_text(
+                '{"language":"x86","functions":[],"truncated":false,"start_index":0,'
+                '"next_index":0,"functions":[]}'
+            )
             with self.assertRaises(GhidraError):
                 _read_report(path)
             path.write_text("A" * (256 * 1024 + 1))

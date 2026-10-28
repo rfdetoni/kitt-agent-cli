@@ -33,6 +33,14 @@ explicit \`allow_tools\` list. Do not expose it as a public network endpoint.
 In interactive mode, ask KITT to call the MCP tool
 \`mcp.reverse-engineering.binary_inspect\` on a relative path to a sample PE/ELF.
 
+## Ghidra pseudocode export
+
+The operator-only host operation \`re.lab.analyze\` (CLI: \`kitt re lab analyze --path 2.1.308\`) runs the pinned, networkless Ghidra image with the active workspace mounted read-only. The packaged post-analysis script exports decompiled C functions to \`reimplement/pseudoc/\` and writes \`manifest.json\` with source identity, function counts, per-file sizes and SHA-256 hashes.
+
+\`GHIDRA_COMPLETED\` now requires both a successful Ghidra analysis/save receipt and a complete, verified pseudocode manifest. If Ghidra reports success but the export is missing, partial, truncated, or has changed files, the operation returns \`PSEUDOCODE_INCOMPLETE\`; it is not a successful completion. The original ELF is inspected and decompiled as data only and is never executed. Exports are bounded to 10,000 functions, 256 KiB per function and 512 MiB total C output; exceeding a limit leaves the manifest \`PARTIAL\`.
+
+The root manifest is tied to the original relative source path, byte size and SHA-256. Reusing the output directory for a different binary is rejected rather than mixing decompilations. Do not infer behavioral equivalence from decompiler output alone.
+
 ## Disposable Windows/Linux VM probes
 
 The lab operator, not the model, installs this package and the test binaries

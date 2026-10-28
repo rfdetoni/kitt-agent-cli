@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from kitt.extensions.builtin_plugins.reverse_engineering.pseudocode_manifest import (
+    pseudocode_completion_issue,
+)
 from kitt.goals.completion import CompletionCheck
 from kitt.security.capabilities import CAP_PROCESS_RUN
 from kitt.validation.orchestrator import VerificationOrchestrator
@@ -78,6 +81,22 @@ class ContractCheckRunner:
                 )
             )
 
+        pseudocode_issue = ""
+        if str(getattr(item, "kind", "") or "").lower() == "final":
+            pseudocode_issue = pseudocode_completion_issue(
+                self.runtime.canonical_root,
+                str(getattr(goal, "objective", "") or ""),
+            )
+            if pseudocode_issue:
+                checks.append(
+                    CompletionCheck(
+                        "deterministic",
+                        "Ghidra pseudocode completeness",
+                        False,
+                        redact(pseudocode_issue)[:6000],
+                    )
+                )
+
         if not checks and (item.check_ids or unique_paths):
             checks.append(
                 CompletionCheck(
@@ -103,9 +122,10 @@ class ContractCheckRunner:
             )
 
         raw_evidence = report.as_dict()
+        all_checks_passed = all(check.passed for check in checks)
         evidence = {
-            "ok": bool(raw_evidence.get("ok")),
-            "status": str(raw_evidence.get("status") or ""),
+            "ok": bool(raw_evidence.get("ok")) and all_checks_passed,
+            "status": str(raw_evidence.get("status") or "") if all_checks_passed else "FAIL",
             "checked_paths": list(raw_evidence.get("checked_paths") or [])[:64],
             "full_verification": bool(raw_evidence.get("full_verification")),
             "workspace_verified": bool(raw_evidence.get("workspace_verified")),
@@ -126,4 +146,8 @@ class ContractCheckRunner:
             f"checked_paths={unique_paths!r}\n"
             + (report.failure_message() if not report.ok else report.command_output)
         ).strip()
+        if pseudocode_issue:
+            evidence_text = (
+                evidence_text + "\nGhidra pseudocode completeness: FAIL; " + pseudocode_issue
+            ).strip()
         return ContractCheckResult(checks, evidence, evidence_text[:12000], unique_paths)
