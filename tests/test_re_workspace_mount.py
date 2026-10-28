@@ -384,7 +384,7 @@ def test_optional_ghidra_timeout_and_memory_are_applied_only_on_request(monkeypa
     assert "GHIDRA_HEADLESS_MAXMEM=1536M" in argv
     assert argv[argv.index("--memory") + 1] == "3072m"
     assert result["status"] == "GHIDRA_COMPLETED"
-    assert result["completion_scope"] == "ghidra_report_only"
+    assert result["completion_scope"] == "ghidra_analysis_and_pseudocode_export"
 
 
 def test_slow_active_process_is_not_cancelled_by_old_limit(monkeypatch, tmp_path):
