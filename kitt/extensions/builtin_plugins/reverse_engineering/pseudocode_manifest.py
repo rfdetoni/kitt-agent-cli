@@ -117,7 +117,12 @@ def validate_pseudocode_manifest(
         or type(payload.get("decompiled_count")) is not int
         or payload["decompiled_count"] <= 0
         or type(payload.get("function_count")) is not int
-        or payload["function_count"] != payload["decompiled_count"]
+        or type(payload.get("skipped_count", 0)) is not int
+        or payload.get("skipped_count", 0) < 0
+        or payload["function_count"] != payload["decompiled_count"] + payload.get("skipped_count", 0)
+        or payload.get("original_executed") is not False
+        or type(payload.get("batch_count")) is not int
+        or payload["batch_count"] != len(payload.get("batches", []))
         or not isinstance(payload.get("functions"), list)
         or len(payload["functions"]) != payload["function_count"]
         or not isinstance(payload.get("batches"), list)
@@ -130,19 +135,20 @@ def validate_pseudocode_manifest(
         )
 
     cursor_index = 0
-    batch_functions = batch_decompiled = batch_failed = 0
+    batch_functions = batch_decompiled = batch_failed = batch_skipped = 0
     for index, batch in enumerate(payload["batches"]):
         if not isinstance(batch, dict):
             return payload, "Pseudocode manifest contains an invalid batch."
         start, end = batch.get("start_index"), batch.get("next_index")
-        count, good, failed = (
-            batch.get("function_count"), batch.get("decompiled_count"), batch.get("failed_count")
+        count, good, failed, skipped = (
+            batch.get("function_count"), batch.get("decompiled_count"),
+            batch.get("failed_count"), batch.get("skipped_count", 0),
         )
         if (
             type(start) is not int or type(end) is not int or start != cursor_index or end < start
             or type(count) is not int or count != end - start
-            or type(good) is not int or type(failed) is not int
-            or good < 0 or failed < 0 or good + failed != count
+            or type(good) is not int or type(failed) is not int or type(skipped) is not int
+            or good < 0 or failed < 0 or skipped < 0 or good + failed + skipped != count
             or type(batch.get("truncated")) is not bool
             or (not batch["truncated"] and index != len(payload["batches"]) - 1)
         ):
@@ -151,6 +157,7 @@ def validate_pseudocode_manifest(
         batch_functions += count
         batch_decompiled += good
         batch_failed += failed
+        batch_skipped += skipped
     if (
         payload["batches"][-1]["truncated"]
         or cursor_index != payload.get("next_index")
@@ -158,6 +165,7 @@ def validate_pseudocode_manifest(
         or batch_functions != payload["function_count"]
         or batch_decompiled != payload["decompiled_count"]
         or batch_failed != payload["failed_count"]
+        or batch_skipped != payload.get("skipped_count", 0)
     ):
         return payload, "Pseudocode manifest does not prove complete function-table coverage."
 
@@ -193,19 +201,25 @@ def validate_pseudocode_manifest(
         return payload, "Pseudocode source size or SHA-256 does not match the manifest."
 
     seen = set()
+    skipped_seen = 0
     for function in payload["functions"]:
         if not isinstance(function, dict):
             return payload, "Pseudocode manifest contains an invalid function."
         filename = function.get("file")
         digest = function.get("sha256")
         size = function.get("bytes")
+        if function.get("status") == "SKIPPED_EXTERNAL":
+            if filename or digest or size != 0 or not isinstance(function.get("error"), str) or not function["error"]:
+                return payload, "Pseudocode manifest contains an invalid external-function record."
+            skipped_seen += 1
+            continue
         if (
             function.get("status") != "DECOMPILED"
             or not isinstance(filename, str) or not _FUNCTION_FILE.fullmatch(filename)
             or filename in seen
             or not isinstance(digest, str) or not _HASH.fullmatch(digest)
             or type(size) is not int or size <= 0
-            or function.get("error") not in ("", None)
+            or function.get("error") != ""
         ):
             return payload, "Pseudocode manifest contains a failed or invalid function record."
         seen.add(filename)
@@ -218,6 +232,8 @@ def validate_pseudocode_manifest(
             return payload, f"Pseudocode output is unsafe or changed: {filename}"
         if actual_bytes != size or actual_hash != digest:
             return payload, f"Pseudocode output size or SHA-256 mismatch: {filename}"
+    if skipped_seen != payload.get("skipped_count", 0):
+        return payload, "Pseudocode manifest skipped-function count does not match its records."
     return payload, ""
 
 

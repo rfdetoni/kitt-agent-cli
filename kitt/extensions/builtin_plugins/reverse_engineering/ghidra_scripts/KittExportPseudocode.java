@@ -31,7 +31,7 @@ public class KittExportPseudocode extends GhidraScript {
     private static String quote(String value) {
         if (value == null) value = "";
         StringBuilder builder = new StringBuilder("\"");
-        for (int i = 0; i < value.length() && i < 1000; i++) {
+        for (int i = 0; i < value.length() && i < 4096; i++) {
             char c = value.charAt(i);
             if (c == '\\' || c == '"') builder.append('\\').append(c);
             else if (c == '\n') builder.append("\\n");
@@ -126,6 +126,7 @@ public class KittExportPseudocode extends GhidraScript {
         int seen = 0;
         int decompiledCount = 0;
         int failedCount = 0;
+        int skippedCount = 0;
         long totalBytes = 0;
         boolean truncated = false;
         String language = currentProgram.getLanguage().toString();
@@ -139,6 +140,13 @@ public class KittExportPseudocode extends GhidraScript {
                 }
                 Function function = functions.next();
                 String entry = function.getEntryPoint().toString();
+                if (function.isExternal()) {
+                    rows.add(functionRow(function.getName(), entry, "SKIPPED_EXTERNAL",
+                            "", "", 0, "External function has no body in this binary"));
+                    skippedCount++;
+                    seen++;
+                    continue;
+                }
                 String status = "FAILED";
                 String file = "";
                 String digest = "";
@@ -196,7 +204,7 @@ public class KittExportPseudocode extends GhidraScript {
             decompiler.dispose();
         }
 
-        boolean complete = !truncated && seen > 0 && failedCount == 0;
+        boolean complete = !truncated && decompiledCount > 0 && failedCount == 0;
         String status = complete ? "COMPLETE" : "PARTIAL";
         StringBuilder json = new StringBuilder(Math.max(1024, rows.size() * 400));
         json.append("{\"schema_version\":1,\"status\":").append(quote(status))
@@ -210,10 +218,12 @@ public class KittExportPseudocode extends GhidraScript {
                 .append(seen).append(",\"truncated\":").append(truncated)
                 .append(",\"function_count\":").append(seen)
                 .append(",\"decompiled_count\":").append(decompiledCount)
-                .append(",\"failed_count\":").append(failedCount).append("}]")
+                .append(",\"failed_count\":").append(failedCount)
+                .append(",\"skipped_count\":").append(skippedCount).append("}]")
                 .append(",\"function_count\":").append(seen)
                 .append(",\"decompiled_count\":").append(decompiledCount)
                 .append(",\"failed_count\":").append(failedCount)
+                .append(",\"skipped_count\":").append(skippedCount)
                 .append(",\"truncated\":").append(truncated)
                 .append(",\"next_index\":").append(seen)
                 .append(",\"functions\":[");
