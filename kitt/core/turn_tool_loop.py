@@ -35,7 +35,7 @@ from kitt.edit_format.strategy import (
 from kitt.llm.attachments import AttachmentError
 from kitt.llm.client import LLMClient
 from kitt.llm.http_security import TransportCancelled
-from kitt.llm.domain import ProviderOutputLimitError, ProviderRecoverableError
+from kitt.llm.domain import ProviderOutputLimitError, ProviderProtocolError, ProviderRecoverableError
 from kitt.security.context import ExecutionSecurityContext
 from kitt.tools.protocol import extract_tool_reasoning_summary, parse_tool_call
 from kitt.tools.registry import ToolResult
@@ -305,6 +305,25 @@ class TurnToolLoopMixin:
                 })
                 full_response = ""
                 continue
+            except ProviderProtocolError as exc:
+                # An invalid/failed proxy response can occur before the prompt
+                # is sent or after WebChat received it. Preserve host receipts
+                # and stop this turn, never replay an ambiguous browser action.
+                trace_event(
+                    logger,
+                    "tool_loop.provider_protocol_checkpoint",
+                    turn_id=cmd.turn_id,
+                    route=effective_agent_route,
+                    tool_calls=tool_calls,
+                    reason=str(exc)[:1000],
+                )
+                yield TurnBlocked(reason=(
+                    f"Provider protocol checkpoint: {exc}. "
+                    "Previously completed host actions remain recorded. "
+                    "Inspect the browser/proxy state before continuing; "
+                    "the failed model request was not replayed."
+                )), None, None
+                return
             except ExecutionBudgetExceeded as exc:
                 # The host has already enforced the wallet. Preserve verified
                 # tool receipts and ask for a fresh budgeted turn, not a replay
