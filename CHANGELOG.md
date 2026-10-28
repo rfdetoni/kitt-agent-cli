@@ -1,5 +1,11 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.10 — permit governed directory reads in programmatic flow
+
+- Allow `repo.list` inside bounded `flow.execute` and `program.execute`; it already works directly and in `repo.batch_read`, but was rejected by the shared flow allowlist in the 2026-10-28 runtime logs.
+- Preserve the normal `repo.read` capability, path-scoped security, bounded listing limits and read-only operation whitelist. Add regression coverage for parallel directory discovery, missing authority and forbidden mutation.
+- Synchronize Python package, fallback runtime version and uv lock metadata. No third-party dependency changes.
+
 ## 0.89.9 — safe checkpoints and required Python regression evidence
 
 - Convert ambiguous WebChat provider protocol failures, including failed UI composer writes, into TurnBlocked checkpoints without automatic retries or uncaught turn failures.

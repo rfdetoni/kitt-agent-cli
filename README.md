@@ -1,6 +1,6 @@
 # K.I.T.T. Agent CLI
 
-Versão **0.89.9**. Documentação de instalação, arquitetura, configuração e uso. Consulte o [CHANGELOG.md](CHANGELOG.md) para o histórico de versões e [integrações opcionais](docs/OPTIONAL_AGENT_ECOSYSTEM.md) para ferramentas externas.
+Versão **0.89.10**. Documentação de instalação, arquitetura, configuração e uso. Consulte o [CHANGELOG.md](CHANGELOG.md) para o histórico de versões e [integrações opcionais](docs/OPTIONAL_AGENT_ECOSYSTEM.md) para ferramentas externas.
 
 ## What’s included
 
@@ -16,7 +16,7 @@ Versão **0.89.9**. Documentação de instalação, arquitetura, configuração 
 - Dreaming/memory consolidation and context compaction.
 - Stable prompt-prefix layout with dynamic turn context moved behind invariant execution/tool contracts.
 - Consumed tool-result receipts reclaim model context without mutating browser-backed conversation identity.
-- Token-pressure history compaction and dependency-aware parallel read-only programmatic flows.
+- Token-pressure history compaction and dependency-aware parallel read-only programmatic flows, including bounded `repo.list` directory reads under the existing `repo.read` capability.
 - Durable model-input ledger, Task Episodes, evidence states, sparse session projections and deterministic replay fingerprints.
 - Bounded read-only `program.execute` plus durable `program.session.*` state for loops/branching without arbitrary code execution or approval bypass.
 - Durable schedules/heartbeats that re-enter the existing follow-up queue, plus pre-output provider parking/failover and headless JSON-RPC.
