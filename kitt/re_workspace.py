@@ -184,9 +184,20 @@ def _pseudocode_output(root: Path, source_sha256: str, *, create: bool) -> Path:
     if manifest.exists() or manifest.is_symlink():
         if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size > 16 * 1024 * 1024:
             raise VMError("Existing pseudocode manifest is unsafe or oversized")
+        def unique_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON field")
+                result[key] = value
+            return result
         try:
-            payload = json.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError, UnicodeError) as exc:
+            payload = json.loads(
+                manifest.read_text(encoding="utf-8"),
+                object_pairs_hook=unique_pairs,
+                parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")),
+            )
+        except (OSError, ValueError, UnicodeError, RecursionError) as exc:
             raise VMError("Existing pseudocode manifest is malformed") from exc
         if not isinstance(payload, dict) or payload.get("source_sha256") != source_sha256:
             raise VMError(

@@ -84,6 +84,7 @@ def _read_report(path: Path) -> dict:
         if (
             not isinstance(function["name"], str) or not function["name"] or len(function["name"]) > 160
             or not isinstance(function["entry"], str) or not function["entry"] or len(function["entry"]) > 160
+            or not isinstance(function["status"], str)
             or function["status"] not in {"DECOMPILED", "FAILED", "TRUNCATED"}
             or not isinstance(function["file"], str) or len(function["file"]) > 100
             or not isinstance(function["error"], str) or len(function["error"]) > 500
@@ -189,9 +190,11 @@ def _read_batches(output_dir: Path, source_sha256: str) -> list[dict]:
         ):
             raise GhidraError("Existing Ghidra batch manifest is invalid or belongs to another ELF")
         for function in payload["functions"]:
-            if not isinstance(function, dict) or set(function) != {
-                "name", "entry", "status", "file", "sha256", "bytes", "error",
-            }:
+            if (
+                not isinstance(function, dict)
+                or set(function) != {"name", "entry", "status", "file", "sha256", "bytes", "error"}
+                or not isinstance(function.get("status"), str)
+            ):
                 raise GhidraError("Existing Ghidra function manifest is malformed")
             if function["status"] == "DECOMPILED":
                 name = function["file"]
@@ -277,7 +280,8 @@ def _persist_logs(root: Path, output_dir_relative: str, start_index: int, stdout
     for suffix, path in (("stdout", stdout), ("stderr", stderr)):
         if not path.is_file() or path.is_symlink():
             continue
-        raw = path.read_bytes()
+        with path.open("rb") as source:
+            raw = source.read(MAX_LOG_BYTES + 1)
         if len(raw) > MAX_LOG_BYTES:
             raw = raw[:MAX_LOG_BYTES] + b"\n[log truncated by KITT safety limit]\n"
         _atomic_write(logs_dir / f"{prefix}.{suffix}.log", raw)
