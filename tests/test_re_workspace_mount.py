@@ -14,7 +14,7 @@ from kitt.cli.main import build_parser
 from kitt.vm_supervisor import VMError
 
 
-def _fake_ghidra(monkeypatch, *, lines=None, interrupt=False, oom=False, polls=0):
+def _fake_ghidra(monkeypatch, *, lines=None, interrupt=False, oom=False, polls=0, export=True):
     """No Docker engine, Ghidra or installed KITT CLI required for these contracts."""
     if lines is None:
         lines = (b"INFO REPORT: Analysis succeeded for file: /2.1.308\n"
@@ -52,6 +52,37 @@ def _fake_ghidra(monkeypatch, *, lines=None, interrupt=False, oom=False, polls=0
         calls.append((argv, kwargs))
         kwargs["stdout"].write(lines)
         kwargs["stdout"].flush()
+        if export:
+            pseudoc_mount = next(arg for arg in argv if isinstance(arg, str) and "dst=/pseudoc" in arg)
+            workspace_mount = next(arg for arg in argv if isinstance(arg, str) and "dst=/workspace,readonly" in arg)
+            pseudoc_root = Path(pseudoc_mount.split("type=bind,src=", 1)[1].split(",dst=/pseudoc", 1)[0])
+            workspace_root = Path(workspace_mount.split("type=bind,src=", 1)[1].split(",dst=/workspace,readonly", 1)[0])
+            source_path = next(arg.split("=", 1)[1] for arg in argv if isinstance(arg, str) and arg.startswith("source="))
+            source_sha = next(arg.split("=", 1)[1] for arg in argv if isinstance(arg, str) and arg.startswith("sha256="))
+            source_size = int(next(arg.split("=", 1)[1] for arg in argv if isinstance(arg, str) and arg.startswith("size=")))
+            source_bytes = (workspace_root / source_path).read_bytes()
+            assert hashlib.sha256(source_bytes).hexdigest() == source_sha
+            assert len(source_bytes) == source_size
+            pseudoc = b"/* static pseudocode fixture */\nint main(void) { return 0; }\n"
+            filename = f"fn_{source_sha[:12]}_000000_00400000.c"
+            (pseudoc_root / filename).write_bytes(pseudoc)
+            manifest = {
+                "schema_version": 1, "status": "COMPLETE", "complete": True,
+                "source_path": source_path, "source_sha256": source_sha,
+                "source_size_bytes": source_size, "format": "ELF",
+                "architecture": "x86:LE:64:default", "tool": "Ghidra Headless",
+                "language": "x86:LE:64:default", "batch_count": 1,
+                "batches": [{"start_index": 0, "next_index": 1, "truncated": False,
+                             "function_count": 1, "decompiled_count": 1, "failed_count": 0}],
+                "function_count": 1, "decompiled_count": 1, "failed_count": 0,
+                "truncated": False, "next_index": 1,
+                "functions": [{"name": "main", "entry": "00400000",
+                               "status": "DECOMPILED", "file": filename,
+                               "sha256": hashlib.sha256(pseudoc).hexdigest(),
+                               "bytes": len(pseudoc), "error": ""}],
+                "original_executed": False,
+            }
+            (pseudoc_root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         return FakeProc()
 
     def docker(argv, **kwargs):
@@ -118,14 +149,33 @@ def test_real_plan_mounts_active_workspace_readonly_and_only_output_writable(mon
     assert "--read-only" in argv and "--memory" in argv
     assert f"type=bind,src={tmp_path},dst=/workspace,readonly" in argv
     assert f"type=bind,src={result['output']},dst=/output" in argv
+    assert f"type=bind,src={result['pseudocode_output']},dst=/pseudoc" in argv
+    assert "-scriptPath" in argv and argv[argv.index("-scriptPath") + 1] == "/scripts"
+    assert "-postScript" in argv and argv[argv.index("-postScript") + 1] == "KittExportPseudocode.java"
+    assert f"type=bind,src={re_workspace._script_dir()},dst=/scripts,readonly" in argv
     assert "/workspace/2.1.308" in argv
     assert "/opt/ghidra/support/analyzeHeadless" in argv
+    assert result["decompiled_source_exported"] is True
+    assert result["pseudocode_status"] == "COMPLETE"
+    assert Path(result["pseudocode_manifest"]).is_file()
+    assert list(Path(result["pseudocode_output"]).glob("fn_*.c"))
     assert "--privileged" not in argv and "/var/run/docker.sock" not in " ".join(argv)
     assert Path(result["output"]).is_dir()
     assert Path(result["log"]).is_file()
     after = binary.stat()
     assert (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns)
     assert binary.read_bytes() == b"\x7fELF\x02\x01" + bytes(122)
+
+
+def test_analysis_success_without_pseudocode_export_is_not_reported_as_complete(monkeypatch, tmp_path):
+    (tmp_path / "2.1.308").write_bytes(b"\x7fELF\x02\x01" + bytes(122))
+    monkeypatch.setattr(re_workspace, "_managed_image", lambda: "sha256:" + "a" * 64)
+    _fake_ghidra(monkeypatch, export=False)
+    result = re_workspace.analyze_workspace(workspace=tmp_path, path="2.1.308")
+    assert result["status"] == "PSEUDOCODE_INCOMPLETE"
+    assert result["decompiled_source_exported"] is False
+    assert result["pseudocode_status"] == "MISSING"
+    assert "manifest is missing" in result["pseudocode_issue"].lower()
 
 
 def test_readonly_workspace_rejects_symlinks_protected_paths_and_size(monkeypatch, tmp_path):

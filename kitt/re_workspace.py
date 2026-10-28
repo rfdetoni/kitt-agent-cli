@@ -450,11 +450,12 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
     source, before_hash, size = _source(root, path)
     image = _managed_image()
     script_dir = _script_dir()
+    parent = _output_root(root, create=not dry_run)
     pseudocode_output = _pseudocode_output(root, before_hash, create=not dry_run)
     resources = {"memory_mib": memory_mib, "heap_mib": heap_mib, "cpus": cpus}
     if dry_run:
         output = (_resume_output(root, source, before_hash, resume_job)
-                  if resume_job else _output_root(root, create=False) / "<new-run>")
+                  if resume_job else parent / "<new-run>")
         return {
             "status": "PLAN_ONLY", "workspace": str(root), "source": source,
             "source_size": size, "source_sha256": before_hash,
@@ -472,7 +473,6 @@ def analyze_workspace(*, workspace: Path | None = None, path: str,
             "stall_warning_seconds": stall_warning_seconds, "resource_limits": resources,
         }
 
-    parent = _output_root(root, create=True)
     job = secrets.token_hex(6)
     container = "kitt-re-job-" + job
     if resume_job:
