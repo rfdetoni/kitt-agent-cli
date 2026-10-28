@@ -121,12 +121,12 @@ def validate_pseudocode_manifest(
         or payload.get("skipped_count", 0) < 0
         or payload["function_count"] != payload["decompiled_count"] + payload.get("skipped_count", 0)
         or payload.get("original_executed") is not False
+        or not isinstance(payload.get("batches"), list)
         or type(payload.get("batch_count")) is not int
-        or payload["batch_count"] != len(payload.get("batches", []))
+        or payload["batch_count"] != len(payload["batches"])
+        or not payload["batches"]
         or not isinstance(payload.get("functions"), list)
         or len(payload["functions"]) != payload["function_count"]
-        or not isinstance(payload.get("batches"), list)
-        or not payload["batches"]
     ):
         return payload, (
             f"Pseudocode export is incomplete: status={payload.get('status')!r}, "
