@@ -22,9 +22,11 @@ def prepare_contract_step(runtime, goal, state) -> ContractStep:
         key = completion_state_key(goal.id)
         return ContractStep(None, goal, key, state.get(key))
 
+    # Keep the original user objective available to the independent validator and
+    # deterministic final gates. The current item prompt is selected separately
+    # by build_contract_prompt below.
     step_goal = replace(
         goal,
-        objective=item.prompt,
         success_criteria=list(item.criteria),
         gates=[],
     )
@@ -39,7 +41,7 @@ def prepare_contract_step(runtime, goal, state) -> ContractStep:
 def build_contract_prompt(
     runtime, goal, step: ContractStep, resume, *, previous_evidence: str = ""
 ) -> str:
-    prompt = step.goal.objective
+    prompt = step.item.prompt if step.item is not None else step.goal.objective
     if step.item is not None:
         progress = " | ".join(
             f"{item.local_id}:{item.status}"
