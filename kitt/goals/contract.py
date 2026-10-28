@@ -18,6 +18,10 @@ MAX_CONTRACT_BYTES = 32 * 1024
 MAX_CONTRACT_ITEMS = 12
 MAX_PLANNING_ATTEMPTS = 2
 _LOCAL_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_PSEUDOCODE_REQUEST_RE = re.compile(
+    r"\b(?:pseudo[\s-]?c(?:ódigo|odigo)?|pseudocode|decompila(?:ção|cao|tion|ted)|decompiled\s+c)\b",
+    re.IGNORECASE,
+)
 _CHECK_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
 
@@ -56,7 +60,36 @@ class ContractPlanner:
             raise ValueError(f"Duplicate {field} entries")
         return result
 
-    def validate(self, payload: Any) -> list[dict[str, Any]]:
+    @staticmethod
+    def _explicit_deliverable_gaps(original_prompt: str, items: list[dict[str, Any]]) -> list[str]:
+        if not _PSEUDOCODE_REQUEST_RE.search(str(original_prompt or "")):
+            return []
+        tasks = [item for item in items if item["kind"] == "task"]
+        task_text = "\n".join(
+            " ".join([
+                item["title"], item["prompt"], item["validation_prompt"],
+                *item["success_criteria"], *item["paths"],
+            ])
+            for item in tasks
+        )
+        final = items[-1]
+        final_text = " ".join([
+            final["title"], final["prompt"], final["validation_prompt"],
+            *final["success_criteria"], *final["paths"],
+        ])
+        gaps = []
+        if not _PSEUDOCODE_REQUEST_RE.search(task_text):
+            gaps.append("no implementation task covers the explicitly requested Ghidra pseudocode/decompilation")
+        if not any(
+            re.search(r"(?:pseudoc|pseudo-c|decompiled|decompil).*|\.c$", path, re.IGNORECASE)
+            for item in tasks for path in item["paths"]
+        ):
+            gaps.append("no task owns a concrete pseudocode directory or .c output path")
+        if not _PSEUDOCODE_REQUEST_RE.search(final_text):
+            gaps.append("FINAL does not verify the requested pseudocode deliverable or its blocked status")
+        return gaps
+
+    def validate(self, payload: Any, *, original_prompt: str = "") -> list[dict[str, Any]]:
         if not isinstance(payload, dict) or set(payload) != {"items"}:
             raise ValueError("Contract must be an object containing only 'items'")
         if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > MAX_CONTRACT_BYTES:
@@ -195,6 +228,9 @@ class ContractPlanner:
         }
         if len(all_checks) > 12:
             raise ValueError("Contract exceeds 12 distinct host verification checks")
+        gaps = self._explicit_deliverable_gaps(original_prompt, normalized)
+        if gaps:
+            raise ValueError("Contract omits explicit user deliverables: " + "; ".join(gaps))
         return normalized
 
     @staticmethod
@@ -227,6 +263,9 @@ class ContractPlanner:
             "checks when available and do not invent a check for unsupported language builds. "
             "When a compiler/guest Oracle is missing, preserve the item as BLOCKED_ENV "
             "with a concrete reproducible validation plan, not DONE. "
+            "Explicit user-requested deliverables such as Ghidra pseudocode/decompiled C and named output folders are mandatory, not optional feasibility-only work. "
+            "If Ghidra is unavailable, record BLOCKED_ENV with concrete evidence and leave the overall decompilation objective incomplete. "
+            "Structural inventories never satisfy an explicit pseudocode/decompilation requirement. "
             "Use acceptance criteria when no check applies. "
             "Do not repeat the entire objective inside each item. Defer repository discovery to the first execution task. "
             "Only the host executes and verifies tasks; never grant permissions or emit shell commands. "
@@ -370,7 +409,7 @@ class ContractPlanner:
             response = self._run_plan_turn(conversation_id, prompt)
             yield ContractProgress(phase="checking", attempt=attempt, max_attempts=MAX_PLANNING_ATTEMPTS)
             try:
-                items = self.validate(parse_structured_result(response))
+                items = self.validate(parse_structured_result(response), original_prompt=superprompt)
             except ValueError as exc:
                 errors = [str(exc)]
                 if attempt == MAX_PLANNING_ATTEMPTS:
