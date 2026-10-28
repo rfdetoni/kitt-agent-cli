@@ -93,6 +93,54 @@ class TurnProcessorDecompositionTests(unittest.TestCase):
                 processor.close()
                 processor.registry.close()
 
+    def test_webchat_composer_protocol_error_creates_safe_checkpoint(self):
+        from kitt.llm.domain import ProviderProtocolError
+
+        class ProxyClient:
+            profile = ModelProfile(
+                backend="kitt-reverse-proxy",
+                protocol="kitt-reverse-proxy",
+                model="chatgpt-web",
+                base_url="http://127.0.0.1:3000",
+                context_window=32768,
+            )
+
+            def chat_stream(self, messages, **kwargs):
+                raise AssertionError("Stream dispatch is mocked for this test")
+                yield ""
+
+        with tempfile.TemporaryDirectory() as root:
+            processor = TurnProcessor(
+                root_dir=root,
+                execution_client=ProxyClient(),
+                config=RuntimeConfig(
+                    history_enabled=False,
+                    persistence_enabled=False,
+                    semantic_mode="local",
+                ),
+            )
+            try:
+                with patch.object(
+                    processor,
+                    "_stream_execution_response",
+                    side_effect=ProviderProtocolError(
+                        "KITT reverse proxy: ui_automation_error: "
+                        "composer fill timed out before submission"
+                    ),
+                ) as stream:
+                    events = list(processor.run_turn(TurnCommand(
+                        "conv", "Continue verified work.", mode="auto", no_history=True,
+                    )))
+                checkpoints = [e for e in events if isinstance(e, TurnBlocked)]
+                self.assertEqual(len(checkpoints), 1)
+                self.assertIn("ui_automation_error", checkpoints[0].reason)
+                self.assertIn("not replayed", checkpoints[0].reason)
+                self.assertFalse(any(isinstance(e, TurnFailed) for e in events))
+                self.assertEqual(stream.call_count, 1)
+            finally:
+                processor.close()
+                processor.registry.close()
+
     def test_native_call_repair_keeps_prior_host_receipts(self):
         from kitt.llm.domain import ProviderRecoverableError
 

@@ -177,6 +177,32 @@ class VerificationOrchestrator:
                 step for step in self._plan(unique, False)
                 if step.name == "python.targeted-tests"
             )
+            # A documentation-only contract can still require real Python
+            # regression evidence. With no changed Python file to pair with
+            # a sibling test, use existing repository tests as a stronger
+            # workspace-wide check (never claim a nonexistent targeted test).
+            if not any(step.name == "python.targeted-tests" for step in plan):
+                root_tests = sorted(self.root.glob("test_*.py"))
+                tests_dir = self.root / "tests"
+                nested_tests = (
+                    sorted(tests_dir.rglob("test_*.py"))
+                    if tests_dir.is_dir() else []
+                )
+                if root_tests:
+                    argv = ["python3", "-m", "unittest", "-v",
+                            *(path.stem for path in root_tests[:64])]
+                elif nested_tests:
+                    argv = ["python3", "-m", "unittest", "discover",
+                            "-s", "tests", "-p", "test_*.py", "-v"]
+                else:
+                    argv = None
+                if argv is not None:
+                    plan.extend(self.contracts.apply_plan([
+                        VerificationStep(
+                            "python.targeted-tests", argv, 240, "test",
+                            scope="workspace",
+                        )
+                    ]))
         if native_source and not any(step.name == "c.build" for step in plan):
             return VerificationReport(
                 False,

@@ -163,3 +163,42 @@ def test_ruff_discovery_uses_kitt_venv_even_when_path_is_unset(tmp_path, monkeyp
     monkeypatch.setattr(sys, "executable", str(binary_dir / "python"))
     monkeypatch.setattr("kitt.tools.build_detector.shutil.which", lambda command: None)
     assert BuildDetector.ruff_executable() == str(binary)
+
+
+def test_required_targeted_tests_run_workspace_suite_for_doc_only_change(tmp_path):
+    from types import SimpleNamespace
+    from kitt.validation.orchestrator import VerificationOrchestrator
+
+    (tmp_path / "test_validate_elf.py").write_text(
+        "import unittest\\nclass Check(unittest.TestCase):\\n    def test_ok(self): assert True\\n"
+    )
+    (tmp_path / "baseline.md").write_text("# evidence\\n")
+    commands = []
+
+    def run(argv, **kwargs):
+        commands.append(argv)
+        return SimpleNamespace(returncode=0, stdout="1 test passed", stderr="",
+                               timed_out=False, cancelled=False)
+
+    report = VerificationOrchestrator(
+        tmp_path, SimpleNamespace(run=run)
+    ).verify(["baseline.md"], check_ids=["python.targeted-tests"])
+    assert report.ok, report.failure_message()
+    assert report.workspace_verified
+    assert commands == [["python3", "-m", "unittest", "-v", "test_validate_elf"]]
+
+
+def test_required_targeted_tests_fail_closed_when_workspace_has_no_tests(tmp_path):
+    from types import SimpleNamespace
+    from kitt.validation.orchestrator import VerificationOrchestrator
+
+    (tmp_path / "baseline.md").write_text("# evidence\\n")
+    runner = SimpleNamespace(run=lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("No test may run without an existing test file")
+    ))
+    report = VerificationOrchestrator(tmp_path, runner).verify(
+        ["baseline.md"], check_ids=["python.targeted-tests"]
+    )
+    assert not report.ok
+    assert report.status == "UNAVAILABLE"
+    assert "python.targeted-tests" in report.command_output

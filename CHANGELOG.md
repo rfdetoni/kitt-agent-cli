@@ -1,5 +1,11 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.9 — safe checkpoints and required Python regression evidence
+
+- Convert ambiguous WebChat provider protocol failures, including failed UI composer writes, into TurnBlocked checkpoints without automatic retries or uncaught turn failures.
+- When the host requires python.targeted-tests for docs-only changes and no paired test exists, execute existing workspace Python tests as a stronger fallback, never report PASS when no test is available.
+- Add regression tests for both flows; synchronize package, runtime and lock versions.
+
 ## 0.89.8 — reliable Python verification and sandbox diagnostics
 
 - Locate Ruff from the Agent CLI virtual environment even when its scripts directory is absent from PATH.
