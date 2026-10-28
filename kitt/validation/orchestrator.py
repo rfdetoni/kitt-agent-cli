@@ -147,6 +147,24 @@ class VerificationOrchestrator:
             )
 
         plan = self._plan(unique, full)
+        # A contract may require linting after a documentation-only edit.
+        # Verify actual workspace Python sources instead of silently marking
+        # the required check PASS or declaring it unavailable solely because
+        # the changed file has a .md extension.
+        if "python.lint" in required and not any(
+            step.name == "python.lint" for step in plan
+        ):
+            ruff = self.detector.ruff_executable()
+            has_python = (
+                (self.root / "pyproject.toml").is_file()
+                or any(self.root.glob("*.py"))
+                or any((self.root / "tests").glob("*.py"))
+            )
+            if ruff and has_python:
+                workspace_lint = VerificationStep(
+                    "python.lint", [ruff, "check", "."], 90, "lint", scope="workspace"
+                )
+                plan.extend(self.contracts.apply_plan([workspace_lint]))
         # Explicit targeted checks must remain discoverable when required
         # check_ids switches the verifier into full mode. The full detector
         # intentionally selects project-wide checks instead of sibling tests.
