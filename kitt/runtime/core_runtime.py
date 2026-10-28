@@ -1374,6 +1374,42 @@ class SafeRuntime:
         except (ValueError, OSError, PermissionError, SandboxUnavailable) as exc:
             return SafeRuntimeResult(False, "sandbox.run", error=str(exc))
         success = result.returncode == 0 and not result.timed_out and not result.cancelled
+        error = None if success else "Sandbox command failed; examine returncode and stderr"
+        metadata = {}
+        command = argv[0].rsplit("/", 1)[-1].lower()
+        stderr = str(result.stderr or "").casefold()
+        if not success and command in {"docker", "podman"}:
+            if command == "docker" and any(term in stderr for term in (
+                "failed to connect to the docker api", "cannot connect to the docker daemon",
+                "dial unix /var/run/docker.sock", "permission denied while trying to connect",
+            )):
+                metadata = {"failure_kind": "DOCKER_SANDBOX_SOCKET_UNAVAILABLE",
+                            "retry_same_command": False}
+                error = (
+                    "Docker socket is deliberately unavailable inside the agent sandbox. "
+                    "Use kitt_runtime re.lab.images for image status or re.lab.analyze for "
+                    "governed reverse engineering; do not retry docker or expose the host socket."
+                )
+            elif command == "podman" and any(term in stderr for term in (
+                "execvp podman", "no such file or directory", "command not found",
+            )):
+                metadata = {"failure_kind": "PODMAN_SANDBOX_EXECUTABLE_UNAVAILABLE",
+                            "retry_same_command": False}
+                error = (
+                    "Podman executable is unavailable inside the agent sandbox. "
+                    "Use the host-governed re.lab.images/re.lab.analyze operations; "
+                    "do not retry podman or expand the sandbox."
+                )
+        elif not success and command == "find" and any(term in stderr for term in (
+            "permission denied", "permissão negada",
+        )):
+            metadata = {"failure_kind": "HOST_PATH_SEARCH_DENIED",
+                        "retry_same_command": False}
+            error = (
+                "Searching host system directories is restricted by the sandbox. "
+                "Use workspace-scoped repo.list or inspect known toolchain locations; "
+                "do not repeat a broad host filesystem search."
+            )
         return SafeRuntimeResult(
             success, "sandbox.run",
             data={
@@ -1384,7 +1420,7 @@ class SafeRuntime:
                 "truncated": result.truncated,
                 "sandbox": result.sandbox_backend,
             },
-            error=None if success else "Sandbox command failed; examine returncode and stderr",
+            error=error, metadata=metadata,
         )
 
     def _managed_processes(self):
