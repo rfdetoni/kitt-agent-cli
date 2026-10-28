@@ -398,6 +398,10 @@ class ContractPlanner:
         if not str(superprompt or "").strip():
             raise ValueError("Contract objective is required")
         simple = self._simple_single_file_plan(superprompt)
+        if simple is not None and self._explicit_deliverable_gaps(superprompt, simple):
+            # The shortcut is for ordinary single-file edits only. Explicit
+            # decompilation deliverables need the full host-validated plan.
+            simple = None
         if simple is not None:
             self._check_cancelled()
             yield ContractProgress(phase="accepted", attempt=0, max_attempts=0)

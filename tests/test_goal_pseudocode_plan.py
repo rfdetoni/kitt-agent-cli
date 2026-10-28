@@ -30,6 +30,27 @@ def test_non_pseudoc_request_does_not_trigger_pseudoc_deliverable_guard(tmp_path
     assert result[-1]["kind"] == "final"
 
 
+def test_simple_single_file_shortcut_does_not_bypass_pseudoc_plan(monkeypatch, tmp_path):
+    planner = ContractPlanner(SimpleNamespace(canonical_root=Path(tmp_path)))
+    shortcut = [
+        {
+            "local_id": "T01", "kind": "task", "title": "Inspect ELF",
+            "prompt": "Inspect ELF headers only.", "validation_prompt": "Verify inventory.",
+            "success_criteria": ["Inventory exists"], "check_ids": [],
+            "paths": ["analysis/inventory.json"], "depends_on": [],
+        },
+        {
+            "local_id": "FINAL", "kind": "final", "title": "Finish",
+            "prompt": "Confirm inventory exists.", "validation_prompt": "Verify inventory.",
+            "success_criteria": ["Inventory exists"], "check_ids": [],
+            "paths": ["analysis/inventory.json"], "depends_on": ["T01"],
+        },
+    ]
+    monkeypatch.setattr(planner, "_simple_single_file_plan", lambda prompt: shortcut)
+    progress = next(planner.iter_plan("conversation_test", "Create pseudoC for 2.1.308."))
+    assert progress.phase == "generating"
+
+
 def test_planner_rejects_inventory_only_plan_for_explicit_pseudoc_request(tmp_path):
     planner = ContractPlanner(SimpleNamespace(canonical_root=Path(tmp_path)))
     payload = {"items": [
