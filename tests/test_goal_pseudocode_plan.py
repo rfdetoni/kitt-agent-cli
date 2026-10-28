@@ -20,6 +20,16 @@ def _item(local_id, *, kind="task", title=None, prompt=None, validation=None,
     }
 
 
+def test_non_pseudoc_request_does_not_trigger_pseudoc_deliverable_guard(tmp_path):
+    planner = ContractPlanner(SimpleNamespace(canonical_root=Path(tmp_path)))
+    payload = {"items": [
+        _item("T01", paths=["analysis/inventory.json"]),
+        _item("FINAL", kind="final", depends_on=["T01"]),
+    ]}
+    result = planner.validate(payload, original_prompt="Review the static ELF inventory.")
+    assert result[-1]["kind"] == "final"
+
+
 def test_planner_rejects_inventory_only_plan_for_explicit_pseudoc_request(tmp_path):
     planner = ContractPlanner(SimpleNamespace(canonical_root=Path(tmp_path)))
     payload = {"items": [

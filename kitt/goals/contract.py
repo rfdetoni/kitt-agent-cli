@@ -412,7 +412,7 @@ class ContractPlanner:
             response = self._run_plan_turn(conversation_id, prompt)
             yield ContractProgress(phase="checking", attempt=attempt, max_attempts=MAX_PLANNING_ATTEMPTS)
             try:
-                items = self.validate(parse_structured_result(response), original_prompt=superprompt)
+                items = self.validate(parse_structured_result(response), original_prompt=goal.objective)
             except ValueError as exc:
                 errors = [str(exc)]
                 if attempt == MAX_PLANNING_ATTEMPTS:
