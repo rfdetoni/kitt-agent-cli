@@ -41,7 +41,10 @@ def prepare_contract_step(runtime, goal, state) -> ContractStep:
 def build_contract_prompt(
     runtime, goal, step: ContractStep, resume, *, previous_evidence: str = ""
 ) -> str:
-    prompt = step.item.prompt if step.item is not None else step.goal.objective
+    prompt = (
+        str(getattr(step.item, "prompt", "") or step.goal.objective)
+        if step.item is not None else step.goal.objective
+    )
     if step.item is not None:
         progress = " | ".join(
             f"{item.local_id}:{item.status}"
