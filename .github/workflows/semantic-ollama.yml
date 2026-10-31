@@ -1,12 +1,6 @@
 name: Real Ollama Multilingual E5
 
 on:
-  pull_request:
-    paths:
-      - "kitt/context/rag/**"
-      - "kitt/context_filter/**"
-      - "tests/integration/test_real_semantic_ollama.py"
-      - ".github/workflows/semantic-ollama.yml"
   workflow_dispatch:
 
 permissions:
