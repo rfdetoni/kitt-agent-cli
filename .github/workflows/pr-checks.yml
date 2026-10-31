@@ -2,15 +2,18 @@ name: PR Checks
 
 on:
   pull_request:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**']
   push:
-    branches: [main, 'fix/**']
+    branches: [main] # Automatic release depends on PR Checks after merge
+    paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-checks-${{ github.event_name == 'push' && github.sha || github.ref }}
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -121,6 +124,7 @@ jobs:
           done
 
   windows-smoke:
+    if: github.event_name != 'pull_request'
     name: windows package smoke
     runs-on: windows-latest
     timeout-minutes: 8
@@ -142,6 +146,7 @@ jobs:
       - run: kitt --help
 
   container-runtime:
+    if: github.event_name != 'pull_request'
     name: docker runtime smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -161,6 +166,7 @@ jobs:
         run: python -m pytest -q tests/integration/test_real_container_runtime.py tests/integration/test_autonomous_docker_sandbox.py tests/integration/test_persistent_autopilot_broker.py
 
   podman-runtime:
+    if: github.event_name != 'pull_request'
     name: podman runtime smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 10

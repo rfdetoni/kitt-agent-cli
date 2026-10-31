@@ -1,9 +1,5 @@
 name: Build VM container images
 on:
-  pull_request:
-    paths:
-      - "kitt/vm_assets/**"
-      - ".github/workflows/vm-container-images.yml"
   push:
     branches: [main]
     paths:
