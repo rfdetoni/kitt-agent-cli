@@ -346,6 +346,8 @@ class KittUIApp:
     _reverse_proxy_show = _reverse_proxy_panel._reverse_proxy_show
     _reverse_proxy_prepare_url = _reverse_proxy_panel._reverse_proxy_prepare_url
     _reverse_proxy_prepare_profile_create = _reverse_proxy_panel._reverse_proxy_prepare_profile_create
+    _reverse_proxy_prepare_decision = _reverse_proxy_panel._reverse_proxy_prepare_decision
+    _reverse_proxy_list_decision_models_selected = _reverse_proxy_panel._reverse_proxy_list_decision_models_selected
     _reverse_proxy_start_selected = _reverse_proxy_panel._reverse_proxy_start_selected
     _reverse_proxy_stop_selected = _reverse_proxy_panel._reverse_proxy_stop_selected
     _reverse_proxy_restart_selected = _reverse_proxy_panel._reverse_proxy_restart_selected
