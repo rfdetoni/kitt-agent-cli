@@ -356,7 +356,7 @@ def _reverse_proxy_text(ui) -> str:
             f"@ {instance.decision_url} | temporário: {instance.temporary_chat}"
         )
         ui.interactions.add_row(
-            "reverse_proxy", len(lines) - 1, "reverse_proxy.item", index
+            "reverse_proxy", len(lines) - 2, "reverse_proxy.item", index
         )
     service_buttons = [
         ("[n] Novo serviço", "reverse_proxy.show", "plugins"),
