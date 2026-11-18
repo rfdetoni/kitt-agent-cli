@@ -27,6 +27,34 @@ def parse_model_command(arg: str) -> Tuple[str, str, Optional[str], Optional[str
 
 
 async def handle_model_command(app: KittUIApp, arg: str) -> None:
+    tokens = shlex.split(arg) if arg else []
+    if tokens and tokens[0].lower() == "decision":
+        # Decision models are a separate advisor, not a generative task role.
+        if len(tokens) == 1:
+            await app._open_reverse_proxy_overlay()
+            return
+        if len(tokens) == 2:
+            from kitt.ui.reverse_proxy_panel import handle_reverse_proxy_command
+            await handle_reverse_proxy_command(app, "models " + shlex.quote(tokens[1]))
+            return
+        if len(tokens) > 4:
+            app._show_result("Usage: /model decision <instance> [model] [off|shadow|assist]")
+            return
+        mode = tokens[3] if len(tokens) == 4 else "assist"
+        try:
+            instance = await app._run_blocking(
+                app.reverse_proxy_client.configure_instance,
+                tokens[1],
+                decision_model=tokens[2],
+                decision_mode=mode,
+            )
+            app._show_result(
+                f"Decisão atualizada: {instance.id} → "
+                f"{instance.decision_mode}/{instance.decision_model}"
+            )
+        except Exception as error:
+            app._show_result(f"Modelo de decisão: {error}")
+        return
     if not arg:
         await app._open_model_setup_overlay()
         return
