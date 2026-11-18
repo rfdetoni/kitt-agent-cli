@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any
 
 from kitt.reverse_proxy.contracts import (
@@ -83,6 +84,11 @@ class ReverseProxyClient:
         profile: str | None = None,
         instance_id: str | None = None,
         port: int | None = None,
+        decision_mode: str | None = None,
+        decision_model: str | None = None,
+        decision_url: str | None = None,
+        decision_timeout_ms: int | None = None,
+        temporary_chat: str | None = None,
     ) -> ReverseProxyInstance:
         self._refresh_managed_control_plane()
         args = ["service", "start", target]
@@ -92,6 +98,22 @@ class ReverseProxyClient:
             args.extend(["--id", instance_id])
         if port is not None:
             args.extend(["--port", str(port)])
+        model_params = self._model_settings(
+            decision_mode=decision_mode,
+            decision_model=decision_model,
+            decision_url=decision_url,
+            decision_timeout_ms=decision_timeout_ms,
+            temporary_chat=temporary_chat,
+        )
+        for flag, key in (
+            ("--decision-mode", "decision_mode"),
+            ("--decision-model", "decision_model"),
+            ("--decision-url", "decision_url"),
+            ("--decision-timeout-ms", "decision_timeout_ms"),
+            ("--temporary-chat", "temporary_chat"),
+        ):
+            if key in model_params:
+                args.extend([flag, str(model_params[key])])
 
         try:
             log_level = int((os.getenv("KITT_LOG_LEVEL", "0") or "0").strip() or "0")
@@ -118,6 +140,7 @@ class ReverseProxyClient:
                 **({"profile": profile} if profile else {}),
                 **({"id": instance_id} if instance_id else {}),
                 **({"port": port} if port is not None else {}),
+                **model_params,
                 "log_level": log_level,
                 "log_content": log_content,
                 "owner_pid": self.owner_pid,
@@ -185,26 +208,107 @@ class ReverseProxyClient:
             ).get("stopped") or 0
         )
 
-    def restart_instance(self, instance_id: str) -> ReverseProxyInstance:
+    @staticmethod
+    def _model_settings(
+        *,
+        decision_mode: str | None = None,
+        decision_model: str | None = None,
+        decision_url: str | None = None,
+        decision_timeout_ms: int | None = None,
+        temporary_chat: str | None = None,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        if decision_mode is not None:
+            if decision_mode not in {"off", "shadow", "assist"}:
+                raise ValueError("decision_mode must be off, shadow or assist")
+            result["decision_mode"] = decision_mode
+        if temporary_chat is not None:
+            if temporary_chat not in {"off", "supported", "required"}:
+                raise ValueError("temporary_chat must be off, supported or required")
+            result["temporary_chat"] = temporary_chat
+        if decision_model is not None:
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", decision_model):
+                raise ValueError("decision_model must be a valid model identifier")
+            result["decision_model"] = decision_model
+        if decision_url is not None:
+            parts = urlsplit(decision_url)
+            if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password or parts.path not in {"", "/"} or parts.query or parts.fragment:
+                raise ValueError("decision_url must be an HTTP(S) origin without credentials, path or query")
+            result["decision_url"] = decision_url.rstrip("/")
+        if decision_timeout_ms is not None:
+            if type(decision_timeout_ms) is not int or not 100 <= decision_timeout_ms <= 30000:
+                raise ValueError("decision_timeout_ms must be between 100 and 30000")
+            result["decision_timeout_ms"] = decision_timeout_ms
+        return result
+
+    def configure_instance(
+        self,
+        instance_id: str,
+        *,
+        decision_mode: str | None = None,
+        decision_model: str | None = None,
+        decision_url: str | None = None,
+        decision_timeout_ms: int | None = None,
+        temporary_chat: str | None = None,
+    ) -> ReverseProxyInstance:
+        settings = self._model_settings(
+            decision_mode=decision_mode,
+            decision_model=decision_model,
+            decision_url=decision_url,
+            decision_timeout_ms=decision_timeout_ms,
+            temporary_chat=temporary_chat,
+        )
+        if not settings:
+            raise ValueError("No decision-model or temporary-chat setting was provided")
         self._refresh_managed_control_plane()
-        current = next(
-            (item for item in self.list_instances() if item.id == instance_id),
-            None,
+        args = ["service", "configure", instance_id]
+        for flag, key in (
+            ("--decision-mode", "decision_mode"),
+            ("--decision-model", "decision_model"),
+            ("--decision-url", "decision_url"),
+            ("--decision-timeout-ms", "decision_timeout_ms"),
+            ("--temporary-chat", "temporary_chat"),
+        ):
+            if key in settings:
+                args.extend([flag, str(settings[key])])
+        payload = self._request("service.configure", {"id": instance_id, **settings}, *args)
+        instance = payload.get("instance")
+        if not isinstance(instance, dict):
+            raise ReverseProxyControlError("Reverse proxy did not confirm its configuration")
+        return ReverseProxyInstance.from_dict(instance)
+
+    def list_decision_models(self, url: str = "http://127.0.0.1:11435") -> list[str]:
+        """Read installed Ollaya models; never auto-pull or transmit conversation data."""
+        validated = self._model_settings(decision_url=url)
+        endpoint = validated["decision_url"]
+        request = urllib.request.Request(endpoint + "/api/tags", method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=min(self.timeout_seconds, 4.0)) as response:
+                payload = json.loads(response.read(1024 * 1024).decode("utf-8"))
+        except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError) as error:
+            raise ReverseProxyControlError(f"Cannot list decision models from Ollaya: {error}") from error
+        models = payload.get("models") if isinstance(payload, dict) else None
+        if not isinstance(models, list):
+            raise ReverseProxyControlError("Ollaya did not return a models list")
+        return sorted({
+            str(item.get("name") or item.get("model")).strip()
+            for item in models if isinstance(item, dict) and
+            isinstance(item.get("name") or item.get("model"), str) and
+            item.get("name", item.get("model", ""))
+        })
+
+    def restart_instance(self, instance_id: str) -> ReverseProxyInstance:
+        # Delegate restart to the proxy owner so persisted model settings survive.
+        self._refresh_managed_control_plane()
+        payload = self._request(
+            "service.restart", {"id": instance_id},
+            "service", "restart", instance_id,
         )
-        if current is None:
-            raise ReverseProxyControlError(
-                f"Reverse proxy instance was not found: {instance_id}"
-            )
-        if not self.stop_instance(instance_id):
-            raise ReverseProxyControlError(
-                f"Reverse proxy instance could not be stopped: {instance_id}"
-            )
-        return self.start_instance(
-            current.target,
-            profile=current.profile_id or None,
-            instance_id=current.id,
-            port=current.port or None,
-        )
+        instance = payload.get("instance")
+        if not isinstance(instance, dict):
+            raise ReverseProxyControlError("Reverse proxy did not return the restarted instance")
+        return ReverseProxyInstance.from_dict(instance)
 
     def create_profile(self, name: str, provider: str | None = None) -> ReverseProxyProfile:
         args = ["profiles", "create", name]
@@ -315,7 +419,7 @@ class ReverseProxyClient:
         )
         timeout = (
             self.startup_timeout_seconds
-            if action in {"service.start", "service.restart"}
+            if action in {"service.start", "service.restart", "service.configure"}
             else min(self.timeout_seconds, 5.0)
         )
         with urllib.request.urlopen(
