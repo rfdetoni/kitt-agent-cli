@@ -46,6 +46,7 @@ class CaptureReverseProxyClient(ReverseProxyClient):
                     "pid": 321,
                     "status": "running",
                     "startedAt": "now",
+                    "logFile": "/tmp/kitt/reverse-proxy-agent-owned.log",
                     "decisionMode": params.get("decision_mode", "assist"),
                     "decisionModel": params.get("decision_model", "laya"),
                     "temporaryChat": params.get("temporary_chat", "supported"),
