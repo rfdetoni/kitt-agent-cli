@@ -142,6 +142,7 @@ def _reverse_proxy_prepare_decision(ui) -> None:
         ui,
         f"/reverse-proxy configure {shlex.quote(instance.id)} "
         f"--decision-mode {mode} --decision-model {shlex.quote(instance.decision_model)} "
+        f"--temporary-chat {instance.temporary_chat} "
     )
 
 
@@ -149,6 +150,7 @@ async def _reverse_proxy_list_decision_models_selected(ui) -> None:
     instance = ui.reverse_proxy_model.selected_instance()
     if instance is None:
         return
+    ui.close_overlay()
     await handle_reverse_proxy_command(ui, f"models {shlex.quote(instance.id)}")
 
 
