@@ -69,7 +69,7 @@ class CommandRegistry:
             ("status", "Runtime Status", "System", "Show runtime snapshot", ["/status"]),
             ("verify_full", "Full Verification", "System", "Toggle bounded compile/typecheck/lint/test verification: /verify-full [on|off|status]", ["/verify-full", "/verify"]),
             ("re", "Ambientes RE / Laboratório", "System", "Gerenciar VMs, ferramentas e helper de instalação (/re)", ["/re", "/re-lab"]),
-            ("reverse_proxy", "KITT Reverse Proxy", "System", "Manage reverse-proxy instances, profiles, plugins and role bindings", ["/reverse-proxy", "/proxy"]),
+            ("reverse_proxy", "KITT Reverse Proxy", "System", "Manage LLMs, decision models, temporary chats, reverse-proxy instances and role bindings", ["/reverse-proxy", "/proxy"]),
             ("restart_reverse_proxy", "Restart Reverse Proxy", "System", "Restart all local KITT Reverse Proxy services", ["/restart-reverse-proxy"]),
             ("stop_reverse_proxy", "Stop Reverse Proxy", "System", "Stop all local KITT Reverse Proxy services", ["/stop-reverse-proxy"]),
             ("compact", "Compact History", "Session", "Compact bounded conversation history", ["/compact"]),
