@@ -121,6 +121,8 @@ Example inside KITT:
 
 Options are validated **before** stopping the selected service. A successful `configure` action restarts that one managed proxy and displays its effective settings. Choices are stored per browser profile **and provider** in the reverse proxy's private local configuration. They survive service restarts, KITT restarts and stopping/starting the same profile, without editing `.env`. A second service with another profile may use different settings.
 
+You can also use `/model decision` to open the proxy panel, `/model decision coding` to list installed Ollaya models, or `/model decision coding winnow:e4b assist` to select one directly.
+
 To set the LLM itself, use `/model principal`, `/model context` or `/setup-models` as before. Selecting a WebChat API alias never forcibly changes the provider's actual UI model.
 
 The **required** temporary-chat mode is currently supported only for ChatGPT UI. `supported` leaves other providers in their prior mode; ChatGPT must visibly confirm temporary mode before a prompt is sent. The mode does not disable provider-side retention guarantees. The decision endpoint is operator-supplied; the last user text (up to 4096 characters) is sent to that endpoint in enabled modes. Avoid untrusted or unencrypted remote decision servers.
