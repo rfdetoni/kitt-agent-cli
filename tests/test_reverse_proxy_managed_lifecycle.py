@@ -33,6 +33,25 @@ class CaptureReverseProxyClient(ReverseProxyClient):
                     "logFile": "/tmp/kitt/reverse-proxy-agent-owned.log",
                 }
             }
+        if action in {"service.configure", "service.restart"}:
+            return {
+                "instance": {
+                    "id": "agent-owned",
+                    "provider": "chatgpt",
+                    "model": "chatgpt-web",
+                    "target": "chatgpt",
+                    "profileId": "coding",
+                    "host": "127.0.0.1",
+                    "port": 3001,
+                    "pid": 321,
+                    "status": "running",
+                    "startedAt": "now",
+                    "logFile": "/tmp/kitt/reverse-proxy-agent-owned.log",
+                    "decisionMode": params.get("decision_mode", "assist"),
+                    "decisionModel": params.get("decision_model", "laya"),
+                    "temporaryChat": params.get("temporary_chat", "supported"),
+                }
+            }
         if action == "service.stop":
             return {"stopped": True}
         return {}
@@ -140,7 +159,7 @@ class ReverseProxyManagedLifecycleTests(unittest.TestCase):
 
         self.assertEqual(restarted.log_file, "/tmp/kitt/reverse-proxy-agent-owned.log")
         actions = [action for action, _params, _fallback in client.calls]
-        self.assertEqual(actions, ["service.stop", "service.start"])
+        self.assertEqual(actions, ["service.restart"])
 
     def test_shutdown_stops_only_instances_started_by_this_client(self):
         client = CaptureReverseProxyClient()
@@ -157,6 +176,35 @@ class ReverseProxyManagedLifecycleTests(unittest.TestCase):
         ]
         self.assertEqual(stop_calls, [{"id": "agent-owned"}])
 
+
+    def test_kitt_can_configure_decision_model_and_temporary_chat_without_env(self):
+        client = CaptureReverseProxyClient()
+        configured = client.configure_instance(
+            "agent-owned",
+            decision_mode="assist",
+            decision_model="winnow:e4b",
+            decision_url="http://127.0.0.1:11435",
+            decision_timeout_ms=1200,
+            temporary_chat="supported",
+        )
+        self.assertEqual(configured.decision_model, "winnow:e4b")
+        action, params, args = client.calls[0]
+        self.assertEqual(action, "service.configure")
+        self.assertEqual(params["decision_model"], "winnow:e4b")
+        self.assertIn("--decision-model", args)
+        self.assertEqual(params["temporary_chat"], "supported")
+
+    def test_invalid_decision_options_are_rejected_before_service_mutation(self):
+        client = CaptureReverseProxyClient()
+        with self.assertRaises(ValueError):
+            client.configure_instance("agent-owned", decision_mode="garbage")
+        with self.assertRaises(ValueError):
+            client.configure_instance("agent-owned", decision_url="http://user:pass@localhost:11435")
+        with self.assertRaises(ValueError):
+            client.configure_instance("agent-owned", decision_timeout_ms=30001)
+        with self.assertRaises(ValueError):
+            client.configure_instance("agent-owned")
+        self.assertEqual(client.calls, [])
 
 if __name__ == "__main__":
     unittest.main()
