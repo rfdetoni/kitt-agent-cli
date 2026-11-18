@@ -183,6 +183,13 @@ def build_key_bindings(ui):
     def _(event):
         if ui.reverse_proxy_model.page == "profiles":
             asyncio.create_task(ui._reverse_proxy_remove_profile())
+        elif ui.reverse_proxy_model.page == "instances":
+            ui._reverse_proxy_prepare_decision()
+
+    @kb.add("m", filter=reverse_proxy)
+    def _(event):
+        if ui.reverse_proxy_model.page == "instances":
+            asyncio.create_task(ui._reverse_proxy_list_decision_models_selected())
 
     @kb.add("enter", filter=reverse_proxy)
     def _(event):
