@@ -132,6 +132,26 @@ def _reverse_proxy_prepare_profile_create(ui) -> None:
     _prefill_prompt(ui, "/reverse-proxy profile create ")
 
 
+def _reverse_proxy_prepare_decision(ui) -> None:
+    instance = ui.reverse_proxy_model.selected_instance()
+    if instance is None:
+        ui.state.add_toast("Selecione um serviço para configurar o modelo de decisão.", persistent=True)
+        return
+    mode = instance.decision_mode if instance.decision_mode != "off" else "assist"
+    _prefill_prompt(
+        ui,
+        f"/reverse-proxy configure {shlex.quote(instance.id)} "
+        f"--decision-mode {mode} --decision-model {shlex.quote(instance.decision_model)} "
+    )
+
+
+async def _reverse_proxy_list_decision_models_selected(ui) -> None:
+    instance = ui.reverse_proxy_model.selected_instance()
+    if instance is None:
+        return
+    await handle_reverse_proxy_command(ui, f"models {shlex.quote(instance.id)}")
+
+
 async def _reverse_proxy_start_selected(ui) -> None:
     plugin = ui.reverse_proxy_model.selected_plugin()
     if not plugin:
@@ -331,6 +351,10 @@ def _reverse_proxy_text(ui) -> str:
             f"{instance.id:<20} {instance.provider:<10} "
             f"{instance.status:<9} {instance.endpoint} · perfil {instance.profile_id}"
         )
+        lines.append(
+            f"    Decisão: {instance.decision_mode}/{instance.decision_model} "
+            f"@ {instance.decision_url} | temporário: {instance.temporary_chat}"
+        )
         ui.interactions.add_row(
             "reverse_proxy", len(lines) - 1, "reverse_proxy.item", index
         )
@@ -340,6 +364,8 @@ def _reverse_proxy_text(ui) -> str:
         ("[F5] Atualizar", "reverse_proxy.refresh", None),
         ("[r] Reiniciar", "reverse_proxy.restart", None),
         ("[x] Parar", "reverse_proxy.stop", None),
+        ("[d] Config. decisão", "reverse_proxy.decision", None),
+        ("[m] Listar modelos", "reverse_proxy.models", None),
     ]
     role_buttons = [
         ("[c] Usar em Contexto", "reverse_proxy.bind", "context"),
@@ -361,6 +387,8 @@ def _reverse_proxy_text(ui) -> str:
     _register_button(ui, actions_row, actions_line, "[F5] Atualizar", "reverse_proxy.refresh")
     _register_button(ui, actions_row, actions_line, "[r] Reiniciar", "reverse_proxy.restart")
     _register_button(ui, actions_row, actions_line, "[x] Parar", "reverse_proxy.stop")
+    _register_button(ui, actions_row, actions_line, "[d] Config. decisão", "reverse_proxy.decision")
+    _register_button(ui, actions_row, actions_line, "[m] Listar modelos", "reverse_proxy.models")
     _register_button(ui, role_row, role_line, "[c] Usar em Contexto", "reverse_proxy.bind", "context")
     _register_button(ui, role_row, role_line, "[e] Usar em Código", "reverse_proxy.bind", "principal")
     _register_button(ui, role_row, role_line, "[v] Usar em Validação", "reverse_proxy.bind", "validation")
@@ -373,6 +401,32 @@ def _flag_value(tokens: list[str], name: str) -> str | None:
     except ValueError:
         return None
     return tokens[index + 1] if index + 1 < len(tokens) else None
+
+
+def _parse_decision_flags(tokens: list[str]) -> dict[str, object]:
+    flags = {
+        "--decision-mode": "decision_mode",
+        "--decision-model": "decision_model",
+        "--decision-url": "decision_url",
+        "--decision-timeout-ms": "decision_timeout_ms",
+        "--temporary-chat": "temporary_chat",
+    }
+    options: dict[str, object] = {}
+    for flag, key in flags.items():
+        if flag not in tokens:
+            continue
+        index = tokens.index(flag)
+        if index + 1 >= len(tokens) or tokens[index + 1].startswith("--"):
+            raise ValueError(f"Missing value after {flag}")
+        value = tokens[index + 1]
+        if key == "decision_timeout_ms":
+            try:
+                options[key] = int(value)
+            except ValueError as error:
+                raise ValueError("decision-timeout-ms must be an integer") from error
+        else:
+            options[key] = value
+    return options
 
 
 async def handle_reverse_proxy_command(ui, argument: str) -> None:
@@ -395,12 +449,14 @@ async def handle_reverse_proxy_command(ui, argument: str) -> None:
             if len(tokens) < 2:
                 raise ValueError("Usage: /reverse-proxy start <plugin|url> [--profile NAME] [--id ID] [--role ROLE]")
             raw_port = _flag_value(tokens, "--port")
+            kwargs = _parse_decision_flags(tokens)
             instance = await ui._run_blocking(
                 ui.reverse_proxy_client.start_instance,
                 tokens[1],
                 profile=_flag_value(tokens, "--profile"),
                 instance_id=_flag_value(tokens, "--id"),
                 port=int(raw_port) if raw_port else None,
+                **kwargs,
             )
             role = _flag_value(tokens, "--role")
             if role:
@@ -408,6 +464,39 @@ async def handle_reverse_proxy_command(ui, argument: str) -> None:
             ui._show_result(
                 f"Reverse Proxy iniciado\n{instance.id}: {instance.provider}/{instance.model}\n{instance.endpoint}"
                 + (f"\nRole: {normalize_role(role)}" if role else "")
+            )
+            return
+
+        if action == "configure":
+            if len(tokens) < 3:
+                raise ValueError("Usage: /reverse-proxy configure <instance> --decision-mode off|shadow|assist --decision-model <model> [--decision-url <origin>] [--decision-timeout-ms <ms>] [--temporary-chat off|supported|required]")
+            options = _parse_decision_flags(tokens)
+            if not options:
+                raise ValueError("Informe ao menos uma configuração de modelo ou chat temporário.")
+            instance = await ui._run_blocking(
+                ui.reverse_proxy_client.configure_instance, tokens[1], **options,
+            )
+            ui._show_result(
+                f"Configuração aplicada e serviço reiniciado: {instance.id}"
+                f"\nModelo de decisão: {instance.decision_mode}/{instance.decision_model}"
+                f"\nEndpoint: {instance.decision_url}"
+                f"\nChat temporário: {instance.temporary_chat}"
+            )
+            return
+
+        if action == "models":
+            instance_id = tokens[1] if len(tokens) > 1 else ""
+            instances = await ui._run_blocking(ui.reverse_proxy_client.list_instances)
+            instance = next((item for item in instances if item.id == instance_id), None)
+            if not instance:
+                raise ValueError("Selecione uma instância em /reverse-proxy e informe o ID.")
+            models = await ui._run_blocking(
+                ui.reverse_proxy_client.list_decision_models, instance.decision_url,
+            )
+            ui._show_result(
+                "Modelos de decisão instalados no Ollaya:\n"
+                + ("\n".join(f"  {model}" for model in models) if models else "  Nenhum modelo instalado.")
+                + f"\n\nSelecionar: /reverse-proxy configure {instance.id} --decision-model <modelo>"
             )
             return
 
@@ -468,7 +557,7 @@ async def handle_reverse_proxy_command(ui, argument: str) -> None:
             return
 
         raise ValueError(
-            "Usage: /reverse-proxy [start|stop|restart|bind|plugins|profile]"
+            "Usage: /reverse-proxy [start|configure|models|stop|restart|bind|plugins|profile]"
         )
     except (ReverseProxyControlError, ValueError) as error:
         ui._show_result(f"KITT Reverse Proxy: {error}")
