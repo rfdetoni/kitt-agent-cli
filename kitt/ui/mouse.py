@@ -178,6 +178,10 @@ def _activate_interaction(ui, region) -> None:
         ui._reverse_proxy_prepare_profile_create()
     elif action == "reverse_proxy.profile_remove":
         asyncio.create_task(ui._reverse_proxy_remove_profile())
+    elif action == "reverse_proxy.decision":
+        ui._reverse_proxy_prepare_decision()
+    elif action == "reverse_proxy.models":
+        asyncio.create_task(ui._reverse_proxy_list_decision_models_selected())
     elif action == "model.role_next":
         asyncio.create_task(ui._move_model_role(1))
     elif action == "model.role":
