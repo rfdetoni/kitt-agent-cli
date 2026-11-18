@@ -65,6 +65,11 @@ class ReverseProxyInstance:
     pid: int
     status: str
     started_at: str
+    decision_mode: str = "off"
+    decision_model: str = "laya"
+    decision_url: str = "http://127.0.0.1:11435"
+    decision_timeout_ms: int = 2500
+    temporary_chat: str = "off"
     log_file: str | None = None
 
     @property
@@ -85,5 +90,10 @@ class ReverseProxyInstance:
             pid=int(value.get("pid") or 0),
             status=_text(value.get("status")) or "running",
             started_at=_text(value.get("startedAt") or value.get("started_at")),
+            decision_mode=_text(value.get("decisionMode") or value.get("decision_mode")) or "off",
+            decision_model=_text(value.get("decisionModel") or value.get("decision_model")) or "laya",
+            decision_url=_text(value.get("decisionUrl") or value.get("decision_url")) or "http://127.0.0.1:11435",
+            decision_timeout_ms=int(value.get("decisionTimeoutMs") or value.get("decision_timeout_ms") or 2500),
+            temporary_chat=_text(value.get("temporaryChat") or value.get("temporary_chat")) or "off",
             log_file=_text(value.get("logFile") or value.get("log_file")) or None,
         )
