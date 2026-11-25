@@ -234,7 +234,10 @@ class WorkspaceSnapshotService:
             return self._manifest_digest(self._tree_manifest(rel))
         return self.fs.read(rel).sha256 if self.fs.exists_regular(rel) else None
 
-    def _restore_directory_v2(self, rel: str, raw: bytes, expected: str) -> None:
+    def _restore_directory_v2(
+        self, rel: str, raw: bytes, expected: str,
+        expected_current: dict[str, str | None] | None,
+    ) -> None:
         manifest = json.loads(raw)
         if not isinstance(manifest, list) or self._manifest_digest(manifest) != expected:
             raise ValueError(f"snapshot artifact digest mismatch for {rel}")
@@ -250,10 +253,14 @@ class WorkspaceSnapshotService:
                         or hashlib.sha256(content).hexdigest() != entry["sha256"]):
                     raise ValueError(f"snapshot artifact digest mismatch for {target}")
         from kitt.security.workspace_mutations import delete_path
+        if expected_current is not None and self._current_sha(rel, expected) != expected_current[rel]:
+            raise ValueError(f"Rollback conflict: {rel} changed during snapshot validation")
         if self.fs.is_safe_directory(rel):
             delete_path(self.fs, rel, recursive=True)
         elif self.fs.exists_regular(rel):
-            self.fs.unlink(rel)
+            self.fs.unlink(
+                rel, expected_sha256=None if expected_current is None else expected_current[rel],
+            )
         self.fs.create_directory(rel, parents=True, exist_ok=True)
         for entry in manifest:
             target = rel + "/" + entry["path"]
@@ -436,7 +443,7 @@ class WorkspaceSnapshotService:
             if item.get("kind") == "directory":
                 raw = self.artifacts.read(str(item.get("artifact_id") or ""))
                 if str(item.get("sha256") or "").startswith("directory-v2:"):
-                    self._restore_directory_v2(rel, raw, item["sha256"])
+                    self._restore_directory_v2(rel, raw, item["sha256"], expected_current)
                     restored.append(rel)
                     continue
                 if "directory:" + hashlib.sha256(raw).hexdigest() != item.get("sha256"):
