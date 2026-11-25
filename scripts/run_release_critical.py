@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import argparse
 
 import pytest
 import faulthandler
@@ -65,6 +66,9 @@ RELEASE_CRITICAL_TESTS = (
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--full", action="store_true", help="Run all tests once, including mandatory release contracts")
+    args = parser.parse_args()
     missing = [path for path in RELEASE_CRITICAL_TESTS if not (ROOT / path).is_file()]
     if missing:
         raise SystemExit(f"release-critical test paths are missing: {missing}")
@@ -73,6 +77,21 @@ def main() -> int:
     faulthandler.enable()
     faulthandler.dump_traceback_later(240, repeat=False, file=sys.stderr)
     try:
+        if args.full:
+            # pytest's full suite covers these paths and the previously repeated
+            # focused groups. Explicitly validate mandatory test collection too.
+            class CriticalCoverage:
+                def pytest_collection_finish(self, session):
+                    collected = {Path(item.path).resolve() for item in session.items}
+                    absent = [path for path in RELEASE_CRITICAL_TESTS
+                              if (ROOT / path).resolve() not in collected]
+                    if absent:
+                        pytest.exit(f"release-critical tests not collected: {absent}", returncode=1)
+
+            return int(pytest.main(
+                ["-q", "--durations=10", str(ROOT / "tests")],
+                plugins=[CriticalCoverage()],
+            ))
         return int(pytest.main(["-vv", "--maxfail=1", "--durations=10", *RELEASE_CRITICAL_TESTS]))
     finally:
         faulthandler.cancel_dump_traceback_later()
