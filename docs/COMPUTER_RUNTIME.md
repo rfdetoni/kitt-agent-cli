@@ -88,3 +88,12 @@ as execution. Manual RPC
 enabled, the next manager execution resumes a paused runtime, including
 a manually paused one. No separate daemon is created. The optional WASM
 engine is installed in CI to exercise real fuel and import guards.
+
+## Bounded artifact transfer
+
+The host-owned artifact store accepts binary chunks via `put_stream`, spools
+large data to disk, verifies an optional expected SHA-256 before publication,
+and deduplicates verified blobs. `transfer_to` copies an artifact between two
+already authorized stores with identical workspace/conversation scope and
+preserves sensitivity and expiry metadata. Transfers use 64 KiB reads. This is
+a local/shared-store primitive, not a network cache or remote authorization API.

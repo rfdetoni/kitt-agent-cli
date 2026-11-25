@@ -83,7 +83,7 @@ def _compute(args):
         str(item) not in integer_types for item in signature.results
     ):
         raise ValueError("only integer parameters and at most one integer result are supported")
-    for value, kind in zip(values, signature.params):
+    for value, kind in zip(values, signature.params, strict=True):
         if str(kind) == "i32" and not -(2 ** 31) <= value < 2 ** 31:
             raise ValueError("i32 argument outside signed range")
     value = func(store, *values)
