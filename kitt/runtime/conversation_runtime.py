@@ -345,9 +345,14 @@ class RemoteRuntimeDriver:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=float(config.get("timeout_seconds", 120))) as response:
-                value = json.loads(response.read(1024 * 1024).decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            timeout = max(1.0, min(float(config.get("timeout_seconds", 120)), 3600.0))
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                max_response = 1024 * 1024
+                raw = response.read(max_response + 1)
+                if len(raw) > max_response:
+                    raise RuntimeError("remote runtime response exceeds 1 MiB")
+                value = json.loads(raw.decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise RuntimeError(f"remote runtime request failed: {type(exc).__name__}") from exc
         if not isinstance(value, dict):
             raise RuntimeError("remote runtime returned non-object response")
