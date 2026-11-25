@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 
 class PersistentProgramSessions:
     """Durable variable scope for the bounded declarative program runtime."""
@@ -36,7 +38,14 @@ class PersistentProgramSessions:
                 "program.session.execute",
                 error="persistent runtime state is unavailable",
             )
-        prior = self.snapshot(name)
+        key = self._key(name)
+        previous = self.state_store.get(key)
+        if previous is not None and not isinstance(previous, dict):
+            return SafeRuntimeResult(
+                False, "program.session.execute", error="invalid persistent program state",
+            )
+        # Keep the compare value independent of interpreter-owned mutable data.
+        prior = copy.deepcopy(previous) if previous is not None else {}
         request = dict(arguments)
         explicit = request.get("state")
         if explicit is not None and not isinstance(explicit, dict):
@@ -66,6 +75,18 @@ class PersistentProgramSessions:
                     data={"state_truncated": True},
                 )
             if isinstance(state, dict):
-                self.state_store.set(self._key(name), state)
+                try:
+                    saved = self.state_store.set(key, state, expected_value=previous)
+                except ValueError as exc:
+                    return SafeRuntimeResult(
+                        False, "program.session.execute",
+                        error=f"persistent state rejected: {exc}",
+                    )
+                if not saved:
+                    return SafeRuntimeResult(
+                        False, "program.session.execute",
+                        error="persistent program state changed concurrently; retry with the current state",
+                        data={"state_conflict": True},
+                    )
         result.operation = "program.session.execute"
         return result

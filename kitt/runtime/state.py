@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 from kitt.history.database import HistoryDatabase
 
 
+_UNCONDITIONAL = object()
+
+
 class RuntimeStateStore:
     """Persistent, session-scoped key-value state store backed by SQLite with strict bounds."""
 
@@ -53,8 +56,12 @@ class RuntimeStateStore:
             except Exception:
                 return None
 
-    def set(self, key: str, value: Any, ttl_seconds: Optional[float] = None) -> bool:
-        """Store a key-value pair under session scope with bounded limits."""
+    def set(
+        self, key: str, value: Any, ttl_seconds: Optional[float] = None,
+        *, expected_value: Any = _UNCONDITIONAL,
+    ) -> bool:
+        """Store a bounded value; optionally compare the previous value atomically."""
+
         if not key or not isinstance(key, str):
             raise ValueError("State key must be a non-empty string")
         if len(key) > 128:
@@ -72,6 +79,15 @@ class RuntimeStateStore:
             conn.execute("BEGIN IMMEDIATE")
             self._cleanup_expired(conn)
             cur = conn.cursor()
+            if expected_value is not _UNCONDITIONAL:
+                previous = cur.execute(
+                    "SELECT value_json FROM runtime_states WHERE workspace_id=? "
+                    "AND conversation_id=? AND state_key=?",
+                    (self.workspace_id, self.conversation_id, key),
+                ).fetchone()
+                current = json.loads(previous[0]) if previous else None
+                if current != expected_value:
+                    return False
 
             # Check total count
             cur.execute(

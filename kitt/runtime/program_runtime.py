@@ -8,11 +8,13 @@ from kitt.runtime.programmatic_flow import (
     _bounded,
     _get_path,
     _json_tokens,
+    _json_size,
     _transform,
 )
 
 
 PROGRAM_OPERATIONS = frozenset(READ_ONLY_FLOW_OPERATIONS)
+_MAX_SCOPE_BYTES = 2 * 1024 * 1024
 
 
 def _resolve(value: Any, scope: dict[str, Any]) -> Any:
@@ -101,6 +103,33 @@ class BoundedProgramRuntime:
         if not isinstance(initial_state, dict):
             return SafeRuntimeResult(False, "program.execute", error="state must be an object")
         scope: dict[str, Any] = dict(initial_state)
+        # Account only modified bindings, rather than repeatedly serializing
+        # every retained tool response. Scope values use copy-on-write.
+        try:
+            sizes = {key: _json_size({key: value}) - 2 for key, value in scope.items()}
+            retained = 2 + sum(sizes.values()) + max(0, len(sizes) - 1)
+        except (ValueError, TypeError, RecursionError) as exc:
+            return SafeRuntimeResult(False, "program.execute", error=f"invalid initial state: {exc}")
+        if retained > _MAX_SCOPE_BYTES:
+            return SafeRuntimeResult(False, "program.execute", error="program scope exceeds 2 MiB")
+
+        def assign(key: str, value: Any) -> None:
+            nonlocal retained
+            size = _json_size({key: value}) - 2
+            old = sizes.get(key)
+            delta = size - old if old is not None else size + bool(sizes)
+            if retained + delta > _MAX_SCOPE_BYTES:
+                raise ValueError("program scope exceeds 2 MiB")
+            scope[key] = value
+            sizes[key] = size
+            retained += delta
+
+        def remove(key: str) -> None:
+            nonlocal retained
+            if key in sizes:
+                retained -= sizes.pop(key) + bool(sizes)
+                scope.pop(key)
+
         metrics = {"statements": 0, "tool_calls": 0, "intermediate_tokens": 0, "tokens_saved": 0}
         returned = {"set": False, "value": None}
 
@@ -145,21 +174,23 @@ class BoundedProgramRuntime:
                     save = str(raw.get("save") or "").strip()
                     collect = str(raw.get("collect") or "").strip()
                     if save or collect:
+                        if save and save == collect:
+                            raise ValueError("save and collect require distinct variables")
                         selected = _transform(result.data, raw.get("transform"))
                         if save:
-                            local_scope[save] = selected
+                            assign(save, selected)
                         if collect:
-                            bucket = local_scope.setdefault(collect, [])
+                            bucket = local_scope.get(collect, [])
                             if not isinstance(bucket, list):
                                 raise ValueError(f"collect target '{collect}' is not a list")
-                            bucket.append(selected)
+                            assign(collect, [*bucket, selected])
                     continue
 
                 if "set" in raw:
                     name = str(raw.get("set") or "").strip()
                     if not name:
                         raise ValueError("set requires a variable name")
-                    local_scope[name] = _resolve(raw.get("value"), local_scope)
+                    assign(name, _resolve(raw.get("value"), local_scope))
                     continue
 
                 if "for_each" in raw:
@@ -175,15 +206,15 @@ class BoundedProgramRuntime:
                     previous = local_scope.get(variable, missing)
                     try:
                         for item in collection[:limit]:
-                            local_scope[variable] = item
+                            assign(variable, item)
                             run_statements(body, local_scope, depth + 1)
                             if returned["set"]:
                                 break
                     finally:
                         if previous is missing:
-                            local_scope.pop(variable, None)
+                            remove(variable)
                         else:
-                            local_scope[variable] = previous
+                            assign(variable, previous)
                     continue
 
                 if "if" in raw:
@@ -204,7 +235,7 @@ class BoundedProgramRuntime:
             run_statements(program, scope)
             value = returned["value"] if returned["set"] else scope
             bounded, truncated = _bounded(value, max_tokens)
-        except (KeyError, IndexError, TypeError, ValueError, RuntimeError, PermissionError) as exc:
+        except (KeyError, IndexError, TypeError, ValueError, RuntimeError, PermissionError, RecursionError) as exc:
             return SafeRuntimeResult(
                 False,
                 "program.execute",

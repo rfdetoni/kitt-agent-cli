@@ -80,3 +80,33 @@ def test_zero_limit_does_not_execute_and_restores_shadowed_variable():
     assert result.success
     assert result.data["tool_calls"] == 0
     assert result.data["result"] == {"item": "outer", "observed": 2}
+
+
+def test_program_scope_budget_rejects_oversized_retained_values():
+    result = run([
+        {"set": "large", "value": "x" * (2 * 1024 * 1024)},
+        {"return": True},
+    ])
+    assert not result.success
+    assert "scope exceeds" in result.error
+
+
+def test_program_collect_does_not_mutate_an_aliased_list():
+    result = run([
+        {"set": "bucket", "value": []},
+        {"set": "alias", "value": "$bucket"},
+        {"call": "repo.list", "collect": "bucket",
+         "transform": {"path": "files", "aggregate": "count"}},
+        {"return": {"bucket": "$bucket", "alias": "$alias"}},
+    ])
+    assert result.success
+    assert result.data["result"] == {"bucket": [3], "alias": []}
+
+
+def test_program_rejects_self_referential_save_collect():
+    result = run([
+        {"call": "repo.list", "save": "files", "collect": "files",
+         "transform": {"path": "files"}},
+    ])
+    assert not result.success
+    assert "distinct variables" in result.error
