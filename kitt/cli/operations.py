@@ -113,8 +113,14 @@ def build_session_report(
                 if not sid:
                     continue
                 conversation = conn.execute(
-                    """SELECT status, updated_at, last_turn_at
-                       FROM conversations WHERE id=?""",
+                    """SELECT c.status, c.updated_at, c.last_turn_at,
+                              r.value_json AS runtime_binding
+                       FROM conversations c
+                       LEFT JOIN runtime_states r ON r.workspace_id=c.workspace_id
+                         AND r.conversation_id=c.id
+                         AND r.state_key='conversation.runtime.binding'
+                         AND (r.expires_at IS NULL OR r.expires_at >= strftime('%s','now'))
+                       WHERE c.id=?""",
                     (sid,),
                 ).fetchone()
                 latest = conn.execute(
@@ -148,8 +154,23 @@ def build_session_report(
                 if not status and conversation:
                     status = conversation["status"]
 
+                runtime_binding = None
+                if conversation and conversation["runtime_binding"]:
+                    try:
+                        candidate = json.loads(conversation["runtime_binding"])
+                        if isinstance(candidate, dict):
+                            # Report only operational metadata, never the config
+                            # or connection credentials.
+                            runtime_binding = {
+                                "backend": _clean(candidate.get("backend"), 32),
+                                "state": _clean(candidate.get("state"), 32),
+                                "runtime_id": _clean(candidate.get("runtime_id"), 128),
+                            }
+                    except (ValueError, TypeError):
+                        pass
                 rows.append(
                     {
+                        "runtime_binding": runtime_binding,
                         "id": sid,
                         "title": _clean(raw.get("title") or sid, 120),
                         "status": _clean(status or "UNKNOWN", 32),
@@ -205,6 +226,9 @@ def render_session_report(
             f"{str(row.get('age', '-')):>6}  "
             f"{tokens:>9}  {row.get('title', '')}"
         )
+        binding = row.get("runtime_binding")
+        if binding:
+            lines.append(f"  runtime: {binding['backend']} / {binding['state']} / {binding['runtime_id']}")
         detail = row.get("last_error")
         if detail:
             lines.append(f"  error: {detail}")

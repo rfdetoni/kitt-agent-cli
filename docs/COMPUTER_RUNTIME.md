@@ -23,3 +23,23 @@ implement automatic idle timers or scheduled hibernation.
 The durable binding retains its concrete backend and PAUSED state; a
 hibernated container may be resumed after restarting the manager. Never
 treat a stopped RUNNING container as a successful health check.
+
+## Operator RPC
+
+The local host-owned `kitt rpc --no-start-services` stdio adapter accepts
+`runtime.status`, `runtime.health`, `runtime.provision`, `runtime.attach`,
+`runtime.pause`, `runtime.resume`, `runtime.snapshot`, and
+`runtime.terminate`. All require an explicit existing conversation ID
+within the active workspace. No arbitrary command execution is exposed by
+these RPC methods and they are not model-facing tools.
+
+Example request (replace the conversation ID with a real one):
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"runtime.provision","params":{"conversation_id":"existing-id","backend":"AUTO","config":{"auto_backends":["PODMAN","DOCKER"],"image":"alpine:3.20","hibernate_on_pause":true}}}
+```
+
+Use `runtime.status` for the persisted binding without a backend request;
+`runtime.health` explicitly probes the backend. `kitt sessions --json`
+includes the sanitized runtime binding metadata, suitable for UI consumers.
+Do not expose the local operator RPC directly on an unauthenticated network.

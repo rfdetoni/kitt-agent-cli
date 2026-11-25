@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 
 class RuntimeRPC:
@@ -18,7 +19,49 @@ class RuntimeRPC:
             active = self.runtime.history.get_or_create_active()
         return str(active["id"])
 
+    def _runtime_control(self, method, params):
+        # Local operator RPC only. No model-facing runtime operation exposes
+        # these lifecycle methods, and explicit conversation scope is mandatory.
+        conversation_id = str(params.get("conversation_id") or "").strip()
+        if not conversation_id:
+            raise ValueError("runtime control requires an explicit conversation_id")
+        conversation = self.runtime.history.repo.get_conversation(conversation_id)
+        if not conversation or conversation.get("workspace_id") != self.runtime.workspace_id:
+            raise PermissionError("conversation is outside the active workspace")
+        manager = self.runtime.conversation_runtimes.for_conversation(conversation_id)
+        config = params.get("config", {})
+        if not isinstance(config, dict):
+            raise ValueError("runtime config must be an object")
+        if method == "runtime.status":
+            binding = manager.binding()
+        elif method == "runtime.health":
+            return manager.health()
+        elif method == "runtime.provision":
+            if manager.binding() is not None:
+                raise RuntimeError("conversation already has a runtime; terminate it first")
+            binding = manager.provision(str(params["backend"]), config)
+        elif method == "runtime.attach":
+            if manager.binding() is not None:
+                raise RuntimeError("conversation already has a runtime")
+            binding = manager.attach(str(params["backend"]), str(params["runtime_id"]), config)
+        elif method == "runtime.pause":
+            binding = manager.pause()
+        elif method == "runtime.resume":
+            binding = manager.resume()
+        elif method == "runtime.snapshot":
+            return manager.snapshot_state()
+        elif method == "runtime.terminate":
+            manager.terminate()
+            return {"ok": True}
+        else:
+            raise KeyError(f"unknown RPC method: {method}")
+        if binding is None:
+            return {"binding": None, "state": "UNBOUND"}
+        return {"binding": {**asdict(binding), "backend": binding.backend.value}}
+
     def dispatch(self, method, params):
+        if method.startswith("runtime."):
+            return self._runtime_control(method, params)
         conversation_id = self._conversation(params)
 
         if method == "agents.list":
