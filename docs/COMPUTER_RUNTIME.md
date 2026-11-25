@@ -97,3 +97,17 @@ and deduplicates verified blobs. `transfer_to` copies an artifact between two
 already authorized stores with identical workspace/conversation scope and
 preserves sensitivity and expiry metadata. Transfers use 64 KiB reads. This is
 a local/shared-store primitive, not a network cache or remote authorization API.
+
+## Read-only operator mounts and compressed frames
+
+Docker and Podman provisioning accept `readonly_mounts`, an object mapping
+up to eight simple aliases to absolute, existing operator-selected host directories.
+They are mounted at `/mnt/kitt/<alias>` with read-only flags. These are live bind
+mounts, not snapshots or a model-facing VFS. AUTO refuses to choose unsupported
+backends when mounts are required. Do not select directories containing credentials.
+
+`ArtifactStore.export_frames` and `import_frames` provide independent 64 KiB
+transport frames with optional native Python 3.14 Zstandard level 1 compression.
+Uncompressible blocks remain raw. Import validates frame size, decompression limits,
+and the expected full SHA-256 before publishing. The caller supplies authorized
+workspace/conversation metadata; no unauthenticated network endpoint is created.
