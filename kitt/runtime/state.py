@@ -22,8 +22,9 @@ class RuntimeStateStore:
     def _cleanup_expired(self, conn) -> None:
         now = time.time()
         conn.execute(
-            "DELETE FROM runtime_states WHERE expires_at IS NOT NULL AND expires_at < ?",
-            (now,)
+            "DELETE FROM runtime_states WHERE workspace_id=? AND conversation_id=? "
+            "AND expires_at IS NOT NULL AND expires_at < ?",
+            (self.workspace_id, self.conversation_id, now)
         )
 
     def get(self, key: str) -> Optional[Any]:
@@ -31,14 +32,15 @@ class RuntimeStateStore:
         if not key or not isinstance(key, str):
             return None
         with self.db.get_connection() as conn:
-            self._cleanup_expired(conn)
+            # Reads never acquire a writer reservation just to expire keys.
             cur = conn.cursor()
             cur.execute(
                 """
                 SELECT value_json, expires_at FROM runtime_states
                 WHERE workspace_id = ? AND conversation_id = ? AND state_key = ?
+                  AND (expires_at IS NULL OR expires_at >= ?)
                 """,
-                (self.workspace_id, self.conversation_id, key)
+                (self.workspace_id, self.conversation_id, key, time.time())
             )
             row = cur.fetchone()
             if not row:
@@ -67,6 +69,7 @@ class RuntimeStateStore:
         expires_at = (now + ttl_seconds) if ttl_seconds is not None else None
 
         with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             self._cleanup_expired(conn)
             cur = conn.cursor()
 
@@ -124,16 +127,16 @@ class RuntimeStateStore:
     def list_keys(self) -> List[Dict[str, Any]]:
         """List all active keys and metadata for this conversation."""
         with self.db.get_connection() as conn:
-            self._cleanup_expired(conn)
             cur = conn.cursor()
             cur.execute(
                 """
                 SELECT state_key, bytes_count, created_at, updated_at, expires_at
                 FROM runtime_states
                 WHERE workspace_id = ? AND conversation_id = ?
+                  AND (expires_at IS NULL OR expires_at >= ?)
                 ORDER BY updated_at DESC
                 """,
-                (self.workspace_id, self.conversation_id)
+                (self.workspace_id, self.conversation_id, time.time())
             )
             rows = cur.fetchall()
             return [
