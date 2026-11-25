@@ -8,6 +8,7 @@ from kitt.runtime.programmatic_flow import (
     _bounded,
     _get_path,
     _json_tokens,
+    _transform,
 )
 
 
@@ -143,13 +144,15 @@ class BoundedProgramRuntime:
                     metrics["tokens_saved"] += int(result.tokens_saved or 0)
                     save = str(raw.get("save") or "").strip()
                     collect = str(raw.get("collect") or "").strip()
-                    if save:
-                        local_scope[save] = result.data
-                    if collect:
-                        bucket = local_scope.setdefault(collect, [])
-                        if not isinstance(bucket, list):
-                            raise ValueError(f"collect target '{collect}' is not a list")
-                        bucket.append(result.data)
+                    if save or collect:
+                        selected = _transform(result.data, raw.get("transform"))
+                        if save:
+                            local_scope[save] = selected
+                        if collect:
+                            bucket = local_scope.setdefault(collect, [])
+                            if not isinstance(bucket, list):
+                                raise ValueError(f"collect target '{collect}' is not a list")
+                            bucket.append(selected)
                     continue
 
                 if "set" in raw:
@@ -164,16 +167,23 @@ class BoundedProgramRuntime:
                     if not isinstance(collection, list):
                         raise ValueError("for_each must resolve to an array")
                     variable = str(raw.get("as") or "item").strip() or "item"
-                    limit = max(0, min(int(raw.get("limit", 16) or 16), 32))
+                    limit = max(0, min(int(raw.get("limit", 16)), 32))
                     body = raw.get("do", [])
                     if not isinstance(body, list):
                         raise ValueError("for_each.do must be an array")
-                    for item in collection[:limit]:
-                        local_scope[variable] = item
-                        run_statements(body, local_scope, depth + 1)
-                        if returned["set"]:
-                            break
-                    local_scope.pop(variable, None)
+                    missing = object()
+                    previous = local_scope.get(variable, missing)
+                    try:
+                        for item in collection[:limit]:
+                            local_scope[variable] = item
+                            run_statements(body, local_scope, depth + 1)
+                            if returned["set"]:
+                                break
+                    finally:
+                        if previous is missing:
+                            local_scope.pop(variable, None)
+                        else:
+                            local_scope[variable] = previous
                     continue
 
                 if "if" in raw:
