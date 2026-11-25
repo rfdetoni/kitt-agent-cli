@@ -26,6 +26,10 @@ from kitt_protocol import ConversationRuntimeBinding, RuntimeBackend
 _SECRET_KEYS = ("token", "secret", "password", "credential", "api_key", "authorization")
 
 
+class RuntimeOutcomeUnknown(RuntimeError):
+    """An external request may have taken effect; never auto-retry it."""
+
+
 def _sanitized_config(config: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {}
     for key, value in dict(config or {}).items():
@@ -470,10 +474,10 @@ class RemoteRuntimeDriver:
         except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, ValueError) as exc:
             # Size errors contain no remote input; preserve the actionable limit.
             if type(exc) is ValueError and str(exc) == "HTTP response exceeds configured size limit":
-                raise RuntimeError("remote runtime response exceeds 1 MiB") from exc
-            raise RuntimeError(f"remote runtime request failed: {type(exc).__name__}") from exc
+                raise RuntimeOutcomeUnknown("remote runtime response exceeds 1 MiB") from exc
+            raise RuntimeOutcomeUnknown(f"remote runtime request failed: {type(exc).__name__}") from exc
         if not isinstance(value, dict):
-            raise RuntimeError("remote runtime returned non-object response")
+            raise RuntimeOutcomeUnknown("remote runtime returned non-object response")
         return value
 
     def provision(self, config: dict[str, Any]) -> str:
@@ -529,7 +533,13 @@ class ConversationRuntimeManager:
             raise RuntimeError("runtime operation already active")
         try:
             yield
-        finally:
+        except (RuntimeOutcomeUnknown, TimeoutError, subprocess.TimeoutExpired):
+            # The backend may still be operating. Retain the durable fence.
+            raise
+        except Exception:
+            self.state.set(self.OPERATION_KEY, {"active": False}, expected_value=claim)
+            raise
+        else:
             self.state.set(self.OPERATION_KEY, {"active": False}, expected_value=claim)
 
     def operation_status(self):
@@ -875,18 +885,26 @@ class ConversationRuntimeRegistry:
         self.ledger = ledger
 
     def hibernate_idle(self) -> int:
-        # Called by the host's existing maintenance loop, not a new daemon.
+        # Only inspect eligible persisted bindings; do not write operation
+        # fences for every conversation or contact a backend for inactive ones.
         with self.db.get_connection() as conn:
             rows = conn.execute(
                 "SELECT conversation_id FROM runtime_states WHERE workspace_id=? "
-                "AND state_key=?",
-                (self.workspace_id, ConversationRuntimeManager.STATE_KEY),
+                "AND state_key=? AND json_extract(value_json,'$.state')='RUNNING' "
+                "AND json_extract(value_json,'$.backend') IN ('DOCKER','PODMAN') "
+                "AND json_extract(value_json,'$.config.hibernate_on_pause')=1 "
+                "AND json_type(value_json,'$.config.idle_hibernate_seconds')='integer' "
+                "AND json_extract(value_json,'$.config.idle_hibernate_seconds') BETWEEN 30 AND 86400 "
+                "AND json_extract(value_json,'$.updated_at') + "
+                "1000 * json_extract(value_json,'$.config.idle_hibernate_seconds') <= ? "
+                "ORDER BY updated_at LIMIT 32",
+                (self.workspace_id, ConversationRuntimeManager.STATE_KEY, int(time.time() * 1000)),
             ).fetchall()
         count = 0
         for row in rows:
             try:
                 count += self.for_conversation(row[0]).hibernate_idle()
-            except RuntimeError:
+            except (RuntimeError, TimeoutError, subprocess.TimeoutExpired, OSError, ValueError):
                 # Busy/uncertain bindings are never stopped by maintenance.
                 continue
         return count

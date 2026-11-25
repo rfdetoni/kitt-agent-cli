@@ -45,6 +45,7 @@ jobs:
         run: |
           python -m pip install -e '.[dev]'
           python -m pip install --no-deps -e assistant-source/packages/kitt-assistant-runtime
+          python -m pip install 'wasmtime==51.0.0'
       - name: Verify uv dependency lock using uv resolver
         run: |
           python -m pip install 'uv==0.10.0'

@@ -81,8 +81,10 @@ remote operation. Runtime config and binding are persisted together.
 
 For Docker/Podman set `hibernate_on_pause: true`,
 `idle_hibernate_seconds: 300` and optionally `auto_resume: true`.
-A host maintenance caller invokes registry.hibernate_idle(); this uses
-the same durable operation fence as execution. Manual RPC
+The existing wake scheduler calls registry.hibernate_idle() at most every
+30 seconds while it is enabled; this uses the same durable operation fence
+as execution. Manual RPC
 `runtime.hibernate_idle` also checks the idle budget. With auto_resume
 enabled, the next manager execution resumes a paused runtime, including
-a manually paused one. No timer or background service is created here.
+a manually paused one. No separate daemon is created. The optional WASM
+engine is installed in CI to exercise real fuel and import guards.

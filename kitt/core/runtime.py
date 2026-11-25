@@ -574,6 +574,7 @@ class KittRuntime:
             ledger=event_ledger,
         )
         processor.conversation_runtimes = runtime.conversation_runtimes
+        wake_scheduler.set_maintenance(runtime.conversation_runtimes.hibernate_idle)
         from kitt.runtime.rpc import RuntimeRPC
         runtime.rpc = RuntimeRPC(runtime)
         return runtime

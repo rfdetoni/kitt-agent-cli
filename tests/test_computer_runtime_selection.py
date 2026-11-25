@@ -138,6 +138,11 @@ def test_execution_receipt_prevents_replay_and_conflicting_arguments(tmp_path):
         with patch.object(driver, "execute", side_effect=TimeoutError("uncertain")) as execute:
             with pytest.raises(TimeoutError):
                 manager.execute(["echo", "a"], request_id="r2")
+            operation = manager.operation_status()
+            assert operation["active"]
+            with pytest.raises(RuntimeError, match="recovery required"):
+                manager.execute(["echo", "a"], request_id="r2")
+            manager.acknowledge_interrupted_operation(operation["id"])
             assert manager.execute(["echo", "a"], request_id="r2")["receipt"]["status"] == "INDETERMINATE"
             execute.assert_called_once()
     finally:
