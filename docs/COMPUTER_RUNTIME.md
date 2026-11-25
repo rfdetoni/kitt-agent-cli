@@ -54,3 +54,35 @@ cluster policy and are rejected rather than silently ignored. LOCAL rejects
 these options. AUTO excludes local containers with insufficient observed
 CPU or memory, accounting for CPU affinity and Linux cgroup v2 where available.
 This is a preflight estimate, not a reservation or a remote capacity handshake.
+
+## Optional WASM compute
+
+Install `wasmtime==51.0.0` in the Agent Python environment and explicitly
+set `KITT_WASM_ENABLED=1`. `sandbox.wasm` requires the safe-compute
+capability and the existing compute policy, and is available to bounded
+CodeMode programs. It accepts a WAT module (32 KiB maximum), integer
+arguments, a single integer result, fuel (up to 1 million), and linear
+memory (up to 16 MiB). No WASI, imports, host functions, or shared state.
+A fresh isolated Python worker has a five-second wall-time limit; the
+linear-memory limit is not an OS-level RSS limit for the compiler.
+The optional engine is not installed automatically.
+
+## Durable execution and idle maintenance
+
+Manager execution accepts an optional request_id, scoped to a conversation.
+A durable claim precedes backend dispatch. Completed retries return a
+receipt (not duplicate output); uncertain retries return INDETERMINATE
+without replaying commands. Receipts are bounded by the existing state
+quota and are not automatically evicted. A process crash may leave an
+active operation fence; inspect `runtime.operation_status` and use
+`runtime.acknowledge_interrupted` only after confirming independently
+that no backend operation is active. Never assume a timeout cancelled a
+remote operation. Runtime config and binding are persisted together.
+
+For Docker/Podman set `hibernate_on_pause: true`,
+`idle_hibernate_seconds: 300` and optionally `auto_resume: true`.
+A host maintenance caller invokes registry.hibernate_idle(); this uses
+the same durable operation fence as execution. Manual RPC
+`runtime.hibernate_idle` also checks the idle budget. With auto_resume
+enabled, the next manager execution resumes a paused runtime, including
+a manually paused one. No timer or background service is created here.
