@@ -739,11 +739,15 @@ class TurnProcessor(
             )
             return (
                 "Host tool: kitt_runtime. Use ONLY the operations enumerated in "
-                "the host-provided tool schema. A request MUST be one JSON object "
+                "the host-provided tool schema. For WebChat use one JSON object "
                 "with action=use_tool, tool=kitt_runtime, "
                 "tool_input={operation,arguments}, content=null, "
-                "reasoning_summary and loop=null. "
+                "reasoning_summary and loop=null. When provider-native function calling "
+                "is offered, use exactly one declared native host function call instead. "
                 "Do not use XML tool tags. "
+                + ("Prefer repo.batch_read for up to eight independent reads, each with "
+                   "its own id, operation and arguments. " if "repo.batch_read" in plan_operations else "")
+                +
                 "repo.write_file creates files; patch.apply edits files; "
                 "process.run takes argv arrays, not shell strings, and cannot "
                 "create workspace files using shell redirection. "

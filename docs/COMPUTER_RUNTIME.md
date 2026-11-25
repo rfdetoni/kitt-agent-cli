@@ -43,3 +43,14 @@ Use `runtime.status` for the persisted binding without a backend request;
 `runtime.health` explicitly probes the backend. `kitt sessions --json`
 includes the sanitized runtime binding metadata, suitable for UI consumers.
 Do not expose the local operator RPC directly on an unauthenticated network.
+
+## Resource limits
+
+The operator may specify integer `cpu_millis`, `memory_bytes` and
+`pids_limit` when provisioning. Docker/Podman enforce the requested caps
+and optionally disable networking with `network_disabled: true`. Kubernetes
+sets CPU/memory resource requests and limits; PID and network isolation require
+cluster policy and are rejected rather than silently ignored. LOCAL rejects
+these options. AUTO excludes local containers with insufficient observed
+CPU or memory, accounting for CPU affinity and Linux cgroup v2 where available.
+This is a preflight estimate, not a reservation or a remote capacity handshake.

@@ -3275,10 +3275,19 @@ class SafeRuntime:
             metadata=dict(getattr(result, "metadata", {}) or {}),
         )
 
+    @staticmethod
+    def _is_operator_state_key(key: str) -> bool:
+        # Runtime bindings/configuration and program checkpoints have their
+        # own authority and consistency rules. Generic model state must not
+        # mutate or disclose those records.
+        return key.startswith(("conversation.runtime.", "program-session:"))
+
     def _op_state_get(self, args):
         key = str(args.get("key", ""))
         if not key:
             return SafeRuntimeResult(False, "state.get", error="key required")
+        if self._is_operator_state_key(key):
+            return SafeRuntimeResult(False, "state.get", error="reserved runtime state key")
         if not self.state:
             return SafeRuntimeResult(False, "state.get", error="State store not initialized")
         return SafeRuntimeResult(True, "state.get", data=self.state.get(key))
@@ -3287,6 +3296,8 @@ class SafeRuntime:
         key = str(args.get("key", ""))
         if not key:
             return SafeRuntimeResult(False, "state.set", error="key required")
+        if self._is_operator_state_key(key):
+            return SafeRuntimeResult(False, "state.set", error="reserved runtime state key")
         if not self.state:
             return SafeRuntimeResult(False, "state.set", error="State store not initialized")
         self.state.set(key, args.get("value"), ttl_seconds=args.get("ttl_seconds"))
@@ -3295,7 +3306,10 @@ class SafeRuntime:
     def _op_state_list(self):
         if not self.state:
             return SafeRuntimeResult(False, "state.list", error="State store not initialized")
-        return SafeRuntimeResult(True, "state.list", data=self.state.list_keys())
+        return SafeRuntimeResult(True, "state.list", data=[
+            item for item in self.state.list_keys()
+            if not self._is_operator_state_key(item["key"])
+        ])
 
     def _op_handles_resolve(self, args, security_context):
         handle = str(args.get("handle", ""))

@@ -83,3 +83,36 @@ def test_container_rejects_option_like_runtime_id_and_image(tmp_path):
         with pytest.raises(ValueError):
             driver.provision({"image": "--privileged"})
         execute.assert_not_called()
+
+
+def test_container_resource_limits_are_enforced_by_engine_flags(tmp_path):
+    driver = ContainerCliRuntimeDriver(RuntimeBackend.DOCKER, "docker", tmp_path)
+    with patch("kitt.runtime.conversation_runtime._run_host", return_value={"success": True}) as run:
+        driver.provision({"image": "alpine", "cpu_millis": 500, "memory_bytes": 67108864,
+                          "pids_limit": 32, "network_disabled": True})
+        argv = run.call_args.args[0]
+        for flag, expected in [
+            ("--cpus", "0.500"), ("--memory", "67108864"),
+            ("--memory-swap", "67108864"), ("--pids-limit", "32"), ("--network", "none"),
+        ]:
+            assert argv[argv.index(flag) + 1] == expected
+        with pytest.raises(ValueError):
+            driver.provision({"image": "alpine", "memory_bytes": -1})
+        assert run.call_count == 1
+
+
+def test_auto_rejects_insufficient_local_capacity(tmp_path):
+    db = HistoryDatabase(tmp_path)
+    manager = ConversationRuntimeManager(tmp_path, "ws", "conv", db)
+    config = {"auto_backends": ["PODMAN", "DOCKER", "REMOTE"],
+              "image": "alpine", "endpoint": "https://example.invalid",
+              "cpu_millis": 2000, "memory_bytes": 268435456}
+    try:
+        with patch("shutil.which", return_value="/bin/runtime"), patch(
+            "kitt.runtime.conversation_runtime._local_capacity", return_value=(1000, 134217728)
+        ):
+            assert manager._select_auto_backend(config) == RuntimeBackend.REMOTE
+        with pytest.raises(ValueError, match="LOCAL"):
+            manager.provision("LOCAL", config)
+    finally:
+        db.close()
