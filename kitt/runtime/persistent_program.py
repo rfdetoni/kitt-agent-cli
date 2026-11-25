@@ -55,7 +55,16 @@ class PersistentProgramSessions:
             security_context=security_context,
         )
         if result.success:
-            state = (result.data or {}).get("state")
+            data = result.data or {}
+            state = data.get("state")
+            # Never persist a truncated prefix over the prior durable scope.
+            if data.get("state_truncated"):
+                return SafeRuntimeResult(
+                    False,
+                    "program.session.execute",
+                    error="persistent state exceeds output budget; prior state preserved",
+                    data={"state_truncated": True},
+                )
             if isinstance(state, dict):
                 self.state_store.set(self._key(name), state)
         result.operation = "program.session.execute"
