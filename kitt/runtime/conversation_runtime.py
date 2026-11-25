@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import time
 import urllib.error
@@ -170,12 +171,16 @@ class ContainerCliRuntimeDriver:
         )
 
     def pause(self, runtime_id: str, config: dict[str, Any]) -> None:
-        result = _run_host([self.binary, "pause", runtime_id], cwd=self.root, timeout=30)
+        # An opt-in cold pause frees the container's process memory while
+        # preserving its writable layer and mounted workspace.
+        action = "stop" if config.get("hibernate_on_pause") is True else "pause"
+        result = _run_host([self.binary, action, runtime_id], cwd=self.root, timeout=30)
         if not result["success"]:
             raise RuntimeError(result["stderr"] or result["stdout"])
 
     def resume(self, runtime_id: str, config: dict[str, Any]) -> None:
-        result = _run_host([self.binary, "unpause", runtime_id], cwd=self.root, timeout=30)
+        action = "start" if config.get("hibernate_on_pause") is True else "unpause"
+        result = _run_host([self.binary, action, runtime_id], cwd=self.root, timeout=30)
         if not result["success"]:
             raise RuntimeError(result["stderr"] or result["stdout"])
 
@@ -467,8 +472,39 @@ class ConversationRuntimeManager:
             raise RuntimeError(f"runtime backend unavailable: {backend.value}")
         return driver
 
+    def _select_auto_backend(self, config: dict[str, Any]) -> RuntimeBackend:
+        """Select a configured backend before provision; never weaken isolation.
+
+        The host must supply the ordered allowlist. LOCAL is intentionally not
+        eligible for auto selection because it executes directly on the host.
+        """
+        allowed = config.get("auto_backends")
+        if not isinstance(allowed, (tuple, list)) or not allowed:
+            raise ValueError("AUTO requires an explicit ordered auto_backends allowlist")
+        candidates = [RuntimeBackend(str(getattr(item, "value", item)).upper()) for item in allowed]
+        if RuntimeBackend.LOCAL in candidates:
+            raise PermissionError("AUTO cannot select the unrestricted LOCAL runtime")
+        for backend in candidates:
+            driver = self.drivers.get(backend)
+            if driver is None:
+                continue
+            if backend == RuntimeBackend.REMOTE:
+                if config.get("endpoint"):
+                    return backend
+            elif backend in {RuntimeBackend.PODMAN, RuntimeBackend.DOCKER, RuntimeBackend.KUBERNETES}:
+                binary = getattr(driver, "binary", None)
+                if config.get("image") and binary and shutil.which(binary):
+                    return backend
+        raise RuntimeError("no permitted AUTO backend is available")
+
     def provision(self, backend: RuntimeBackend | str, config: dict[str, Any] | None = None) -> ConversationRuntimeBinding:
-        backend = RuntimeBackend(str(getattr(backend, "value", backend)).upper())
+        requested = str(getattr(backend, "value", backend)).upper()
+        if requested == "AUTO":
+            backend = self._select_auto_backend(dict(config or {}))
+        else:
+            backend = RuntimeBackend(requested)
+        # Only one provision call. A failed backend may have produced external
+        # effects, so automatic fallback after submission is not safe.
         clean = _sanitized_config(dict(config or {}))
         runtime_id = self._driver(backend).provision(dict(config or {}))
         now = int(time.time() * 1000)
@@ -549,7 +585,16 @@ class ConversationRuntimeManager:
         binding = self.binding()
         if binding is None:
             return {"ok": False, "state": "UNBOUND"}
-        return self._driver(binding.backend).health(binding.runtime_id, self._config())
+        config = self._config()
+        health = self._driver(binding.backend).health(binding.runtime_id, config)
+        if (
+            binding.backend in {RuntimeBackend.DOCKER, RuntimeBackend.PODMAN}
+            and binding.state == "PAUSED"
+            and config.get("hibernate_on_pause") is True
+            and health.get("state") in {"exited", "stopped"}
+        ):
+            return {**health, "ok": True, "hibernated": True}
+        return health
 
     def snapshot_state(self) -> dict[str, Any]:
         binding = self.binding()
