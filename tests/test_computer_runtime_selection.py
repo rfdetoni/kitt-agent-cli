@@ -116,3 +116,59 @@ def test_auto_rejects_insufficient_local_capacity(tmp_path):
             manager.provision("LOCAL", config)
     finally:
         db.close()
+
+
+def test_execution_receipt_prevents_replay_and_conflicting_arguments(tmp_path):
+    from kitt.runtime.conversation_runtime import LocalRuntimeDriver
+
+    db = HistoryDatabase(tmp_path)
+    driver = LocalRuntimeDriver(tmp_path)
+    manager = ConversationRuntimeManager(tmp_path, "ws", "conv", db,
+                                         drivers={RuntimeBackend.LOCAL: driver})
+    try:
+        manager.provision("LOCAL")
+        with patch.object(driver, "execute", return_value={"success": True, "returncode": 0}) as execute:
+            first = manager.execute(["echo", "a"], request_id="r1")
+            second = manager.execute(["echo", "a"], request_id="r1")
+            assert first["receipt"] == second["receipt"]
+            assert second["replayed"]
+            execute.assert_called_once()
+            with pytest.raises(ValueError, match="different arguments"):
+                manager.execute(["echo", "b"], request_id="r1")
+        with patch.object(driver, "execute", side_effect=TimeoutError("uncertain")) as execute:
+            with pytest.raises(TimeoutError):
+                manager.execute(["echo", "a"], request_id="r2")
+            operation = manager.operation_status()
+            assert operation["active"]
+            with pytest.raises(RuntimeError, match="recovery required"):
+                manager.execute(["echo", "a"], request_id="r2")
+            manager.acknowledge_interrupted_operation(operation["id"])
+            assert manager.execute(["echo", "a"], request_id="r2")["receipt"]["status"] == "INDETERMINATE"
+            execute.assert_called_once()
+    finally:
+        db.close()
+
+
+def test_idle_container_hibernates_and_resumes_on_execution(tmp_path):
+    db = HistoryDatabase(tmp_path)
+    manager = ConversationRuntimeManager(tmp_path, "ws", "conv", db)
+    driver = manager.drivers[RuntimeBackend.DOCKER]
+    try:
+        with patch.object(driver, "provision", return_value="test-id"), patch.object(
+            driver, "pause"
+        ) as pause, patch.object(driver, "resume") as resume, patch.object(
+            driver, "execute", return_value={"success": True}
+        ):
+            binding = manager.provision("DOCKER", {
+                "image": "alpine", "hibernate_on_pause": True,
+                "idle_hibernate_seconds": 30, "auto_resume": True,
+            })
+            assert not manager.hibernate_idle(now_ms=binding.updated_at + 1000)
+            assert manager.hibernate_idle(now_ms=binding.updated_at + 31000)
+            assert manager.binding().state == "PAUSED"
+            assert manager.execute(["true"])["success"]
+            pause.assert_called_once()
+            resume.assert_called_once()
+            assert manager.binding().state == "RUNNING"
+    finally:
+        db.close()

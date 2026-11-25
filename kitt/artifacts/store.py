@@ -84,21 +84,52 @@ class ArtifactStore:
             sensitivity: str = "NORMAL", metadata: Optional[dict] = None,
             expires_at: Optional[float] = None) -> Artifact:
         raw = content.encode("utf-8") if isinstance(content, str) else bytes(content)
-        if len(raw) > self.max_artifact_bytes:
-            raise ValueError("Artifact exceeds size limit")
-        digest = hashlib.sha256(raw).hexdigest()
+        return self.put_stream(
+            workspace_id, (raw,), artifact_type, summary,
+            conversation_id=conversation_id, turn_id=turn_id,
+            sensitivity=sensitivity, metadata=metadata, expires_at=expires_at,
+        )
+
+    def put_stream(self, workspace_id: str, chunks, artifact_type: str, summary: str,
+                   conversation_id: Optional[str] = None, turn_id: Optional[str] = None,
+                   sensitivity: str = "NORMAL", metadata: Optional[dict] = None,
+                   expires_at: Optional[float] = None,
+                   expected_hash: Optional[str] = None) -> Artifact:
+        """Ingest bounded binary chunks without assembling a full artifact in RAM."""
         aid = f"art_{uuid.uuid4().hex}"
-        kind = "INLINE"
-        rel: Optional[str] = None
-        inline: Optional[bytes] = raw
-        if len(raw) > self.inline_limit:
-            kind, rel, inline = "FILE", f"{digest[:2]}/{digest}.bin", None
-        now = time.time()
-        staged_tmp: Optional[Path] = None
+        digest = hashlib.sha256()
+        size = 0
+        staged_tmp = None
+        handle = None
+        inline = bytearray()
         try:
+            for chunk in chunks:
+                if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                    raise TypeError("Artifact chunks must be bytes")
+                size += len(chunk)
+                if size > self.max_artifact_bytes:
+                    raise ValueError("Artifact exceeds size limit")
+                digest.update(chunk)
+                if handle is None and size <= self.inline_limit:
+                    inline.extend(chunk)
+                else:
+                    if handle is None:
+                        fd, name = tempfile.mkstemp(prefix=".stage-", dir=self.storage)
+                        staged_tmp = Path(name)
+                        handle = os.fdopen(fd, "wb")
+                        handle.write(inline)
+                        inline.clear()
+                    handle.write(chunk)
+            content_hash = digest.hexdigest()
+            if expected_hash is not None and expected_hash != content_hash:
+                raise ValueError("Artifact integrity check failed")
+            if handle is not None:
+                handle.flush()
+                os.fsync(handle.fileno())
+                handle.close()
+                handle = None
+            rel = f"{content_hash[:2]}/{content_hash}.bin" if staged_tmp else None
             with self.db.get_connection() as conn:
-                # Serialize blob publication with GC and other writers.
-                # Readers must never observe a committed row before its blob.
                 conn.execute("BEGIN IMMEDIATE")
                 self._validate_ownership(conn, workspace_id, conversation_id, turn_id)
                 conn.execute("""INSERT INTO artifacts
@@ -106,30 +137,54 @@ class ArtifactStore:
                      relative_storage_path,inline_content,summary,content_hash,size_bytes,
                      sensitivity,created_at,expires_at,pinned,metadata_json)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
-                    (aid, workspace_id, conversation_id, turn_id, artifact_type, kind, rel, inline,
-                     summary, digest, len(raw), sensitivity, now, expires_at,
+                    (aid, workspace_id, conversation_id, turn_id, artifact_type,
+                     "FILE" if rel else "INLINE", rel, None if rel else bytes(inline),
+                     summary, content_hash, size, sensitivity, time.time(), expires_at,
                      json.dumps(metadata or {}, ensure_ascii=False)))
-                if rel is not None:
+                if rel:
                     target = self.storage / rel
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    # Preserve valid content-addressed blobs; repair corrupt
-                    # copies rather than trusting the filename alone.
                     valid = False
-                    if target.is_file() and target.stat().st_size == len(raw):
+                    if target.is_file() and target.stat().st_size == size:
                         with target.open("rb") as existing:
-                            valid = hashlib.file_digest(existing, "sha256").hexdigest() == digest
+                            valid = hashlib.file_digest(existing, "sha256").hexdigest() == content_hash
                     if not valid:
-                        fd, name = tempfile.mkstemp(prefix=".stage-", dir=target.parent)
-                        staged_tmp = Path(name)
-                        with os.fdopen(fd, "wb") as handle:
-                            handle.write(raw)
-                            handle.flush()
-                            os.fsync(handle.fileno())
                         os.replace(staged_tmp, target)
         finally:
+            if handle is not None:
+                handle.close()
             if staged_tmp is not None:
                 staged_tmp.unlink(missing_ok=True)
         return self.get(aid)
+
+    def transfer_to(self, artifact_id: str, destination: "ArtifactStore", *,
+                    workspace_id: str, conversation_id: str) -> Artifact:
+        """Copy an owned artifact to another authorized store with digest verification.
+
+        Metadata authorization remains local to each store. Callers must already
+        have authority over both stores; this is not a model-facing operation.
+        """
+        artifact = self.get(artifact_id)
+        if (artifact is None or artifact.workspace_id != workspace_id
+                or artifact.conversation_id != conversation_id
+                or (artifact.expires_at is not None and artifact.expires_at < time.time()
+                    and not artifact.pinned)):
+            raise KeyError("Artifact unavailable in this conversation")
+
+        def chunks():
+            if artifact.storage_kind == "INLINE":
+                yield artifact.inline_content or b""
+            else:
+                with (self.storage / artifact.relative_storage_path).open("rb") as source:
+                    while block := source.read(64 * 1024):
+                        yield block
+
+        return destination.put_stream(
+            workspace_id, chunks(), artifact.artifact_type, artifact.summary,
+            conversation_id=conversation_id, sensitivity=artifact.sensitivity,
+            metadata=artifact.metadata, expires_at=artifact.expires_at,
+            expected_hash=artifact.content_hash,
+        )
 
     def get(self, artifact_id: str) -> Optional[Artifact]:
         with self.db.get_connection() as conn:

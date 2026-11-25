@@ -10,7 +10,9 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Protocol
 from urllib.parse import urlsplit
@@ -22,6 +24,10 @@ from kitt_protocol import ConversationRuntimeBinding, RuntimeBackend
 
 
 _SECRET_KEYS = ("token", "secret", "password", "credential", "api_key", "authorization")
+
+
+class RuntimeOutcomeUnknown(RuntimeError):
+    """An external request may have taken effect; never auto-retry it."""
 
 
 def _sanitized_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -468,10 +474,10 @@ class RemoteRuntimeDriver:
         except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, ValueError) as exc:
             # Size errors contain no remote input; preserve the actionable limit.
             if type(exc) is ValueError and str(exc) == "HTTP response exceeds configured size limit":
-                raise RuntimeError("remote runtime response exceeds 1 MiB") from exc
-            raise RuntimeError(f"remote runtime request failed: {type(exc).__name__}") from exc
+                raise RuntimeOutcomeUnknown("remote runtime response exceeds 1 MiB") from exc
+            raise RuntimeOutcomeUnknown(f"remote runtime request failed: {type(exc).__name__}") from exc
         if not isinstance(value, dict):
-            raise RuntimeError("remote runtime returned non-object response")
+            raise RuntimeOutcomeUnknown("remote runtime returned non-object response")
         return value
 
     def provision(self, config: dict[str, Any]) -> str:
@@ -501,9 +507,52 @@ class RemoteRuntimeDriver:
         self._request(runtime_id, "terminate", config)
 
 
+def _exclusive(method):
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        with self._operation(method.__name__):
+            return method(self, *args, **kwargs)
+    return guarded
+
+
 class ConversationRuntimeManager:
     STATE_KEY = "conversation.runtime.binding"
     CONFIG_KEY = "conversation.runtime.config"
+    OPERATION_KEY = "conversation.runtime.operation"
+    RECEIPT_PREFIX = "conversation.runtime.receipt."
+
+    @contextmanager
+    def _operation(self, name):
+        # Cross-process fence; never expire or steal an uncertain operation.
+        previous = self.state.get(self.OPERATION_KEY)
+        if previous is not None and previous.get("active"):
+            raise RuntimeError("runtime operation already active or recovery required")
+        claim = {"active": True, "operation": name, "id": uuid.uuid4().hex,
+                 "started_at": int(time.time() * 1000)}
+        if not self.state.set(self.OPERATION_KEY, claim, expected_value=previous):
+            raise RuntimeError("runtime operation already active")
+        try:
+            yield
+        except (RuntimeOutcomeUnknown, TimeoutError, subprocess.TimeoutExpired):
+            # The backend may still be operating. Retain the durable fence.
+            raise
+        except Exception:
+            self.state.set(self.OPERATION_KEY, {"active": False}, expected_value=claim)
+            raise
+        else:
+            self.state.set(self.OPERATION_KEY, {"active": False}, expected_value=claim)
+
+    def operation_status(self):
+        return self.state.get(self.OPERATION_KEY) or {"active": False}
+
+    def acknowledge_interrupted_operation(self, operation_id: str):
+        # Operator must independently confirm the backend is no longer executing.
+        previous = self.operation_status()
+        if not previous.get("active") or previous.get("id") != operation_id:
+            raise ValueError("interrupted operation ID mismatch")
+        if not self.state.set(self.OPERATION_KEY, {"active": False}, expected_value=previous):
+            raise RuntimeError("runtime operation changed concurrently")
+
 
     def __init__(
         self,
@@ -551,8 +600,8 @@ class ConversationRuntimeManager:
         self.state.set(self.STATE_KEY, {
             **asdict(binding),
             "backend": binding.backend.value,
+            "config": _sanitized_config(config),
         })
-        self.state.set(self.CONFIG_KEY, _sanitized_config(config))
         return binding
 
     def binding(self) -> ConversationRuntimeBinding | None:
@@ -574,6 +623,9 @@ class ConversationRuntimeManager:
             return None
 
     def _config(self) -> dict[str, Any]:
+        record = self.state.get(self.STATE_KEY)
+        if isinstance(record, dict) and isinstance(record.get("config"), dict):
+            return dict(record["config"])
         raw = self.state.get(self.CONFIG_KEY)
         return dict(raw) if isinstance(raw, dict) else {}
 
@@ -622,7 +674,10 @@ class ConversationRuntimeManager:
                 return backend
         raise RuntimeError("no permitted AUTO backend is available")
 
+    @_exclusive
     def provision(self, backend: RuntimeBackend | str, config: dict[str, Any] | None = None) -> ConversationRuntimeBinding:
+        if self.binding() is not None:
+            raise RuntimeError("conversation already has a runtime")
         requested = str(getattr(backend, "value", backend)).upper()
         if requested == "AUTO":
             backend = self._select_auto_backend(dict(config or {}))
@@ -653,7 +708,10 @@ class ConversationRuntimeManager:
         self._event("ConversationRuntimeProvisioned", binding)
         return binding
 
+    @_exclusive
     def attach(self, backend: RuntimeBackend | str, runtime_id: str, config: dict[str, Any] | None = None) -> ConversationRuntimeBinding:
+        if self.binding() is not None:
+            raise RuntimeError("conversation already has a runtime")
         backend = RuntimeBackend(str(getattr(backend, "value", backend)).upper())
         clean = _sanitized_config(dict(config or {}))
         runtime_id = _runtime_id(str(runtime_id))
@@ -673,43 +731,109 @@ class ConversationRuntimeManager:
         self._event("ConversationRuntimeAttached", binding)
         return binding
 
-    def execute(self, argv: list[str]) -> dict[str, Any]:
+    @_exclusive
+    def execute(self, argv: list[str], *, request_id: str | None = None) -> dict[str, Any]:
         binding = self.binding()
         if binding is None:
             raise RuntimeError("conversation has no runtime binding")
-        if binding.state != "RUNNING":
-            raise RuntimeError(f"conversation runtime is not running: {binding.state}")
         if not argv or not all(isinstance(item, str) and item for item in argv):
             raise ValueError("argv must be a non-empty string list")
-        return self._driver(binding.backend).execute(binding.runtime_id, list(argv), self._config())
+        config = self._config()
+        key = None
+        claim = None
+        if request_id is not None:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id):
+                raise ValueError("invalid execution request ID")
+            key = self.RECEIPT_PREFIX + request_id
+            digest = _digest([binding.runtime_id, argv, binding.config_digest])
+            previous = self.state.get(key)
+            if previous is not None:
+                if previous.get("digest") != digest:
+                    raise ValueError("execution request ID already used with different arguments")
+                return {"receipt": previous, "replayed": True}
+        if binding.state == "PAUSED" and config.get("auto_resume") is True:
+            binding = self._resume(binding, config)
+        if binding.state != "RUNNING":
+            raise RuntimeError(f"conversation runtime is not running: {binding.state}")
+        if key is not None:
+            claim = {"status": "INDETERMINATE", "digest": digest, "request_id": request_id}
+            if not self.state.set(key, claim, expected_value=None):
+                raise RuntimeError("execution request already claimed")
+        # Persist claim before any external effect. Exceptions never trigger replay.
+        try:
+            result = self._driver(binding.backend).execute(binding.runtime_id, list(argv), config)
+            if key is not None:
+                receipt = {**claim, "status": "COMPLETED", "result_digest": _digest(result),
+                           "success": result.get("success") is True,
+                           "returncode": result.get("returncode")}
+                self.state.set(key, receipt, expected_value=claim)
+                result = {**result, "receipt": receipt, "replayed": False}
+            return result
+        finally:
+            updated = ConversationRuntimeBinding(
+                **{**asdict(binding), "updated_at": int(time.time() * 1000)}
+            )
+            self._save(updated, config)
 
+    @_exclusive
+    def hibernate_idle(self, *, now_ms: int | None = None) -> bool:
+        binding = self.binding()
+        config = self._config()
+        seconds = config.get("idle_hibernate_seconds")
+        if (binding is None or binding.state != "RUNNING"
+                or binding.backend not in {RuntimeBackend.DOCKER, RuntimeBackend.PODMAN}
+                or config.get("hibernate_on_pause") is not True
+                or type(seconds) is not int or not 30 <= seconds <= 86400):
+            return False
+        now = int(time.time() * 1000) if now_ms is None else now_ms
+        if now - binding.updated_at < seconds * 1000:
+            return False
+        self._pause(binding, config)
+        return True
+
+    @_exclusive
     def pause(self) -> ConversationRuntimeBinding:
         binding = self.binding()
         if binding is None:
             raise RuntimeError("conversation has no runtime binding")
+        return self._pause(binding, self._config())
+
+    def _pause(self, binding, config):
+        if binding.state == "PAUSED":
+            return binding
+        if binding.state != "RUNNING":
+            raise RuntimeError("runtime is not running")
         if self.ledger is not None:
             self.ledger.durability_fence(
                 self.conversation_id,
                 turn_id=None,
                 reason="conversation-runtime-pause",
             )
-        self._driver(binding.backend).pause(binding.runtime_id, self._config())
+        self._driver(binding.backend).pause(binding.runtime_id, config)
         updated = ConversationRuntimeBinding(
             **{**asdict(binding), "state": "PAUSED", "updated_at": int(time.time() * 1000)}
         )
-        self._save(updated, self._config())
+        self._save(updated, config)
         self._event("ConversationRuntimePaused", updated)
         return updated
 
+    @_exclusive
     def resume(self) -> ConversationRuntimeBinding:
         binding = self.binding()
         if binding is None:
             raise RuntimeError("conversation has no runtime binding")
-        self._driver(binding.backend).resume(binding.runtime_id, self._config())
+        return self._resume(binding, self._config())
+
+    def _resume(self, binding, config):
+        if binding.state == "RUNNING":
+            return binding
+        if binding.state != "PAUSED":
+            raise RuntimeError("runtime is not paused")
+        self._driver(binding.backend).resume(binding.runtime_id, config)
         updated = ConversationRuntimeBinding(
             **{**asdict(binding), "state": "RUNNING", "updated_at": int(time.time() * 1000)}
         )
-        self._save(updated, self._config())
+        self._save(updated, config)
         self._event("ConversationRuntimeResumed", updated)
         return updated
 
@@ -736,6 +860,7 @@ class ConversationRuntimeManager:
         self._event("ConversationRuntimeSnapshot", binding, {"snapshot_digest": _digest(snapshot)})
         return snapshot
 
+    @_exclusive
     def terminate(self) -> None:
         binding = self.binding()
         if binding is None:
@@ -758,6 +883,31 @@ class ConversationRuntimeRegistry:
         self.workspace_id = str(workspace_id)
         self.db = db
         self.ledger = ledger
+
+    def hibernate_idle(self) -> int:
+        # Only inspect eligible persisted bindings; do not write operation
+        # fences for every conversation or contact a backend for inactive ones.
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT conversation_id FROM runtime_states WHERE workspace_id=? "
+                "AND state_key=? AND json_extract(value_json,'$.state')='RUNNING' "
+                "AND json_extract(value_json,'$.backend') IN ('DOCKER','PODMAN') "
+                "AND json_extract(value_json,'$.config.hibernate_on_pause')=1 "
+                "AND json_type(value_json,'$.config.idle_hibernate_seconds')='integer' "
+                "AND json_extract(value_json,'$.config.idle_hibernate_seconds') BETWEEN 30 AND 86400 "
+                "AND json_extract(value_json,'$.updated_at') + "
+                "1000 * json_extract(value_json,'$.config.idle_hibernate_seconds') <= ? "
+                "ORDER BY updated_at LIMIT 32",
+                (self.workspace_id, ConversationRuntimeManager.STATE_KEY, int(time.time() * 1000)),
+            ).fetchall()
+        count = 0
+        for row in rows:
+            try:
+                count += self.for_conversation(row[0]).hibernate_idle()
+            except (RuntimeError, TimeoutError, subprocess.TimeoutExpired, OSError, ValueError):
+                # Busy/uncertain bindings are never stopped by maintenance.
+                continue
+        return count
 
     def for_conversation(self, conversation_id: str) -> ConversationRuntimeManager:
         return ConversationRuntimeManager(

@@ -125,6 +125,9 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     "sandbox.python": RuntimeOperationSpec(
         "sandbox.python", CAP_SAFE_COMPUTE, "python_compute"
     ),
+    "sandbox.wasm": RuntimeOperationSpec(
+        "sandbox.wasm", CAP_SAFE_COMPUTE, "python_compute"
+    ),
     "flow.execute": RuntimeOperationSpec("flow.execute", None, sensitive=False),
     "program.execute": RuntimeOperationSpec("program.execute", None, sensitive=False),
     "program.session.execute": RuntimeOperationSpec(
@@ -1106,6 +1109,7 @@ class SafeRuntime:
             "sandbox.python": lambda: self._op_sandbox_python(
                 args, turn_id, origin, security_context
             ),
+            "sandbox.wasm": lambda: self._op_sandbox_wasm(args),
             "flow.execute": lambda: self._op_flow_execute(
                 args, turn_id, origin, capabilities, security_context
             ),
@@ -1599,6 +1603,14 @@ class SafeRuntime:
             },
         )
 
+
+    def _op_sandbox_wasm(self, args):
+        from kitt.runtime.wasm_compute import execute_wasm
+
+        try:
+            return SafeRuntimeResult(True, "sandbox.wasm", data=execute_wasm(args))
+        except (ValueError, RuntimeError, PermissionError) as exc:
+            return SafeRuntimeResult(False, "sandbox.wasm", error=str(exc))
 
     def _op_sandbox_python(self, args, turn_id, origin, security_context):
         """Delegate safe compute through the existing policy-governed tool."""

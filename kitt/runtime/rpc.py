@@ -36,6 +36,15 @@ class RuntimeRPC:
             binding = manager.binding()
         elif method == "runtime.health":
             return manager.health()
+        elif method == "runtime.operation_status":
+            return manager.operation_status()
+        elif method == "runtime.acknowledge_interrupted":
+            if params.get("confirmed_backend_idle") is not True:
+                raise ValueError("operator must confirm the backend is idle")
+            manager.acknowledge_interrupted_operation(str(params["operation_id"]))
+            return {"ok": True}
+        elif method == "runtime.hibernate_idle":
+            return {"hibernated": manager.hibernate_idle()}
         elif method == "runtime.provision":
             if manager.binding() is not None:
                 raise RuntimeError("conversation already has a runtime; terminate it first")

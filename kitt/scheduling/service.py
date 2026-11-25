@@ -17,6 +17,13 @@ class PersistentWakeScheduler:
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.RLock()
+        self._maintenance = None
+        self._maintenance_interval = 30.0
+
+    def set_maintenance(self, callback, *, interval_seconds=30.0):
+        """Attach bounded host maintenance to the existing scheduler."""
+        self._maintenance = callback
+        self._maintenance_interval = max(30.0, float(interval_seconds))
 
     @staticmethod
     def _cron_interval(expr):
@@ -143,11 +150,18 @@ class PersistentWakeScheduler:
         return len(claimed)
 
     def _loop(self):
+        next_maintenance = time.monotonic() + self._maintenance_interval
         while not self._stop.wait(self.poll_interval):
             try:
                 self.run_due_once()
             except Exception as exc:
                 self._on_event("ScheduledWakeError", {"error": str(exc)})
+            if self._maintenance is not None and time.monotonic() >= next_maintenance:
+                next_maintenance = time.monotonic() + self._maintenance_interval
+                try:
+                    self._maintenance()
+                except Exception as exc:
+                    self._on_event("RuntimeMaintenanceError", {"error": type(exc).__name__})
 
     def start(self):
         with self._lock:

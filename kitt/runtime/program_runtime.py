@@ -13,7 +13,7 @@ from kitt.runtime.programmatic_flow import (
 )
 
 
-PROGRAM_OPERATIONS = frozenset(READ_ONLY_FLOW_OPERATIONS)
+PROGRAM_OPERATIONS = frozenset(READ_ONLY_FLOW_OPERATIONS | {"sandbox.wasm"})
 _MAX_SCOPE_BYTES = 2 * 1024 * 1024
 
 
