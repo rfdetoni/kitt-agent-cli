@@ -157,6 +157,52 @@ class ArtifactStore:
                 staged_tmp.unlink(missing_ok=True)
         return self.get(aid)
 
+    def export_frames(self, artifact_id: str, *, workspace_id: str,
+                      conversation_id: str, compress: bool = True):
+        """Yield independently bounded transport frames for an owned artifact."""
+        from kitt.artifacts.transfer_codec import encode_frame
+
+        artifact = self.get(artifact_id)
+        if (artifact is None or artifact.workspace_id != workspace_id
+                or artifact.conversation_id != conversation_id
+                or (artifact.expires_at is not None and artifact.expires_at < time.time()
+                    and not artifact.pinned)):
+            raise KeyError("Artifact unavailable in this conversation")
+        digest = hashlib.sha256()
+        size = 0
+        if artifact.storage_kind == "INLINE":
+            from io import BytesIO
+            source = BytesIO(artifact.inline_content or b"")
+        else:
+            source = (self.storage / artifact.relative_storage_path).open("rb")
+        with source:
+            while chunk := source.read(64 * 1024):
+                size += len(chunk)
+                if size > artifact.size_bytes or size > self.max_artifact_bytes:
+                    raise ValueError("Artifact size mismatch")
+                digest.update(chunk)
+                yield encode_frame(chunk, compress=compress)
+        if size != artifact.size_bytes or digest.hexdigest() != artifact.content_hash:
+            raise ValueError("Artifact integrity check failed")
+
+    def import_frames(self, workspace_id: str, conversation_id: str, frames, *,
+                      expected_hash: str, artifact_type: str, summary: str,
+                      sensitivity: str = "NORMAL", metadata: Optional[dict] = None,
+                      expires_at: Optional[float] = None) -> Artifact:
+        """Publish only after a full, bounded decode and expected digest check."""
+        from kitt.artifacts.transfer_codec import decode_frame
+
+        if not isinstance(expected_hash, str) or len(expected_hash) != 64 or any(
+            char not in "0123456789abcdef" for char in expected_hash
+        ):
+            raise ValueError("expected_hash must be a SHA-256 digest")
+        return self.put_stream(
+            workspace_id, (decode_frame(frame) for frame in frames),
+            artifact_type, summary, conversation_id=conversation_id,
+            sensitivity=sensitivity, metadata=metadata, expires_at=expires_at,
+            expected_hash=expected_hash,
+        )
+
     def transfer_to(self, artifact_id: str, destination: "ArtifactStore", *,
                     workspace_id: str, conversation_id: str) -> Artifact:
         """Copy an owned artifact to another authorized store with digest verification.

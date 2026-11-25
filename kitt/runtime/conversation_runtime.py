@@ -110,6 +110,28 @@ def _remote_endpoint(value: str) -> tuple[str, bool]:
     return endpoint, loopback
 
 
+def _readonly_mounts(config: dict[str, Any]) -> list[tuple[str, str]]:
+    """Only an explicit host operator can select additional bind sources."""
+    mounts = config.get("readonly_mounts", {})
+    if not isinstance(mounts, dict) or len(mounts) > 8:
+        raise ValueError("readonly_mounts must be an object with at most eight entries")
+    result = []
+    for alias, source in sorted(mounts.items()):
+        if not isinstance(alias, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", alias):
+            raise ValueError("invalid readonly mount alias")
+        if not isinstance(source, str) or not Path(source).is_absolute():
+            raise ValueError("mount source must be an absolute operator-selected directory")
+        path = Path(source).resolve(strict=True)
+        if not path.is_dir() or path == Path(path.anchor):
+            raise ValueError("mount source must be a non-root directory")
+        # Docker's comma-delimited mount grammar is not a shell grammar.
+        # Reject delimiter injection instead of attempting ambiguous escaping.
+        if any(char in str(path) for char in (",", '"', "\n", "\r", "\x00")):
+            raise ValueError("mount source contains unsupported delimiters")
+        result.append((alias, str(path)))
+    return result
+
+
 def _resource_limits(config: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
     values = []
     for name, minimum, maximum in (
@@ -233,6 +255,8 @@ class ContainerCliRuntimeDriver:
             flags += ["--pids-limit", str(pids)]
         if config.get("network_disabled") is True:
             flags += ["--network", "none"]
+        for alias, source in _readonly_mounts(config):
+            flags += ["--mount", f"type=bind,src={source},dst=/mnt/kitt/{alias},readonly"]
         result = _run_host(
             [
                 self.binary,
@@ -597,11 +621,16 @@ class ConversationRuntimeManager:
         )
 
     def _save(self, binding: ConversationRuntimeBinding, config: dict[str, Any]) -> ConversationRuntimeBinding:
-        self.state.set(self.STATE_KEY, {
-            **asdict(binding),
-            "backend": binding.backend.value,
-            "config": _sanitized_config(config),
-        })
+        try:
+            self.state.set(self.STATE_KEY, {
+                **asdict(binding),
+                "backend": binding.backend.value,
+                "config": _sanitized_config(config),
+            })
+        except Exception as exc:
+            # An external effect may already have occurred. Keep the operation
+            # fence rather than inviting a second provision/execute.
+            raise RuntimeOutcomeUnknown("runtime binding persistence failed; operator recovery required") from exc
         return binding
 
     def binding(self) -> ConversationRuntimeBinding | None:
@@ -648,20 +677,21 @@ class ConversationRuntimeManager:
         if RuntimeBackend.LOCAL in candidates:
             raise PermissionError("AUTO cannot select the unrestricted LOCAL runtime")
         cpu, memory, pids = _resource_limits(config)
+        mounts = _readonly_mounts(config)
         capacity = None
         for backend in candidates:
             driver = self.drivers.get(backend)
             if driver is None:
                 continue
             if backend == RuntimeBackend.REMOTE:
-                if config.get("endpoint"):
+                if config.get("endpoint") and not mounts:
                     return backend
             elif backend in {RuntimeBackend.PODMAN, RuntimeBackend.DOCKER, RuntimeBackend.KUBERNETES}:
                 binary = getattr(driver, "binary", None)
                 if not (config.get("image") and binary and shutil.which(binary)):
                     continue
                 if backend == RuntimeBackend.KUBERNETES:
-                    if pids is not None or config.get("network_disabled") is True:
+                    if mounts or pids is not None or config.get("network_disabled") is True:
                         continue
                 elif cpu is not None or memory is not None:
                     if capacity is None:
@@ -691,6 +721,11 @@ class ConversationRuntimeManager:
             any(value is not None for value in limits) or requested_config.get("network_disabled") is True
         ):
             raise ValueError("LOCAL does not enforce resource or network isolation")
+        mounts = _readonly_mounts(requested_config)
+        if mounts and backend not in {RuntimeBackend.DOCKER, RuntimeBackend.PODMAN}:
+            raise ValueError("readonly mounts require Docker or Podman")
+        if mounts:
+            requested_config["readonly_mounts"] = dict(mounts)
         clean = _sanitized_config(requested_config)
         runtime_id = self._driver(backend).provision(requested_config)
         now = int(time.time() * 1000)

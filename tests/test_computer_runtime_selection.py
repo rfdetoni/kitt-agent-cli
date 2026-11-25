@@ -172,3 +172,20 @@ def test_idle_container_hibernates_and_resumes_on_execution(tmp_path):
             assert manager.binding().state == "RUNNING"
     finally:
         db.close()
+
+
+def test_operator_mounts_are_readonly_and_cannot_inject_mount_options(tmp_path):
+    source = tmp_path / "external"
+    source.mkdir()
+    driver = ContainerCliRuntimeDriver(RuntimeBackend.DOCKER, "docker", tmp_path)
+    with patch("kitt.runtime.conversation_runtime._run_host", return_value={"success": True}) as run:
+        driver.provision({"image": "alpine", "readonly_mounts": {"docs": str(source)}})
+        argv = run.call_args.args[0]
+        assert argv[argv.index("--mount") + 1] == f"type=bind,src={source.resolve()},dst=/mnt/kitt/docs,readonly"
+        with pytest.raises(ValueError):
+            driver.provision({"image": "alpine", "readonly_mounts": {"../escape": str(source)}})
+        injected = tmp_path / "path,readonly=false"
+        injected.mkdir()
+        with pytest.raises(ValueError):
+            driver.provision({"image": "alpine", "readonly_mounts": {"docs": str(injected)}})
+        assert run.call_count == 1
