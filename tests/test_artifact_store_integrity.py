@@ -88,6 +88,22 @@ class ArtifactStoreIntegrityTests(unittest.TestCase):
         self.assertEqual(self.store.collect_garbage(now=2), 130)
         self.assertEqual(self.store.read(live.id), content)
 
+    def test_duplicate_blob_does_not_rewrite_valid_storage(self):
+        from unittest.mock import patch
+
+        first = self.store.put(self.identity.id, b"duplicate", "TEXT", "first")
+        with patch("kitt.artifacts.store.os.replace", side_effect=AssertionError("rewrite")):
+            second = self.store.put(self.identity.id, b"duplicate", "TEXT", "second")
+        self.assertEqual(first.relative_storage_path, second.relative_storage_path)
+        self.assertEqual(self.store.read(second.id), b"duplicate")
+
+    def test_corrupt_duplicate_blob_is_repaired(self):
+        first = self.store.put(self.identity.id, b"original", "TEXT", "first")
+        (self.store.storage / first.relative_storage_path).write_bytes(b"corrupt!")
+        second = self.store.put(self.identity.id, b"original", "TEXT", "second")
+        self.assertEqual(self.store.read(first.id), b"original")
+        self.assertEqual(self.store.read(second.id), b"original")
+
     def test_turn_id_requires_a_matching_conversation(self):
         with self.assertRaisesRegex(sqlite3.IntegrityError, "turn_id requires conversation_id"):
             self.store.put(

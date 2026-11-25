@@ -61,12 +61,22 @@ class WorkspaceSnapshotService:
         entries: list[dict[str, Any]] = []
         for rel in normalized:
             if self.fs.is_safe_directory(rel):
-                raw = self._tree(rel)
-                artifact = self.artifacts.put(self.workspace_id, raw, "WORKSPACE_SNAPSHOT_DIRECTORY",
+                manifest = self._tree_manifest(
+                    rel, snapshot_id=snapshot_id,
+                    conversation_id=conversation_id, turn_id=turn_id,
+                )
+                raw = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+                artifact = self.artifacts.put(
+                    self.workspace_id, raw, "WORKSPACE_SNAPSHOT_DIRECTORY",
                     f"Pre-mutation snapshot of {rel}", conversation_id=conversation_id or None,
-                    turn_id=turn_id or None, sensitivity="PRIVATE", metadata={"snapshot_id": snapshot_id, "path": rel})
-                entries.append({"path": rel, "existed": True, "kind": "directory", "artifact_id": artifact.id,
-                                "sha256": "directory:" + hashlib.sha256(raw).hexdigest()})
+                    turn_id=turn_id or None, sensitivity="PRIVATE",
+                    metadata={"snapshot_id": snapshot_id, "path": rel, "format": 2},
+                )
+                entries.append({
+                    "path": rel, "existed": True, "kind": "directory",
+                    "artifact_id": artifact.id,
+                    "sha256": self._manifest_digest(manifest),
+                })
                 continue
             if not self.fs.exists_regular(rel):
                 entries.append(
@@ -160,10 +170,100 @@ class WorkspaceSnapshotService:
                     raise ValueError("Directory snapshot exceeds recovery budget")
         return json.dumps(sorted(manifest, key=lambda item: item["path"]), sort_keys=True, separators=(",", ":")).encode()
 
-    def _current_sha(self, rel: str) -> str | None:
+    @classmethod
+    def _manifest_digest(cls, manifest: list[dict[str, Any]]) -> str:
+        # Storage identities are not content identities. Unchanged directory
+        # contents must have equal digests across different snapshots.
+        return "directory-v2:" + cls._digest([
+            {key: value for key, value in entry.items() if key != "artifact_id"}
+            for entry in manifest
+        ])
+
+    def _tree_manifest(
+        self, rel: str, *, snapshot_id: str | None = None,
+        conversation_id: str = "", turn_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """Store file preimages independently, without a directory-sized buffer."""
+        import os
+        import stat
+
+        base = self.fs.absolute_lexical(rel)
+        manifest: list[dict[str, Any]] = []
+        size = 0
+        for current, dirs, files in os.walk(base, followlinks=False):
+            dirs.sort()
+            for name in sorted(dirs + files):
+                if len(manifest) >= 1000:
+                    raise ValueError("Directory snapshot exceeds recovery budget")
+                path = Path(current) / name
+                relative = path.relative_to(base).as_posix()
+                workspace_path = path.relative_to(self.fs.root).as_posix()
+                st = path.lstat()
+                if stat.S_ISLNK(st.st_mode) or self.fs._windows_reparse_point(st):
+                    raise PermissionError("Snapshot refuses links/reparse points")
+                if stat.S_ISDIR(st.st_mode):
+                    manifest.append({"path": relative, "directory": True})
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    raise PermissionError("Snapshot refuses special files")
+                remaining = 32 * 1024 * 1024 - size
+                if st.st_size > remaining:
+                    raise ValueError("Directory snapshot exceeds recovery budget")
+                data = self.fs.read(workspace_path)
+                size += len(data.content)
+                if size > 32 * 1024 * 1024:
+                    raise ValueError("Directory snapshot exceeds recovery budget")
+                item = {"path": relative, "sha256": data.sha256, "size": len(data.content)}
+                if snapshot_id is not None:
+                    artifact = self.artifacts.put(
+                        self.workspace_id, data.content, "WORKSPACE_SNAPSHOT_FILE",
+                        f"Pre-mutation snapshot of {workspace_path}",
+                        conversation_id=conversation_id or None, turn_id=turn_id or None,
+                        sensitivity="PRIVATE",
+                        metadata={"snapshot_id": snapshot_id, "path": workspace_path,
+                                  "sha256": data.sha256, "recovery": "EXACT"},
+                    )
+                    item["artifact_id"] = artifact.id
+                manifest.append(item)
+        return sorted(manifest, key=lambda item: item["path"])
+
+    def _current_sha(self, rel: str, before_sha: str | None = None) -> str | None:
         if self.fs.is_safe_directory(rel):
-            return "directory:" + hashlib.sha256(self._tree(rel)).hexdigest()
+            if before_sha and before_sha.startswith("directory:"):
+                return "directory:" + hashlib.sha256(self._tree(rel)).hexdigest()
+            return self._manifest_digest(self._tree_manifest(rel))
         return self.fs.read(rel).sha256 if self.fs.exists_regular(rel) else None
+
+    def _restore_directory_v2(self, rel: str, raw: bytes, expected: str) -> None:
+        manifest = json.loads(raw)
+        if not isinstance(manifest, list) or self._manifest_digest(manifest) != expected:
+            raise ValueError(f"snapshot artifact digest mismatch for {rel}")
+        # Verify every child before any destructive operation, including
+        # containment and content integrity. Never hold the complete tree in RAM.
+        for entry in manifest:
+            target = rel + "/" + entry["path"]
+            if self.fs.relative(target) != target or not target.startswith(rel + "/"):
+                raise ValueError("invalid snapshot path")
+            if not entry.get("directory"):
+                content = self.artifacts.read(entry["artifact_id"])
+                if (len(content) != entry["size"]
+                        or hashlib.sha256(content).hexdigest() != entry["sha256"]):
+                    raise ValueError(f"snapshot artifact digest mismatch for {target}")
+        from kitt.security.workspace_mutations import delete_path
+        if self.fs.is_safe_directory(rel):
+            delete_path(self.fs, rel, recursive=True)
+        elif self.fs.exists_regular(rel):
+            self.fs.unlink(rel)
+        self.fs.create_directory(rel, parents=True, exist_ok=True)
+        for entry in manifest:
+            target = rel + "/" + entry["path"]
+            if entry.get("directory"):
+                self.fs.create_directory(target, parents=True, exist_ok=True)
+            else:
+                content = self.artifacts.read(entry["artifact_id"])
+                if hashlib.sha256(content).hexdigest() != entry["sha256"]:
+                    raise ValueError(f"snapshot artifact digest mismatch for {target}")
+                self.fs.atomic_write(target, content)
 
     def _load_record(
         self,
@@ -173,6 +273,9 @@ class WorkspaceSnapshotService:
     ) -> dict[str, Any]:
         cached = self._records.get(snapshot_id)
         if cached is not None:
+            if (cached.get("conversation_id") != conversation_id
+                    or cached.get("snapshot", {}).get("turn_id") != turn_id):
+                raise KeyError(snapshot_id)
             return cached
         if self.ledger is None:
             raise KeyError(snapshot_id)
@@ -228,9 +331,9 @@ class WorkspaceSnapshotService:
             if selected is not None and rel not in selected:
                 continue
             existed = bool(item.get("existed"))
-            current_sha = self._current_sha(rel)
-            current_exists = current_sha is not None
             before_sha = str(item.get("sha256") or "") or None
+            current_sha = self._current_sha(rel, before_sha)
+            current_exists = current_sha is not None
             if existed and not current_exists:
                 status = "DELETED"
             elif not existed and current_exists:
@@ -332,6 +435,10 @@ class WorkspaceSnapshotService:
             existed = bool(item.get("existed"))
             if item.get("kind") == "directory":
                 raw = self.artifacts.read(str(item.get("artifact_id") or ""))
+                if str(item.get("sha256") or "").startswith("directory-v2:"):
+                    self._restore_directory_v2(rel, raw, item["sha256"])
+                    restored.append(rel)
+                    continue
                 if "directory:" + hashlib.sha256(raw).hexdigest() != item.get("sha256"):
                     raise ValueError(f"snapshot artifact digest mismatch for {rel}")
                 from kitt.security.workspace_mutations import delete_path

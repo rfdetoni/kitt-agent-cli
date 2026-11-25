@@ -91,19 +91,15 @@ class ArtifactStore:
         kind = "INLINE"
         rel: Optional[str] = None
         inline: Optional[bytes] = raw
-        staged_tmp: Optional[Path] = None
         if len(raw) > self.inline_limit:
             kind, rel, inline = "FILE", f"{digest[:2]}/{digest}.bin", None
-            target = self.storage / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            # Stage into a temp file *before* touching the DB so a failed
-            # insert does not leave an unreferenced blob behind.
-            tmp = target.with_suffix(".tmp-" + uuid.uuid4().hex[:8])
-            tmp.write_bytes(raw)
-            staged_tmp = tmp
         now = time.time()
+        staged_tmp: Optional[Path] = None
         try:
             with self.db.get_connection() as conn:
+                # Serialize blob publication with GC and other writers.
+                # Readers must never observe a committed row before its blob.
+                conn.execute("BEGIN IMMEDIATE")
                 self._validate_ownership(conn, workspace_id, conversation_id, turn_id)
                 conn.execute("""INSERT INTO artifacts
                     (id,workspace_id,conversation_id,turn_id,artifact_type,storage_kind,
@@ -113,24 +109,26 @@ class ArtifactStore:
                     (aid, workspace_id, conversation_id, turn_id, artifact_type, kind, rel, inline,
                      summary, digest, len(raw), sensitivity, now, expires_at,
                      json.dumps(metadata or {}, ensure_ascii=False)))
-        except Exception:
-            if staged_tmp is not None and staged_tmp.exists():
+                if rel is not None:
+                    target = self.storage / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    # Preserve valid content-addressed blobs; repair corrupt
+                    # copies rather than trusting the filename alone.
+                    valid = False
+                    if target.is_file() and target.stat().st_size == len(raw):
+                        with target.open("rb") as existing:
+                            valid = hashlib.file_digest(existing, "sha256").hexdigest() == digest
+                    if not valid:
+                        fd, name = tempfile.mkstemp(prefix=".stage-", dir=target.parent)
+                        staged_tmp = Path(name)
+                        with os.fdopen(fd, "wb") as handle:
+                            handle.write(raw)
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                        os.replace(staged_tmp, target)
+        finally:
+            if staged_tmp is not None:
                 staged_tmp.unlink(missing_ok=True)
-            raise
-        # Commit the staged blob only after the row exists.
-        if staged_tmp is not None:
-            if rel is None:
-                raise RuntimeError("staged artifact is missing storage path")
-            target = self.storage / rel
-            try:
-                os.replace(staged_tmp, target)
-            except OSError:
-                staged_tmp.unlink(missing_ok=True)
-                # The DB row references a missing blob; remove it to avoid
-                # dangling references and surface the failure.
-                with self.db.get_connection() as conn:
-                    conn.execute("DELETE FROM artifacts WHERE id=?", (aid,))
-                raise
         return self.get(aid)
 
     def get(self, artifact_id: str) -> Optional[Artifact]:

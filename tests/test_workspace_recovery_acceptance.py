@@ -164,6 +164,55 @@ class WorkspaceRecoveryAcceptanceTests(unittest.TestCase):
         self.assertEqual((self.root / "source" / "original.py").read_bytes(), b"def original():\n    return 1\n")
         self.assertFalse((self.root / "destination").exists())
 
+    def test_directory_snapshot_uses_independent_file_blobs(self):
+        import json
+
+        tree = self.root / "large-tree"
+        tree.mkdir()
+        data = b"\x00" * (3 * 1024 * 1024)
+        for name in ("a", "b", "c"):
+            (tree / name).write_bytes(data)
+        snapshot = self.snapshots.capture(
+            conversation_id=self.conversation["id"], turn_id="large-tree",
+            paths=["large-tree"],
+        )
+        record = self.snapshots._records[snapshot.snapshot_id]["entries"][0]
+        manifest = json.loads(self.artifacts.read(record["artifact_id"]))
+        self.assertEqual(len(manifest), 3)
+        self.assertTrue(record["sha256"].startswith("directory-v2:"))
+        self.assertNotIn("content", manifest[0])
+        blobs = [self.artifacts.get(item["artifact_id"]).relative_storage_path
+                 for item in manifest]
+        self.assertEqual(len(set(blobs)), 1)
+        (tree / "a").write_bytes(b"changed")
+        recovered = WorkspaceSnapshotService(
+            self.root, workspace_id=self.identity.id,
+            artifact_store=self.artifacts, ledger=self.ledger,
+        )
+        recovered.restore(snapshot.snapshot_id,
+                          conversation_id=self.conversation["id"], turn_id="large-tree")
+        self.assertEqual((tree / "a").read_bytes(), data)
+
+    def test_corrupt_directory_child_prevents_destructive_restore(self):
+        import json
+
+        tree = self.root / "corrupt-tree"
+        tree.mkdir()
+        (tree / "file").write_bytes(b"x" * 1024)
+        snapshot = self.snapshots.capture(
+            conversation_id=self.conversation["id"], turn_id="corrupt-tree",
+            paths=["corrupt-tree"],
+        )
+        record = self.snapshots._records[snapshot.snapshot_id]["entries"][0]
+        manifest = json.loads(self.artifacts.read(record["artifact_id"]))
+        child = self.artifacts.get(manifest[0]["artifact_id"])
+        (self.artifacts.storage / child.relative_storage_path).write_bytes(b"corrupt")
+        (tree / "file").write_bytes(b"current")
+        with self.assertRaisesRegex(ValueError, "integrity"):
+            self.snapshots.restore(snapshot.snapshot_id,
+                                   conversation_id=self.conversation["id"], turn_id="corrupt-tree")
+        self.assertEqual((tree / "file").read_bytes(), b"current")
+
     def test_directory_rollback_refuses_concurrent_descendant_changes(self):
         (self.root / "tree").mkdir()
         (self.root / "tree" / "file.txt").write_text("original")
