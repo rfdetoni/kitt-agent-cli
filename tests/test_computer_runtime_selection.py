@@ -59,3 +59,27 @@ def test_container_cold_pause_is_opt_in(tmp_path, backend, binary):
             [binary, "pause", "id"], [binary, "unpause", "id"],
             [binary, "stop", "id"], [binary, "start", "id"],
         ]
+
+def test_runtime_host_capture_is_bounded(tmp_path):
+    import sys
+    from kitt.runtime.conversation_runtime import _run_host
+
+    result = _run_host(
+        [sys.executable, "-c", "import sys; sys.stdout.write('x' * 2000000); print('END')"],
+        cwd=tmp_path,
+    )
+    assert result["success"]
+    assert result["truncated"]
+    assert result["stdout_total_bytes"] == 2000004
+    assert len(result["stdout"].encode("utf-8")) <= 256 * 1024
+    assert result["stdout"].endswith("END\n")
+
+
+def test_container_rejects_option_like_runtime_id_and_image(tmp_path):
+    driver = ContainerCliRuntimeDriver(RuntimeBackend.DOCKER, "docker", tmp_path)
+    with patch("kitt.runtime.conversation_runtime._run_host") as execute:
+        with pytest.raises(ValueError):
+            driver.provision({"runtime_id": "--privileged", "image": "alpine"})
+        with pytest.raises(ValueError):
+            driver.provision({"image": "--privileged"})
+        execute.assert_not_called()

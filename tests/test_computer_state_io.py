@@ -38,12 +38,46 @@ def test_state_reads_do_not_write_or_delete_other_conversation_expirations(tmp_p
 
 def test_remote_response_rejects_oversized_valid_json_prefix():
     body = b'{}' + b' ' * (1024 * 1024)
-    with patch("urllib.request.urlopen", return_value=BytesIO(body)):
+    with patch("kitt.llm.http_security._OPENER.open", return_value=BytesIO(body)):
         with pytest.raises(RuntimeError, match="exceeds"):
             RemoteRuntimeDriver().health("runtime", {"endpoint": "https://example.invalid"})
 
 
 def test_remote_response_rejects_invalid_utf8():
-    with patch("urllib.request.urlopen", return_value=BytesIO(b'\xff')):
+    with patch("kitt.llm.http_security._OPENER.open", return_value=BytesIO(b'\xff')):
         with pytest.raises(RuntimeError, match="UnicodeDecodeError"):
             RemoteRuntimeDriver().health("runtime", {"endpoint": "https://example.invalid"})
+
+@pytest.mark.parametrize("endpoint", [
+    "http://example.invalid",
+    "http://localhost:80@evil.invalid",
+    "https://user:password@example.invalid",
+    "https://example.invalid?token=secret",
+    "https://example.invalid/#fragment",
+])
+def test_remote_runtime_rejects_untrusted_endpoint_forms(endpoint):
+    with patch("kitt.runtime.conversation_runtime.secure_urlopen") as transport:
+        with pytest.raises(PermissionError):
+            RemoteRuntimeDriver().health("runtime", {"endpoint": endpoint})
+        transport.assert_not_called()
+
+
+@pytest.mark.parametrize("runtime_id", ["../other", "id/other", "-f", "id?foo", "id#foo"])
+def test_remote_runtime_rejects_nonliteral_ids(runtime_id):
+    with patch("kitt.runtime.conversation_runtime.secure_urlopen") as transport:
+        with pytest.raises(ValueError, match="runtime ID"):
+            RemoteRuntimeDriver().health(runtime_id, {"endpoint": "https://example.invalid"})
+        transport.assert_not_called()
+
+
+def test_remote_loopback_uses_nonproxy_transport():
+    with patch("kitt.llm.http_security._LOCAL_OPENER.open", return_value=BytesIO(b'{"ok":true}')) as local:
+        assert RemoteRuntimeDriver().health("runtime", {"endpoint": "http://localhost:1234"}) == {"ok": True}
+        local.assert_called_once()
+
+
+def test_runtime_config_retains_reference_not_credentials():
+    from kitt.runtime.conversation_runtime import _sanitized_config
+    assert _sanitized_config({
+        "token_env": "MY_RUNTIME_TOKEN", "token": "private", "auto_backends": ["REMOTE"],
+    }) == {"token_env": "MY_RUNTIME_TOKEN", "auto_backends": ["REMOTE"]}

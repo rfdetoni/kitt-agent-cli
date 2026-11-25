@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -12,9 +13,11 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Protocol
+from urllib.parse import urlsplit
 
 from kitt.runtime.state import RuntimeStateStore
-from kitt.tools.process_runner import sanitized_subprocess_env
+from kitt.llm.http_security import secure_urlopen
+from kitt.tools.process_runner import ProcessRunner
 from kitt_protocol import ConversationRuntimeBinding, RuntimeBackend
 
 
@@ -26,9 +29,17 @@ def _sanitized_config(config: dict[str, Any]) -> dict[str, Any]:
     for key, value in dict(config or {}).items():
         normalized = str(key).strip().lower()
         if any(term in normalized for term in _SECRET_KEYS):
+            # A variable NAME is a credential reference, not its value.
+            # Only retain the identifier, never a literal credential.
+            if normalized == "token_env" and isinstance(value, str) and re.fullmatch(
+                r"[A-Z_][A-Z0-9_]{0,127}", value
+            ):
+                clean[str(key)] = value
             continue
         if isinstance(value, dict):
             clean[str(key)] = _sanitized_config(value)
+        elif normalized == "auto_backends" and isinstance(value, (tuple, list)):
+            clean[str(key)] = [str(getattr(item, "value", item)) for item in value]
         elif isinstance(value, (str, int, float, bool)) or value is None:
             clean[str(key)] = value
     return clean
@@ -47,25 +58,50 @@ def _digest(value: Any) -> str:
 
 
 def _run_host(argv: list[str], *, cwd: Path, timeout: float = 120.0) -> dict[str, Any]:
-    process = subprocess.run(
-        argv,
-        cwd=str(cwd),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        shell=False,
-        env=sanitized_subprocess_env(),
-        timeout=max(1.0, min(float(timeout), 3600.0)),
-        check=False,
-    )
+    # Host-authorized runtime control commands are not agent sandbox commands.
+    # Reuse the bounded capture and process-group cleanup without altering their
+    # existing authority. Preserve the 256 KiB per-stream capture window.
+    runner = ProcessRunner(str(cwd), max_output_bytes=512 * 1024,
+                           capture_window_bytes=256 * 1024)
+    process = runner.run(argv, timeout_seconds=timeout, sandbox_profile="full-access")
+    if process.timed_out:
+        raise subprocess.TimeoutExpired(argv, timeout, output=process.stdout, stderr=process.stderr)
     return {
         "argv": list(argv),
         "returncode": int(process.returncode),
-        "stdout": process.stdout[-262144:],
-        "stderr": process.stderr[-262144:],
-        "success": process.returncode == 0,
+        "stdout": process.stdout,
+        "stderr": process.stderr,
+        "success": process.returncode == 0 and not process.cancelled,
+        "truncated": process.truncated,
+        "stdout_total_bytes": process.stdout_total_bytes,
+        "stderr_total_bytes": process.stderr_total_bytes,
     }
+
+
+def _runtime_id(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value):
+        raise ValueError("invalid runtime ID")
+    return value
+
+
+def _remote_endpoint(value: str) -> tuple[str, bool]:
+    endpoint = value.rstrip("/")
+    try:
+        parsed = urlsplit(endpoint)
+        port = parsed.port
+    except ValueError as exc:
+        raise PermissionError("invalid remote runtime endpoint") from exc
+    del port
+    loopback = parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+    if (
+        not parsed.hostname or parsed.username is not None or parsed.password is not None
+        or parsed.query or parsed.fragment
+        or (parsed.scheme != "https" and not (parsed.scheme == "http" and loopback))
+        or any(ord(char) < 33 for char in endpoint)
+        or "\\" in endpoint
+    ):
+        raise PermissionError("remote runtime endpoint must use HTTPS or loopback HTTP without credentials")
+    return endpoint, loopback
 
 
 class ConversationRuntimeDriver(Protocol):
@@ -132,10 +168,10 @@ class ContainerCliRuntimeDriver:
         self.root = Path(workspace_root).resolve()
 
     def provision(self, config: dict[str, Any]) -> str:
-        runtime_id = str(config.get("runtime_id") or f"kitt-{uuid.uuid4().hex[:16]}")
+        runtime_id = _runtime_id(str(config.get("runtime_id") or f"kitt-{uuid.uuid4().hex[:16]}"))
         image = str(config.get("image") or "").strip()
-        if not image:
-            raise ValueError("container runtime requires image")
+        if not image or image.startswith("-"):
+            raise ValueError("container runtime requires a valid image reference")
         result = _run_host(
             [
                 self.binary,
@@ -223,7 +259,7 @@ class KubernetesRuntimeDriver:
         return str(config.get("namespace") or "default")
 
     def provision(self, config: dict[str, Any]) -> str:
-        runtime_id = str(config.get("runtime_id") or f"kitt-{uuid.uuid4().hex[:16]}")
+        runtime_id = _runtime_id(str(config.get("runtime_id") or f"kitt-{uuid.uuid4().hex[:16]}"))
         image = str(config.get("image") or "").strip()
         if not image:
             raise ValueError("kubernetes runtime requires image")
@@ -335,11 +371,12 @@ class RemoteRuntimeDriver:
         self.secret_provider = secret_provider or (lambda config: os.getenv(str(config.get("token_env") or "KITT_REMOTE_RUNTIME_TOKEN")))
 
     def _request(self, runtime_id: str, action: str, config: dict[str, Any], payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        endpoint = str(config.get("endpoint") or "").rstrip("/")
-        if not endpoint.startswith(("https://", "http://127.0.0.1:", "http://localhost:")):
-            raise PermissionError("remote runtime endpoint must use HTTPS or loopback HTTP")
+        endpoint, loopback = _remote_endpoint(str(config.get("endpoint") or ""))
+        runtime_id = _runtime_id(runtime_id)
         token = self.secret_provider(config)
-        body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+        body = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(body) > 1024 * 1024:
+            raise ValueError("remote runtime request exceeds 1 MiB")
         request = urllib.request.Request(
             f"{endpoint}/v1/runtimes/{runtime_id}/{action}",
             data=body,
@@ -351,13 +388,13 @@ class RemoteRuntimeDriver:
         )
         try:
             timeout = max(1.0, min(float(config.get("timeout_seconds", 120)), 3600.0))
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                max_response = 1024 * 1024
-                raw = response.read(max_response + 1)
-                if len(raw) > max_response:
-                    raise RuntimeError("remote runtime response exceeds 1 MiB")
-                value = json.loads(raw.decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            with secure_urlopen(request, timeout=timeout, max_body_bytes=1024 * 1024,
+                                local_only=loopback) as response:
+                value = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, ValueError) as exc:
+            # Size errors contain no remote input; preserve the actionable limit.
+            if type(exc) is ValueError and str(exc) == "HTTP response exceeds configured size limit":
+                raise RuntimeError("remote runtime response exceeds 1 MiB") from exc
             raise RuntimeError(f"remote runtime request failed: {type(exc).__name__}") from exc
         if not isinstance(value, dict):
             raise RuntimeError("remote runtime returned non-object response")
@@ -366,7 +403,7 @@ class RemoteRuntimeDriver:
     def provision(self, config: dict[str, Any]) -> str:
         runtime_id = str(config.get("runtime_id") or f"remote_{uuid.uuid4().hex}")
         result = self._request(runtime_id, "provision", config, {"config": _sanitized_config(config)})
-        return str(result.get("runtime_id") or runtime_id)
+        return _runtime_id(str(result.get("runtime_id") or runtime_id))
 
     def attach(self, runtime_id: str, config: dict[str, Any]) -> None:
         self._request(runtime_id, "attach", config)
@@ -452,7 +489,7 @@ class ConversationRuntimeManager:
             return ConversationRuntimeBinding(
                 conversation_id=str(raw["conversation_id"]),
                 backend=RuntimeBackend(str(raw["backend"])),
-                runtime_id=str(raw["runtime_id"]),
+                runtime_id=_runtime_id(str(raw["runtime_id"])),
                 state=str(raw["state"]),
                 workspace_ref=str(raw["workspace_ref"]),
                 config_digest=str(raw["config_digest"]),
@@ -525,7 +562,8 @@ class ConversationRuntimeManager:
     def attach(self, backend: RuntimeBackend | str, runtime_id: str, config: dict[str, Any] | None = None) -> ConversationRuntimeBinding:
         backend = RuntimeBackend(str(getattr(backend, "value", backend)).upper())
         clean = _sanitized_config(dict(config or {}))
-        self._driver(backend).attach(str(runtime_id), dict(config or {}))
+        runtime_id = _runtime_id(str(runtime_id))
+        self._driver(backend).attach(runtime_id, dict(config or {}))
         now = int(time.time() * 1000)
         binding = ConversationRuntimeBinding(
             conversation_id=self.conversation_id,

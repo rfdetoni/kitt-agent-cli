@@ -135,11 +135,11 @@ def _fair_stream_budget(stdout: bytes, stderr: bytes, limit: int) -> tuple[bytes
 class _HeadTailCapture:
     """Bounded stream capture retaining both the beginning and the latest bytes."""
 
-    def __init__(self, limit: int):
+    def __init__(self, limit: int, window_bytes: int = _CAPTURE_WINDOW_BYTES):
         requested = max(1024, int(limit))
-        self.limit = min(requested, _CAPTURE_WINDOW_BYTES)
-        self.head_limit = min(_CAPTURE_HEAD_BYTES, self.limit)
-        self.tail_limit = min(_CAPTURE_TAIL_BYTES, max(0, self.limit - self.head_limit))
+        self.limit = min(requested, max(1024, min(int(window_bytes), 512 * 1024)))
+        self.head_limit = min(_CAPTURE_HEAD_BYTES, self.limit // 4)
+        self.tail_limit = self.limit - self.head_limit
         self.head = bytearray()
         self.tail = bytearray()
         self.truncated = False
@@ -198,9 +198,12 @@ class ProcessRunner:
         root_dir: str,
         max_output_bytes: int = 262144,
         sandbox: ExecutionSandbox | None = None,
+        *,
+        capture_window_bytes: int = _CAPTURE_WINDOW_BYTES,
     ):
         self.root = Path(root_dir).resolve()
         self.max_output_bytes = max(4096, int(max_output_bytes))
+        self.capture_window_bytes = max(1024, min(int(capture_window_bytes), 512 * 1024))
         self.sandbox = sandbox or ExecutionSandbox(self.root)
 
     def _resolve_cwd(self, cwd: str | Path | None) -> Path:
@@ -289,8 +292,8 @@ class ProcessRunner:
             timeout_seconds=timeout_seconds,
         )
 
-        out_cap = _HeadTailCapture(self.max_output_bytes)
-        err_cap = _HeadTailCapture(self.max_output_bytes)
+        out_cap = _HeadTailCapture(self.max_output_bytes, self.capture_window_bytes)
+        err_cap = _HeadTailCapture(self.max_output_bytes, self.capture_window_bytes)
         process_env = sanitized_subprocess_env(env)
         process_env.update(plan.env_overrides)
         kwargs = dict(
