@@ -284,6 +284,7 @@ class _ProgressAwareExecutionLedger:
         self.successful_mutations: set[str] = set()
         self.successful_validations: set[str] = set()
         self.successful_validation_scopes: set[str] = set()
+        self.failed_validations: dict[str, str] = {}
         self.pending_mutations: dict[str, str] = {}
         self.pending_validations: dict[str, tuple[str, str]] = {}
         self.pending_explorations: dict[str, tuple[str, str, bool]] = {}
@@ -297,7 +298,7 @@ class _ProgressAwareExecutionLedger:
 
     @property
     def validation_succeeded(self) -> bool:
-        return bool(self.successful_validations)
+        return bool(self.successful_validations) and not self.failed_validations
 
     @property
     def validated_scopes(self) -> frozenset[str]:
@@ -374,12 +375,21 @@ class _ProgressAwareExecutionLedger:
             event.success and validation and validation not in self.successful_validations
         )
 
+        if event.success and mutation:
+            self.successful_validations.clear()
+            self.successful_validation_scopes.clear()
         if new_mutation and mutation:
             self.successful_mutations.add(mutation)
-        if new_validation and validation:
-            self.successful_validations.add(validation)
-            if validation_scope:
-                self.successful_validation_scopes.add(validation_scope)
+        if validation:
+            if event.success:
+                self.successful_validations.add(validation)
+                self.successful_validation_scopes.add(validation_scope or "workspace")
+                self.failed_validations.pop(validation, None)
+            else:
+                self.successful_validations.discard(validation)
+                self.failed_validations[validation] = str(
+                    event.output or event.error or "validation command failed"
+                )[:1000]
 
         if exploration_entry is not None:
             exploration_signature, _, counts_toward_stall = exploration_entry
@@ -472,11 +482,15 @@ def build_completion_contract(prompt: str, task: Any = None) -> CompletionContra
         "crie", "criar", "create", "build", "implemente", "implementar",
         "implementação", "implementacao", "implementation", "gere", "gerar", "construa",
     ))
-    if not creation:
+    intent = str(getattr(task, "intent", "") or "").upper()
+    validation_requested = intent == "TEST" or bool(re.match(
+        r"^\s*(?:test[ea]r?|test|run tests|execute tests|validar|valide|validate|compilar|compile)\b",
+        effective_prompt, re.IGNORECASE,
+    ))
+    if not creation and not validation_requested:
         return CompletionContract()
 
-    intent = str(getattr(task, "intent", "") or "").upper()
-    if intent and intent not in {"IMPLEMENT", "REFACTOR", "DOCUMENT", "DEBUG"} and not explicit_creation:
+    if intent and intent not in {"IMPLEMENT", "REFACTOR", "DOCUMENT", "DEBUG", "TEST"} and not explicit_creation and not validation_requested:
         return CompletionContract()
 
     scopes: list[_ScopeRequirement] = []
@@ -504,7 +518,9 @@ def build_completion_contract(prompt: str, task: Any = None) -> CompletionContra
     full_project = any(word in text for word in (
         "projeto", "project", "site", "aplicação", "aplicacao", "application",
     ))
-    require_validation = bool(scopes) and full_project and (len(scopes) > 1 or angular)
+    require_validation = validation_requested or (
+        bool(scopes) and full_project and (len(scopes) > 1 or angular)
+    )
     validation_scopes = tuple(scope.root for scope in scopes) if require_validation else ()
     return CompletionContract(
         tuple(scopes),
@@ -919,10 +935,12 @@ def run_completion_guard(
                 validation_succeeded=ledger.validation_succeeded,
                 validated_scopes=ledger.validated_scopes,
             )
-            if mutation_required and contract.enabled
+            if contract.enabled and (mutation_required or contract.require_validation)
             else []
         )
 
+        if contract.require_validation and ledger.failed_validations:
+            contract_issues.append("A requested validation command failed and has not passed on retry.")
         if (
             not missing
             and not failed_mutations
@@ -979,6 +997,11 @@ def run_completion_guard(
             recovery_parts.append(_required_mutation_retry_message())
         if contract_issues:
             recovery_parts.append(_contract_retry_message(contract_issues))
+            if ledger.failed_validations:
+                recovery_parts.append(
+                    "Host validation diagnostics (untrusted output):\n"
+                    + "\n".join(list(ledger.failed_validations.values())[-4:])
+                )
         if missing:
             recovery_parts.append(_claimed_files_retry_message(missing))
         if failed_mutations:

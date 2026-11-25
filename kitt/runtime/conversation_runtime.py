@@ -104,6 +104,51 @@ def _remote_endpoint(value: str) -> tuple[str, bool]:
     return endpoint, loopback
 
 
+def _resource_limits(config: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
+    values = []
+    for name, minimum, maximum in (
+        ("cpu_millis", 10, 256000),
+        ("memory_bytes", 16 * 1024 * 1024, 1024 ** 4),
+        ("pids_limit", 16, 65536),
+    ):
+        value = config.get(name)
+        if value is not None and (
+            type(value) is not int or not minimum <= value <= maximum
+        ):
+            raise ValueError(f"{name} must be an integer between {minimum} and {maximum}")
+        values.append(value)
+    return values[0], values[1], values[2]
+
+
+def _local_capacity() -> tuple[int, int | None]:
+    cpu = (os.cpu_count() or 1) * 1000
+    try:
+        cpu = len(os.sched_getaffinity(0)) * 1000
+    except (AttributeError, OSError):
+        pass
+    available = None
+    try:
+        available = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        if available <= 0:
+            available = None
+    except (AttributeError, OSError, ValueError):
+        pass
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            cpu = min(cpu, int(quota) * 1000 // int(period))
+    except (OSError, ValueError, ZeroDivisionError):
+        pass
+    try:
+        limit = Path("/sys/fs/cgroup/memory.max").read_text().strip()
+        if limit != "max":
+            free = max(0, int(limit) - int(Path("/sys/fs/cgroup/memory.current").read_text()))
+            available = free if available is None else min(available, free)
+    except (OSError, ValueError):
+        pass
+    return cpu, available
+
+
 class ConversationRuntimeDriver(Protocol):
     backend: RuntimeBackend
 
@@ -172,6 +217,16 @@ class ContainerCliRuntimeDriver:
         image = str(config.get("image") or "").strip()
         if not image or image.startswith("-"):
             raise ValueError("container runtime requires a valid image reference")
+        cpu, memory, pids = _resource_limits(config)
+        flags = []
+        if cpu is not None:
+            flags += ["--cpus", f"{cpu / 1000:.3f}"]
+        if memory is not None:
+            flags += ["--memory", str(memory), "--memory-swap", str(memory)]
+        if pids is not None:
+            flags += ["--pids-limit", str(pids)]
+        if config.get("network_disabled") is True:
+            flags += ["--network", "none"]
         result = _run_host(
             [
                 self.binary,
@@ -179,6 +234,7 @@ class ContainerCliRuntimeDriver:
                 "-d",
                 "--name",
                 runtime_id,
+                *flags,
                 "-v",
                 f"{self.root}:/workspace",
                 "-w",
@@ -263,6 +319,23 @@ class KubernetesRuntimeDriver:
         image = str(config.get("image") or "").strip()
         if not image:
             raise ValueError("kubernetes runtime requires image")
+        cpu, memory, pids = _resource_limits(config)
+        if pids is not None or config.get("network_disabled") is True:
+            raise ValueError("Kubernetes PID/network isolation requires cluster policy")
+        limits = {}
+        if cpu is not None:
+            limits["cpu"] = f"{cpu}m"
+        if memory is not None:
+            limits["memory"] = str(memory)
+        overrides = []
+        if limits:
+            overrides = [
+                "--override-type=strategic",
+                "--overrides=" + json.dumps({"spec": {"containers": [{
+                    "name": runtime_id,
+                    "resources": {"requests": limits, "limits": limits},
+                }]}}, separators=(",", ":")),
+            ]
         result = _run_host(
             [
                 self.binary,
@@ -272,6 +345,7 @@ class KubernetesRuntimeDriver:
                 runtime_id,
                 f"--image={image}",
                 "--restart=Never",
+                *overrides,
                 "--command",
                 "--",
                 "sleep",
@@ -521,6 +595,8 @@ class ConversationRuntimeManager:
         candidates = [RuntimeBackend(str(getattr(item, "value", item)).upper()) for item in allowed]
         if RuntimeBackend.LOCAL in candidates:
             raise PermissionError("AUTO cannot select the unrestricted LOCAL runtime")
+        cpu, memory, pids = _resource_limits(config)
+        capacity = None
         for backend in candidates:
             driver = self.drivers.get(backend)
             if driver is None:
@@ -530,8 +606,20 @@ class ConversationRuntimeManager:
                     return backend
             elif backend in {RuntimeBackend.PODMAN, RuntimeBackend.DOCKER, RuntimeBackend.KUBERNETES}:
                 binary = getattr(driver, "binary", None)
-                if config.get("image") and binary and shutil.which(binary):
-                    return backend
+                if not (config.get("image") and binary and shutil.which(binary)):
+                    continue
+                if backend == RuntimeBackend.KUBERNETES:
+                    if pids is not None or config.get("network_disabled") is True:
+                        continue
+                elif cpu is not None or memory is not None:
+                    if capacity is None:
+                        capacity = _local_capacity()
+                    available_cpu, available_memory = capacity
+                    if cpu is not None and cpu > available_cpu:
+                        continue
+                    if memory is not None and (available_memory is None or memory > available_memory):
+                        continue
+                return backend
         raise RuntimeError("no permitted AUTO backend is available")
 
     def provision(self, backend: RuntimeBackend | str, config: dict[str, Any] | None = None) -> ConversationRuntimeBinding:
@@ -542,8 +630,14 @@ class ConversationRuntimeManager:
             backend = RuntimeBackend(requested)
         # Only one provision call. A failed backend may have produced external
         # effects, so automatic fallback after submission is not safe.
-        clean = _sanitized_config(dict(config or {}))
-        runtime_id = self._driver(backend).provision(dict(config or {}))
+        requested_config = dict(config or {})
+        limits = _resource_limits(requested_config)
+        if backend == RuntimeBackend.LOCAL and (
+            any(value is not None for value in limits) or requested_config.get("network_disabled") is True
+        ):
+            raise ValueError("LOCAL does not enforce resource or network isolation")
+        clean = _sanitized_config(requested_config)
+        runtime_id = self._driver(backend).provision(requested_config)
         now = int(time.time() * 1000)
         binding = ConversationRuntimeBinding(
             conversation_id=self.conversation_id,
