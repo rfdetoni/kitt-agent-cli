@@ -46,11 +46,14 @@ class FlowLimits:
     max_tokens: int = 1200
 
 
-def _json_tokens(value: Any) -> int:
-    raw = json.dumps(
+def _json_size(value: Any) -> int:
+    return len(json.dumps(
         value, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")
-    ).encode("utf-8")
-    return (len(raw) + 3) // 4
+    ).encode("utf-8"))
+
+
+def _json_tokens(value: Any) -> int:
+    return (_json_size(value) + 3) // 4
 
 
 def _get_path(value: Any, path: str) -> Any:
@@ -114,7 +117,9 @@ def _transform(value: Any, spec: Any) -> Any:
         return value
     if not isinstance(spec, dict):
         raise ValueError("transform must be an object")
-    result = copy.deepcopy(value)
+    # Transformations do not mutate inputs. Copy only the selected output,
+    # not the entire tool payload before path/where/project/limit.
+    result = value
 
     path = str(spec.get("path") or "").strip()
     if path:
@@ -162,45 +167,55 @@ def _transform(value: Any, spec: Any) -> Any:
         if aggregate == "count":
             return len(result) if isinstance(result, (list, dict, str)) else int(result is not None)
         if aggregate == "first":
-            return result[0] if isinstance(result, list) and result else None
+            return copy.deepcopy(result[0]) if isinstance(result, list) and result else None
         if aggregate == "last":
-            return result[-1] if isinstance(result, list) and result else None
+            return copy.deepcopy(result[-1]) if isinstance(result, list) and result else None
         raise ValueError("transform.aggregate must be one of: count, first, last")
-    return result
+    return copy.deepcopy(result)
 
 
 def _bounded(value: Any, max_tokens: int) -> tuple[Any, bool]:
-    if _json_tokens(value) <= max_tokens:
-        return value, False
+    """Keep a JSON prefix within the estimated token budget in linear time.
+
+    Count framing, separators, UTF-8 and JSON escaping, including for the first
+    item. Never return an oversized item merely to make the prefix nonempty.
+    """
+    if max_tokens < 1:
+        raise ValueError("max_tokens must be positive")
+    max_bytes = max_tokens * 4
     if isinstance(value, list):
         kept = []
+        used = 2  # []
         for item in value:
-            candidate = kept + [item]
-            if kept and _json_tokens(candidate) > max_tokens:
-                break
-            kept = candidate
-            if _json_tokens(kept) >= max_tokens:
-                break
-        return kept, len(kept) < len(value)
+            size = _json_size(item) + bool(kept)
+            if used + size > max_bytes:
+                return kept, True
+            kept.append(item)
+            used += size
+        return value, False
     if isinstance(value, dict):
-        kept: dict[str, Any] = {}
+        kept = {}
+        used = 2  # {}
         for key, item in value.items():
-            candidate = {**kept, key: item}
-            if kept and _json_tokens(candidate) > max_tokens:
-                break
+            size = _json_size({key: item}) - 2 + bool(kept)
+            if used + size > max_bytes:
+                return kept, True
             kept[key] = item
-            if _json_tokens(kept) >= max_tokens:
-                break
-        return kept, len(kept) < len(value)
+            used += size
+        return value, False
+    if _json_size(value) <= max_bytes:
+        return value, False
+    # JSON escaping can use more bytes than the original string, so measure
+    # candidate prefixes instead of truncating raw UTF-8 blindly.
     text = str(value)
-    max_bytes = max_tokens * 4
-    raw = text.encode("utf-8")[:max_bytes]
-    while raw:
-        try:
-            return raw.decode("utf-8"), True
-        except UnicodeDecodeError:
-            raw = raw[:-1]
-    return "", True
+    low, high = 0, min(len(text), max_bytes - 2)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if _json_size(text[:mid]) <= max_bytes:
+            low = mid
+        else:
+            high = mid - 1
+    return text[:low], True
 
 
 class ProgrammaticToolFlow:

@@ -93,3 +93,30 @@ never overwritten. Hooks cannot execute shell or grant additional tools.
 
 Conditional and looped read-only recipes use existing `program.execute`
 `if` and `for_each` statements; mutable changes remain explicitly staged.
+
+## Selective tool results
+
+A `call` statement can specify the same deterministic `transform` as
+`flow.execute` (path, where, project, unique, limit, aggregate). Only the
+transformed value is saved or collected; the raw tool payload is not retained
+by the program scope. The operation still goes through the existing runtime
+and read-only allowlist. Example:
+
+```toml
+[[program]]
+call = "repo.list"
+save = "files"
+[program.arguments]
+path = "."
+[program.transform]
+path = "files"
+aggregate = "count"
+
+[[program]]
+return = "$files"
+```
+
+Output budgets count JSON framing, escaping and UTF-8 bytes. A list or object
+whose first entry does not fit returns an empty prefix with `truncated=true`.
+Loop limits of zero execute no iterations, and nested loops restore shadowed
+variables when their bodies finish.
