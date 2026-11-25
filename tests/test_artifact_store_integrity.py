@@ -63,6 +63,31 @@ class ArtifactStoreIntegrityTests(unittest.TestCase):
         self.assertEqual(self.store.collect_garbage(), 1)
         self.assertEqual(self.store.read(live.id), content)
 
+    def test_paged_read_checks_whole_blob_without_read_bytes(self):
+        from unittest.mock import patch
+
+        content = bytes(range(256)) * 600
+        artifact = self.store.put(self.identity.id, content, "TEXT", "paged")
+        path = self.store.storage / artifact.relative_storage_path
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("full read")):
+            self.assertEqual(self.store.read_page(artifact.id, 65530, 30), content[65530:65560])
+            self.assertEqual(self.store.read_page(artifact.id, len(content), 30), b"")
+            self.assertEqual(self.store.read_text_page(artifact.id, -1, 8)["offset"], 0)
+            with path.open("r+b") as handle:
+                handle.seek(-1, 2)
+                handle.write(b"!")
+            with self.assertRaisesRegex(ValueError, "integrity"):
+                self.store.read_page(artifact.id, 0, 8)
+
+    def test_batched_garbage_collection_preserves_live_duplicate(self):
+        content = b"deduplicated"
+        for i in range(130):
+            self.store.put(self.identity.id, content, "TEXT", str(i), expires_at=1)
+        live = self.store.put(self.identity.id, content, "TEXT", "live")
+        self.assertEqual(self.store.collect_garbage(now=0), 0)
+        self.assertEqual(self.store.collect_garbage(now=2), 130)
+        self.assertEqual(self.store.read(live.id), content)
+
     def test_turn_id_requires_a_matching_conversation(self):
         with self.assertRaisesRegex(sqlite3.IntegrityError, "turn_id requires conversation_id"):
             self.store.put(

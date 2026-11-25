@@ -164,15 +164,36 @@ class ArtifactStore:
             raise KeyError("Artifact expired")
         offset = max(0, offset)
         limit = max(1, min(max_bytes or self.page_bytes, self.page_bytes))
-        raw = artifact.inline_content if artifact.storage_kind == "INLINE" else (
-            self.storage / artifact.relative_storage_path
-        ).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != artifact.content_hash:
+        if artifact.storage_kind == "INLINE":
+            raw = artifact.inline_content or b""
+            if hashlib.sha256(raw).hexdigest() != artifact.content_hash:
+                raise ValueError("Artifact integrity check failed")
+            return raw[offset:offset + limit]
+
+        # Verify every byte, including bytes outside the requested page, on
+        # the same stream used to extract the page. No full-blob allocation.
+        digest = hashlib.sha256()
+        page = bytearray()
+        position = 0
+        end = offset + limit
+        with (self.storage / artifact.relative_storage_path).open("rb") as source:
+            while block := source.read(64 * 1024):
+                digest.update(block)
+                next_position = position + len(block)
+                if next_position > artifact.size_bytes:
+                    raise ValueError("Artifact integrity check failed")
+                left = max(offset, position)
+                right = min(end, next_position)
+                if left < right:
+                    page.extend(memoryview(block)[left - position:right - position])
+                position = next_position
+        if position != artifact.size_bytes or digest.hexdigest() != artifact.content_hash:
             raise ValueError("Artifact integrity check failed")
-        return raw[offset:offset + limit]
+        return bytes(page)
 
     def read_text_page(self, artifact_id: str, offset: int = 0,
                        max_bytes: Optional[int] = None) -> dict:
+        offset = max(0, offset)
         raw = self.read_page(artifact_id, offset, max_bytes)
         artifact = self.get(artifact_id)
         if artifact is None:
@@ -318,37 +339,41 @@ class ArtifactStore:
 
     def collect_garbage(self, now: Optional[float] = None) -> int:
         """Remove expired artifacts without deleting shared content-addressed blobs."""
-        now = now or time.time()
+        now = time.time() if now is None else now
         removed = 0
-        candidate_paths: set[str] = set()
-        with self.db.get_connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM artifacts WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at < ?",
-                (now,),
-            ).fetchall()
-            for r in rows:
-                a = self._from_row(r)
-                conn.execute("DELETE FROM artifacts WHERE id=?", (a.id,))
-                removed += 1
-                if a.storage_kind == "FILE" and a.relative_storage_path:
-                    candidate_paths.add(a.relative_storage_path)
-
-        for relative_path in candidate_paths:
-            # Recheck under a writer reservation so a concurrent put cannot
-            # create a new reference between the SELECT and the unlink.
+        # Do not hydrate inline contents or retain every expired row/path.
+        # Release the SQLite writer reservation between bounded batches.
+        while True:
             with self.db.get_connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
-                still_referenced = conn.execute(
-                    """SELECT 1 FROM artifacts
-                       WHERE storage_kind='FILE' AND relative_storage_path=?
-                       LIMIT 1""",
-                    (relative_path,),
-                ).fetchone()
-                if not still_referenced:
-                    target = self.storage / relative_path
-                    if target.exists():
-                        target.unlink()
-        return removed
+                rows = conn.execute(
+                    """SELECT id,storage_kind,relative_storage_path FROM artifacts
+                       WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at < ?
+                       LIMIT 128""",
+                    (now,),
+                ).fetchall()
+                if not rows:
+                    return removed
+                conn.executemany(
+                    "DELETE FROM artifacts WHERE id=?", ((row["id"],) for row in rows),
+                )
+                removed += len(rows)
+                candidate_paths = {
+                    row["relative_storage_path"] for row in rows
+                    if row["storage_kind"] == "FILE" and row["relative_storage_path"]
+                }
+            for relative_path in candidate_paths:
+                # Recheck under a writer reservation before unlink.
+                with self.db.get_connection() as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    still_referenced = conn.execute(
+                        """SELECT 1 FROM artifacts
+                           WHERE storage_kind='FILE' AND relative_storage_path=?
+                           LIMIT 1""",
+                        (relative_path,),
+                    ).fetchone()
+                    if not still_referenced:
+                        (self.storage / relative_path).unlink(missing_ok=True)
 
     def close(self) -> None:
         if self.ephemeral and self._tmp_root:
