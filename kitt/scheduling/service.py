@@ -9,10 +9,11 @@ import uuid
 class PersistentWakeScheduler:
     """Durable scheduler that re-enters conversations through the host queue."""
 
-    def __init__(self, db, callback, *, poll_interval_seconds=1.0, event_callback=None):
+    def __init__(self, db, callback, *, poll_interval_seconds=1.0, event_callback=None, workspace_id=None):
         self.db = db
         self.callback = callback
         self.poll_interval = max(0.1, float(poll_interval_seconds))
+        self.workspace_id = workspace_id
         self._on_event = event_callback or (lambda *_: None)
         self._stop = threading.Event()
         self._thread = None
@@ -84,37 +85,54 @@ class PersistentWakeScheduler:
             task_id=f"heartbeat_{digest}",
         )
 
-    def cancel(self, task_id):
+    def cancel(self, task_id, *, workspace_id=None):
+        sql = "UPDATE scheduled_tasks SET state='CANCELLED' WHERE id=? AND state!='CANCELLED'"
+        args = [task_id]
+        if workspace_id is not None:
+            sql += " AND workspace_id=?"
+            args.append(workspace_id)
         with self.db.get_connection() as conn:
-            cur = conn.execute(
-                "UPDATE scheduled_tasks SET state='CANCELLED' WHERE id=? AND state!='CANCELLED'",
-                (task_id,),
-            )
+            cur = conn.execute(sql, args)
             return cur.rowcount > 0
 
-    def list(self, conversation_id=None, limit=100):
+    def list(self, conversation_id=None, limit=100, *, workspace_id=None):
         sql = "SELECT * FROM scheduled_tasks"
+        clauses = []
         args = []
         if conversation_id:
-            sql += " WHERE conversation_id=?"
+            clauses.append("conversation_id=?")
             args.append(conversation_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id=?")
+            args.append(workspace_id)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY next_run_at ASC LIMIT ?"
         args.append(max(1, min(int(limit), 200)))
         with self.db.get_connection() as conn:
             return [dict(row) for row in conn.execute(sql, args).fetchall()]
 
-    def run_due_once(self, *, now=None, limit=32):
+    def run_due_once(self, *, now=None, limit=32, workspace_id=None):
         timestamp = time.time() if now is None else float(now)
+        effective_workspace = workspace_id if workspace_id is not None else self.workspace_id
         claimed = []
         with self._lock:
             with self.db.get_connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
-                rows = conn.execute(
-                    """SELECT * FROM scheduled_tasks
-                       WHERE state='ACTIVE' AND next_run_at<=?
-                       ORDER BY next_run_at ASC LIMIT ?""",
-                    (timestamp, max(1, min(int(limit), 64))),
-                ).fetchall()
+                if effective_workspace is not None:
+                    rows = conn.execute(
+                        """SELECT * FROM scheduled_tasks
+                           WHERE state='ACTIVE' AND workspace_id=? AND next_run_at<=?
+                           ORDER BY next_run_at ASC LIMIT ?""",
+                        (effective_workspace, timestamp, max(1, min(int(limit), 64))),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """SELECT * FROM scheduled_tasks
+                           WHERE state='ACTIVE' AND next_run_at<=?
+                           ORDER BY next_run_at ASC LIMIT ?""",
+                        (timestamp, max(1, min(int(limit), 64))),
+                    ).fetchall()
                 for row in rows:
                     cur = conn.execute(
                         "UPDATE scheduled_tasks SET state='RUNNING' WHERE id=? AND state='ACTIVE'",
@@ -167,6 +185,14 @@ class PersistentWakeScheduler:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return
+            with self.db.get_connection() as conn:
+                if self.workspace_id is not None:
+                    conn.execute(
+                        "UPDATE scheduled_tasks SET state='ACTIVE' WHERE state='RUNNING' AND workspace_id=?",
+                        (self.workspace_id,),
+                    )
+                else:
+                    conn.execute("UPDATE scheduled_tasks SET state='ACTIVE' WHERE state='RUNNING'")
             self._stop.clear()
             self._thread = threading.Thread(
                 target=self._loop, name="kitt-wake-scheduler", daemon=True

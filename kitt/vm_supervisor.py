@@ -94,7 +94,7 @@ def _profile(file: Path) -> dict:
         raise VMError("Base image too large")
     _regular(Path(info["ssh_key"]), private=True)
     _regular(Path(info["known_hosts"]), private=True)
-    if any(c in info["image"] for c in (",", "\\n", "\\r", "\\x00")):
+    if any(c in info["image"] for c in (",", "\n", "\r", "\x00")):
         raise VMError("Unsupported image path characters")
     return info
 
@@ -263,7 +263,7 @@ def run_vm_job(profile: Path, goal: str, *, qemu: str | None = None,
 
 
 def inspect_profile(profile: Path) -> dict:
-    """Operator-owned preflight: image digest and tool availability only."""
+    """Operator-owned preflight: image digest, KVM/TCG, permissions, gateway and tool availability."""
     if sys.platform != "linux":
         raise VMError("VM supervisor needs Linux host")
     info = _profile(profile)
@@ -271,10 +271,31 @@ def inspect_profile(profile: Path) -> dict:
         if not shutil.which(program):
             raise VMError(f"Missing prerequisite: {program}")
     _check_image(info, shutil.which("qemu-img"))
+    kvm_available = os.access("/dev/kvm", os.R_OK | os.W_OK)
+    image_mode = oct(stat.S_IMODE(Path(info["image"]).stat().st_mode))
+    gateway_reachable = None
+    if info["gateway_port"]:
+        try:
+            with socket.create_connection(("127.0.0.1", info["gateway_port"]), timeout=1):
+                gateway_reachable = True
+        except OSError:
+            gateway_reachable = False
+    attestation_path = profile.parent / "bootstrap-attestation.json"
+    attestation = None
+    if attestation_path.is_file() and not attestation_path.is_symlink():
+        try:
+            attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            attestation = None
     return {"ready": True, "isolation": "qemu-user-restrict-on",
             "guest_image_sha256": info["sha256"],
+            "base_image_mode": image_mode,
+            "kvm_available": kvm_available,
+            "acceleration": "kvm" if kvm_available else "tcg",
             "memory_mib": info["memory_mib"], "cpus": info["cpus"],
             "gateway_forward": bool(info["gateway_port"]),
+            "gateway_reachable": gateway_reachable,
+            "bootstrap_attestation": attestation,
             "guest_provisioned_by_operator": True,
             "live_guest_attestation": False}
 

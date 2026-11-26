@@ -184,10 +184,12 @@ class HarnessRefiner:
         rid = self.repo.save_proposal(conversation_id, preview["proposal"], before)
         return rid, preview
 
-    def apply(self, proposal_id, after_snapshot=None):
+    def apply(self, proposal_id, after_snapshot=None, *, workspace_id=None):
         record = self.repo.refinement(proposal_id)
         if record is None:
             raise ValueError("unknown refinement proposal")
+        if workspace_id is not None and record.before_snapshot.get("workspace_id") != workspace_id:
+            raise PermissionError("refinement proposal is outside the active workspace")
         if record.state != "PROPOSED":
             raise ValueError(f"refinement is not applicable from state {record.state}")
         if after_snapshot is not None and not record.proposal.get("edits"):
@@ -238,10 +240,12 @@ class HarnessRefiner:
                 self.repo.set_status(hid, "ACTIVE")
             raise
 
-    def rollback(self, proposal_id):
+    def rollback(self, proposal_id, *, workspace_id=None):
         record = self.repo.refinement(proposal_id)
         if record is None:
             raise ValueError("unknown refinement proposal")
+        if workspace_id is not None and record.before_snapshot.get("workspace_id") != workspace_id:
+            raise PermissionError("refinement proposal is outside the active workspace")
         if record.state != "APPLIED":
             raise ValueError(f"refinement is not rollbackable from state {record.state}")
         after = record.after_snapshot or {}

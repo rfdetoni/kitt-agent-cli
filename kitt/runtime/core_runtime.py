@@ -1459,6 +1459,8 @@ class SafeRuntime:
         security_context,
         origin: str,
     ) -> SafeRuntimeResult:
+        if security_context is not None and getattr(security_context, "is_path_scoped", False):
+            raise PermissionError("path-scoped principals cannot start managed host processes")
         argv = args.get("argv")
         if not isinstance(argv, list):
             return SafeRuntimeResult(
@@ -1466,11 +1468,13 @@ class SafeRuntime:
                 "process.start",
                 error="process.start requires argv as a string list",
             )
-        profile = (
-            "workspace-write+network"
-            if args.get("network") is True
-            else str(args.get("sandbox_profile") or "workspace-write")
-        )
+        if args.get("network") is True:
+            profile = "workspace-write+network"
+        else:
+            requested_profile = str(args.get("sandbox_profile") or "workspace-write").strip()
+            if requested_profile not in {"read-only", "workspace-write"}:
+                raise PermissionError("process.start cannot elevate sandbox_profile beyond workspace-write")
+            profile = requested_profile
         data = self._managed_processes().start(
             argv=argv,
             conversation_id=self.conversation_id,
@@ -1644,7 +1648,7 @@ class SafeRuntime:
             raise ValueError("computer.run requires argv, binding and request_id")
         argv = args["argv"]
         if (not isinstance(argv, list) or not 1 <= len(argv) <= 128
-                or any(not isinstance(arg, str) or not arg or "\\x00" in arg or len(arg) > 8192
+                or any(not isinstance(arg, str) or not arg or "\x00" in arg or len(arg) > 8192
                        for arg in argv)
                 or len(json.dumps(argv, ensure_ascii=False).encode("utf-8")) > 32 * 1024):
             raise ValueError("invalid computer argv")
@@ -3356,10 +3360,16 @@ class SafeRuntime:
 
     @staticmethod
     def _is_operator_state_key(key: str) -> bool:
-        # Runtime bindings/configuration and program checkpoints have their
-        # own authority and consistency rules. Generic model state must not
-        # mutate or disclose those records.
-        return key.startswith(("conversation.runtime.", "program-session:"))
+        # Runtime bindings/configuration, autopilot verification, revision refs,
+        # review records and program checkpoints have their own authority rules.
+        return key.startswith((
+            "conversation.runtime.",
+            "program-session:",
+            "autopilot.",
+            "revision-ref:",
+            "workspace.review.",
+            "recipe.",
+        ))
 
     def _op_state_get(self, args):
         key = str(args.get("key", ""))

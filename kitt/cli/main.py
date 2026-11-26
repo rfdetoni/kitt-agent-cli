@@ -815,6 +815,8 @@ def build_parser() -> argparse.ArgumentParser:
     vm_prepare.add_argument("--gateway-port", type=int, default=3000)
     vm_prepare.add_argument("--agent-sha", required=True, help="Immutable Agent revision")
     vm_prepare.add_argument("--image-sha512", required=True, help="Independently trusted Debian image SHA512")
+    vm_prepare.add_argument("--image-url", help="Optional pinned official Debian cloud directory URL")
+    vm_prepare.add_argument("--gpg-keyring", type=Path, help="Optional Debian GPG keyring for SHA512SUMS.sign")
     vm_prepare.add_argument("--timeout", type=int, default=1200)
     windows_parser = vm_commands.add_parser("windows", help="Guide Windows VM creation from your own ISO/QCOW2")
     windows_commands = windows_parser.add_subparsers(dest="windows_action", required=True)
@@ -1448,7 +1450,8 @@ def main(argv=None) -> int:
                 from kitt.vm_debian import prepare_debian
                 profile = prepare_debian(args.destination, gateway_port=args.gateway_port,
                                          timeout_seconds=args.timeout, agent_sha=args.agent_sha,
-                                         image_sha512=args.image_sha512)
+                                         image_sha512=args.image_sha512,
+                                         image_url=args.image_url, gpg_keyring=args.gpg_keyring)
                 print(_json.dumps({"ready": True, "profile": str(profile)}))
                 return 0
             if args.vm_action == "lab":

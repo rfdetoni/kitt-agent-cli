@@ -385,7 +385,7 @@ class ExecutionSandbox:
             return _TOOLCHAIN_IMAGES["rust"]
         if executable in {"sh", "bash", "dash", "zsh"} and len(argv) >= 3 and argv[1] in {"-c", "-lc"}:
             names = re.findall(
-                r"(?<![\\w.-])(mvnw?|gradlew?|java|javac|npm|npx|node|pnpm|yarn|cargo|rustc|rustup)(?![\\w.-])",
+                r"(?<![\w.-])(mvnw?|gradlew?|java|javac|npm|npx|node|pnpm|yarn|cargo|rustc|rustup)(?![\w.-])",
                 argv[2], flags=re.IGNORECASE,
             )
             for name in names:

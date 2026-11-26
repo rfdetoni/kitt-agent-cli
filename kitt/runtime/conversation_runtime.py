@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 from kitt.runtime.state import RuntimeStateStore
 from kitt.llm.http_security import secure_urlopen
+from kitt.security.network_policy import NetworkPolicy
 from kitt.tools.process_runner import ProcessRunner
 from kitt_protocol import ConversationRuntimeBinding, RuntimeBackend
 
@@ -108,6 +109,9 @@ def _remote_endpoint(value: str) -> tuple[str, bool]:
         or "\\" in endpoint
     ):
         raise PermissionError("remote runtime endpoint must use HTTPS or loopback HTTP without credentials")
+    ok, reason = NetworkPolicy.validate_url(endpoint, allow_private=True, allow_loopback=True, resolve_dns=False)
+    if not ok:
+        raise PermissionError(f"remote runtime endpoint blocked: {reason}")
     return endpoint, loopback
 
 
@@ -343,13 +347,16 @@ class KubernetesRuntimeDriver:
         self.binary = binary
 
     def _namespace(self, config: dict[str, Any]) -> str:
-        return str(config.get("namespace") or "default")
+        ns = str(config.get("namespace") or "default").strip()
+        if not re.fullmatch(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?", ns):
+            raise ValueError("invalid kubernetes namespace")
+        return ns
 
     def provision(self, config: dict[str, Any]) -> str:
         runtime_id = _runtime_id(str(config.get("runtime_id") or f"kitt-{uuid.uuid4().hex[:16]}"))
         image = str(config.get("image") or "").strip()
-        if not image:
-            raise ValueError("kubernetes runtime requires image")
+        if not image or image.startswith("-") or any(ord(c) < 33 for c in image):
+            raise ValueError("kubernetes runtime requires valid image")
         cpu, memory, pids = _resource_limits(config)
         if pids is not None or config.get("network_disabled") is True:
             raise ValueError("Kubernetes PID/network isolation requires cluster policy")
@@ -469,11 +476,18 @@ class KubernetesRuntimeDriver:
             raise RuntimeError(result["stderr"] or result["stdout"])
 
 
+def _default_remote_secret(config: dict[str, Any]) -> str | None:
+    env_name = str(config.get("token_env") or "KITT_REMOTE_RUNTIME_TOKEN").strip()
+    if not env_name.startswith("KITT_REMOTE_RUNTIME_TOKEN"):
+        raise PermissionError("remote runtime token_env must start with KITT_REMOTE_RUNTIME_TOKEN")
+    return os.getenv(env_name)
+
+
 class RemoteRuntimeDriver:
     backend = RuntimeBackend.REMOTE
 
     def __init__(self, secret_provider: Callable[[dict[str, Any]], str | None] | None = None):
-        self.secret_provider = secret_provider or (lambda config: os.getenv(str(config.get("token_env") or "KITT_REMOTE_RUNTIME_TOKEN")))
+        self.secret_provider = secret_provider or _default_remote_secret
 
     def _request(self, runtime_id: str, action: str, config: dict[str, Any], payload: dict[str, Any] | None = None) -> dict[str, Any]:
         endpoint, loopback = _remote_endpoint(str(config.get("endpoint") or ""))
@@ -847,6 +861,12 @@ class ConversationRuntimeManager:
         if binding.state != "RUNNING":
             raise RuntimeError(f"conversation runtime is not running: {binding.state}")
         if key is not None:
+            existing_receipts = [
+                item["key"] for item in self.state.list_keys()
+                if str(item.get("key", "")).startswith(self.RECEIPT_PREFIX)
+            ]
+            while len(existing_receipts) >= 32:
+                self.state.delete(existing_receipts.pop(0))
             claim = {"status": "INDETERMINATE", "digest": digest, "request_id": request_id}
             if not self.state.set(key, claim, expected_value=None):
                 raise RuntimeError("execution request already claimed")
@@ -1008,7 +1028,7 @@ class ConversationRuntimeManager:
                 "image": result["image"]}
 
     @_exclusive
-    def restore_snapshot(self, store, artifact_id, config, *, allow_sensitive=False):
+    def restore_snapshot(self, store, artifact_id, config, *, allow_sensitive=False, bind: bool = False):
         from kitt.artifacts.remote_cache import RemoteArtifactCache
 
         if self.binding() is not None:
@@ -1027,8 +1047,126 @@ class ConversationRuntimeManager:
         cache = RemoteArtifactCache(config, runtime_id, driver.secret_provider(config))
         with store.open_verified(artifact_id) as source:
             cache.push(source, artifact.content_hash, artifact.size_bytes)
-        return driver._request(runtime_id, "snapshot_import", config,
-                               {"sha256": artifact.content_hash, "allow_sensitive": True})
+        imported = driver._request(runtime_id, "snapshot_import", config,
+                                   {"sha256": artifact.content_hash, "allow_sensitive": True})
+        if bind:
+            provisioned_id = driver.provision(config)
+            clean = _sanitized_config(dict(config))
+            now = int(time.time() * 1000)
+            binding = ConversationRuntimeBinding(
+                conversation_id=self.conversation_id,
+                backend=RuntimeBackend.REMOTE,
+                runtime_id=provisioned_id,
+                state="RUNNING",
+                workspace_ref=str(self.root),
+                config_digest=_digest(clean),
+                created_at=now,
+                updated_at=now,
+            )
+            self._save(binding, clean)
+            self._event("ConversationRuntimeRestored", binding, {"artifact_id": artifact_id})
+        return imported
+
+    @_exclusive
+    def migrate_runtime(self, target_config: dict[str, Any], store, *,
+                        mode: str = "cold", allow_sensitive: bool = False,
+                        release_source: bool = False) -> dict[str, Any]:
+        """Transactional 10-step remote runtime migration; preserves source on any failure."""
+        from kitt.artifacts.remote_cache import RemoteArtifactCache
+
+        if mode not in {"cold", "warm"}:
+            raise ValueError("supported transactional migration modes are 'cold' and 'warm'")
+        if allow_sensitive is not True:
+            raise PermissionError("migration requires explicit sensitive-data authorization")
+        binding = self.binding()
+        if binding is None or binding.backend != RuntimeBackend.REMOTE:
+            raise ValueError("migration requires an active REMOTE runtime binding")
+        source_config = self._config()
+        driver = self._driver(RuntimeBackend.REMOTE)
+        target_id = _runtime_id(str(target_config.get("runtime_id") or f"remote_{uuid.uuid4().hex[:16]}"))
+        target_cfg = {**dict(target_config), "runtime_id": target_id}
+
+        # 1-2. Verify target compatibility & capacity before touching source.
+        cap = driver._request(target_id, "capacity", target_cfg)
+        if not cap.get("available"):
+            raise RuntimeError("migration target worker is unavailable")
+        policy = cap.get("policy") or {}
+        if source_config.get("image") and policy.get("image") and policy["image"] != source_config["image"]:
+            raise ValueError("migration target image mismatch")
+
+        # 3. Quiesce source runtime.
+        if binding.state == "RUNNING":
+            binding = self._pause(binding, source_config)
+
+        # 4. Snapshot source workspace/state into conversation ArtifactStore.
+        exported = driver._request(binding.runtime_id, "snapshot_export", source_config, {"allow_sensitive": True})
+        digest = exported["sha256"]
+        source_cache = RemoteArtifactCache(source_config, binding.runtime_id, driver.secret_provider(source_config))
+        with source_cache.open_blob(digest) as response:
+            artifact = store.put_stream(
+                self.workspace_id, iter(lambda: response.read(64 * 1024), b""),
+                "runtime_snapshot", f"Migration snapshot ({mode})",
+                conversation_id=self.conversation_id, sensitivity="SENSITIVE", expected_hash=digest,
+            )
+
+        # 5-8. Transfer, verify cryptographic digest, restore, provision & health-check target.
+        target_provisioned = False
+        try:
+            target_cache = RemoteArtifactCache(target_cfg, target_id, driver.secret_provider(target_cfg))
+            with store.open_verified(artifact.id) as source_stream:
+                target_cache.push(source_stream, artifact.content_hash, artifact.size_bytes)
+            driver._request(target_id, "snapshot_import", target_cfg,
+                            {"sha256": artifact.content_hash, "allow_sensitive": True})
+            provisioned_id = driver.provision(target_cfg)
+            target_provisioned = True
+            health = driver.health(provisioned_id, target_cfg)
+            if not health.get("ok"):
+                raise RuntimeError("migration target failed post-restore health check")
+        except Exception:
+            if target_provisioned:
+                try:
+                    driver.terminate(target_id, target_cfg)
+                except Exception:
+                    pass
+            raise
+
+        # 9. Atomic conversation binding cutover.
+        clean_target = _sanitized_config(target_cfg)
+        now = int(time.time() * 1000)
+        new_binding = ConversationRuntimeBinding(
+            conversation_id=self.conversation_id,
+            backend=RuntimeBackend.REMOTE,
+            runtime_id=provisioned_id,
+            state="RUNNING",
+            workspace_ref=str(self.root),
+            config_digest=_digest(clean_target),
+            created_at=now,
+            updated_at=now,
+        )
+        self._save(new_binding, clean_target)
+        self._event("ConversationRuntimeMigrated", new_binding, {
+            "source_runtime_id": binding.runtime_id,
+            "artifact_id": artifact.id,
+            "mode": mode,
+        })
+
+        # 10. Optional source release after target cutover is durable.
+        source_released = False
+        if release_source:
+            try:
+                driver.terminate(binding.runtime_id, source_config)
+                source_released = True
+            except Exception:
+                source_released = False
+        return {
+            "ok": True,
+            "mode": mode,
+            "source_runtime_id": binding.runtime_id,
+            "target_runtime_id": provisioned_id,
+            "artifact_id": artifact.id,
+            "sha256": artifact.content_hash,
+            "source_released": source_released,
+        }
 
     def health(self) -> dict[str, Any]:
         binding = self.binding()

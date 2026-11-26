@@ -492,6 +492,7 @@ class KittRuntime:
                 ),
             ),
             event_callback=lambda name, payload: events.publish(name, payload),
+            workspace_id=identity.id,
         )
         registry.wake_scheduler = wake_scheduler
         registry.harness_refiner = refiner

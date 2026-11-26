@@ -160,12 +160,14 @@ class SafeRuntime(_core.SafeRuntime):
             if not security_context.allows_path(relative) and not security_context.is_ancestor_of_allowed_path(relative):
                 raise PermissionError(f"Path '{relative}' is outside the principal path scope")
 
+        from collections import deque
+
         entries: list[dict[str, Any]] = []
-        queue: list[tuple[str, int]] = [(relative, 1)]
+        queue: deque[tuple[str, int]] = deque([(relative, 1)])
         truncated = False
 
         while queue and len(entries) < limit:
-            current, level = queue.pop(0)
+            current, level = queue.popleft()
             remaining = limit - len(entries)
             children = list_entries(fs, current, limit=min(500, remaining + 1))
             if len(children) > remaining:

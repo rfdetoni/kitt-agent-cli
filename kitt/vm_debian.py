@@ -24,11 +24,42 @@ from .vm_supervisor import VMError, _check_image, _forward_port, _ssh_args, _ter
 
 BASE = "https://cloud.debian.org/images/cloud/trixie/latest/"
 MIRROR = "https://cloudfront.debian.net/cdimage/cloud/trixie/latest/"
+_ALLOWED_BASE_PREFIXES = (
+    "https://cloud.debian.org/images/cloud/",
+    "https://cloudfront.debian.net/cdimage/cloud/",
+)
 IMAGE = "debian-13-genericcloud-amd64.qcow2"
 MAX_IMAGE_BYTES = 2 * 1024 ** 3
 MAX_SUMS_BYTES = 128 * 1024
+MIN_FREE_DISK_BYTES = 4 * 1024 ** 3
 UV_VERSION = "0.10.0"
 _ALLOWED_HEX = re.compile(r"^[0-9a-f]{128}$")
+_SYSTEM_DEBIAN_KEYRING = Path("/usr/share/keyrings/debian-archive-keyring.gpg")
+
+
+def _validate_base_url(url: str | None) -> str:
+    target = (url or BASE).strip()
+    if not target.endswith("/"):
+        target += "/"
+    if (
+        not target.startswith(_ALLOWED_BASE_PREFIXES)
+        or any(c in target for c in ("?", "#", "@", "\\", "\n", "\r", "\x00"))
+    ):
+        raise VMError("Only official Debian Cloud HTTPS directories are accepted")
+    return target
+
+
+class _DebianRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not str(newurl).startswith(_ALLOWED_BASE_PREFIXES):
+            raise VMError("Debian download redirected outside the official mirror")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_DEBIAN_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}),
+    _DebianRedirectHandler(),
+)
 
 
 def _program(name: str) -> str:
@@ -39,11 +70,11 @@ def _program(name: str) -> str:
 
 
 def _read_https(url: str, max_bytes: int) -> bytes:
-    # Fixed official URLs; no user-supplied network destinations.
-    if not url.startswith(BASE):
+    # Fixed official URLs; no user-supplied network destinations or ambient proxies.
+    if not url.startswith(_ALLOWED_BASE_PREFIXES):
         raise VMError("Only the official Debian Cloud image directory is accepted")
-    with urllib.request.urlopen(url, timeout=40) as response:
-        if not (response.url.startswith(BASE) or response.url.startswith(MIRROR)) or response.status != 200:
+    with _DEBIAN_OPENER.open(url, timeout=40) as response:
+        if not response.url.startswith(_ALLOWED_BASE_PREFIXES) or response.status != 200:
             raise VMError("Debian download redirected outside the official mirror")
         data = response.read(max_bytes + 1)
     if len(data) > max_bytes:
@@ -51,8 +82,44 @@ def _read_https(url: str, max_bytes: int) -> bytes:
     return data
 
 
-def expected_sha512() -> str:
-    text = _read_https(BASE + "SHA512SUMS", MAX_SUMS_BYTES).decode("utf-8")
+def verify_sha512sums_gpg(
+    sums_bytes: bytes,
+    *,
+    base_url: str = BASE,
+    keyring: Path | None = None,
+) -> bool:
+    """Verify official SHA512SUMS.sign when GPG tools and keyring are present."""
+    resolved_base = _validate_base_url(base_url)
+    target_keyring = keyring or (_SYSTEM_DEBIAN_KEYRING if _SYSTEM_DEBIAN_KEYRING.is_file() else None)
+    if target_keyring is None:
+        return False
+    if not target_keyring.is_file() or target_keyring.is_symlink():
+        raise VMError("Invalid Debian GPG keyring path")
+    gpgv = shutil.which("gpgv")
+    if gpgv is None:
+        if keyring is not None:
+            raise VMError("Explicit --gpg-keyring requires gpgv installed")
+        return False
+    sig_bytes = _read_https(resolved_base + "SHA512SUMS.sign", MAX_SUMS_BYTES)
+    with tempfile.TemporaryDirectory(prefix=".kitt-gpg-") as tmp:
+        sums_path = Path(tmp) / "SHA512SUMS"
+        sig_path = Path(tmp) / "SHA512SUMS.sign"
+        sums_path.write_bytes(sums_bytes)
+        sig_path.write_bytes(sig_bytes)
+        result = subprocess.run(
+            [gpgv, "--keyring", str(target_keyring), str(sig_path), str(sums_path)],
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise VMError("Debian SHA512SUMS GPG signature verification failed")
+    return True
+
+
+def expected_sha512(*, base_url: str = BASE) -> str:
+    resolved_base = _validate_base_url(base_url)
+    text = _read_https(resolved_base + "SHA512SUMS", MAX_SUMS_BYTES).decode("utf-8")
     matches = []
     for line in text.splitlines():
         parts = line.split(maxsplit=1)
@@ -63,14 +130,15 @@ def expected_sha512() -> str:
     return matches[0]
 
 
-def download_debian(destination: Path, expected: str) -> None:
+def download_debian(destination: Path, expected: str, *, base_url: str = BASE) -> None:
     if not _ALLOWED_HEX.fullmatch(expected):
         raise VMError("Invalid official Debian SHA512")
+    resolved_base = _validate_base_url(base_url)
     digest = hashlib.sha512()
     total = 0
-    request = urllib.request.Request(BASE + IMAGE, headers={"User-Agent": "KITT-VM-Bootstrap/1"})
-    with urllib.request.urlopen(request, timeout=90) as response:
-        if response.status != 200 or not response.url.startswith(BASE):
+    request = urllib.request.Request(resolved_base + IMAGE, headers={"User-Agent": "KITT-VM-Bootstrap/1"})
+    with _DEBIAN_OPENER.open(request, timeout=90) as response:
+        if response.status != 200 or not response.url.startswith(_ALLOWED_BASE_PREFIXES):
             raise VMError("Unexpected Debian cloud image endpoint")
         with destination.open("xb") as stream:
             while True:
@@ -99,13 +167,15 @@ def _bootstrap_script(agent_sha: str) -> str:
         "export UV_PYTHON_INSTALL_DIR=/opt/kitt-python\n"
         "/opt/kitt-bootstrap/bin/uv python install 3.14\n"
         "/opt/kitt-bootstrap/bin/uv venv --python 3.14 /opt/kitt/venv\n"
-        f"/opt/kitt-bootstrap/bin/uv pip install --python /opt/kitt/venv/bin/python "
+        f"/opt/kitt-bootstrap/bin/uv pip install --no-cache --python /opt/kitt/venv/bin/python "
         f"'git+https://github.com/rfdetoni/kitt-agent-cli.git@{agent_sha}'\n"
         "/opt/kitt/venv/bin/python -c 'import sys, kitt; "
         "assert sys.version_info >= (3,14); print(kitt.__version__)'\n"
         "install -d -m 0700 -o kitt -g kitt /home/kitt/workspace\n"
         "/usr/sbin/sshd -t\n"
         "systemctl restart ssh\n"
+        "rm -rf /opt/kitt-bootstrap /root/.cache /tmp/* /var/lib/apt/lists/*\n"
+        "apt-get clean || true\n"
         f"printf '%s\\n' {agent_sha} > /var/lib/kitt-bootstrap-ok\n"
         "chmod 0644 /var/lib/kitt-bootstrap-ok\n"
     )
@@ -172,12 +242,20 @@ def _health(key: Path, known: Path, port: int, ssh: str, version: str, agent_sha
         if result.returncode or len(result.stdout) > 4096:
             return False
         response = json.loads(result.stdout)
+        minor_raw = str(response.get("python_minor") or "")
+        parts = minor_raw.split(".")
+        python_ok = (
+            len(parts) >= 2
+            and parts[0].isdigit()
+            and parts[1].isdigit()
+            and (int(parts[0]), int(parts[1])) >= (3, 14)
+        )
         return (isinstance(response, dict)
                 and response.get("version") == 1
                 and response.get("status") == "READY"
                 and response.get("agent_version") == version
                 and response.get("agent_sha") == agent_sha
-                and response.get("python_minor") == "3.14")
+                and python_ok)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return False
 
@@ -188,7 +266,8 @@ def _file_sha256(path: Path) -> str:
 
 
 def prepare_debian(destination: Path, *, gateway_port: int = 3000,
-                   timeout_seconds: int = 1200, agent_sha: str, image_sha512: str) -> Path:
+                   timeout_seconds: int = 1200, agent_sha: str, image_sha512: str,
+                   image_url: str | None = None, gpg_keyring: Path | None = None) -> Path:
     """Create an immutable Debian guest and private supervisor profile once.
 
     Never edits an existing profile or installs privileged packages on host.
@@ -199,6 +278,7 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
         raise VMError("Gateway port must be an integer between 0 and 65535")
     if type(timeout_seconds) is not int or not 180 <= timeout_seconds <= 3600:
         raise VMError("Bootstrap timeout must be 180..3600 seconds")
+    resolved_base = _validate_base_url(image_url)
     destination = destination.expanduser().absolute()
     if any(c in str(destination) for c in (",", "\n", "\r", "\x00")):
         raise VMError("Unsafe VM storage path for QEMU")
@@ -224,13 +304,19 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
         or stat.S_IMODE(destination.parent.stat().st_mode) & 0o077
     ):
         raise VMError("VM destination parent must be private (0700)")
-    expected = expected_sha512()
+    if shutil.disk_usage(destination.parent).free < MIN_FREE_DISK_BYTES:
+        raise VMError("Insufficient disk space for Debian VM provisioning (minimum 4 GiB free required)")
+    expected = expected_sha512(base_url=resolved_base)
     if expected != image_sha512:
         raise VMError("Published Debian checksum does not match operator pin")
+    gpg_verified = False
+    if gpg_keyring is not None or _SYSTEM_DEBIAN_KEYRING.is_file():
+        sums_raw = _read_https(resolved_base + "SHA512SUMS", MAX_SUMS_BYTES)
+        gpg_verified = verify_sha512sums_gpg(sums_raw, base_url=resolved_base, keyring=gpg_keyring)
     with tempfile.TemporaryDirectory(prefix=".kitt-debian-", dir=destination.parent) as tmp:
         stage = Path(tmp)
         image = stage / "debian.qcow2"
-        download_debian(image, expected)
+        download_debian(image, expected, base_url=resolved_base)
         check = subprocess.run([dependencies["qemu-img"], "info", "--output=json", str(image)],
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                timeout=25, check=True)
@@ -266,7 +352,8 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
             "-netdev", f"user,id=provision,ipv6=off,hostfwd=tcp:127.0.0.1:{port}-:22",
             "-device", "virtio-net-pci,netdev=provision",
         ]
-        with (stage / "qemu-bootstrap.log").open("wb") as log:
+        log_path = stage / "qemu-bootstrap.log"
+        with log_path.open("wb") as log:
             process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=log,
                                        stderr=subprocess.STDOUT, start_new_session=True)
             try:
@@ -285,12 +372,30 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
                     time.sleep(3)
                 else:
                     raise VMError("Debian bootstrap failed or timed out; image not promoted")
+            except Exception as exc:
+                diag_tail = ""
+                try:
+                    raw_log = log_path.read_bytes()[-4096:]
+                    diag_tail = raw_log.decode("utf-8", errors="replace").strip()
+                except OSError:
+                    pass
+                if diag_tail:
+                    diag_file = destination.parent / "last-qemu-bootstrap-error.log"
+                    try:
+                        diag_file.write_text(diag_tail + "\n", encoding="utf-8")
+                        diag_file.chmod(0o600)
+                    except OSError:
+                        pass
+                    if isinstance(exc, VMError):
+                        raise VMError(f"{exc} (diagnostics saved to {diag_file})") from exc
+                raise
             finally:
                 if process.poll() is None:
                     _terminate_group(process)
                 if process.stdin is not None:
                     process.stdin.close()
-        # Never preserve cloud-init seed/credentials other than the private SSH identity.
+        # Protect sealed base image read-only; never preserve cloud-init seed/credentials.
+        image.chmod(0o400)
         for name in ("user-data", "meta-data", "seed.iso", "qemu-bootstrap.log", "guest_host", "guest_host.pub"):
             (stage / name).unlink(missing_ok=True)
         profile = {
@@ -304,6 +409,18 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
         }
         (stage / "profile.json").write_text(json.dumps(profile, indent=2) + "\n", encoding="utf-8")
         (stage / "profile.json").chmod(0o600)
+        attestation = {
+            "base_url": resolved_base,
+            "image_sha512": expected,
+            "gpg_verified": gpg_verified,
+            "agent_sha": agent_sha,
+            "agent_version": expected_version,
+            "kvm_host": os.access("/dev/kvm", os.R_OK | os.W_OK),
+        }
+        (stage / "bootstrap-attestation.json").write_text(
+            json.dumps(attestation, indent=2) + "\n", encoding="utf-8"
+        )
+        (stage / "bootstrap-attestation.json").chmod(0o600)
         _check_image({**profile, "image": str(image)}, dependencies["qemu-img"])
         if destination.exists() or destination.is_symlink():
             raise VMError("VM destination appeared during provisioning")
