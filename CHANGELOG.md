@@ -1,5 +1,9 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.13 — coordinated Protocol 0.14.3 dependency
+
+- Pin Python Protocol to the same immutable revision as the Rust and TypeScript ecosystem consumers; synchronize the lock and release metadata.
+
 ## 0.89.12 — governed computer runtime and artifact transport
 
 - Include optional bounded WASM, durable runtime receipts, container hibernation, read-only mounts, Zstd artifact frames and scoped remote cache RPC.
