@@ -983,6 +983,53 @@ class ConversationRuntimeManager:
         return {"artifact_id": artifact.id, "sha256": artifact.content_hash,
                 "bytes": artifact.size_bytes}
 
+    @_exclusive
+    def export_snapshot(self, store, *, allow_sensitive=False):
+        from kitt.artifacts.remote_cache import RemoteArtifactCache
+
+        binding = self.binding()
+        if binding is None or binding.backend != RuntimeBackend.REMOTE or binding.state != "PAUSED":
+            raise ValueError("snapshot requires a paused REMOTE runtime")
+        if allow_sensitive is not True:
+            raise PermissionError("explicit sensitive snapshot authorization required")
+        driver = self._driver(binding.backend)
+        config = self._config()
+        result = driver._request(binding.runtime_id, "snapshot_export", config, {"allow_sensitive": True})
+        digest = result["sha256"]
+        cache = RemoteArtifactCache(config, binding.runtime_id, driver.secret_provider(config))
+        with cache.open_blob(digest) as response:
+            artifact = store.put_stream(
+                self.workspace_id, iter(lambda: response.read(64 * 1024), b""),
+                "runtime_snapshot", "Cold remote workspace snapshot", conversation_id=self.conversation_id,
+                sensitivity="SENSITIVE", expected_hash=digest,
+            )
+        self._event("ConversationRuntimeSnapshotExported", binding, {"artifact_id": artifact.id})
+        return {"artifact_id": artifact.id, "sha256": artifact.content_hash, "bytes": artifact.size_bytes,
+                "image": result["image"]}
+
+    @_exclusive
+    def restore_snapshot(self, store, artifact_id, config, *, allow_sensitive=False):
+        from kitt.artifacts.remote_cache import RemoteArtifactCache
+
+        if self.binding() is not None:
+            raise ValueError("snapshot restore requires an unbound conversation")
+        if allow_sensitive is not True:
+            raise PermissionError("explicit sensitive snapshot authorization required")
+        artifact = store.get(artifact_id)
+        if (artifact is None or artifact.workspace_id != self.workspace_id
+                or artifact.conversation_id != self.conversation_id
+                or artifact.kind != "runtime_snapshot"
+                or (artifact.expires_at is not None and artifact.expires_at < time.time()
+                    and not artifact.pinned)):
+            raise KeyError("snapshot unavailable in this conversation")
+        runtime_id = _runtime_id(config["runtime_id"])
+        driver = self._driver(RuntimeBackend.REMOTE)
+        cache = RemoteArtifactCache(config, runtime_id, driver.secret_provider(config))
+        with store.open_verified(artifact_id) as source:
+            cache.push(source, artifact.content_hash, artifact.size_bytes)
+        return driver._request(runtime_id, "snapshot_import", config,
+                               {"sha256": artifact.content_hash, "allow_sensitive": True})
+
     def health(self) -> dict[str, Any]:
         binding = self.binding()
         if binding is None:
