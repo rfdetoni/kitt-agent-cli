@@ -111,3 +111,17 @@ transport frames with optional native Python 3.14 Zstandard level 1 compression.
 Uncompressible blocks remain raw. Import validates frame size, decompression limits,
 and the expected full SHA-256 before publishing. The caller supplies authorized
 workspace/conversation metadata; no unauthenticated network endpoint is created.
+
+## Remote artifact cache (operator RPC)
+
+After binding a dedicated Assistant REMOTE worker, use `runtime.artifact_push`
+with an explicit conversation_id and artifact_id. Non-NORMAL artifacts require
+allow_sensitive=true from the operator. HEAD checks for an existing verified
+blob before streaming a PUT; the worker validates the full SHA-256. The response
+includes the read-only cache path for the remote container. `runtime.artifact_pull`
+accepts a SHA-256 and creates a scoped SENSITIVE local artifact, validating the
+complete hash before publication. No automatic synchronization or model access.
+Only raw blobs are transported over this worker protocol; Zstd remains a separate
+codec. Both directions are limited to 8 MiB and use the existing bounded HTTP
+transport, rejecting redirects. Remote execution receipts now carry a scoped
+request ID to the worker when supplied by the local caller.

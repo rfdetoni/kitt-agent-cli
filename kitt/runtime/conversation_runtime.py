@@ -515,6 +515,9 @@ class RemoteRuntimeDriver:
     def execute(self, runtime_id: str, argv: list[str], config: dict[str, Any]) -> dict[str, Any]:
         return self._request(runtime_id, "execute", config, {"argv": list(argv)})
 
+    def execute_once(self, runtime_id: str, argv: list[str], config: dict[str, Any], request_id: str) -> dict[str, Any]:
+        return self._request(runtime_id, "execute", config, {"argv": list(argv), "request_id": request_id})
+
     def pause(self, runtime_id: str, config: dict[str, Any]) -> None:
         self._request(runtime_id, "pause", config)
 
@@ -796,7 +799,14 @@ class ConversationRuntimeManager:
                 raise RuntimeError("execution request already claimed")
         # Persist claim before any external effect. Exceptions never trigger replay.
         try:
-            result = self._driver(binding.backend).execute(binding.runtime_id, list(argv), config)
+            driver = self._driver(binding.backend)
+            if request_id is not None and isinstance(driver, RemoteRuntimeDriver):
+                # Scope the remote receipt to this binding and conversation, never
+                # expose an unrelated caller's bare request identifier.
+                remote_request_id = _digest([self.workspace_id, self.conversation_id, binding.runtime_id, request_id])
+                result = driver.execute_once(binding.runtime_id, list(argv), config, remote_request_id)
+            else:
+                result = driver.execute(binding.runtime_id, list(argv), config)
             if key is not None:
                 receipt = {**claim, "status": "COMPLETED", "result_digest": _digest(result),
                            "success": result.get("success") is True,
@@ -871,6 +881,54 @@ class ConversationRuntimeManager:
         self._save(updated, config)
         self._event("ConversationRuntimeResumed", updated)
         return updated
+
+    @_exclusive
+    def push_artifact(self, store, artifact_id: str, *, allow_sensitive: bool = False):
+        from kitt.artifacts.remote_cache import RemoteArtifactCache
+
+        binding = self.binding()
+        if binding is None or binding.backend != RuntimeBackend.REMOTE:
+            raise ValueError("artifact push requires a bound REMOTE runtime")
+        artifact = store.get(artifact_id)
+        if (artifact is None or artifact.workspace_id != self.workspace_id
+                or artifact.conversation_id != self.conversation_id
+                or (artifact.expires_at is not None and artifact.expires_at < time.time()
+                    and not artifact.pinned)):
+            raise KeyError("artifact unavailable in this conversation")
+        if artifact.sensitivity != "NORMAL" and allow_sensitive is not True:
+            raise PermissionError("explicit sensitive artifact authorization required")
+        driver = self._driver(binding.backend)
+        config = self._config()
+        cache = RemoteArtifactCache(config, binding.runtime_id, driver.secret_provider(config))
+        with store.open_verified(artifact_id) as source:
+            transferred = cache.push(source, artifact.content_hash, artifact.size_bytes)
+        self._event("ConversationRuntimeArtifactPushed", binding, {
+            "artifact_id": artifact_id, "bytes": artifact.size_bytes, "transferred": transferred,
+        })
+        return {"sha256": artifact.content_hash, "bytes": artifact.size_bytes,
+                "transferred": transferred, "remote_path": f"/mnt/kitt/cache/{artifact.content_hash}"}
+
+    @_exclusive
+    def pull_artifact(self, store, digest: str, *, summary: str = "Remote runtime artifact"):
+        from kitt.artifacts.remote_cache import RemoteArtifactCache
+
+        binding = self.binding()
+        if binding is None or binding.backend != RuntimeBackend.REMOTE:
+            raise ValueError("artifact pull requires a bound REMOTE runtime")
+        driver = self._driver(binding.backend)
+        config = self._config()
+        cache = RemoteArtifactCache(config, binding.runtime_id, driver.secret_provider(config))
+        with cache.open_blob(digest) as response:
+            artifact = store.put_stream(
+                self.workspace_id, iter(lambda: response.read(64 * 1024), b""),
+                "binary", summary[:256], conversation_id=self.conversation_id,
+                sensitivity="SENSITIVE", expected_hash=digest,
+            )
+        self._event("ConversationRuntimeArtifactPulled", binding, {
+            "artifact_id": artifact.id, "bytes": artifact.size_bytes,
+        })
+        return {"artifact_id": artifact.id, "sha256": artifact.content_hash,
+                "bytes": artifact.size_bytes}
 
     def health(self) -> dict[str, Any]:
         binding = self.binding()
