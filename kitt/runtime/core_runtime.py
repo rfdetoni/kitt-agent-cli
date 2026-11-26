@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 
 import time
 from dataclasses import dataclass, field
@@ -124,6 +125,10 @@ OPERATION_REGISTRY = RuntimeOperationRegistry({
     ),
     "sandbox.python": RuntimeOperationSpec(
         "sandbox.python", CAP_SAFE_COMPUTE, "python_compute"
+    ),
+    "computer.status": RuntimeOperationSpec("computer.status", CAP_REPO_READ),
+    "computer.run": RuntimeOperationSpec(
+        "computer.run", CAP_PROCESS_RUN, "run_command", sensitive=True,
     ),
     "sandbox.wasm": RuntimeOperationSpec(
         "sandbox.wasm", CAP_SAFE_COMPUTE, "python_compute"
@@ -703,6 +708,12 @@ class SafeRuntime:
                     ),
                 )
 
+        if op == "computer.run":
+            try:
+                self._computer_preflight(args, security_context, capabilities)
+            except (ValueError, RuntimeError, PermissionError) as exc:
+                return self._result(start, SafeRuntimeResult(False, op, error=str(exc)))
+
         # A grant returned after a delegated tool requested approval must follow
         # the resume path back to that exact tool. The nested ToolRegistry remains
         # the authority that validates/consumes the grant against tool+args+scope.
@@ -896,7 +907,11 @@ class SafeRuntime:
                             ),
                         ),
                     )
-                if permission == "ASK" and approval_grant is None:
+                if op == "computer.run":
+                    # Remote execution always requires an exact, one-use user
+                    # grant, even under allow-all or autonomous host policy.
+                    permission = "ASK"
+                if permission == "ASK" and approval_grant is None and op != "computer.run":
                     review_profile = (
                         "workspace-write+network"
                         if bool(args.get("network", False))
@@ -1110,6 +1125,8 @@ class SafeRuntime:
                 args, turn_id, origin, security_context
             ),
             "sandbox.wasm": lambda: self._op_sandbox_wasm(args),
+            "computer.status": lambda: self._op_computer_status(args, security_context),
+            "computer.run": lambda: self._op_computer_run(args, turn_id, security_context, capabilities),
             "flow.execute": lambda: self._op_flow_execute(
                 args, turn_id, origin, capabilities, security_context
             ),
@@ -1603,6 +1620,56 @@ class SafeRuntime:
             },
         )
 
+
+    def _computer_manager(self, security_context):
+        if (security_context is None or security_context.is_path_scoped
+                or security_context.parent_principal_id is not None):
+            raise PermissionError("computer operations require an unscoped root principal")
+        registry = getattr(self.registry, "conversation_runtimes", None)
+        if registry is None or getattr(self.registry, "policy", None) is None:
+            raise RuntimeError("computer runtime or policy is unavailable")
+        return registry.for_conversation(self.conversation_id)
+
+    def _op_computer_status(self, args, security_context):
+        if args:
+            raise ValueError("computer.status accepts no arguments")
+        manager = self._computer_manager(security_context)
+        return SafeRuntimeResult(True, "computer.status", data=manager.agent_status())
+
+    def _computer_preflight(self, args, security_context, capabilities):
+        if CAP_REPO_WRITE not in capabilities:
+            raise PermissionError("computer.run requires repo.write")
+        manager = self._computer_manager(security_context)
+        if set(args) != {"argv", "binding", "request_id"}:
+            raise ValueError("computer.run requires argv, binding and request_id")
+        argv = args["argv"]
+        if (not isinstance(argv, list) or not 1 <= len(argv) <= 128
+                or any(not isinstance(arg, str) or not arg or "\\x00" in arg or len(arg) > 8192
+                       for arg in argv)
+                or len(json.dumps(argv, ensure_ascii=False).encode("utf-8")) > 32 * 1024):
+            raise ValueError("invalid computer argv")
+        if not isinstance(args["request_id"], str) or not 1 <= len(args["request_id"]) <= 64:
+            raise ValueError("invalid computer request_id")
+        status = manager.agent_status()
+        if not status.get("enabled") or args["binding"] != status.get("binding"):
+            raise PermissionError("computer binding unavailable, disabled or changed")
+        return manager
+
+    def _op_computer_run(self, args, turn_id, security_context, capabilities):
+        manager = self._computer_preflight(args, security_context, capabilities)
+        request_id = hashlib.sha256(
+            json.dumps([turn_id, args["request_id"]], separators=(",", ":")).encode()
+        ).hexdigest()
+        result = manager.execute(args["argv"], request_id=request_id,
+                                 expected_agent_binding=args["binding"])
+        success = result.get("success") is True
+        receipt = result.get("receipt") or {}
+        if result.get("replayed") is True:
+            success = receipt.get("status") == "COMPLETED" and receipt.get("success") is True
+        # Never misrepresent remote execution as local workspace validation.
+        return SafeRuntimeResult(success, "computer.run", data=result,
+                                 error=None if success else "Remote command failed or outcome is uncertain",
+                                 metadata={"execution_scope": "remote", "local_workspace_verified": False})
 
     def _op_sandbox_wasm(self, args):
         from kitt.runtime.wasm_compute import execute_wasm
