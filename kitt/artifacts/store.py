@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
+from io import BytesIO
 import json
 import os
 import shutil
@@ -171,7 +173,6 @@ class ArtifactStore:
         digest = hashlib.sha256()
         size = 0
         if artifact.storage_kind == "INLINE":
-            from io import BytesIO
             source = BytesIO(artifact.inline_content or b"")
         else:
             source = (self.storage / artifact.relative_storage_path).open("rb")
@@ -236,6 +237,30 @@ class ArtifactStore:
         with self.db.get_connection() as conn:
             row = conn.execute("SELECT * FROM artifacts WHERE id=?", (artifact_id,)).fetchone()
             return self._from_row(row) if row else None
+
+    @contextmanager
+    def open_verified(self, artifact_id: str):
+        """Host-only streaming reader; verify before exposing the open stream."""
+        artifact = self.get(artifact_id)
+        if not artifact or (artifact.expires_at is not None
+                            and artifact.expires_at < time.time() and not artifact.pinned):
+            raise KeyError("artifact unavailable")
+        if artifact.storage_kind == "INLINE":
+            source = BytesIO(artifact.inline_content or b"")
+        else:
+            source = (self.storage / artifact.relative_storage_path).open("rb")
+        with source:
+            digest = hashlib.sha256()
+            size = 0
+            while chunk := source.read(64 * 1024):
+                size += len(chunk)
+                if size > artifact.size_bytes or size > self.max_artifact_bytes:
+                    raise ValueError("Artifact size mismatch")
+                digest.update(chunk)
+            if size != artifact.size_bytes or digest.hexdigest() != artifact.content_hash:
+                raise ValueError("Artifact integrity check failed")
+            source.seek(0)
+            yield source
 
     def read(self, artifact_id: str) -> bytes:
         artifact = self.get(artifact_id)

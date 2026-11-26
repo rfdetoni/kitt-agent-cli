@@ -59,6 +59,16 @@ class RuntimeRPC:
             binding = manager.resume()
         elif method == "runtime.snapshot":
             return manager.snapshot_state()
+        elif method == "runtime.artifact_push":
+            return manager.push_artifact(
+                self.runtime.artifacts, str(params["artifact_id"]),
+                allow_sensitive=params.get("allow_sensitive") is True,
+            )
+        elif method == "runtime.artifact_pull":
+            return manager.pull_artifact(
+                self.runtime.artifacts, str(params["sha256"]),
+                summary=str(params.get("summary") or "Remote runtime artifact"),
+            )
         elif method == "runtime.terminate":
             manager.terminate()
             return {"ok": True}
