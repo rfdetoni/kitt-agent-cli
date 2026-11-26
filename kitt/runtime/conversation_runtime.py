@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from compression import zstd
 from contextlib import contextmanager
 from dataclasses import asdict
 from functools import wraps
@@ -481,12 +482,20 @@ class RemoteRuntimeDriver:
         body = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         if len(body) > 1024 * 1024:
             raise ValueError("remote runtime request exceeds 1 MiB")
+        headers = {"Content-Type": "application/json"}
+        if config.get("transport_zstd") is True:
+            headers["Accept-Encoding"] = "zstd"
+            if len(body) >= 1024:
+                packed = zstd.compress(body, level=1)
+                if len(packed) < len(body):
+                    body = packed
+                    headers["Content-Encoding"] = "zstd"
         request = urllib.request.Request(
             f"{endpoint}/v1/runtimes/{runtime_id}/{action}",
             data=body,
             method="POST",
             headers={
-                "Content-Type": "application/json",
+                **headers,
                 **({"Authorization": f"Bearer {token}"} if token else {}),
             },
         )
@@ -494,8 +503,22 @@ class RemoteRuntimeDriver:
             timeout = max(1.0, min(float(config.get("timeout_seconds", 120)), 3600.0))
             with secure_urlopen(request, timeout=timeout, max_body_bytes=1024 * 1024,
                                 local_only=loopback) as response:
-                value = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, ValueError) as exc:
+                raw = response.read()
+                if config.get("transport_zstd") is True:
+                    encodings = response.headers.get_all("Content-Encoding") or []
+                    if encodings == ["zstd"]:
+                        limit = 1024 * 1024
+                        info = zstd.get_frame_info(raw)
+                        if info.decompressed_size is None or info.decompressed_size > limit:
+                            raise ValueError("decoded remote runtime response exceeds 1 MiB")
+                        decoder = zstd.ZstdDecompressor(options={zstd.DecompressionParameter.window_log_max: 20})
+                        raw = decoder.decompress(raw, max_length=limit + 1)
+                        if len(raw) > limit or not decoder.eof or decoder.unused_data:
+                            raise ValueError("invalid bounded Zstd frame")
+                    elif encodings and encodings != ["identity"]:
+                        raise ValueError("unsupported remote runtime response encoding")
+                value = json.loads(raw.decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, ValueError, zstd.ZstdError, EOFError) as exc:
             # Size errors contain no remote input; preserve the actionable limit.
             if type(exc) is ValueError and str(exc) == "HTTP response exceeds configured size limit":
                 raise RuntimeOutcomeUnknown("remote runtime response exceeds 1 MiB") from exc
