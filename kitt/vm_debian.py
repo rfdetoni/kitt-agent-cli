@@ -164,6 +164,7 @@ def _health(key: Path, known: Path, port: int, ssh: str, version: str, agent_sha
     info = {"ssh_key": str(key), "known_hosts": str(known),
             "host_key_alias": "kitt-sandbox", "ssh_user": "kitt"}
     argv = _ssh_args(info, port, ssh)
+    argv[1:1] = ["-F", "/dev/null", "-o", "GlobalKnownHostsFile=/dev/null"]
     try:
         result = subprocess.run(argv, input=b'{"version":1,"method":"vm.health"}\n',
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
