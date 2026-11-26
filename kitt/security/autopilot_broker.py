@@ -257,6 +257,18 @@ class BrokerServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         self.broker = broker
         super().__init__(sock_path, BrokerHandler)
 
+    def verify_request(self, request, client_address) -> bool:
+        del client_address
+        if os.name == "posix" and hasattr(socket, "SO_PEERCRED"):
+            try:
+                import struct
+                cred = request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+                _pid, uid, _gid = struct.unpack("3i", cred)
+                return uid in (0, os.geteuid())
+            except OSError:
+                return False
+        return True
+
 
 def send(socket_path: str, payload: dict[str, Any], timeout: float = 5) -> dict:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
@@ -289,7 +301,7 @@ def main() -> int:
             path.unlink()
         broker = DockerBroker(os.getenv("KITT_BROKER_HOST_WORKSPACE", ""))
         with BrokerServer(socket_path, broker) as server:
-            os.chmod(socket_path, 0o666)
+            os.chmod(socket_path, 0o600)
             server.serve_forever()
         return 0
     if options.command == "ping":

@@ -61,7 +61,16 @@ class RuntimeRPC:
             return manager.export_snapshot(self.runtime.artifacts, allow_sensitive=params.get("allow_sensitive") is True)
         elif method == "runtime.snapshot_restore":
             return manager.restore_snapshot(self.runtime.artifacts, str(params["artifact_id"]), config,
-                                            allow_sensitive=params.get("allow_sensitive") is True)
+                                            allow_sensitive=params.get("allow_sensitive") is True,
+                                            bind=params.get("bind") is True)
+        elif method == "runtime.migrate":
+            return manager.migrate_runtime(
+                config,
+                self.runtime.artifacts,
+                mode=str(params.get("mode") or "cold"),
+                allow_sensitive=params.get("allow_sensitive") is True,
+                release_source=params.get("release_source") is True,
+            )
         elif method == "runtime.artifact_push":
             return manager.push_artifact(
                 self.runtime.artifacts, str(params["artifact_id"]),
@@ -85,6 +94,9 @@ class RuntimeRPC:
         if method.startswith("runtime."):
             return self._runtime_control(method, params)
         conversation_id = self._conversation(params)
+        conversation = self.runtime.history.repo.get_conversation(conversation_id)
+        if conversation and conversation.get("workspace_id") != self.runtime.workspace_id:
+            raise PermissionError("conversation is outside the active workspace")
 
         if method == "agents.list":
             return self.runtime.children.observe_agents(conversation_id)
@@ -125,9 +137,9 @@ class RuntimeRPC:
             )
             return {"id": schedule_id}
         if method == "schedule.list":
-            return self.runtime.wake_scheduler.list(conversation_id)
+            return self.runtime.wake_scheduler.list(conversation_id, workspace_id=self.runtime.workspace_id)
         if method == "schedule.cancel":
-            return {"ok": self.runtime.wake_scheduler.cancel(str(params["id"]))}
+            return {"ok": self.runtime.wake_scheduler.cancel(str(params["id"]), workspace_id=self.runtime.workspace_id)}
         if method == "heartbeat.set":
             schedule_id = self.runtime.wake_scheduler.set_heartbeat(
                 workspace_id=self.runtime.workspace_id,
@@ -148,9 +160,9 @@ class RuntimeRPC:
             )
             return {"id": refinement_id, "preview": preview}
         if method == "refine.apply":
-            return self.runtime.refiner.apply(str(params["id"]))
+            return self.runtime.refiner.apply(str(params["id"]), workspace_id=self.runtime.workspace_id)
         if method == "refine.rollback":
-            return {"ok": self.runtime.refiner.rollback(str(params["id"]))}
+            return {"ok": self.runtime.refiner.rollback(str(params["id"]), workspace_id=self.runtime.workspace_id)}
 
         if method == "session.export":
             return self.runtime.history.export_conversation(
