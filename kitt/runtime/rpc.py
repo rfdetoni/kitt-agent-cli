@@ -57,6 +57,11 @@ class RuntimeRPC:
             binding = manager.resume()
         elif method == "runtime.snapshot":
             return manager.snapshot_state()
+        elif method == "runtime.snapshot_export":
+            return manager.export_snapshot(self.runtime.artifacts, allow_sensitive=params.get("allow_sensitive") is True)
+        elif method == "runtime.snapshot_restore":
+            return manager.restore_snapshot(self.runtime.artifacts, str(params["artifact_id"]), config,
+                                            allow_sensitive=params.get("allow_sensitive") is True)
         elif method == "runtime.artifact_push":
             return manager.push_artifact(
                 self.runtime.artifacts, str(params["artifact_id"]),
