@@ -1442,6 +1442,7 @@ def main(argv=None) -> int:
     if args.subcommand == "vm":
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
+        import subprocess
         try:
             if args.vm_action == "prepare":
                 from kitt.vm_debian import prepare_debian
@@ -1547,7 +1548,7 @@ def main(argv=None) -> int:
             result = run_vm_job(args.profile, args.goal)
             print(_json.dumps(result, ensure_ascii=False))
             return 0 if result["guest"]["status"] == "PASS" else 2
-        except (VMError, OSError, ValueError) as exc:
+        except (VMError, OSError, ValueError, subprocess.SubprocessError) as exc:
             print(f"VM supervision blocked: {exc}", file=sys.stderr)
             return 2
 
