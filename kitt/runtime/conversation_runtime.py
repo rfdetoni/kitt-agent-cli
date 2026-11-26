@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from compression import zstd
 from contextlib import contextmanager
 from dataclasses import asdict
 from functools import wraps
@@ -481,12 +482,20 @@ class RemoteRuntimeDriver:
         body = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         if len(body) > 1024 * 1024:
             raise ValueError("remote runtime request exceeds 1 MiB")
+        headers = {"Content-Type": "application/json"}
+        if config.get("transport_zstd") is True:
+            headers["Accept-Encoding"] = "zstd"
+            if len(body) >= 1024:
+                packed = zstd.compress(body, level=1)
+                if len(packed) < len(body):
+                    body = packed
+                    headers["Content-Encoding"] = "zstd"
         request = urllib.request.Request(
             f"{endpoint}/v1/runtimes/{runtime_id}/{action}",
             data=body,
             method="POST",
             headers={
-                "Content-Type": "application/json",
+                **headers,
                 **({"Authorization": f"Bearer {token}"} if token else {}),
             },
         )
@@ -494,8 +503,22 @@ class RemoteRuntimeDriver:
             timeout = max(1.0, min(float(config.get("timeout_seconds", 120)), 3600.0))
             with secure_urlopen(request, timeout=timeout, max_body_bytes=1024 * 1024,
                                 local_only=loopback) as response:
-                value = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, ValueError) as exc:
+                raw = response.read()
+                if config.get("transport_zstd") is True:
+                    encodings = response.headers.get_all("Content-Encoding") or []
+                    if encodings == ["zstd"]:
+                        limit = 1024 * 1024
+                        info = zstd.get_frame_info(raw)
+                        if info.decompressed_size is None or info.decompressed_size > limit:
+                            raise ValueError("decoded remote runtime response exceeds 1 MiB")
+                        decoder = zstd.ZstdDecompressor(options={zstd.DecompressionParameter.window_log_max: 20})
+                        raw = decoder.decompress(raw, max_length=limit + 1)
+                        if len(raw) > limit or not decoder.eof or decoder.unused_data:
+                            raise ValueError("invalid bounded Zstd frame")
+                    elif encodings and encodings != ["identity"]:
+                        raise ValueError("unsupported remote runtime response encoding")
+                value = json.loads(raw.decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, ValueError, zstd.ZstdError, EOFError) as exc:
             # Size errors contain no remote input; preserve the actionable limit.
             if type(exc) is ValueError and str(exc) == "HTTP response exceeds configured size limit":
                 raise RuntimeOutcomeUnknown("remote runtime response exceeds 1 MiB") from exc
@@ -959,6 +982,53 @@ class ConversationRuntimeManager:
         })
         return {"artifact_id": artifact.id, "sha256": artifact.content_hash,
                 "bytes": artifact.size_bytes}
+
+    @_exclusive
+    def export_snapshot(self, store, *, allow_sensitive=False):
+        from kitt.artifacts.remote_cache import RemoteArtifactCache
+
+        binding = self.binding()
+        if binding is None or binding.backend != RuntimeBackend.REMOTE or binding.state != "PAUSED":
+            raise ValueError("snapshot requires a paused REMOTE runtime")
+        if allow_sensitive is not True:
+            raise PermissionError("explicit sensitive snapshot authorization required")
+        driver = self._driver(binding.backend)
+        config = self._config()
+        result = driver._request(binding.runtime_id, "snapshot_export", config, {"allow_sensitive": True})
+        digest = result["sha256"]
+        cache = RemoteArtifactCache(config, binding.runtime_id, driver.secret_provider(config))
+        with cache.open_blob(digest) as response:
+            artifact = store.put_stream(
+                self.workspace_id, iter(lambda: response.read(64 * 1024), b""),
+                "runtime_snapshot", "Cold remote workspace snapshot", conversation_id=self.conversation_id,
+                sensitivity="SENSITIVE", expected_hash=digest,
+            )
+        self._event("ConversationRuntimeSnapshotExported", binding, {"artifact_id": artifact.id})
+        return {"artifact_id": artifact.id, "sha256": artifact.content_hash, "bytes": artifact.size_bytes,
+                "image": result["image"]}
+
+    @_exclusive
+    def restore_snapshot(self, store, artifact_id, config, *, allow_sensitive=False):
+        from kitt.artifacts.remote_cache import RemoteArtifactCache
+
+        if self.binding() is not None:
+            raise ValueError("snapshot restore requires an unbound conversation")
+        if allow_sensitive is not True:
+            raise PermissionError("explicit sensitive snapshot authorization required")
+        artifact = store.get(artifact_id)
+        if (artifact is None or artifact.workspace_id != self.workspace_id
+                or artifact.conversation_id != self.conversation_id
+                or artifact.artifact_type != "runtime_snapshot"
+                or (artifact.expires_at is not None and artifact.expires_at < time.time()
+                    and not artifact.pinned)):
+            raise KeyError("snapshot unavailable in this conversation")
+        runtime_id = _runtime_id(config["runtime_id"])
+        driver = self._driver(RuntimeBackend.REMOTE)
+        cache = RemoteArtifactCache(config, runtime_id, driver.secret_provider(config))
+        with store.open_verified(artifact_id) as source:
+            cache.push(source, artifact.content_hash, artifact.size_bytes)
+        return driver._request(runtime_id, "snapshot_import", config,
+                               {"sha256": artifact.content_hash, "allow_sensitive": True})
 
     def health(self) -> dict[str, Any]:
         binding = self.binding()

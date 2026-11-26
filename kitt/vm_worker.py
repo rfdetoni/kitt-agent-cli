@@ -19,13 +19,8 @@ MAX_OUTPUT = 256 * 1024
 
 
 def handle(request: dict, workspace: Path, *, runner=None) -> dict:
-    if not isinstance(request, dict) or set(request) != {"version", "method", "goal"}:
-        raise ValueError("Invalid VM worker request")
-    if type(request["version"]) is not int or request["version"] != 1 or request["method"] != "agent.run":
-        raise ValueError("Unknown VM worker request")
-    goal = request["goal"]
-    if not isinstance(goal, str) or not goal.strip() or len(goal.encode("utf-8")) > 8192:
-        raise ValueError("Invalid goal")
+    if not isinstance(request, dict) or type(request.get("version")) is not int or request["version"] != 1:
+        raise ValueError("Invalid VM worker version")
     if os.environ.get("SSH_ORIGINAL_COMMAND"):
         raise ValueError("Guest SSH must use an operator-owned forced command")
     if os.name == "posix" and os.geteuid() == 0:
@@ -33,6 +28,22 @@ def handle(request: dict, workspace: Path, *, runner=None) -> dict:
     workspace = workspace.resolve(strict=True)
     if not workspace.is_dir():
         raise ValueError("Workspace missing")
+    if request.get("method") == "vm.health" and set(request) == {"version", "method"}:
+        from kitt import __version__
+        marker = Path("/var/lib/kitt-bootstrap-ok")
+        if not marker.is_file() or marker.stat().st_size != 41:
+            raise ValueError("Guest bootstrap not complete")
+        sha = marker.read_text("ascii").strip()
+        if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+            raise ValueError("Invalid guest bootstrap revision")
+        return {"version": 1, "status": "READY",
+                "python_minor": f"{sys.version_info.major}.{sys.version_info.minor}",
+                "agent_version": __version__, "agent_sha": sha}
+    if set(request) != {"version", "method", "goal"} or request["method"] != "agent.run":
+        raise ValueError("Unknown VM worker request")
+    goal = request["goal"]
+    if not isinstance(goal, str) or not goal.strip() or len(goal.encode("utf-8")) > 8192:
+        raise ValueError("Invalid goal")
     args = [
         sys.executable, "-m", "kitt.cli.main",
         "--root", str(workspace), "--ui", "plain",
@@ -70,8 +81,16 @@ def main() -> None:
     raw = sys.stdin.buffer.readline(MAX_REQUEST + 1)
     if not raw or len(raw) > MAX_REQUEST or not raw.endswith(b"\n"):
         raise SystemExit(2)
+    def unique_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate worker request key")
+            result[key] = value
+        return result
     try:
-        request = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite")))
+        request = json.loads(raw, object_pairs_hook=unique_pairs,
+                             parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite")))
         result = handle(request, args.workspace)
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         result = {"version": 1, "status": "BLOCKED", "error": type(error).__name__}

@@ -810,6 +810,12 @@ def build_parser() -> argparse.ArgumentParser:
     vm_run.add_argument("--goal", required=True)
     vm_doctor = vm_commands.add_parser("doctor", help="Check VM tools and pinned image")
     vm_doctor.add_argument("--profile", type=Path, required=True)
+    vm_prepare = vm_commands.add_parser("prepare", help="Provision a pinned Debian autonomous Agent guest")
+    vm_prepare.add_argument("--destination", type=Path, default=Path.home() / ".local/share/kitt/vm/debian-agent")
+    vm_prepare.add_argument("--gateway-port", type=int, default=3000)
+    vm_prepare.add_argument("--agent-sha", required=True, help="Immutable Agent revision")
+    vm_prepare.add_argument("--image-sha512", required=True, help="Independently trusted Debian image SHA512")
+    vm_prepare.add_argument("--timeout", type=int, default=1200)
     windows_parser = vm_commands.add_parser("windows", help="Guide Windows VM creation from your own ISO/QCOW2")
     windows_commands = windows_parser.add_subparsers(dest="windows_action", required=True)
     windows_prepare = windows_commands.add_parser("prepare", help="Create offline Windows VM")
@@ -1436,7 +1442,15 @@ def main(argv=None) -> int:
     if args.subcommand == "vm":
         from kitt.vm_supervisor import VMError, run_vm_job, inspect_profile
         import json as _json
+        import subprocess
         try:
+            if args.vm_action == "prepare":
+                from kitt.vm_debian import prepare_debian
+                profile = prepare_debian(args.destination, gateway_port=args.gateway_port,
+                                         timeout_seconds=args.timeout, agent_sha=args.agent_sha,
+                                         image_sha512=args.image_sha512)
+                print(_json.dumps({"ready": True, "profile": str(profile)}))
+                return 0
             if args.vm_action == "lab":
                 from kitt import vm_broker
                 if args.lab_action == "doctor":
@@ -1534,7 +1548,7 @@ def main(argv=None) -> int:
             result = run_vm_job(args.profile, args.goal)
             print(_json.dumps(result, ensure_ascii=False))
             return 0 if result["guest"]["status"] == "PASS" else 2
-        except (VMError, OSError, ValueError) as exc:
+        except (VMError, OSError, ValueError, subprocess.SubprocessError) as exc:
             print(f"VM supervision blocked: {exc}", file=sys.stderr)
             return 2
 
