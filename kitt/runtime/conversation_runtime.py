@@ -1018,7 +1018,7 @@ class ConversationRuntimeManager:
         artifact = store.get(artifact_id)
         if (artifact is None or artifact.workspace_id != self.workspace_id
                 or artifact.conversation_id != self.conversation_id
-                or artifact.kind != "runtime_snapshot"
+                or artifact.artifact_type != "runtime_snapshot"
                 or (artifact.expires_at is not None and artifact.expires_at < time.time()
                     and not artifact.pinned)):
             raise KeyError("snapshot unavailable in this conversation")
