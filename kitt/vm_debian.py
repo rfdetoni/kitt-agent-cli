@@ -104,10 +104,10 @@ def _bootstrap_script(agent_sha: str) -> str:
         "/opt/kitt/venv/bin/python -c 'import sys, kitt; "
         "assert sys.version_info >= (3,14); print(kitt.__version__)'\n"
         "install -d -m 0700 -o kitt -g kitt /home/kitt/workspace\n"
-        f"printf '%s\\n' {agent_sha} > /var/lib/kitt-bootstrap-ok\n"
-        "chmod 0644 /var/lib/kitt-bootstrap-ok\n"
         "/usr/sbin/sshd -t\n"
         "systemctl restart ssh\n"
+        f"printf '%s\\n' {agent_sha} > /var/lib/kitt-bootstrap-ok\n"
+        "chmod 0644 /var/lib/kitt-bootstrap-ok\n"
     )
 
 
@@ -234,8 +234,9 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                timeout=25, check=True)
         metadata = json.loads(check.stdout)
-        if (metadata.get("format") != "qcow2" or metadata.get("backing-filename")
-                or metadata.get("data-file") or metadata.get("encrypted")):
+        if (not isinstance(metadata, dict) or metadata.get("format") != "qcow2"
+                or metadata.get("backing-filename") or metadata.get("backing-filename-format")
+                or metadata.get("data-file") or metadata.get("data-file-raw") or metadata.get("encrypted")):
             raise VMError("Unsafe Debian base image")
         subprocess.run([dependencies["qemu-img"], "resize", "-f", "qcow2", str(image), "12G"],
                        check=True, timeout=25, stdout=subprocess.DEVNULL)
@@ -284,7 +285,10 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
                 else:
                     raise VMError("Debian bootstrap failed or timed out; image not promoted")
             finally:
-                _terminate_group(process)
+                if process.poll() is None:
+                    _terminate_group(process)
+                if process.stdin is not None:
+                    process.stdin.close()
         # Never preserve cloud-init seed/credentials other than the private SSH identity.
         for name in ("user-data", "meta-data", "seed.iso", "qemu-bootstrap.log", "guest_host", "guest_host.pub"):
             (stage / name).unlink(missing_ok=True)
@@ -300,5 +304,7 @@ def prepare_debian(destination: Path, *, gateway_port: int = 3000,
         (stage / "profile.json").write_text(json.dumps(profile, indent=2) + "\n", encoding="utf-8")
         (stage / "profile.json").chmod(0o600)
         _check_image({**profile, "image": str(image)}, dependencies["qemu-img"])
+        if destination.exists() or destination.is_symlink():
+            raise VMError("VM destination appeared during provisioning")
         stage.rename(destination)
         return destination / "profile.json"
