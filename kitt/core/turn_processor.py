@@ -669,7 +669,7 @@ class TurnProcessor(
             "flow.execute", "program.execute",
             "plan.submit", "plan.inspect", "plan.next", "plan.dispatch", "plan.dispatch_ready", "plan.verify", "plan.checkpoint",
             *edits,
-            "process.run", "artifacts.store", "artifacts.read",
+            "process.run", "computer.status", "computer.run", "artifacts.store", "artifacts.read",
             "children.spawn", "children.send", "children.inspect",
             "goal.inspect", "goal.update", "memory.query", "memory.correct",
             "memory.concept", "memory.link",

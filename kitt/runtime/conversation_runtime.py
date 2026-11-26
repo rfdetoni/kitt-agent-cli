@@ -779,8 +779,28 @@ class ConversationRuntimeManager:
         self._event("ConversationRuntimeAttached", binding)
         return binding
 
+    def agent_status(self) -> dict[str, Any]:
+        binding = self.binding()
+        config = self._config()
+        enabled = (binding is not None and binding.backend == RuntimeBackend.REMOTE
+                   and config.get("agent_execute") is True
+                   and config.get("network_disabled") is True
+                   and isinstance(config.get("token_env"), str)
+                   and config["token_env"].startswith("KITT_REMOTE_RUNTIME_TOKEN"))
+        if not enabled:
+            return {"enabled": False}
+        return {"enabled": True, "state": binding.state,
+                "binding": {"runtime_id": binding.runtime_id,
+                            "config_digest": binding.config_digest,
+                            "created_at": binding.created_at}}
+
     @_exclusive
-    def execute(self, argv: list[str], *, request_id: str | None = None) -> dict[str, Any]:
+    def execute(self, argv: list[str], *, request_id: str | None = None,
+                expected_agent_binding: dict[str, Any] | None = None) -> dict[str, Any]:
+        if expected_agent_binding is not None:
+            status = self.agent_status()
+            if not status["enabled"] or status["binding"] != expected_agent_binding:
+                raise PermissionError("approved computer binding changed")
         binding = self.binding()
         if binding is None:
             raise RuntimeError("conversation has no runtime binding")

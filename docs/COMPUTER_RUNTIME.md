@@ -125,3 +125,20 @@ Only raw blobs are transported over this worker protocol; Zstd remains a separat
 codec. Both directions are limited to 8 MiB and use the existing bounded HTTP
 transport, rejecting redirects. Remote execution receipts now carry a scoped
 request ID to the worker when supplied by the local caller.
+
+## Explicit model-facing remote execution
+
+The operator may provision a dedicated authenticated REMOTE worker with
+`agent_execute: true`, `network_disabled: true` and a dedicated
+`KITT_REMOTE_RUNTIME_TOKEN` environment reference. `computer.status` returns
+an opaque binding identity (runtime ID, config digest and creation time);
+`computer.run` accepts exactly argv, that binding identity and a unique
+request_id within the turn. The model must have process.run and repo.write
+authority and an unscoped root principal. Each invocation requires a
+single-use approval even in autonomous/allow-all policy. The binding is
+rechecked under the operation fence immediately before dispatch. No automatic
+local fallback, host directory transfer, network elevation, child path-scope
+bypass or task-transaction bypass. Remote output is not evidence of local
+workspace validation. The remote worker is operator-trusted and must enforce
+its documented isolation; this does not turn arbitrary remote URLs into
+trusted execution targets.
