@@ -50,8 +50,6 @@ class RuntimeRPC:
                 raise RuntimeError("conversation already has a runtime; terminate it first")
             binding = manager.provision(str(params["backend"]), config)
         elif method == "runtime.attach":
-            if manager.binding() is not None:
-                raise RuntimeError("conversation already has a runtime")
             binding = manager.attach(str(params["backend"]), str(params["runtime_id"]), config)
         elif method == "runtime.pause":
             binding = manager.pause()

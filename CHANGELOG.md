@@ -1,5 +1,11 @@
 # Changelog — K.I.T.T. Agent CLI
 
+## 0.89.12 — governed computer runtime and artifact transport
+
+- Include optional bounded WASM, durable runtime receipts, container hibernation, read-only mounts, Zstd artifact frames and scoped remote cache RPC.
+- Restore idempotent reconnection to the exact persisted backend and ID without rewriting configuration or state.
+- Exercise real Docker and Podman lifecycle tests before merge, not only after main changes.
+
 ## 0.89.11 — persist verified Ghidra pseudocode and block false completion
 
 - Wire the isolated, pinned Ghidra executor to a packaged post-analysis decompiler script. Successful imports now write per-function C pseudocode to `reimplement/pseudoc/` plus a SHA-256 manifest.

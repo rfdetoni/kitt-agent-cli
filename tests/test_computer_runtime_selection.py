@@ -189,3 +189,28 @@ def test_operator_mounts_are_readonly_and_cannot_inject_mount_options(tmp_path):
         with pytest.raises(ValueError):
             driver.provision({"image": "alpine", "readonly_mounts": {"docs": str(injected)}})
         assert run.call_count == 1
+
+
+def test_reconnect_keeps_original_config_and_paused_state(tmp_path):
+    db = HistoryDatabase(tmp_path)
+    manager = ConversationRuntimeManager(tmp_path, "ws", "conv", db)
+    driver = manager.drivers[RuntimeBackend.DOCKER]
+    config = {"image": "alpine", "memory_bytes": 67108864, "hibernate_on_pause": True}
+    try:
+        with patch.object(driver, "provision", return_value="lab"), patch.object(
+            driver, "pause"
+        ), patch.object(driver, "health", return_value={"ok": True, "state": "paused"}), patch.object(
+            driver, "attach"
+        ) as attach:
+            manager.provision("DOCKER", config)
+            paused = manager.pause()
+            restarted = ConversationRuntimeManager(tmp_path, "ws", "conv", db, drivers=manager.drivers)
+            assert restarted.attach("DOCKER", "lab", {"image": "alpine"}) == paused
+            assert restarted._config() == config
+            with pytest.raises(ValueError, match="cannot change"):
+                restarted.attach("DOCKER", "lab", {"memory_bytes": 134217728})
+            with pytest.raises(RuntimeError, match="different"):
+                restarted.attach("DOCKER", "other")
+            attach.assert_not_called()
+    finally:
+        db.close()
