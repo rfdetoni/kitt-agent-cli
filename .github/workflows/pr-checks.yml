@@ -98,7 +98,6 @@ jobs:
       - run: kitt --help
 
   container-runtime:
-    if: github.event_name != 'pull_request'
     name: docker runtime smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -118,7 +117,6 @@ jobs:
         run: python -m pytest -q tests/integration/test_real_container_runtime.py tests/integration/test_autonomous_docker_sandbox.py tests/integration/test_persistent_autopilot_broker.py
 
   podman-runtime:
-    if: github.event_name != 'pull_request'
     name: podman runtime smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 10

@@ -748,11 +748,21 @@ class ConversationRuntimeManager:
 
     @_exclusive
     def attach(self, backend: RuntimeBackend | str, runtime_id: str, config: dict[str, Any] | None = None) -> ConversationRuntimeBinding:
-        if self.binding() is not None:
-            raise RuntimeError("conversation already has a runtime")
         backend = RuntimeBackend(str(getattr(backend, "value", backend)).upper())
         clean = _sanitized_config(dict(config or {}))
         runtime_id = _runtime_id(str(runtime_id))
+        existing = self.binding()
+        if existing is not None:
+            if existing.backend != backend or existing.runtime_id != runtime_id:
+                raise RuntimeError("conversation already has a different runtime")
+            persisted = self._config()
+            # An idempotent reconnect may omit config or repeat existing values,
+            # but cannot replace the endpoint, image, limits or credential reference.
+            if any(key not in persisted or persisted[key] != value for key, value in clean.items()):
+                raise ValueError("reconnect cannot change persisted runtime config")
+            if not self.health().get("ok"):
+                raise RuntimeError("existing runtime is unavailable")
+            return existing
         self._driver(backend).attach(runtime_id, dict(config or {}))
         now = int(time.time() * 1000)
         binding = ConversationRuntimeBinding(
